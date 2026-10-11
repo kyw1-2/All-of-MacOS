@@ -31,7 +31,11 @@ cp AllOfMacOS/AllOfMacOS.entitlements "$BUNDLE_DIR/Contents/Resources/AllOfMacOS
 cp "$EXEC_PATH" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS"
 
 echo "→ Signing with explicitly configured All of MacOS identity…"
-SIGN_FLAG="${ALLOFMACOS_SIGN_ID:?Specify the All of MacOS signing identity; use - only for CI}"
+SIGN_FLAG="${ALLOFMACOS_SIGN_ID:-AOM Dev}"
+if [ "$SIGN_FLAG" != "AOM Dev" ] && [ "$SIGN_FLAG" != "-" ]; then
+    echo "ERROR: Expected AOM Dev (local) or - (CI test only)." >&2
+    exit 1
+fi
 
 codesign --force --deep --sign "$SIGN_FLAG" \
     --identifier "$BUNDLE_ID" \

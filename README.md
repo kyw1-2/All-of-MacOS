@@ -16,7 +16,7 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 - Helper identifier: `com.kyw.allofmacos.ScriptRunner`
 - Separate Application Support folder: `AllOfMacOS`
 - Output: `build/All of MacOS.app`
-- Uses the local code-signing identity specified by `ALLOFMACOS_SIGN_ID`, which must be specified explicitly. Ad-hoc signing is reserved for CI builds.
+- Uses the local **self-signed Code Signing** identity `AOM Dev`. No paid Apple Developer membership is required for private local development. CI can request an ad-hoc build with `ALLOFMACOS_SIGN_ID=-`, which does not establish the same stable identity.
 
 ## Build
 
@@ -24,12 +24,12 @@ On macOS with Xcode:
 
 ```bash
 swift test
-ALLOFMACOS_SIGN_ID="<authorized code signing identity>" ./build-and-sign.sh
+./build-and-sign.sh
 codesign --verify --deep --strict "build/All of MacOS.app"
 hdiutil create -volname "All of MacOS" -srcfolder "build/All of MacOS.app" -format UDZO "All-of-MacOS.dmg"
 ```
 
-CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only.
+Create a local Keychain Access **Self Signed Root / Code Signing** identity named `AOM Dev` before a local release build. CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only; it must never be confused with the local stable-signed DMG.
 
 ## Repository
 

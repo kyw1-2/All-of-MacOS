@@ -13,7 +13,13 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 
-SIGN_ID="${ALLOFMACOS_SIGN_ID:?Specify the All of MacOS signing identity; use - only for CI}"
+# Stable local self-signed Code Signing certificate, created in Keychain Access.
+# CI passes ALLOFMACOS_SIGN_ID=- for an ad-hoc, non-distributable test build.
+SIGN_ID="${ALLOFMACOS_SIGN_ID:-AOM Dev}"
+if [ "$SIGN_ID" != "AOM Dev" ] && [ "$SIGN_ID" != "-" ]; then
+    echo "ERROR: Expected AOM Dev (local) or - (CI test only)." >&2
+    exit 1
+fi
 APP="build/All of MacOS.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
