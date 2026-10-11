@@ -11,28 +11,44 @@ import UniformTypeIdentifiers
 /// - Instant dismiss upon Copy, Save, OCR, Pin, or Delete actions
 /// - Acrylic glassmorphism card with rounded corners and double drop shadow
 /// - Rich toolbar with hover feedback, tooltips, and keyboard shortcuts
+private final class QuickAccessPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 final class QuickAccessOverlayController {
     private var panel: NSPanel?
     private var closeTimer: Task<Void, Never>?
-    private var outsideMonitor: Any?
     private var localMonitor: Any?
-    private var escapeMonitor: Any?
     private let entry: CaptureHistoryEntry
+    private var stackIndex: Int
+    private var secondsRemaining: TimeInterval?
+    private var resumedAt: Date?
+    private var hovering = false
+    private var dragging = false
+    private var wasDeleted = false
     private let forcedAutoCloseSeconds: TimeInterval?
-    var onDismiss: (() -> Void)?
+    var onDismiss: ((Bool) -> Void)?
 
-    init(entry: CaptureHistoryEntry, forcedAutoCloseSeconds: TimeInterval? = nil) {
+    init(entry: CaptureHistoryEntry, stackIndex: Int = 0, forcedAutoCloseSeconds: TimeInterval? = nil) {
         self.entry = entry
+        self.stackIndex = stackIndex
         self.forcedAutoCloseSeconds = forcedAutoCloseSeconds
+    }
+
+    func setStackIndex(_ index: Int) {
+        stackIndex = index
+        guard let panel else { return }
+        position(panel)
     }
 
     func present() {
         guard panel == nil else { return }
         let width = max(270, CaptureSettings.overlaySize.panelWidth)
-        let height = CaptureSettings.overlaySize.thumbnailSide + 105
+        let height = CaptureSettings.overlaySize.thumbnailSide + 48
         let size = NSSize(width: width, height: height)
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
+        let panel = QuickAccessPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel],
                             backing: .buffered, defer: false)
         panel.level = .floating
@@ -57,16 +73,39 @@ final class QuickAccessOverlayController {
             onDelete: { [weak self] in self?.dismiss(deleteFile: true) },
             onClose: { [weak self] in self?.dismiss(deleteFile: false) },
             onSwipeDismiss: { [weak self] in self?.dismissWithSwipe() },
-            onDragOut: { [weak self] in self?.handleDragOut() }
+            onDragOut: { [weak self] success in self?.handleDragOut(success: success) },
+            prepareDragFile: { [weak self] in self?.beginDragFile() },
+            onHoverChange: { [weak self] hovering in self?.setHovering(hovering) },
+            onSaveAs: { [weak self] in self?.saveAs() },
+            onPreview: { [weak self] in self?.preview() },
+            onTemporarilyHide: { [weak self] in self?.temporarilyHide() },
+            onInfo: { [weak self] in self?.showFileInfo() },
+            onPrint: { [weak self] in self?.printCapture() },
+            onCopyOneX: { [weak self] in
+                guard let self else { return }
+                self.copyTransformed(QuickAccessImageTools.downscaleToOneX(
+                    self.entry.image, pointSize: self.entry.pointSize))
+            },
+            onFlip: { [weak self] in
+                guard let self else { return }
+                self.copyTransformed(QuickAccessImageTools.flippedHorizontally(self.entry.image))
+            },
+            onRotate: { [weak self] in
+                guard let self else { return }
+                self.copyTransformed(QuickAccessImageTools.rotatedLeft(self.entry.image))
+            },
+            onShare: { [weak self] in self?.shareCapture() },
+            onOpenWith: { [weak self] in self?.openWithDefaultApp() }
         )
         panel.contentView = NSHostingView(rootView: view)
         self.panel = panel
 
         position(panel)
 
-        // Slide in from right edge
+        // Slide in from the configured side of the active display.
         let finalFrame = panel.frame
-        let startFrame = NSRect(x: finalFrame.origin.x + 50, y: finalFrame.origin.y, width: finalFrame.width, height: finalFrame.height)
+        let incoming: CGFloat = CaptureSettings.overlayCorner.isLeft ? -50 : 50
+        let startFrame = NSRect(x: finalFrame.origin.x + incoming, y: finalFrame.origin.y, width: finalFrame.width, height: finalFrame.height)
         panel.setFrame(startFrame, display: true)
         panel.alphaValue = 0.0
         panel.orderFrontRegardless()
@@ -84,54 +123,48 @@ final class QuickAccessOverlayController {
 
     private func installDismissMonitors() {
         removeDismissMonitors()
-        outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, let panel = self.panel else { return }
-                if !panel.frame.contains(NSEvent.mouseLocation) { self.dismiss(deleteFile: false) }
+        // Quick Access must stay visible while interacting with *other apps*.
+        // Only intercept keys actually directed to this overlay, never global
+        // Cmd-C/Esc, which would steal shortcuts from the destination app.
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.panel else { return event }
+            guard let action = QuickAccessPolicy.shortcut(
+                keyCode: event.keyCode,
+                command: event.modifierFlags.contains(.command)) else { return event }
+            switch action {
+            case .close: self.dismiss(deleteFile: false)
+            case .copy: self.copyImage()
+            case .save: self.save()
+            case .edit: self.annotate()
+            case .pin: self.pin()
+            case .quickLook: self.preview()
             }
-        }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
-            guard let self, let panel = self.panel else { return event }
-            if event.type == .keyDown && event.keyCode == 53 {
-                self.dismiss(deleteFile: false)
-                return nil
-            }
-            if event.type != .keyDown, event.window !== panel, !panel.frame.contains(NSEvent.mouseLocation) {
-                self.dismiss(deleteFile: false)
-            }
-            return event
-        }
-        escapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return }
-            Task { @MainActor [weak self] in self?.dismiss(deleteFile: false) }
+            return nil
         }
     }
 
     private func removeDismissMonitors() {
-        for monitor in [outsideMonitor, localMonitor, escapeMonitor].compactMap({ $0 }) {
-            NSEvent.removeMonitor(monitor)
-        }
-        outsideMonitor = nil
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         localMonitor = nil
-        escapeMonitor = nil
     }
 
     func dismiss(deleteFile: Bool) {
         closeTimer?.cancel()
         closeTimer = nil
         removeDismissMonitors()
-        if deleteFile, let url = entry.fileURL {
-            try? FileManager.default.removeItem(at: url)
+        if deleteFile {
+            moveToTrash()
+            return
         }
-        if deleteFile { CaptureHistory.shared.remove(entry) }
         let closing = panel
         panel = nil
-        onDismiss?()
+        onDismiss?(wasDeleted)
         onDismiss = nil
         guard let closing else { return }
 
         let currentFrame = closing.frame
-        let targetFrame = NSRect(x: currentFrame.origin.x + 60, y: currentFrame.origin.y, width: currentFrame.width, height: currentFrame.height)
+        let direction: CGFloat = CaptureSettings.overlayCorner.isLeft ? -60 : 60
+        let targetFrame = NSRect(x: currentFrame.origin.x + direction, y: currentFrame.origin.y, width: currentFrame.width, height: currentFrame.height)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
@@ -149,12 +182,13 @@ final class QuickAccessOverlayController {
         removeDismissMonitors()
         let closing = panel
         panel = nil
-        onDismiss?()
+        onDismiss?(wasDeleted)
         onDismiss = nil
         guard let closing else { return }
 
         let currentFrame = closing.frame
-        let targetFrame = NSRect(x: currentFrame.origin.x + 360, y: currentFrame.origin.y, width: currentFrame.width, height: currentFrame.height)
+        let direction: CGFloat = CaptureSettings.overlayCorner.isLeft ? -360 : 360
+        let targetFrame = NSRect(x: currentFrame.origin.x + direction, y: currentFrame.origin.y, width: currentFrame.width, height: currentFrame.height)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.18
@@ -175,7 +209,9 @@ final class QuickAccessOverlayController {
                 CaptureResult(image: entry.image, globalRect: .zero, scale: entry.scale, kind: entry.kind,
                               windowTitle: entry.windowTitle, capturedAt: entry.capturedAt))
             GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
-            dismiss(deleteFile: false)
+            if !NSEvent.modifierFlags.contains(.option) {
+                dismiss(deleteFile: false)
+            }
         } catch {
             GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
         }
@@ -192,6 +228,10 @@ final class QuickAccessOverlayController {
     }
 
     private func save() {
+        if CaptureSettings.asksForNameAfterCapture || NSEvent.modifierFlags.contains(.option) {
+            saveAs()
+            return
+        }
         guard let url = ensureFile() else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
         GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
@@ -254,13 +294,144 @@ final class QuickAccessOverlayController {
         }
     }
 
+    private func saveAs() {
+        let type: UTType = entry.kind == .videoRecording ? .mpeg4Movie : CaptureSettings.format.contentType
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [type]
+        panel.directoryURL = CaptureSettings.saveDirectory
+        panel.nameFieldStringValue = entry.fileURL?.lastPathComponent
+            ?? "Screenshot-\(entry.id.uuidString.prefix(8)).\(entry.kind == .videoRecording ? "mp4" : CaptureSettings.format.fileExtension)"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    if entry.kind == .videoRecording {
+                        guard let source = entry.playableVideoURL else {
+                            throw CaptureError.captureFailed("Recording file is missing.")
+                        }
+                        if source != url { try FileManager.default.copyItem(at: source, to: url) }
+                    } else {
+                        let result = CaptureResult(image: entry.image, globalRect: .zero,
+                            scale: entry.scale, kind: entry.kind, windowTitle: entry.windowTitle,
+                            capturedAt: entry.capturedAt)
+                        let data = try ScreenCaptureService.shared.encode(result)
+                        try data.write(to: url, options: .atomic)
+                    }
+                    GestureHUD.shared.show(title: "Saved As", detail: url.lastPathComponent)
+                    self.dismiss(deleteFile: false)
+                } catch {
+                    GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func preview() {
+        QuickAccessExpandedPreview.shared.open(entry: entry)
+    }
+
+    private func temporarilyHide() {
+        closeTimer?.cancel()
+        closeTimer = nil
+        removeDismissMonitors()
+        guard let closing = panel else { return }
+        panel = nil
+        onDismiss?(wasDeleted)
+        onDismiss = nil
+        let frame = closing.frame
+        let bottom = (closing.screen?.visibleFrame.minY ?? frame.minY) - frame.height - 18
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.20
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            closing.animator().setFrameOrigin(NSPoint(x: frame.minX, y: bottom))
+            closing.animator().alphaValue = 0
+        } completionHandler: {
+            closing.orderOut(nil)
+        }
+    }
+
+    private func showFileInfo() {
+        let fileSize: String
+        if let url = entry.fileURL,
+           let bytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            fileSize = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        } else {
+            fileSize = "Not saved yet"
+        }
+        GestureHUD.shared.show(title: entry.displayName,
+            detail: "\(entry.image.width) × \(entry.image.height) px • \(fileSize)")
+    }
+
+    private func printCapture() {
+        guard entry.kind != .videoRecording else { return }
+        let image = NSImage(cgImage: entry.image, size: entry.pointSize)
+        let view = NSImageView(frame: CGRect(origin: .zero, size: entry.pointSize))
+        view.image = image
+        view.imageScaling = .scaleProportionallyUpOrDown
+        NSPrintOperation(view: view).run()
+    }
+
+    private func copyTransformed(_ image: CGImage?) {
+        guard let image else {
+            GestureHUD.shared.show(title: "Transform Failed", detail: "Unable to render image.")
+            return
+        }
+        do {
+            try ScreenCaptureService.shared.copyToClipboard(
+                CaptureResult(image: image, globalRect: .zero, scale: 1,
+                              kind: entry.kind, windowTitle: entry.windowTitle,
+                              capturedAt: entry.capturedAt), format: .png)
+            GestureHUD.shared.show(title: "Copied", detail: "Modified image copied.")
+            if !NSEvent.modifierFlags.contains(.option) { dismiss(deleteFile: false) }
+        } catch {
+            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+        }
+    }
+
+    private func shareCapture() {
+        guard let url = ensureFile(), let panel, let view = panel.contentView else { return }
+        NSSharingServicePicker(items: [url]).show(
+            relativeTo: CGRect(x: view.bounds.midX - 1,
+                               y: view.bounds.midY - 1, width: 2, height: 2),
+            of: view, preferredEdge: .minY)
+    }
+
+    private func openWithDefaultApp() {
+        guard let url = ensureFile() else { return }
+        if !NSWorkspace.shared.open(url) {
+            GestureHUD.shared.show(title: "Open Failed", detail: "No compatible application was found.")
+        }
+    }
+
+    private func moveToTrash() {
+        guard let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) else {
+            CaptureHistory.shared.remove(entry)
+            wasDeleted = true
+            dismiss(deleteFile: false)
+            return
+        }
+        NSWorkspace.shared.recycle([url]) { [weak self] _, error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let error {
+                    GestureHUD.shared.show(title: "Move to Trash Failed", detail: error.localizedDescription)
+                    return
+                }
+                CaptureHistory.shared.remove(self.entry)
+                self.wasDeleted = true
+                self.dismiss(deleteFile: false)
+            }
+        }
+    }
+
     private func ensureFile() -> URL? {
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) { return url }
         guard entry.kind != .videoRecording else {
             GestureHUD.shared.show(title: "Video Unavailable", detail: "The recording file is missing.")
             return nil
         }
-        let result = CaptureResult(image: entry.image, globalRect: .zero, scale: 1, kind: entry.kind,
+        let result = CaptureResult(image: entry.image, globalRect: .zero, scale: entry.scale, kind: entry.kind,
                                    windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
         guard let url = try? ScreenCaptureService.shared.writeToDisk(result) else {
             GestureHUD.shared.show(title: "Save Failed", detail: "The capture could not be written to disk.")
@@ -270,23 +441,55 @@ final class QuickAccessOverlayController {
         return url
     }
 
-    private func handleDragOut() {
-        if CaptureSettings.overlayAutoClose == .afterDrag {
+    private func handleDragOut(success: Bool) {
+        dragging = false
+        setHovering(hovering)
+        if QuickAccessPolicy.shouldCloseAfterDrag(mode: CaptureSettings.overlayAutoClose,
+                separateToggle: CaptureSettings.overlayCloseAfterDrag, succeeded: success) {
             dismiss(deleteFile: false)
         }
     }
 
+    private func beginDragFile() -> URL? {
+        let file = ensureFile()
+        if file != nil {
+            dragging = true
+            pauseAutoClose()
+        }
+        return file
+    }
+
     private func scheduleAutoClose() {
-        let interval: TimeInterval
-        if let forcedAutoCloseSeconds { interval = forcedAutoCloseSeconds }
-        else if CaptureSettings.overlayAutoClose == .afterInterval { interval = TimeInterval(CaptureSettings.overlayIntervalSeconds) }
-        else { return }
-        guard interval > 0 else { return }
+        secondsRemaining = QuickAccessPolicy.effectiveInterval(
+            mode: CaptureSettings.overlayAutoClose,
+            configured: CaptureSettings.overlayIntervalSeconds,
+            forced: forcedAutoCloseSeconds)
+        resumeAutoClose()
+    }
+
+    private func pauseAutoClose() {
+        guard let current = secondsRemaining else { return }
+        if let resumedAt { secondsRemaining = max(0.05, current - Date().timeIntervalSince(resumedAt)) }
+        resumedAt = nil
+        closeTimer?.cancel()
+        closeTimer = nil
+    }
+
+    private func resumeAutoClose() {
+        guard !hovering, !dragging, let remaining = secondsRemaining, remaining > 0 else { return }
+        closeTimer?.cancel()
+        resumedAt = Date()
         closeTimer = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(interval)) } catch { return }
+            do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard !Task.isCancelled else { return }
             self?.dismiss(deleteFile: false)
         }
+    }
+
+    private func setHovering(_ value: Bool) {
+        hovering = value
+        if value { pauseAutoClose() }
+        else { resumeAutoClose() }
     }
 
     // MARK: - Placement
@@ -294,22 +497,28 @@ final class QuickAccessOverlayController {
     private func position(_ panel: NSPanel) {
         let corner = CaptureSettings.overlayCorner
         let screen: NSScreen
+        guard let fallback = NSScreen.main ?? NSScreen.screens.first else { return }
         if CaptureSettings.overlayFollowsActiveDisplay {
             let mouse = NSEvent.mouseLocation
-            screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main ?? NSScreen.screens[0]
+            screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? fallback
         } else {
-            screen = NSScreen.main ?? NSScreen.screens[0]
+            screen = fallback
         }
         let visible = screen.visibleFrame
         let size = panel.frame.size
         let margin: CGFloat = 20
         let x = corner.isLeft ? visible.minX + margin : visible.maxX - size.width - margin
-        let y = corner.isTop ? visible.maxY - size.height - margin : visible.minY + margin
+        let stride = size.height + 12
+        let displacement = CGFloat(stackIndex) * stride
+        let preferred = corner.isTop ? visible.maxY - size.height - margin - displacement
+                                     : visible.minY + margin + displacement
+        let y = min(visible.maxY - size.height, max(visible.minY, preferred))
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }
 
-/// The overlay card's SwiftUI content.
+/// Compact CleanShot-style overlay with central Copy / Save controls and corner actions.
+/// The implementation is purposefully original; no proprietary icons or assets are copied.
 private struct QuickAccessOverlayView: View {
     let entry: CaptureHistoryEntry
     let onCopy: () -> Void
@@ -322,269 +531,176 @@ private struct QuickAccessOverlayView: View {
     let onDelete: () -> Void
     let onClose: () -> Void
     let onSwipeDismiss: () -> Void
-    let onDragOut: () -> Void
+    let onDragOut: (Bool) -> Void
+    let prepareDragFile: () -> URL?
+    let onHoverChange: (Bool) -> Void
+    let onSaveAs: () -> Void
+    let onPreview: () -> Void
+    let onTemporarilyHide: () -> Void
+    let onInfo: () -> Void
+    let onPrint: () -> Void
+    let onCopyOneX: () -> Void
+    let onFlip: () -> Void
+    let onRotate: () -> Void
+    let onShare: () -> Void
+    let onOpenWith: () -> Void
 
-    @State private var isHovering = false
-    @State private var isDragging = false
-    @State private var dragOffsetX: CGFloat = 0
-    @State private var isSwipeTriggered = false
-
+    @State private var hovered = false
+    @State private var dragOffset: CGFloat = 0
     private var side: CGFloat { CaptureSettings.overlaySize.thumbnailSide }
-    private var width: CGFloat { max(270, CaptureSettings.overlaySize.panelWidth) }
+    private var width: CGFloat { CaptureSettings.overlaySize.panelWidth }
+    private var isVideo: Bool { entry.kind == .videoRecording }
+    private var isLeft: Bool { CaptureSettings.overlayCorner.isLeft }
 
     var body: some View {
-        VStack(spacing: 8) {
-            thumbnail
-            caption
-            actionBar
-        }
-        .padding(10)
-        .frame(width: width)
-        .background(
+        VStack(spacing: 0) {
             ZStack {
-                VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow, state: .active)
-                Color(nsColor: .windowBackgroundColor).opacity(0.35)
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.35),
-                            Color.white.opacity(0.10),
-                            Color.white.opacity(0.18)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: Color.black.opacity(0.32), radius: 20, x: 0, y: 8)
-        .offset(x: max(0, dragOffsetX))
-        .opacity(isSwipeTriggered ? 0.0 : max(0.2, 1.0 - Double(max(0, dragOffsetX) / 200.0) * 0.6))
-        .gesture(swipeGesture)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
-        }
-        .contextMenu { contextMenu }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Capture overlay for \(entry.displayName)")
-    }
+                RoundedRectangle(cornerRadius: 13)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                Image(nsImage: entry.thumbnail)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        QuickAccessDragSource(preview: entry.thumbnail,
+                                              prepareFile: prepareDragFile,
+                                              didFinish: onDragOut,
+                                              didDoubleClick: onPreview,
+                                              didSwipe: onSwipeDismiss,
+                                              isLeftCorner: isLeft)
+                    }
 
-    // MARK: - Swipe to Dismiss Gesture
-
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .onChanged { value in
-                // Only allow swiping to the right
-                if value.translation.width > 0 {
-                    dragOffsetX = value.translation.width
+                if hovered {
+                    RoundedRectangle(cornerRadius: 13)
+                        .fill(Color.black.opacity(0.38))
+                        .allowsHitTesting(false)
                 }
-            }
-            .onEnded { value in
-                let flickDistance = value.translation.width
-                let flickVelocity = value.predictedEndTranslation.width
-                if flickDistance > 55 || flickVelocity > 140 {
-                    isSwipeTriggered = true
-                    withAnimation(.easeIn(duration: 0.15)) {
-                        dragOffsetX = 350
+                VStack {
+                    HStack {
+                        if !isVideo {
+                            overlayIcon("pin.fill", hint: "Pin screenshot", onPin)
+                        } else {
+                            overlayIcon("play.fill", hint: "Preview recording", onPreview)
+                        }
+                        Spacer(minLength: 4)
+                        overlayIcon("xmark", hint: "Close", onClose)
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        onSwipeDismiss()
+                    Spacer(minLength: 4)
+                    if hovered {
+                        VStack(spacing: 10) {
+                            centralButton("Copy", action: isVideo ? onCopyFile : onCopy)
+                            centralButton("Save", action: onSave)
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     }
-                } else {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.72)) {
-                        dragOffsetX = 0
+                    Spacer(minLength: 4)
+                    HStack {
+                        overlayIcon(isVideo ? "film.stack" : "pencil",
+                                    hint: isVideo ? "Preview video" : "Annotate", isVideo ? onPreview : onAnnotate)
+                        Spacer(minLength: 4)
+                        Menu {
+                            quickActions
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 26, height: 26)
+                                .background(.black.opacity(0.50), in: Circle())
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 28, height: 28)
+                        .help("More actions")
                     }
                 }
+                .padding(8)
             }
-    }
-
-    // MARK: - Thumbnail
-
-    private var thumbnail: some View {
-        ZStack {
-            // Background canvas
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-
-            // Capture preview
-            Image(nsImage: entry.thumbnail)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: width - 24, maxHeight: side)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            // Hover close badge (top-right)
-            VStack {
-                HStack {
-                    // Type badge (top-left)
-                    HStack(spacing: 3) {
-                        Image(systemName: iconForKind(entry.kind))
-                            .font(.system(size: 8, weight: .bold))
-                        Text(entry.kind.displayName)
-                            .font(.system(size: 8.5, weight: .semibold))
-                    }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2.5)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
-
-                    Spacer()
-
-                    // Mini Close Button
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 18, height: 18)
-                            .background(Color.black.opacity(0.5), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Close (Esc or swipe right)")
-                }
-                .padding(6)
-                Spacer()
-            }
-        }
-        .frame(height: side)
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-        )
-        .onDrag {
-            isDragging = true
-            defer { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { isDragging = false } }
-            guard let url = fileURL() else { return NSItemProvider() }
-            onDragOut()
-            return NSItemProvider(contentsOf: url) ?? NSItemProvider()
-        }
-        .onTapGesture(count: 2) { onAnnotate() }
-        .help("Double-click to annotate · drag to export · swipe right to dismiss")
-    }
-
-    // MARK: - Caption
-
-    private var caption: some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 2) {
+            .frame(height: side)
+            .clipShape(RoundedRectangle(cornerRadius: 13))
+            .contextMenu { quickActions }
+            HStack(spacing: 6) {
+                Image(systemName: isVideo ? "video.fill" : "photo.fill")
+                    .font(.system(size: 9))
                 Text(entry.displayName)
-                    .font(.system(size: 11.5, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .foregroundStyle(.primary)
-
-                HStack(spacing: 4) {
-                    Text("\(Int(entry.pixelSize.width)) × \(Int(entry.pixelSize.height))")
-                        .font(.system(size: 10).monospacedDigit())
-                    Text("•")
-                        .opacity(0.5)
-                    Text(entry.kind == .videoRecording ? "MP4" : "PNG")
-                        .font(.system(size: 9.5, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
+                Spacer(minLength: 3)
+                Text("\(entry.image.width) × \(entry.image.height)")
+                    .monospacedDigit()
+                    .lineLimit(1)
             }
-
-            Spacer(minLength: 4)
-
-            // Swipe hint indicator
-            HStack(spacing: 2) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.6))
-            }
-            .help("Swipe right to dismiss")
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 7)
         }
-        .padding(.horizontal, 4)
+        .padding(7)
+        .frame(width: width)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 17))
+        .overlay(RoundedRectangle(cornerRadius: 17)
+            .stroke(Color.white.opacity(0.17), lineWidth: 1))
+        .shadow(color: .black.opacity(0.30), radius: 15, y: 6)
+        .offset(x: dragOffset)
+        .onHover { state in
+            withAnimation(.easeOut(duration: 0.15)) { hovered = state }
+            onHoverChange(state)
+        }
+        // Trackpad horizontal swipes are handled by QuickAccessDragSource.
+        // Do not compete with its mouse-drag session: a file drag must not
+        // accidentally dismiss the overlay as a horizontal "swipe".
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Quick Access for \(entry.displayName)")
     }
 
-    // MARK: - Action Bar
-
-    private var actionBar: some View {
-        HStack(spacing: 4) {
-            if entry.kind == .videoRecording {
-                actionButton("doc.on.doc", "Copy Video File", onCopyFile)
-                actionButton("folder", "Show Recording in Finder", onSave)
-            } else {
-                actionButton("doc.on.doc", "Copy Image", onCopy)
-                actionButton("folder", "Save to Disk", onSave)
-                actionButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
-                actionButton("pin.fill", "Pin to Screen", onPin)
-                actionButton("text.viewfinder", "Copy Text (OCR)", onOCR)
-            }
-
-            Spacer(minLength: 2)
-
-            actionButton("trash", "Delete", onDelete, tint: .red.opacity(0.9), isDestructive: true)
-        }
-        .padding(.horizontal, 2)
-        .padding(.top, 2)
-    }
-
-    private func actionButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void,
-                              tint: Color = .primary, isDestructive: Bool = false) -> some View {
+    private func centralButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11.5, weight: .semibold))
-                .frame(width: 28, height: 26)
-                .background(
-                    isDestructive
-                        ? Color.red.opacity(0.12)
-                        : Color.primary.opacity(0.07),
-                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                )
-                .contentShape(Rectangle())
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(nsColor: .labelColor))
+                .padding(.horizontal, 20)
+                .frame(minWidth: 92, minHeight: 29)
+                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(tint)
-        .help(help)
-        .accessibilityLabel(help)
+        .accessibilityLabel(title)
+        .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S)")
     }
 
-    private func iconForKind(_ kind: CaptureKind) -> String {
-        switch kind {
-        case .area, .selection: return "crop"
-        case .fullscreen: return "display"
-        case .window, .windowUnderCursor: return "macwindow"
-        case .previousArea: return "clock.arrow.circlepath"
-        case .scrolling: return "arrow.up.and.down.text.horizontal"
-        case .videoRecording: return "video.fill"
+    private func overlayIcon(_ symbol: String, hint: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(.black.opacity(0.51), in: Circle())
         }
+        .buttonStyle(.plain)
+        .help(hint)
+        .accessibilityLabel(hint)
     }
 
-    @ViewBuilder
-    private var contextMenu: some View {
-        if entry.kind == .videoRecording {
-            Button("Copy Video File", action: onCopyFile)
-            Button("Reveal Video in Finder", action: onSave)
-        } else {
-            Button("Copy Image", action: onCopy)
-            Button("Copy File", action: onCopyFile)
-            Button("Show in Finder", action: onSave)
+    @ViewBuilder private var quickActions: some View {
+        Button("Quick Look", action: onPreview)
+        Button("Save As…", action: onSaveAs)
+        Button("Copy File", action: onCopyFile)
+        Button("Show in Finder", action: onSave)
+        Button("File Information", action: onInfo)
+        Button("Open with Default App", action: onOpenWith)
+        Button("Share…", action: onShare)
+        if !isVideo {
             Divider()
             Button("Annotate", action: onAnnotate)
             Button("Pin to Screen", action: onPin)
             Button("Copy Text (OCR)", action: onOCR)
             Button("Copy QR Code", action: onQR)
+            Button("Copy Retina as 1×", action: onCopyOneX)
+            Button("Copy Flipped Horizontally", action: onFlip)
+            Button("Copy Rotated Left", action: onRotate)
+            Button("Print…", action: onPrint)
         }
         Divider()
-        Button("Delete", role: .destructive, action: onDelete)
-    }
-
-    private func fileURL() -> URL? {
-        if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) { return url }
-        guard entry.kind != .videoRecording else { return nil }
-        let result = CaptureResult(image: entry.image, globalRect: .zero, scale: 1, kind: entry.kind,
-                                   windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
-        guard let url = try? ScreenCaptureService.shared.writeToDisk(result) else { return nil }
-        CaptureHistory.shared.attachFile(url, to: entry.id)
-        return url
+        Button("Temporarily Hide", action: onTemporarilyHide)
+        Button("Close", action: onClose)
+        Button("Move to Trash", role: .destructive, action: onDelete)
     }
 }

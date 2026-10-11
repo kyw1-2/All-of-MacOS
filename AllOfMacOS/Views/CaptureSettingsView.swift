@@ -27,6 +27,8 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureOverlayAutoClose") private var autoCloseRaw = OverlayAutoClose.never.rawValue
     @AppStorage("AOMCaptureOverlayInterval") private var overlayInterval = 5
     @AppStorage("AOMCaptureOverlayActiveDisplay") private var overlayActiveDisplay = true
+    @AppStorage("AOMCaptureOverlayCloseAfterDrag") private var overlayCloseAfterDrag = true
+    @AppStorage("AOMCaptureOverlayAsksForName") private var asksNameOnSave = false
     @AppStorage("AOMCaptureHistoryCapacity") private var historyCapacity = 40
     @AppStorage("AOMOCRKeepsLineBreaks") private var ocrKeepsLineBreaks = true
     @AppStorage("AOMPinnedShadow") private var pinnedShadow = true
@@ -239,7 +241,7 @@ struct CaptureSettingsView: View {
                 Picker("", selection: $overlaySizeRaw) {
                     ForEach(OverlaySize.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                .pickerStyle(.menu).labelsHidden().frame(width: 140)
             }
             AppleSettingsRow(icon: "square.grid.3x3.topleft.filled", iconColor: .purple,
                              title: "Corner", subtitle: nil, showDivider: true) {
@@ -251,6 +253,20 @@ struct CaptureSettingsView: View {
             AppleSettingsRow(icon: "display", iconColor: .blue, title: "Follow Active Display",
                              subtitle: "Appear on the screen the pointer is on", showDivider: true) {
                 Toggle("", isOn: $overlayActiveDisplay).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .teal,
+                             title: "Save Button Asks for Name",
+                             subtitle: "Show Save As instead of instantly saving",
+                             showDivider: true) {
+                Toggle("", isOn: $asksNameOnSave)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "hand.draw", iconColor: .green,
+                             title: "Close After Drop",
+                             subtitle: "Hide only after a file is successfully dropped in another app",
+                             showDivider: true) {
+                Toggle("", isOn: $overlayCloseAfterDrag)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "xmark.circle", iconColor: .red, title: "Auto Close",
                              subtitle: autoCloseRaw == OverlayAutoClose.afterInterval.rawValue

@@ -79,6 +79,13 @@ enum CaptureMenu {
 
         menu.addItem(.separator())
 
+        menu.addItem(itemWithCaptureState(
+            "Restore Recently Closed Quick Access", "arrow.uturn.backward.circle",
+            #selector(AppDelegate.restoreRecentQuickAccessAction),
+            enabled: CaptureCoordinator.shared.canRestoreQuickAccess
+        ))
+        menu.addItem(.separator())
+
         // The most-recent-capture actions are disabled when there is nothing to
         // act on, rather than being hidden, so the menu keeps a stable shape.
         let hasCapture = CaptureHistory.shared.mostRecent != nil

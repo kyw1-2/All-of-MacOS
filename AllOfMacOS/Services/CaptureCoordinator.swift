@@ -16,7 +16,18 @@ final class CaptureCoordinator {
     /// two selection overlays fighting over the same click is unrecoverable.
     private var isCapturing = false
     private var selectionOverlay: SelectionOverlayController?
-    private var overlayController: QuickAccessOverlayController?
+    private var overlayControllers: [QuickAccessOverlayController] = []
+    private var recentlyClosed: [CaptureHistoryEntry] = []
+
+    var canRestoreQuickAccess: Bool { !recentlyClosed.isEmpty }
+
+    func restoreRecentlyClosedOverlay() {
+        guard let restored = recentlyClosed.popLast() else {
+            GestureHUD.shared.show(title: "Nothing to Restore", detail: "No recently closed captures.")
+            return
+        }
+        showOverlay(for: restored)
+    }
 
     // MARK: - Entry points
 
@@ -284,19 +295,35 @@ final class CaptureCoordinator {
     }
 
     func showRecordingOverlay(for entry: CaptureHistoryEntry) {
-        // Never leave a video preview indefinitely on the desktop.
-        showOverlay(for: entry, forcedAutoCloseSeconds: 10)
+        // Respect the same Quick Access close preference for screenshots and
+        // recordings; a recording must not mysteriously vanish after 10 sec.
+        showOverlay(for: entry)
     }
 
     private func showOverlay(for entry: CaptureHistoryEntry, forcedAutoCloseSeconds: TimeInterval? = nil) {
         guard CaptureSettings.overlayEnabled else { return }
-        overlayController?.dismiss(deleteFile: false)
-        let controller = QuickAccessOverlayController(entry: entry, forcedAutoCloseSeconds: forcedAutoCloseSeconds)
-        controller.onDismiss = { [weak self, weak controller] in
-            guard let controller, self?.overlayController === controller else { return }
-            self?.overlayController = nil
+        let controller = QuickAccessOverlayController(
+            entry: entry, stackIndex: overlayControllers.count,
+            forcedAutoCloseSeconds: forcedAutoCloseSeconds)
+        controller.onDismiss = { [weak self, weak controller] deleted in
+            guard let self, let controller else { return }
+            self.overlayControllers.removeAll { $0 === controller }
+            if !deleted {
+                self.recentlyClosed.append(entry)
+                if self.recentlyClosed.count > QuickAccessPolicy.maximumRestoreHistory {
+                    self.recentlyClosed.removeFirst()
+                }
+            }
+            for (index, visible) in self.overlayControllers.enumerated() {
+                visible.setStackIndex(index)
+            }
         }
-        overlayController = controller
+        overlayControllers.append(controller)
+        if overlayControllers.count > QuickAccessPolicy.maximumVisible,
+           let oldest = overlayControllers.first {
+            oldest.dismiss(deleteFile: false)
+        }
+        controller.setStackIndex(overlayControllers.count - 1)
         controller.present()
     }
 

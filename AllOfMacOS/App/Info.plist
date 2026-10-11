@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.1</string>
+	<string>1.0.2</string>
 	<key>CFBundleVersion</key>
-	<string>2026101202</string>
+	<string>2026101203</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AOM records microphone audio only when you select Microphone in Capture Settings and start screen recording.</string>
 	<key>LSMinimumSystemVersion</key>

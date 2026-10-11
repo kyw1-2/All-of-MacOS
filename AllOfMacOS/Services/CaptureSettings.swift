@@ -75,32 +75,38 @@ enum OverlayCorner: String, CaseIterable, Identifiable, Codable {
 }
 
 enum OverlaySize: String, CaseIterable, Identifiable, Codable {
-    case small, medium, large
+    case extraSmall, small, medium, large, extraLarge
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .extraSmall: return "Extra Small"
         case .small: return "Small"
         case .medium: return "Medium"
         case .large: return "Large"
+        case .extraLarge: return "Extra Large"
         }
     }
 
     /// Thumbnail edge length in points.
     var thumbnailSide: CGFloat {
         switch self {
+        case .extraSmall: return 100
         case .small: return 120
         case .medium: return 160
         case .large: return 220
+        case .extraLarge: return 270
         }
     }
 
     /// Fixed width allowing all 7 action buttons to breathe comfortably.
     var panelWidth: CGFloat {
         switch self {
+        case .extraSmall: return 235
         case .small: return 240
-        case .medium: return 260
-        case .large: return 290
+        case .medium: return 270
+        case .large: return 315
+        case .extraLarge: return 365
         }
     }
 }
@@ -162,6 +168,7 @@ enum CaptureSettings {
         static let overlayAutoClose = "AOMCaptureOverlayAutoClose"
         static let overlayInterval = "AOMCaptureOverlayInterval"
         static let overlayOnActiveDisplay = "AOMCaptureOverlayActiveDisplay"
+        static let overlayCloseAfterDrag = "AOMCaptureOverlayCloseAfterDrag"
         static let overlayAsksForName = "AOMCaptureAsksForName"
         static let historyCapacity = "AOMCaptureHistoryCapacity"
         static let lastArea = "AOMCaptureLastArea"
@@ -265,6 +272,12 @@ enum CaptureSettings {
     static var overlayIntervalSeconds: Int {
         get { d.object(forKey: Key.overlayInterval) as? Int ?? 5 }
         set { d.set(min(120, max(1, newValue)), forKey: Key.overlayInterval) }
+    }
+
+    /// Independent of the auto-close timer; only after a successful drop.
+    static var overlayCloseAfterDrag: Bool {
+        get { d.object(forKey: Key.overlayCloseAfterDrag) as? Bool ?? true }
+        set { d.set(newValue, forKey: Key.overlayCloseAfterDrag) }
     }
 
     static var overlayFollowsActiveDisplay: Bool {
