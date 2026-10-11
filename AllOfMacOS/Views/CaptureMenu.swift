@@ -80,6 +80,10 @@ enum CaptureMenu {
         menu.addItem(.separator())
 
         menu.addItem(item(
+            "Quick Access Drag Diagnostics…", "checkmark.shield",
+            #selector(AppDelegate.quickAccessDiagnosticsAction)
+        ))
+        menu.addItem(item(
             "Add File to Quick Access…", "square.and.arrow.down",
             #selector(AppDelegate.importQuickAccessFileAction)
         ))

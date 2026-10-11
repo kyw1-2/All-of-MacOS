@@ -7,6 +7,7 @@ struct PermissionsSettingsView: View {
     @State private var statuses: [AOMPermission: AOMPermissionStatus] = [:]
     @State private var refreshDate = Date()
     @State private var settingsError: String?
+    @State private var permissionChangeMessage: String?
 
     private var requiredPermissions: [AOMPermission] { AOMPermission.required }
     private var optionalPermissions: [AOMPermission] { AOMPermission.optional }
@@ -31,6 +32,13 @@ struct PermissionsSettingsView: View {
                     }
                 }
 
+                if let permissionChangeMessage {
+                    Label(permissionChangeMessage, systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 if let settingsError {
                     Label(settingsError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -46,7 +54,10 @@ struct PermissionsSettingsView: View {
             .padding(20)
         }
         .onAppear(perform: refresh)
-        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { _ in
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refresh()
         }
     }
@@ -117,7 +128,15 @@ struct PermissionsSettingsView: View {
     }
 
     private func refresh() {
-        statuses = Dictionary(uniqueKeysWithValues: AOMPermission.allCases.map { ($0, $0.status) })
+        let updated = Dictionary(uniqueKeysWithValues: AOMPermission.allCases.map { ($0, $0.status) })
+        let changes = AOMPermissionTransitions.changed(from: statuses, to: updated)
+        if let latest = changes.first {
+            let text = "\(latest.permission.title): \(latest.to.label)"
+            permissionChangeMessage = latest.restartMayBeNeeded
+                ? "\(text). Restart the app if macOS has not applied the change."
+                : "\(text). Access is rechecked automatically."
+        }
+        statuses = updated
         refreshDate = Date()
     }
 }

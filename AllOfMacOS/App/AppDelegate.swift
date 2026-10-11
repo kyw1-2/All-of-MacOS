@@ -57,6 +57,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // itself. They are separate selectors rather than one dispatching method
     // because `NSMenuItem` identifies its action by selector, not by an argument.
 
+    @objc func quickAccessDiagnosticsAction() {
+        MainActor.assumeIsolated { QuickAccessDiagnosticsController.shared.present() }
+    }
+
     @objc func importQuickAccessFileAction() {
         MainActor.assumeIsolated { CaptureCoordinator.shared.chooseQuickAccessFiles() }
     }

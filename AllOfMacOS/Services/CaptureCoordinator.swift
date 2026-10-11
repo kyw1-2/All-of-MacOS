@@ -49,6 +49,19 @@ final class CaptureCoordinator {
     }
 
     var hasVisibleQuickAccess: Bool { !overlayControllers.isEmpty }
+
+    private func reflowOverlaysByDisplay() {
+        // Index separately on every physical display: one capture on an
+        // external screen must not push a card down on the laptop display.
+        let groups = Dictionary(grouping: overlayControllers) {
+            $0.placementDisplayID ?? 0
+        }
+        for overlays in groups.values {
+            for (index, controller) in overlays.enumerated() {
+                controller.setStackIndex(index, total: overlays.count)
+            }
+        }
+    }
     private(set) var areQuickAccessHidden = false
 
     func toggleQuickAccessVisibility() {
@@ -415,9 +428,10 @@ final class CaptureCoordinator {
                 }
                 self.persistRecentlyClosed()
             }
-            for (index, visible) in self.overlayControllers.enumerated() {
-                visible.setStackIndex(index, total: self.overlayControllers.count)
-            }
+            self.reflowOverlaysByDisplay()
+        }
+        controller.onDisplayTopologyChange = { [weak self] in
+            self?.reflowOverlaysByDisplay()
         }
         overlayControllers.append(controller)
         if areQuickAccessHidden {
@@ -430,11 +444,7 @@ final class CaptureCoordinator {
            let oldest = overlayControllers.first {
             oldest.dismiss(deleteFile: false)
         }
-        controller.setStackIndex(overlayControllers.count - 1,
-                                 total: overlayControllers.count)
-        for (index, visible) in overlayControllers.enumerated() {
-            visible.setStackIndex(index, total: overlayControllers.count)
-        }
+        reflowOverlaysByDisplay()
         controller.present()
     }
 

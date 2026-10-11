@@ -137,3 +137,30 @@ enum AOMPermissionStatus: Equatable {
         }
     }
 }
+
+/// Read-only transition classification, suitable for deterministic tests.
+/// Never modifies TCC.db or attempts to grant/revoke permissions on behalf
+/// of the user. The OS remains the sole authority for actual access.
+struct AOMPermissionChange: Equatable {
+    let permission: AOMPermission
+    let from: AOMPermissionStatus
+    let to: AOMPermissionStatus
+
+    var restartMayBeNeeded: Bool {
+        switch permission {
+        case .screenRecording, .inputMonitoring: true
+        default: false
+        }
+    }
+}
+
+enum AOMPermissionTransitions {
+    static func changed(from old: [AOMPermission: AOMPermissionStatus],
+                        to new: [AOMPermission: AOMPermissionStatus]) -> [AOMPermissionChange] {
+        AOMPermission.allCases.compactMap { permission in
+            guard let before = old[permission], let after = new[permission],
+                  before != after else { return nil }
+            return AOMPermissionChange(permission: permission, from: before, to: after)
+        }
+    }
+}

@@ -31,6 +31,10 @@ final class QuickAccessOverlayController {
     private var recycleInProgress = false
     private var temporarilyHidden = false
     private var visibleStackCount = 1
+    private var preferredDisplayID: UInt32?
+    private var displayChangeObserver: NSObjectProtocol?
+    var onDisplayTopologyChange: (() -> Void)?
+    var placementDisplayID: UInt32? { preferredDisplayID }
     private let forcedAutoCloseSeconds: TimeInterval?
     var onDismiss: ((Bool) -> Void)?
 
@@ -38,6 +42,13 @@ final class QuickAccessOverlayController {
         self.entry = entry
         self.stackIndex = stackIndex
         self.forcedAutoCloseSeconds = forcedAutoCloseSeconds
+        let displays = QuickAccessGeometry.currentDisplays()
+        let selected = QuickAccessGeometry.targetDisplay(
+            displays,
+            preferredID: nil,
+            pointer: NSEvent.mouseLocation,
+            followPointer: CaptureSettings.overlayFollowsActiveDisplay)
+        preferredDisplayID = selected?.id
     }
 
     func setStackIndex(_ index: Int, total: Int = 1) {
@@ -127,6 +138,13 @@ final class QuickAccessOverlayController {
         }
 
         installDismissMonitors()
+        displayChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.onDisplaysChanged()
+                }
+            }
         scheduleAutoClose()
     }
 
@@ -155,6 +173,22 @@ final class QuickAccessOverlayController {
     private func removeDismissMonitors() {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         localMonitor = nil
+        if let displayChangeObserver {
+            NotificationCenter.default.removeObserver(displayChangeObserver)
+            self.displayChangeObserver = nil
+        }
+    }
+
+    private func onDisplaysChanged() {
+        guard let panel else { return }
+        let previous = preferredDisplayID
+        let selected = QuickAccessGeometry.targetDisplay(
+            QuickAccessGeometry.currentDisplays(), preferredID: previous,
+            pointer: NSEvent.mouseLocation,
+            followPointer: CaptureSettings.overlayFollowsActiveDisplay)
+        preferredDisplayID = selected?.id
+        position(panel)
+        onDisplayTopologyChange?()
     }
 
     func dismiss(deleteFile: Bool) {
@@ -549,27 +583,21 @@ final class QuickAccessOverlayController {
     // MARK: - Placement
 
     private func position(_ panel: NSPanel) {
-        let corner = CaptureSettings.overlayCorner
-        let screen: NSScreen
-        guard let fallback = NSScreen.main ?? NSScreen.screens.first else { return }
-        if CaptureSettings.overlayFollowsActiveDisplay {
-            let mouse = NSEvent.mouseLocation
-            screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? fallback
-        } else {
-            screen = fallback
-        }
-        let visible = screen.visibleFrame
-        let size = panel.frame.size
-        let margin: CGFloat = 20
-        let x = corner.isLeft ? visible.minX + margin : visible.maxX - size.width - margin
-        let stride = QuickAccessPolicy.stackStride(
-            visibleHeight: visible.height, cardHeight: size.height,
-            count: visibleStackCount, margin: margin)
-        let displacement = CGFloat(stackIndex) * stride
-        let preferred = corner.isTop ? visible.maxY - size.height - margin - displacement
-                                     : visible.minY + margin + displacement
-        let y = min(visible.maxY - size.height, max(visible.minY, preferred))
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        let selected = QuickAccessGeometry.targetDisplay(
+            QuickAccessGeometry.currentDisplays(), preferredID: preferredDisplayID,
+            pointer: NSEvent.mouseLocation,
+            followPointer: CaptureSettings.overlayFollowsActiveDisplay)
+        guard let selected else { return }
+        // Save stable screen identity so moving the mouse doesn't teleport
+        // older cards across monitors as new captures arrive.
+        preferredDisplayID = selected.id
+        let frame = QuickAccessGeometry.frame(
+            visible: selected.visibleFrame,
+            card: panel.frame.size,
+            corner: CaptureSettings.overlayCorner,
+            index: stackIndex,
+            count: visibleStackCount)
+        panel.setFrame(frame, display: true)
     }
 }
 
