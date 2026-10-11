@@ -1,0 +1,43 @@
+name: All of MacOS macOS CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment
+        run: |
+          swift --version
+          xcodebuild -version
+      - name: Verify independent identifiers
+        run: |
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'AllOfMacOS/App/Info.plist')" = 'com.kyw.allofmacos'
+      - name: Test
+        run: swift test -j 2
+      - name: Build test application
+        env:
+          ALLOFMACOS_SIGN_ID: '-'
+        run: ./build-and-sign.sh
+      - name: Verify application identity
+        run: |
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'build/All of MacOS.app/Contents/Info.plist')" = 'com.kyw.allofmacos'
+          codesign --verify --deep --strict 'build/All of MacOS.app'
+      - name: Package
+        run: |
+          hdiutil create -quiet -volname 'All of MacOS CI' -srcfolder 'build/All of MacOS.app' -format UDZO 'All-of-MacOS-CI.dmg'
+          hdiutil verify 'All-of-MacOS-CI.dmg'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: All-of-MacOS-ci-testing-only
+          path: All-of-MacOS-CI.dmg
+          retention-days: 7

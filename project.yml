@@ -1,0 +1,40 @@
+name: AllOfMacOS
+options:
+  bundleIdPrefix: com.kyw
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+targets:
+  AllOfMacOS:
+    type: application
+    platform: macOS
+    sources:
+      - path: AllOfMacOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kyw.allofmacos
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: AllOfMacOS/App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: AllOfMacOS/AllOfMacOS.entitlements
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: "NO"
+
+  AllOfMacOSTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: AllOfMacOSTests
+    dependencies:
+      - target: AllOfMacOS
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: "YES"

@@ -1,0 +1,750 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		D4A2768D8551F99EA7772D1B /* DrawingGestureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65AA72E4F3692617DDF61A44 /* DrawingGestureTests.swift */; };
+		70FAC45A5348E88EBD0C27C0 /* AdvancedFeaturesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7592E6D099126436C0E2BD2 /* AdvancedFeaturesTests.swift */; };
+		D81484DEB134C586BE9041FE /* ActivationGroupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 745D54167F9D2F23187C7CA6 /* ActivationGroupTests.swift */; };
+		E4B86E8D6EC8E04FF761CD05 /* OverviewAndSnapLayoutsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0960CB7DF8456D1759951B3C /* OverviewAndSnapLayoutsTests.swift */; };
+		32160E6F31545479AA5DD827 /* ForceClickOptInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FBB51D9E839D6D397F75B0A /* ForceClickOptInTests.swift */; };
+		8CA05A1AF6EC8F46624E7E74 /* WindowAndMouseActionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB46EE202E8653C8631904CD /* WindowAndMouseActionsTests.swift */; };
+		224B59DFBCCB0920AA084161 /* KeySequenceOptionalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA3967D257FFBEA33FF09E8 /* KeySequenceOptionalTests.swift */; };
+		BB5C8C11345C187A0CCF7488 /* DrawingGestureMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73E456547AE0C218ABC56B0 /* DrawingGestureMonitor.swift */; };
+		57D4A8852095197C4B0B0CD9 /* DrawingGestureEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 750F282D3A46429E3AC3DE55 /* DrawingGestureEditor.swift */; };
+		ACD013000000000000000002 /* WorkflowSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD013000000000000000001 /* WorkflowSupport.swift */; };
+		34B8BAFCAD1B9A6FB5C0C77F /* TrackpadStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D5ED3E3061E8FA0EBDCC48 /* TrackpadStabilityTests.swift */; };
+		73C4BA0A3EBF42ED19C51EBC /* GestureHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA49C111CF4456BD57E2FFC2 /* GestureHaptics.swift */; };
+		7A91EB19D104226D9F67601A /* ScriptRunnerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C82B1F2A26C8D627335AD60 /* ScriptRunnerClient.swift */; };
+		7F26A6961C725859D4A14F80 /* TrackpadPresetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F007C27EF4245D21D490A264 /* TrackpadPresetStore.swift */; };
+		33FCC018B9AE94C154755A8D /* SystemActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FCEEB7AF60A8092E74B523A /* SystemActionTests.swift */; };
+		D61665AAE3D2DD7162F4F4DF /* AudioOutputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A77753837B1730979B10C9E /* AudioOutputService.swift */; };
+		019B9C7BA352AFC84AD954BB /* TrackpadPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1205874DEC0ED25A5E28FD /* TrackpadPipelineTests.swift */; };
+		047BD176EA8475D2CB843670 /* GestureConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 835804504535BFFF0A615239 /* GestureConsoleView.swift */; };
+		085BDE863012A0C9B909B12F /* SerializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1386A246B233DDEA04412DD /* SerializationTests.swift */; };
+		19F61F782EE805CF7F5F3014 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1C96664AFA27E00FA324A5 /* AppState.swift */; };
+		1E6638C7E5B56166D088EDF8 /* LiveTouchStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8227FAB56F6241BC254B8F39 /* LiveTouchStateTests.swift */; };
+		29047DB47C87A598D5B2C7AA /* GesturePreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20C08CE86620F4B0C189D972 /* GesturePreviewView.swift */; };
+		292988165B087AE2F13D8FBF /* GestureStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADCB323AE23F489A226BDB8E /* GestureStatistics.swift */; };
+		312196054CDAE9C39FFA36E7 /* LiveTouchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */; };
+		4FCDFEF6108186D33C545E18 /* AppTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86395DA53EC150134A65426C /* AppTarget.swift */; };
+		52C199558636E32D42A6EE0C /* TrackpadMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9277918E0700B4DF497CC63A /* TrackpadMonitor.swift */; };
+		55F610E7C9360B6C61D064E4 /* TriggerListPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F9AA128B0872E58AF518488 /* TriggerListPanel.swift */; };
+		5A8F422110A23E9ED97A3EF4 /* WindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1F07B761A4890A129778071 /* WindowManager.swift */; };
+		5CFF9E4308528010D641FB27 /* LogSidePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455785A555FBE4C61B590D01 /* LogSidePanel.swift */; };
+		603D6FCF4F48391C35B93546 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF557E7C62CB384D2603CF41 /* AppDelegate.swift */; };
+		6230CBEEB77C284A731579F3 /* UpdateCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C612017BFB150EB1A6D167 /* UpdateCheckerTests.swift */; };
+		6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */; };
+		71277C1FBC48775A8A72FD72 /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A2593070526ABC2E757364 /* ModelTests.swift */; };
+		8F56617241408E093C881A1A /* GestureLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591388447B863AB1271B38FE /* GestureLog.swift */; };
+		903BFC8E7D8AD82702A59CE0 /* Trigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80BACC55ACE7DF1BF21705C /* Trigger.swift */; };
+		93A2106594D8B52D8E09F752 /* TriggerType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0583DD6C77ADF7E2D5EA71E7 /* TriggerType.swift */; };
+		98A7452625E0A2FF61355E95 /* TutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4928C96FA781BE1A45EEAAC5 /* TutorialView.swift */; };
+		9A629E874BAE24B6D987B05A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 70C26620895E16B05C76A98E /* Assets.xcassets */; };
+		9E53BC384C94CA4A3D8D56F8 /* LiveTouchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B3C027AD294C36B6A5BE3CF /* LiveTouchState.swift */; };
+		A5DCAC912D1304E73F9958ED /* ActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB054EA1A8A7A5690A40B7D /* ActionExecutor.swift */; };
+		A81D2DD39D9C38F691EA8061 /* AppSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 506189193F0CED5175427042 /* AppSidebar.swift */; };
+		AF52A804BBFA16C53BA10949 /* Preset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38683DC37492332DC1942B49 /* Preset.swift */; };
+		BAB81AC773B591DF8C84716F /* KeyboardMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A502B75871E60C25D91C35C8 /* KeyboardMonitor.swift */; };
+		BAB8ACAE12BE2DA856CBFD4E /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB2F47B2A8F6BC6D885F30A /* UpdateChecker.swift */; };
+		C66E392ED8FC85D95FEE5E5E /* GestureStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79762574A5108174D57BC923 /* GestureStatisticsTests.swift */; };
+		C7665F020EFF44DD35CA065A /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52DC958E2E845E35D6977C14 /* MainWindow.swift */; };
+		364E5A1C3F1D413A2D2123B0 /* VisualEffectBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C21B73E4E022E98310C0757 /* VisualEffectBackground.swift */; };
+		CAABE3329FC3CA4FCD5B2688 /* Action.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33C98385A38C1DA1F1848DCE /* Action.swift */; };
+		D253B7A0E38D382E3DD92932 /* ActionListPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6AF0ADA1620D8A2021D60F5 /* ActionListPanel.swift */; };
+		DBAE98A258656174646D15F7 /* PresetManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC1E20528882B20DA9398F5 /* PresetManager.swift */; };
+		E0E0722811CA1F5A4C7B0B8F /* StatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */; };
+		E2128A12EA0C8CE46B2A4945 /* AllOfMacOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 015C76C28717C9F0481DE62D /* AllOfMacOSApp.swift */; };
+		E4D58A8D6926A8E4B601C460 /* ConfigurationPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95AF6CD7F63515AC7907609D /* ConfigurationPanel.swift */; };
+		EF3021227CD361333E9A889B /* MouseButtonMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB6108382FC8F6E756D1D3D /* MouseButtonMonitor.swift */; };
+		16A4097A30873C5B2C371526 /* PermissionWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08223D55E52ED0687273CD6 /* PermissionWatchdog.swift */; };
+		F9D6C1BC1CF5D73DE30003CE /* TriggerResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1474A963FFE194B74109809 /* TriggerResolver.swift */; };
+		9333F87A3D849D018DE077C6 /* SwipeResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBA8C26DFE30AAB014D495E /* SwipeResolver.swift */; };
+		A12E54A66A4EC9C829E50272 /* MultitouchSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A169558FBC5FF4B934F614A0 /* MultitouchSource.swift */; };
+		2A41C2D4BBDC6EAC2AB319D5 /* ContactGestureSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10B6C1CAFDDB4AC0105C1586 /* ContactGestureSession.swift */; };
+		02F0BAF4CDD99CA5A4929293 /* GestureReplaySuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA5FAE0DEEE87D2AE7137CA /* GestureReplaySuite.swift */; };
+		0ECD76C0B8AC1E57D2F87B1B /* TouchEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCC8845C96B5495215C99E0B /* TouchEngineTests.swift */; };
+		5A360673B1707EB94A662614 /* DisplayControlService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907738AF0394CCEC28D4DEF3 /* DisplayControlService.swift */; };
+		AE1CFB623AECDC89D7D6EF7E /* SystemTriggerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A92D949449FC9E4C6086B86C /* SystemTriggerMonitor.swift */; };
+		E32A569108CA32BD8EBB42A6 /* DisplayMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A2D3C3A4FCFFD9EBF3B75E /* DisplayMenu.swift */; };
+		96A7DF8C1EF941673CD729C6 /* TriggerMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4853F3CD2CA4177A08B5797E /* TriggerMenu.swift */; };
+		6DD1723544E3012DAA46EF40 /* DisplayControlTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F162C78955E2519BD425C76 /* DisplayControlTests.swift */; };
+		5244DD72B77F54A1DD9040A0 /* DisplayMenuTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 021544D1A8640E86514AA7C0 /* DisplayMenuTests.swift */; };
+		88276266BF1CF001EDD4F5FC /* SystemTriggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6572F38EE388DDD4DA3F432 /* SystemTriggerTests.swift */; };
+		1239E8738240BE1E5E3DB042 /* TriggerMenuTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3D4133CC6A2307496B634F0 /* TriggerMenuTests.swift */; };
+		7E5C71D8EA8856EA6B873FED /* TriggerWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30433F18494E241AF0886F23 /* TriggerWorkspaceTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		69C00980C0C1CC66807B6494 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 953D4117B8782C04D3CD3591 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3C9FB7E272D97E99127B5FE4;
+			remoteInfo = AllOfMacOS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		65AA72E4F3692617DDF61A44 /* DrawingGestureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingGestureTests.swift; sourceTree = "<group>"; };
+		C7592E6D099126436C0E2BD2 /* AdvancedFeaturesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedFeaturesTests.swift; sourceTree = "<group>"; };
+		745D54167F9D2F23187C7CA6 /* ActivationGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivationGroupTests.swift; sourceTree = "<group>"; };
+		0960CB7DF8456D1759951B3C /* OverviewAndSnapLayoutsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewAndSnapLayoutsTests.swift; sourceTree = "<group>"; };
+		3FBB51D9E839D6D397F75B0A /* ForceClickOptInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceClickOptInTests.swift; sourceTree = "<group>"; };
+		EB46EE202E8653C8631904CD /* WindowAndMouseActionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAndMouseActionsTests.swift; sourceTree = "<group>"; };
+		1AA3967D257FFBEA33FF09E8 /* KeySequenceOptionalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeySequenceOptionalTests.swift; sourceTree = "<group>"; };
+		F73E456547AE0C218ABC56B0 /* DrawingGestureMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingGestureMonitor.swift; sourceTree = "<group>"; };
+		750F282D3A46429E3AC3DE55 /* DrawingGestureEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawingGestureEditor.swift; sourceTree = "<group>"; };
+		ACD013000000000000000001 /* WorkflowSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowSupport.swift; sourceTree = "<group>"; };
+		D0D5ED3E3061E8FA0EBDCC48 /* TrackpadStabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadStabilityTests.swift; sourceTree = "<group>"; };
+		EA49C111CF4456BD57E2FFC2 /* GestureHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureHaptics.swift; sourceTree = "<group>"; };
+		9C82B1F2A26C8D627335AD60 /* ScriptRunnerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRunnerClient.swift; sourceTree = "<group>"; };
+		F007C27EF4245D21D490A264 /* TrackpadPresetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadPresetStore.swift; sourceTree = "<group>"; };
+		6FCEEB7AF60A8092E74B523A /* SystemActionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemActionTests.swift; sourceTree = "<group>"; };
+		5A77753837B1730979B10C9E /* AudioOutputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioOutputService.swift; sourceTree = "<group>"; };
+		015C76C28717C9F0481DE62D /* AllOfMacOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllOfMacOSApp.swift; sourceTree = "<group>"; };
+		0583DD6C77ADF7E2D5EA71E7 /* TriggerType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerType.swift; sourceTree = "<group>"; };
+		1C1205874DEC0ED25A5E28FD /* TrackpadPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadPipelineTests.swift; sourceTree = "<group>"; };
+		20C08CE86620F4B0C189D972 /* GesturePreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GesturePreviewView.swift; sourceTree = "<group>"; };
+		26864A407E082224513C0272 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		33C98385A38C1DA1F1848DCE /* Action.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Action.swift; sourceTree = "<group>"; };
+		38683DC37492332DC1942B49 /* Preset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Preset.swift; sourceTree = "<group>"; };
+		3DB054EA1A8A7A5690A40B7D /* ActionExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionExecutor.swift; sourceTree = "<group>"; };
+		3F9AA128B0872E58AF518488 /* TriggerListPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerListPanel.swift; sourceTree = "<group>"; };
+		455785A555FBE4C61B590D01 /* LogSidePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogSidePanel.swift; sourceTree = "<group>"; };
+		480F59657C30BBA39ED8E388 /* AllOfMacOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AllOfMacOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4928C96FA781BE1A45EEAAC5 /* TutorialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialView.swift; sourceTree = "<group>"; };
+		4B3C027AD294C36B6A5BE3CF /* LiveTouchState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchState.swift; sourceTree = "<group>"; };
+		506189193F0CED5175427042 /* AppSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSidebar.swift; sourceTree = "<group>"; };
+		51A2593070526ABC2E757364 /* ModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelTests.swift; sourceTree = "<group>"; };
+		52DC958E2E845E35D6977C14 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
+		6C21B73E4E022E98310C0757 /* VisualEffectBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualEffectBackground.swift; sourceTree = "<group>"; };
+		591388447B863AB1271B38FE /* GestureLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureLog.swift; sourceTree = "<group>"; };
+		5E1C96664AFA27E00FA324A5 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		70C26620895E16B05C76A98E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		75C612017BFB150EB1A6D167 /* UpdateCheckerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckerTests.swift; sourceTree = "<group>"; };
+		79762574A5108174D57BC923 /* GestureStatisticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureStatisticsTests.swift; sourceTree = "<group>"; };
+		7CB6108382FC8F6E756D1D3D /* MouseButtonMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseButtonMonitor.swift; sourceTree = "<group>"; };
+		D08223D55E52ED0687273CD6 /* PermissionWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionWatchdog.swift; sourceTree = "<group>"; };
+		F1474A963FFE194B74109809 /* TriggerResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerResolver.swift; sourceTree = "<group>"; };
+		2CBA8C26DFE30AAB014D495E /* SwipeResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeResolver.swift; sourceTree = "<group>"; };
+		7DC1E20528882B20DA9398F5 /* PresetManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetManager.swift; sourceTree = "<group>"; };
+		7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
+		8227FAB56F6241BC254B8F39 /* LiveTouchStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchStateTests.swift; sourceTree = "<group>"; };
+		835804504535BFFF0A615239 /* GestureConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureConsoleView.swift; sourceTree = "<group>"; };
+		86395DA53EC150134A65426C /* AppTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTarget.swift; sourceTree = "<group>"; };
+		9277918E0700B4DF497CC63A /* TrackpadMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadMonitor.swift; sourceTree = "<group>"; };
+		95AF6CD7F63515AC7907609D /* ConfigurationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationPanel.swift; sourceTree = "<group>"; };
+		A1F07B761A4890A129778071 /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
+		A502B75871E60C25D91C35C8 /* KeyboardMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMonitor.swift; sourceTree = "<group>"; };
+		ADCB323AE23F489A226BDB8E /* GestureStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureStatistics.swift; sourceTree = "<group>"; };
+		B6AF0ADA1620D8A2021D60F5 /* ActionListPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionListPanel.swift; sourceTree = "<group>"; };
+		BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchView.swift; sourceTree = "<group>"; };
+		BE0D11D3DF027F5FA85DFF70 /* AllOfMacOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllOfMacOS.entitlements; sourceTree = "<group>"; };
+		BFBEC8838C761C0A2C708534 /* AllOfMacOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AllOfMacOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateBadgeView.swift; sourceTree = "<group>"; };
+		CDB2F47B2A8F6BC6D885F30A /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		CF557E7C62CB384D2603CF41 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		F1386A246B233DDEA04412DD /* SerializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializationTests.swift; sourceTree = "<group>"; };
+		F80BACC55ACE7DF1BF21705C /* Trigger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trigger.swift; sourceTree = "<group>"; };
+		A169558FBC5FF4B934F614A0 /* MultitouchSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultitouchSource.swift; sourceTree = "<group>"; };
+		10B6C1CAFDDB4AC0105C1586 /* ContactGestureSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactGestureSession.swift; sourceTree = "<group>"; };
+		5EA5FAE0DEEE87D2AE7137CA /* GestureReplaySuite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureReplaySuite.swift; sourceTree = "<group>"; };
+		CCC8845C96B5495215C99E0B /* TouchEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchEngineTests.swift; sourceTree = "<group>"; };
+		907738AF0394CCEC28D4DEF3 /* DisplayControlService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayControlService.swift; sourceTree = "<group>"; };
+		A92D949449FC9E4C6086B86C /* SystemTriggerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTriggerMonitor.swift; sourceTree = "<group>"; };
+		93A2D3C3A4FCFFD9EBF3B75E /* DisplayMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayMenu.swift; sourceTree = "<group>"; };
+		4853F3CD2CA4177A08B5797E /* TriggerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerMenu.swift; sourceTree = "<group>"; };
+		4F162C78955E2519BD425C76 /* DisplayControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayControlTests.swift; sourceTree = "<group>"; };
+		021544D1A8640E86514AA7C0 /* DisplayMenuTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayMenuTests.swift; sourceTree = "<group>"; };
+		B6572F38EE388DDD4DA3F432 /* SystemTriggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTriggerTests.swift; sourceTree = "<group>"; };
+		A3D4133CC6A2307496B634F0 /* TriggerMenuTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerMenuTests.swift; sourceTree = "<group>"; };
+		30433F18494E241AF0886F23 /* TriggerWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TriggerWorkspaceTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		14E9AAEAF10C24DD7D83A0F2 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A92D949449FC9E4C6086B86C /* SystemTriggerMonitor.swift */,
+				907738AF0394CCEC28D4DEF3 /* DisplayControlService.swift */,
+				F73E456547AE0C218ABC56B0 /* DrawingGestureMonitor.swift */,
+				ACD013000000000000000001 /* WorkflowSupport.swift */,
+				3DB054EA1A8A7A5690A40B7D /* ActionExecutor.swift */,
+				591388447B863AB1271B38FE /* GestureLog.swift */,
+				ADCB323AE23F489A226BDB8E /* GestureStatistics.swift */,
+				A502B75871E60C25D91C35C8 /* KeyboardMonitor.swift */,
+				4B3C027AD294C36B6A5BE3CF /* LiveTouchState.swift */,
+				7CB6108382FC8F6E756D1D3D /* MouseButtonMonitor.swift */,
+				D08223D55E52ED0687273CD6 /* PermissionWatchdog.swift */,
+				F1474A963FFE194B74109809 /* TriggerResolver.swift */,
+				2CBA8C26DFE30AAB014D495E /* SwipeResolver.swift */,
+				7DC1E20528882B20DA9398F5 /* PresetManager.swift */,
+				A169558FBC5FF4B934F614A0 /* MultitouchSource.swift */,
+				10B6C1CAFDDB4AC0105C1586 /* ContactGestureSession.swift */,
+				5EA5FAE0DEEE87D2AE7137CA /* GestureReplaySuite.swift */,
+				9277918E0700B4DF497CC63A /* TrackpadMonitor.swift */,
+				CDB2F47B2A8F6BC6D885F30A /* UpdateChecker.swift */,
+				A1F07B761A4890A129778071 /* WindowManager.swift */,
+				5A77753837B1730979B10C9E /* AudioOutputService.swift */,
+				EA49C111CF4456BD57E2FFC2 /* GestureHaptics.swift */,
+				9C82B1F2A26C8D627335AD60 /* ScriptRunnerClient.swift */,
+				F007C27EF4245D21D490A264 /* TrackpadPresetStore.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		2D8DF5E914563BEECDACBBDE /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				4853F3CD2CA4177A08B5797E /* TriggerMenu.swift */,
+				93A2D3C3A4FCFFD9EBF3B75E /* DisplayMenu.swift */,
+				750F282D3A46429E3AC3DE55 /* DrawingGestureEditor.swift */,
+				B6AF0ADA1620D8A2021D60F5 /* ActionListPanel.swift */,
+				506189193F0CED5175427042 /* AppSidebar.swift */,
+				95AF6CD7F63515AC7907609D /* ConfigurationPanel.swift */,
+				835804504535BFFF0A615239 /* GestureConsoleView.swift */,
+				20C08CE86620F4B0C189D972 /* GesturePreviewView.swift */,
+				BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */,
+				455785A555FBE4C61B590D01 /* LogSidePanel.swift */,
+				52DC958E2E845E35D6977C14 /* MainWindow.swift */,
+				6C21B73E4E022E98310C0757 /* VisualEffectBackground.swift */,
+				7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */,
+				3F9AA128B0872E58AF518488 /* TriggerListPanel.swift */,
+				4928C96FA781BE1A45EEAAC5 /* TutorialView.swift */,
+				C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		2E489859415392280385BD38 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BFBEC8838C761C0A2C708534 /* AllOfMacOS.app */,
+				480F59657C30BBA39ED8E388 /* AllOfMacOSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		65D39DB1E19B3F00E4F35ECC /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				5E1C96664AFA27E00FA324A5 /* AppState.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		79CC78645FF4612A524E102C /* App */ = {
+			isa = PBXGroup;
+			children = (
+				CF557E7C62CB384D2603CF41 /* AppDelegate.swift */,
+				015C76C28717C9F0481DE62D /* AllOfMacOSApp.swift */,
+				26864A407E082224513C0272 /* Info.plist */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		9724929651E00043712F74DF /* AllOfMacOS */ = {
+			isa = PBXGroup;
+			children = (
+				70C26620895E16B05C76A98E /* Assets.xcassets */,
+				BE0D11D3DF027F5FA85DFF70 /* AllOfMacOS.entitlements */,
+				79CC78645FF4612A524E102C /* App */,
+				9D931E1B681815AD2C2066C6 /* Models */,
+				14E9AAEAF10C24DD7D83A0F2 /* Services */,
+				65D39DB1E19B3F00E4F35ECC /* ViewModels */,
+				2D8DF5E914563BEECDACBBDE /* Views */,
+			);
+			path = AllOfMacOS;
+			sourceTree = "<group>";
+		};
+		9D931E1B681815AD2C2066C6 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				33C98385A38C1DA1F1848DCE /* Action.swift */,
+				86395DA53EC150134A65426C /* AppTarget.swift */,
+				38683DC37492332DC1942B49 /* Preset.swift */,
+				F80BACC55ACE7DF1BF21705C /* Trigger.swift */,
+				0583DD6C77ADF7E2D5EA71E7 /* TriggerType.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		C8E781272C7F773BB07B5B41 = {
+			isa = PBXGroup;
+			children = (
+				9724929651E00043712F74DF /* AllOfMacOS */,
+				D93F5FB07B64002E57D148E0 /* AllOfMacOSTests */,
+				2E489859415392280385BD38 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D93F5FB07B64002E57D148E0 /* AllOfMacOSTests */ = {
+			isa = PBXGroup;
+			children = (
+				30433F18494E241AF0886F23 /* TriggerWorkspaceTests.swift */,
+				A3D4133CC6A2307496B634F0 /* TriggerMenuTests.swift */,
+				B6572F38EE388DDD4DA3F432 /* SystemTriggerTests.swift */,
+				021544D1A8640E86514AA7C0 /* DisplayMenuTests.swift */,
+				4F162C78955E2519BD425C76 /* DisplayControlTests.swift */,
+				65AA72E4F3692617DDF61A44 /* DrawingGestureTests.swift */,
+				C7592E6D099126436C0E2BD2 /* AdvancedFeaturesTests.swift */,
+				745D54167F9D2F23187C7CA6 /* ActivationGroupTests.swift */,
+				0960CB7DF8456D1759951B3C /* OverviewAndSnapLayoutsTests.swift */,
+				3FBB51D9E839D6D397F75B0A /* ForceClickOptInTests.swift */,
+				EB46EE202E8653C8631904CD /* WindowAndMouseActionsTests.swift */,
+				1AA3967D257FFBEA33FF09E8 /* KeySequenceOptionalTests.swift */,
+				79762574A5108174D57BC923 /* GestureStatisticsTests.swift */,
+				8227FAB56F6241BC254B8F39 /* LiveTouchStateTests.swift */,
+				51A2593070526ABC2E757364 /* ModelTests.swift */,
+				6FCEEB7AF60A8092E74B523A /* SystemActionTests.swift */,
+				D0D5ED3E3061E8FA0EBDCC48 /* TrackpadStabilityTests.swift */,
+				F1386A246B233DDEA04412DD /* SerializationTests.swift */,
+				CCC8845C96B5495215C99E0B /* TouchEngineTests.swift */,
+				1C1205874DEC0ED25A5E28FD /* TrackpadPipelineTests.swift */,
+				75C612017BFB150EB1A6D167 /* UpdateCheckerTests.swift */,
+			);
+			path = AllOfMacOSTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3C9FB7E272D97E99127B5FE4 /* AllOfMacOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 072CB362C302F73CB9FD6B79 /* Build configuration list for PBXNativeTarget "AllOfMacOS" */;
+			buildPhases = (
+				8F65FDE81A152909BC6B27C5 /* Sources */,
+				723510EEF08CF65C7119912D /* Resources */,
+				D35F1D1934A939312712184B /* Build Script Runner */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AllOfMacOS;
+			packageProductDependencies = (
+			);
+			productName = AllOfMacOS;
+			productReference = BFBEC8838C761C0A2C708534 /* AllOfMacOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		740EC18DA37EF395B2BF51BD /* AllOfMacOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EB0D880CD4A627E65A64823E /* Build configuration list for PBXNativeTarget "AllOfMacOSTests" */;
+			buildPhases = (
+				BD452D45B15EB6A721252A1D /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				886A586431328C83DEAF817C /* PBXTargetDependency */,
+			);
+			name = AllOfMacOSTests;
+			packageProductDependencies = (
+			);
+			productName = AllOfMacOSTests;
+			productReference = 480F59657C30BBA39ED8E388 /* AllOfMacOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		953D4117B8782C04D3CD3591 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					3C9FB7E272D97E99127B5FE4 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = CD80ADFA1FB08E5067A2C837 /* Build configuration list for PBXProject "AllOfMacOS" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C8E781272C7F773BB07B5B41;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2E489859415392280385BD38 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3C9FB7E272D97E99127B5FE4 /* AllOfMacOS */,
+				740EC18DA37EF395B2BF51BD /* AllOfMacOSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		723510EEF08CF65C7119912D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A629E874BAE24B6D987B05A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+        D35F1D1934A939312712184B /* Build Script Runner */ = {
+            isa = PBXShellScriptBuildPhase;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = ();
+            outputPaths = ();
+            alwaysOutOfDate = 1;
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/bash;
+            shellScript = "\"$SRCROOT/XPC/build-runner.sh\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH\" \"${EXPANDED_CODE_SIGN_IDENTITY:--}\"";
+        };
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8F65FDE81A152909BC6B27C5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				96A7DF8C1EF941673CD729C6 /* TriggerMenu.swift in Sources */,
+				E32A569108CA32BD8EBB42A6 /* DisplayMenu.swift in Sources */,
+				AE1CFB623AECDC89D7D6EF7E /* SystemTriggerMonitor.swift in Sources */,
+				5A360673B1707EB94A662614 /* DisplayControlService.swift in Sources */,
+				BB5C8C11345C187A0CCF7488 /* DrawingGestureMonitor.swift in Sources */,
+				57D4A8852095197C4B0B0CD9 /* DrawingGestureEditor.swift in Sources */,
+				CAABE3329FC3CA4FCD5B2688 /* Action.swift in Sources */,
+				ACD013000000000000000002 /* WorkflowSupport.swift in Sources */,
+				A5DCAC912D1304E73F9958ED /* ActionExecutor.swift in Sources */,
+				D253B7A0E38D382E3DD92932 /* ActionListPanel.swift in Sources */,
+				603D6FCF4F48391C35B93546 /* AppDelegate.swift in Sources */,
+				A81D2DD39D9C38F691EA8061 /* AppSidebar.swift in Sources */,
+				19F61F782EE805CF7F5F3014 /* AppState.swift in Sources */,
+				4FCDFEF6108186D33C545E18 /* AppTarget.swift in Sources */,
+				E4D58A8D6926A8E4B601C460 /* ConfigurationPanel.swift in Sources */,
+				047BD176EA8475D2CB843670 /* GestureConsoleView.swift in Sources */,
+				8F56617241408E093C881A1A /* GestureLog.swift in Sources */,
+				29047DB47C87A598D5B2C7AA /* GesturePreviewView.swift in Sources */,
+				292988165B087AE2F13D8FBF /* GestureStatistics.swift in Sources */,
+				E2128A12EA0C8CE46B2A4945 /* AllOfMacOSApp.swift in Sources */,
+				BAB81AC773B591DF8C84716F /* KeyboardMonitor.swift in Sources */,
+				9E53BC384C94CA4A3D8D56F8 /* LiveTouchState.swift in Sources */,
+				312196054CDAE9C39FFA36E7 /* LiveTouchView.swift in Sources */,
+				5CFF9E4308528010D641FB27 /* LogSidePanel.swift in Sources */,
+				C7665F020EFF44DD35CA065A /* MainWindow.swift in Sources */,
+				364E5A1C3F1D413A2D2123B0 /* VisualEffectBackground.swift in Sources */,
+				EF3021227CD361333E9A889B /* MouseButtonMonitor.swift in Sources */,
+				16A4097A30873C5B2C371526 /* PermissionWatchdog.swift in Sources */,
+				F9D6C1BC1CF5D73DE30003CE /* TriggerResolver.swift in Sources */,
+				9333F87A3D849D018DE077C6 /* SwipeResolver.swift in Sources */,
+				AF52A804BBFA16C53BA10949 /* Preset.swift in Sources */,
+				DBAE98A258656174646D15F7 /* PresetManager.swift in Sources */,
+				E0E0722811CA1F5A4C7B0B8F /* StatisticsView.swift in Sources */,
+				A12E54A66A4EC9C829E50272 /* MultitouchSource.swift in Sources */,
+				2A41C2D4BBDC6EAC2AB319D5 /* ContactGestureSession.swift in Sources */,
+				02F0BAF4CDD99CA5A4929293 /* GestureReplaySuite.swift in Sources */,
+				52C199558636E32D42A6EE0C /* TrackpadMonitor.swift in Sources */,
+				903BFC8E7D8AD82702A59CE0 /* Trigger.swift in Sources */,
+				55F610E7C9360B6C61D064E4 /* TriggerListPanel.swift in Sources */,
+				93A2106594D8B52D8E09F752 /* TriggerType.swift in Sources */,
+				98A7452625E0A2FF61355E95 /* TutorialView.swift in Sources */,
+				6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */,
+				BAB8ACAE12BE2DA856CBFD4E /* UpdateChecker.swift in Sources */,
+				5A8F422110A23E9ED97A3EF4 /* WindowManager.swift in Sources */,
+				D61665AAE3D2DD7162F4F4DF /* AudioOutputService.swift in Sources */,
+				73C4BA0A3EBF42ED19C51EBC /* GestureHaptics.swift in Sources */,
+				7A91EB19D104226D9F67601A /* ScriptRunnerClient.swift in Sources */,
+				7F26A6961C725859D4A14F80 /* TrackpadPresetStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD452D45B15EB6A721252A1D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E5C71D8EA8856EA6B873FED /* TriggerWorkspaceTests.swift in Sources */,
+				1239E8738240BE1E5E3DB042 /* TriggerMenuTests.swift in Sources */,
+				88276266BF1CF001EDD4F5FC /* SystemTriggerTests.swift in Sources */,
+				5244DD72B77F54A1DD9040A0 /* DisplayMenuTests.swift in Sources */,
+				6DD1723544E3012DAA46EF40 /* DisplayControlTests.swift in Sources */,
+				D4A2768D8551F99EA7772D1B /* DrawingGestureTests.swift in Sources */,
+				70FAC45A5348E88EBD0C27C0 /* AdvancedFeaturesTests.swift in Sources */,
+				D81484DEB134C586BE9041FE /* ActivationGroupTests.swift in Sources */,
+				E4B86E8D6EC8E04FF761CD05 /* OverviewAndSnapLayoutsTests.swift in Sources */,
+				32160E6F31545479AA5DD827 /* ForceClickOptInTests.swift in Sources */,
+				8CA05A1AF6EC8F46624E7E74 /* WindowAndMouseActionsTests.swift in Sources */,
+				224B59DFBCCB0920AA084161 /* KeySequenceOptionalTests.swift in Sources */,
+				C66E392ED8FC85D95FEE5E5E /* GestureStatisticsTests.swift in Sources */,
+				1E6638C7E5B56166D088EDF8 /* LiveTouchStateTests.swift in Sources */,
+				71277C1FBC48775A8A72FD72 /* ModelTests.swift in Sources */,
+				33FCC018B9AE94C154755A8D /* SystemActionTests.swift in Sources */,
+				34B8BAFCAD1B9A6FB5C0C77F /* TrackpadStabilityTests.swift in Sources */,
+				085BDE863012A0C9B909B12F /* SerializationTests.swift in Sources */,
+				0ECD76C0B8AC1E57D2F87B1B /* TouchEngineTests.swift in Sources */,
+				019B9C7BA352AFC84AD954BB /* TrackpadPipelineTests.swift in Sources */,
+				6230CBEEB77C284A731579F3 /* UpdateCheckerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		886A586431328C83DEAF817C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3C9FB7E272D97E99127B5FE4 /* AllOfMacOS */;
+			targetProxy = 69C00980C0C1CC66807B6494 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		06887EC70AA27D5F97D072D4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = AllOfMacOS/AllOfMacOS.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AllOfMacOS/App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kyw.allofmacos;
+				PRODUCT_NAME = AllOfMacOS;
+				PRODUCT_MODULE_NAME = AllOfMacOS;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		6A64594ECB3FA180413ABDBA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = AllOfMacOS/AllOfMacOS.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AllOfMacOS/App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kyw.allofmacos;
+				PRODUCT_NAME = AllOfMacOS;
+				PRODUCT_MODULE_NAME = AllOfMacOS;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		92C9FFDBB548536C1F4AC7F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		ADC617BD9239FE7A9E686265 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kyw.AllOfMacOSTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AllOfMacOS.app/Contents/MacOS/AllOfMacOS";
+			};
+			name = Release;
+		};
+		B2745171AF00365DFAECA0B7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kyw.AllOfMacOSTests;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AllOfMacOS.app/Contents/MacOS/AllOfMacOS";
+			};
+			name = Debug;
+		};
+		D5F01A7D46AACCFAE30F836E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		072CB362C302F73CB9FD6B79 /* Build configuration list for PBXNativeTarget "AllOfMacOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A64594ECB3FA180413ABDBA /* Debug */,
+				06887EC70AA27D5F97D072D4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CD80ADFA1FB08E5067A2C837 /* Build configuration list for PBXProject "AllOfMacOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D5F01A7D46AACCFAE30F836E /* Debug */,
+				92C9FFDBB548536C1F4AC7F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EB0D880CD4A627E65A64823E /* Build configuration list for PBXNativeTarget "AllOfMacOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B2745171AF00365DFAECA0B7 /* Debug */,
+				ADC617BD9239FE7A9E686265 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 953D4117B8782C04D3CD3591 /* Project object */;
+}

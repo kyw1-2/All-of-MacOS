@@ -1,0 +1,41 @@
+{
+  "appTargets": [
+    {
+      "id": "463CBA9E-F25D-48A0-A8B6-803B50D30495",
+      "name": "All Apps"
+    }
+  ],
+  "createdAt": "2026-08-28T12:13:22Z",
+  "id": "546BB23C-E558-4139-94CA-7D4F150B0365",
+  "isEnabled": false,
+  "isMaster": false,
+  "modifiedAt": "2026-10-09T10:19:27Z",
+  "name": "Optional Demo — Show Notification (Disabled)",
+  "triggers": [
+    {
+      "actions": [
+        {
+          "id": "BCD4144F-9666-4378-8D98-9A2F1EF6FC60",
+          "actionType": "Show HUD",
+          "isEnabled": true,
+          "parameters": {
+            "hudText": "All of MacOS demo — trigger works"
+          }
+        }
+      ],
+      "id": "0A4A49AD-43EA-42AB-9A48-9CB0F53F1F52",
+      "input": {
+        "keyboardShortcut": {
+          "_0": {
+            "keyCode": 32,
+            "modifierRawValue": 655360
+          }
+        }
+      },
+      "isEnabled": false,
+      "name": "Demo: Show HUD (Disabled)",
+      "order": 0,
+      "suppressClick": false
+    }
+  ]
+}
