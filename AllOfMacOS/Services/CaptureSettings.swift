@@ -166,6 +166,7 @@ enum CaptureSettings {
         static let overlayCorner = "AOMCaptureOverlayCorner"
         static let overlaySize = "AOMCaptureOverlaySize"
         static let overlayAutoClose = "AOMCaptureOverlayAutoClose"
+        static let overlayAutoCloseSave = "AOMCaptureOverlayAutoCloseSave"
         static let overlayInterval = "AOMCaptureOverlayInterval"
         static let overlayOnActiveDisplay = "AOMCaptureOverlayActiveDisplay"
         static let overlayCloseAfterDrag = "AOMCaptureOverlayCloseAfterDrag"
@@ -269,9 +270,16 @@ enum CaptureSettings {
         set { d.set(newValue.rawValue, forKey: Key.overlayAutoClose) }
     }
 
+    /// If true, auto-close saves previously unsaved captures first. On a
+    /// write failure the overlay remains open for manual recovery.
+    static var overlayAutoCloseSave: Bool {
+        get { d.bool(forKey: Key.overlayAutoCloseSave) }
+        set { d.set(newValue, forKey: Key.overlayAutoCloseSave) }
+    }
+
     static var overlayIntervalSeconds: Int {
         get { d.object(forKey: Key.overlayInterval) as? Int ?? 5 }
-        set { d.set(min(120, max(1, newValue)), forKey: Key.overlayInterval) }
+        set { d.set(min(600, max(1, newValue)), forKey: Key.overlayInterval) }
     }
 
     /// Independent of the auto-close timer; only after a successful drop.

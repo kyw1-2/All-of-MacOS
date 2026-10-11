@@ -16,6 +16,29 @@ final class QuickAccessParityTests: XCTestCase {
         XCTAssertNil(QuickAccessPolicy.shortcut(keyCode: 49, command: true))
     }
 
+    func testStackLayoutKeepsMultipleCardsSeparatedOnSmallScreens() {
+        let ordinary = QuickAccessPolicy.stackStride(visibleHeight: 800,
+            cardHeight: 200, count: 3)
+        XCTAssertEqual(ordinary, 212)
+        let constrained = QuickAccessPolicy.stackStride(visibleHeight: 400,
+            cardHeight: 230, count: 3)
+        XCTAssertEqual(constrained, 65)
+        XCTAssertGreaterThan(constrained, 0)
+        XCTAssertLessThanOrEqual(constrained * 2 + 230 + 40, 400)
+        XCTAssertEqual(QuickAccessPolicy.stackStride(
+            visibleHeight: 900, cardHeight: 200, count: 1), 0)
+    }
+
+    func testRecentlyClosedRestoresOnlyExistingHistoryIDs() {
+        let preserved = UUID()
+        let unknown = UUID()
+        let restored = QuickAccessPolicy.restoredIDs(
+            [unknown.uuidString, preserved.uuidString, "not-a-uuid"],
+            present: Set([preserved]))
+        XCTAssertEqual(restored, [preserved])
+        XCTAssertTrue(QuickAccessPolicy.restoredIDs([], present: []).isEmpty)
+    }
+
     func testThreeOverlayStackDisplacesOldestInOrder() {
         let first = QuickAccessPolicy.visibleAfterAdding([1, 2], new: 3)
         XCTAssertEqual(first.visible, [1, 2, 3])
@@ -34,6 +57,21 @@ final class QuickAccessParityTests: XCTestCase {
                          separateToggle: true, succeeded: true))
         XCTAssertTrue(QuickAccessPolicy.shouldCloseAfterDrag(mode: .afterDrag,
                          separateToggle: false, succeeded: true))
+    }
+
+    func testSaveBeforeAutoCloseAndTenMinuteIntervalPreferences() {
+        let old = CaptureSettings.overlayAutoCloseSave
+        let oldSeconds = CaptureSettings.overlayIntervalSeconds
+        defer {
+            CaptureSettings.overlayAutoCloseSave = old
+            CaptureSettings.overlayIntervalSeconds = oldSeconds
+        }
+        CaptureSettings.overlayAutoCloseSave = true
+        XCTAssertTrue(CaptureSettings.overlayAutoCloseSave)
+        CaptureSettings.overlayIntervalSeconds = 600
+        XCTAssertEqual(CaptureSettings.overlayIntervalSeconds, 600)
+        CaptureSettings.overlayIntervalSeconds = 100000
+        XCTAssertEqual(CaptureSettings.overlayIntervalSeconds, 600)
     }
 
     func testHoverPausesAutoCloseAndIntervalModes() {
@@ -62,6 +100,37 @@ final class QuickAccessParityTests: XCTestCase {
         for size in OverlaySize.allCases {
             XCTAssertGreaterThan(size.panelWidth, size.thumbnailSide)
         }
+    }
+
+    func testImportedCapturePreservesExternalImageBytes() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aom-import-\(UUID().uuidString).png")
+        let image = try XCTUnwrap(CGContext(data: nil, width: 18, height: 12,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage())
+        let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image)
+            .representation(using: .png, properties: [:]))
+        try data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let previousEnabled = CaptureSettings.overlayEnabled
+        let previousCapacity = CaptureSettings.historyCapacity
+        CaptureSettings.overlayEnabled = false
+        CaptureSettings.historyCapacity = 40
+        defer {
+            CaptureSettings.overlayEnabled = previousEnabled
+            CaptureSettings.historyCapacity = previousCapacity
+        }
+        CaptureCoordinator.shared.importQuickAccessFiles([url])
+        let imported = try XCTUnwrap(CaptureHistory.shared.entries.first(where: {
+            $0.fileURL == url
+        }))
+        XCTAssertEqual(imported.image.width, 18)
+        XCTAssertEqual(imported.image.height, 12)
+        XCTAssertEqual(try Data(contentsOf: url), data)
+        CaptureHistory.shared.remove(imported)
+        XCTAssertEqual(try Data(contentsOf: url), data,
+                       "History removal must not delete an external original.")
     }
 
     func testOneXAndFlipAreNondestructive() throws {

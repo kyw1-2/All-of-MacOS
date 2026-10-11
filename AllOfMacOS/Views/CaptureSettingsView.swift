@@ -28,6 +28,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureOverlayInterval") private var overlayInterval = 5
     @AppStorage("AOMCaptureOverlayActiveDisplay") private var overlayActiveDisplay = true
     @AppStorage("AOMCaptureOverlayCloseAfterDrag") private var overlayCloseAfterDrag = true
+    @AppStorage("AOMCaptureOverlayAutoCloseSave") private var overlayAutoCloseSave = false
     @AppStorage("AOMCaptureOverlayAsksForName") private var asksNameOnSave = false
     @AppStorage("AOMCaptureHistoryCapacity") private var historyCapacity = 40
     @AppStorage("AOMOCRKeepsLineBreaks") private var ocrKeepsLineBreaks = true
@@ -279,14 +280,24 @@ struct CaptureSettingsView: View {
             }
             if autoCloseRaw == OverlayAutoClose.afterInterval.rawValue {
                 AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Delay",
-                                 subtitle: nil, showDivider: false) {
+                                 subtitle: nil, showDivider: true) {
                     Picker("", selection: $overlayInterval) {
                         Text("3 s").tag(3)
                         Text("5 s").tag(5)
                         Text("10 s").tag(10)
                         Text("30 s").tag(30)
+                        Text("1 min").tag(60)
+                        Text("5 min").tag(300)
+                        Text("10 min").tag(600)
                     }
                     .pickerStyle(.menu).labelsHidden().frame(width: 90)
+                }
+                AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .green,
+                                 title: "Save Before Auto-Close",
+                                 subtitle: "If saving fails, keep the overlay for retry",
+                                 showDivider: false) {
+                    Toggle("", isOn: $overlayAutoCloseSave)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
             }
         }

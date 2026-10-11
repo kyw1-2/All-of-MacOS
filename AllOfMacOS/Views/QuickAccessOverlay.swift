@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// - Smooth spring slide-in from screen edge upon capture
 /// - Native drag & drop to export image directly into Finder/Slack/Discord
 /// - Swipe-right to dismiss gesture (like CleanShot X flick-to-close)
-/// - Instant dismiss upon Copy, Save, OCR, Pin, or Delete actions
+/// - Multiple overlays, Save All/Close All and restore-most-recently-closed
 /// - Acrylic glassmorphism card with rounded corners and double drop shadow
 /// - Rich toolbar with hover feedback, tooltips, and keyboard shortcuts
 private final class QuickAccessPanel: NSPanel {
@@ -28,6 +28,9 @@ final class QuickAccessOverlayController {
     private var hovering = false
     private var dragging = false
     private var wasDeleted = false
+    private var recycleInProgress = false
+    private var temporarilyHidden = false
+    private var visibleStackCount = 1
     private let forcedAutoCloseSeconds: TimeInterval?
     var onDismiss: ((Bool) -> Void)?
 
@@ -37,15 +40,16 @@ final class QuickAccessOverlayController {
         self.forcedAutoCloseSeconds = forcedAutoCloseSeconds
     }
 
-    func setStackIndex(_ index: Int) {
+    func setStackIndex(_ index: Int, total: Int = 1) {
         stackIndex = index
+        visibleStackCount = max(1, total)
         guard let panel else { return }
         position(panel)
     }
 
     func present() {
         guard panel == nil else { return }
-        let width = max(270, CaptureSettings.overlaySize.panelWidth)
+        let width = CaptureSettings.overlaySize.panelWidth
         let height = CaptureSettings.overlaySize.thumbnailSide + 48
         let size = NSSize(width: width, height: height)
         let panel = QuickAccessPanel(contentRect: NSRect(origin: .zero, size: size),
@@ -66,6 +70,9 @@ final class QuickAccessOverlayController {
             onCopy: { [weak self] in self?.copyImage() },
             onCopyFile: { [weak self] in self?.copyFile() },
             onSave: { [weak self] in self?.save() },
+            onReveal: { [weak self] in self?.revealInFinder() },
+            onSaveAll: { [weak self] in self?.saveAllVisible() },
+            onCloseAll: { [weak self] in self?.closeAllVisible() },
             onAnnotate: { [weak self] in self?.annotate() },
             onPin: { [weak self] in self?.pin() },
             onOCR: { [weak self] in self?.recognizeText() },
@@ -108,7 +115,9 @@ final class QuickAccessOverlayController {
         let startFrame = NSRect(x: finalFrame.origin.x + incoming, y: finalFrame.origin.y, width: finalFrame.width, height: finalFrame.height)
         panel.setFrame(startFrame, display: true)
         panel.alphaValue = 0.0
-        panel.orderFrontRegardless()
+        // Nonactivating panels can become key without activating the main app.
+        // Merely ordering front never routes local Cmd-C/S/E/W into this panel.
+        panel.makeKeyAndOrderFront(nil)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.24
@@ -149,13 +158,15 @@ final class QuickAccessOverlayController {
     }
 
     func dismiss(deleteFile: Bool) {
-        closeTimer?.cancel()
-        closeTimer = nil
-        removeDismissMonitors()
+        // A failed Finder recycle must not leave a visible panel without key
+        // monitoring or a live auto-close timer.
         if deleteFile {
             moveToTrash()
             return
         }
+        closeTimer?.cancel()
+        closeTimer = nil
+        removeDismissMonitors()
         let closing = panel
         panel = nil
         onDismiss?(wasDeleted)
@@ -233,9 +244,22 @@ final class QuickAccessOverlayController {
             return
         }
         guard let url = ensureFile() else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
         GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
         dismiss(deleteFile: false)
+    }
+
+    private func revealInFinder() {
+        guard let url = ensureFile() else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        // Revealing a file should not discard a still-useful Quick Access card.
+    }
+
+    /// Used by Save All: no popup, no Finder activation per capture.
+    @discardableResult
+    func saveWithoutPrompt() -> Bool {
+        guard ensureFile() != nil else { return false }
+        dismiss(deleteFile: false)
+        return true
     }
 
     private func annotate() {
@@ -332,23 +356,43 @@ final class QuickAccessOverlayController {
     }
 
     private func temporarilyHide() {
-        closeTimer?.cancel()
-        closeTimer = nil
-        removeDismissMonitors()
-        guard let closing = panel else { return }
-        panel = nil
-        onDismiss?(wasDeleted)
-        onDismiss = nil
-        let frame = closing.frame
-        let bottom = (closing.screen?.visibleFrame.minY ?? frame.minY) - frame.height - 18
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.20
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            closing.animator().setFrameOrigin(NSPoint(x: frame.minX, y: bottom))
-            closing.animator().alphaValue = 0
-        } completionHandler: {
-            closing.orderOut(nil)
+        CaptureCoordinator.shared.toggleQuickAccessVisibility()
+    }
+
+    func setTemporarilyHidden(_ hidden: Bool) {
+        guard let panel, hidden != temporarilyHidden else { return }
+        temporarilyHidden = hidden
+        if hidden {
+            pauseAutoClose()
+            let frame = panel.frame
+            let offscreenY = (panel.screen?.visibleFrame.minY ?? frame.minY) - frame.height - 18
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                panel.animator().setFrameOrigin(NSPoint(x: frame.minX, y: offscreenY))
+                panel.animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                if self?.temporarilyHidden == true { panel.orderOut(nil) }
+            }
+        } else {
+            position(panel)
+            panel.alphaValue = 0
+            panel.makeKeyAndOrderFront(nil)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.20
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+            resumeAutoClose()
         }
+    }
+
+    private func saveAllVisible() {
+        CaptureCoordinator.shared.saveAllQuickAccess()
+    }
+
+    private func closeAllVisible() {
+        CaptureCoordinator.shared.closeAllQuickAccess()
     }
 
     private func showFileInfo() {
@@ -405,15 +449,18 @@ final class QuickAccessOverlayController {
     }
 
     private func moveToTrash() {
+        guard !recycleInProgress else { return }
         guard let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) else {
             CaptureHistory.shared.remove(entry)
             wasDeleted = true
             dismiss(deleteFile: false)
             return
         }
+        recycleInProgress = true
         NSWorkspace.shared.recycle([url]) { [weak self] _, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                self.recycleInProgress = false
                 if let error {
                     GestureHUD.shared.show(title: "Move to Trash Failed", detail: error.localizedDescription)
                     return
@@ -476,13 +523,20 @@ final class QuickAccessOverlayController {
     }
 
     private func resumeAutoClose() {
-        guard !hovering, !dragging, let remaining = secondsRemaining, remaining > 0 else { return }
+        guard !hovering, !dragging, !temporarilyHidden,
+              let remaining = secondsRemaining, remaining > 0 else { return }
         closeTimer?.cancel()
         resumedAt = Date()
         closeTimer = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard !Task.isCancelled else { return }
-            self?.dismiss(deleteFile: false)
+            if CaptureSettings.overlayAutoCloseSave {
+                if self?.saveWithoutPrompt() == false {
+                    self?.secondsRemaining = nil
+                }
+            } else {
+                self?.dismiss(deleteFile: false)
+            }
         }
     }
 
@@ -508,7 +562,9 @@ final class QuickAccessOverlayController {
         let size = panel.frame.size
         let margin: CGFloat = 20
         let x = corner.isLeft ? visible.minX + margin : visible.maxX - size.width - margin
-        let stride = size.height + 12
+        let stride = QuickAccessPolicy.stackStride(
+            visibleHeight: visible.height, cardHeight: size.height,
+            count: visibleStackCount, margin: margin)
         let displacement = CGFloat(stackIndex) * stride
         let preferred = corner.isTop ? visible.maxY - size.height - margin - displacement
                                      : visible.minY + margin + displacement
@@ -524,6 +580,9 @@ private struct QuickAccessOverlayView: View {
     let onCopy: () -> Void
     let onCopyFile: () -> Void
     let onSave: () -> Void
+    let onReveal: () -> Void
+    let onSaveAll: () -> Void
+    let onCloseAll: () -> Void
     let onAnnotate: () -> Void
     let onPin: () -> Void
     let onOCR: () -> Void
@@ -683,7 +742,7 @@ private struct QuickAccessOverlayView: View {
         Button("Quick Look", action: onPreview)
         Button("Save As…", action: onSaveAs)
         Button("Copy File", action: onCopyFile)
-        Button("Show in Finder", action: onSave)
+        Button("Show in Finder", action: onReveal)
         Button("File Information", action: onInfo)
         Button("Open with Default App", action: onOpenWith)
         Button("Share…", action: onShare)
@@ -700,6 +759,8 @@ private struct QuickAccessOverlayView: View {
         }
         Divider()
         Button("Temporarily Hide", action: onTemporarilyHide)
+        Button("Save All Overlays", action: onSaveAll)
+        Button("Close All Overlays", action: onCloseAll)
         Button("Close", action: onClose)
         Button("Move to Trash", role: .destructive, action: onDelete)
     }

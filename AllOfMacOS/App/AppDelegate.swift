@@ -57,8 +57,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // itself. They are separate selectors rather than one dispatching method
     // because `NSMenuItem` identifies its action by selector, not by an argument.
 
+    @objc func importQuickAccessFileAction() {
+        MainActor.assumeIsolated { CaptureCoordinator.shared.chooseQuickAccessFiles() }
+    }
+
     @objc func restoreRecentQuickAccessAction() {
         MainActor.assumeIsolated { CaptureCoordinator.shared.restoreRecentlyClosedOverlay() }
+    }
+
+    @objc func toggleQuickAccessVisibilityAction() {
+        MainActor.assumeIsolated { CaptureCoordinator.shared.toggleQuickAccessVisibility() }
+    }
+
+    @objc func saveAllQuickAccessAction() {
+        MainActor.assumeIsolated { CaptureCoordinator.shared.saveAllQuickAccess() }
+    }
+
+    @objc func closeAllQuickAccessAction() {
+        MainActor.assumeIsolated { CaptureCoordinator.shared.closeAllQuickAccess() }
     }
 
     @objc func captureAreaAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureArea() } }

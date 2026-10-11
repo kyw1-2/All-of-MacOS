@@ -79,10 +79,31 @@ enum CaptureMenu {
 
         menu.addItem(.separator())
 
+        menu.addItem(item(
+            "Add File to Quick Access…", "square.and.arrow.down",
+            #selector(AppDelegate.importQuickAccessFileAction)
+        ))
         menu.addItem(itemWithCaptureState(
             "Restore Recently Closed Quick Access", "arrow.uturn.backward.circle",
             #selector(AppDelegate.restoreRecentQuickAccessAction),
             enabled: CaptureCoordinator.shared.canRestoreQuickAccess
+        ))
+        menu.addItem(itemWithCaptureState(
+            CaptureCoordinator.shared.areQuickAccessHidden
+                ? "Show Quick Access Overlays" : "Temporarily Hide Quick Access Overlays",
+            "eye.slash",
+            #selector(AppDelegate.toggleQuickAccessVisibilityAction),
+            enabled: CaptureCoordinator.shared.hasVisibleQuickAccess
+        ))
+        menu.addItem(itemWithCaptureState(
+            "Save All Quick Access Overlays", "square.and.arrow.down.on.square",
+            #selector(AppDelegate.saveAllQuickAccessAction),
+            enabled: CaptureCoordinator.shared.hasVisibleQuickAccess
+        ))
+        menu.addItem(itemWithCaptureState(
+            "Close All Quick Access Overlays", "xmark.rectangle.portrait",
+            #selector(AppDelegate.closeAllQuickAccessAction),
+            enabled: CaptureCoordinator.shared.hasVisibleQuickAccess
         ))
         menu.addItem(.separator())
 

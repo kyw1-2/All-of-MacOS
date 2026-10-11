@@ -1,6 +1,9 @@
 import Foundation
 import AppKit
 import ScreenCaptureKit
+import AVFoundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Runs a capture from start to finish: permission, self-timer, the selection
 /// UI, the pixel grab, and whatever the user asked to happen afterwards.
@@ -10,7 +13,22 @@ import ScreenCaptureKit
 @MainActor
 final class CaptureCoordinator {
     static let shared = CaptureCoordinator()
-    private init() {}
+    private init() {
+        // The capture cache already survives app restarts. Persist only UUIDs
+        // here: never duplicate media or store absolute file paths in defaults.
+        let records = CaptureHistory.shared.entries
+        let valid = Set(records.map(\.id))
+        let stored = UserDefaults.standard.stringArray(forKey: Self.closedIDsKey) ?? []
+        let restored = QuickAccessPolicy.restoredIDs(stored, present: valid)
+        let byID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        recentlyClosed = restored.compactMap { byID[$0] }
+    }
+
+    private static let closedIDsKey = "AOMQuickAccessRecentlyClosedIDs"
+
+    private func persistRecentlyClosed() {
+        UserDefaults.standard.set(recentlyClosed.map { $0.id.uuidString }, forKey: Self.closedIDsKey)
+    }
 
     /// Guards against a second capture starting while the first is still up —
     /// two selection overlays fighting over the same click is unrecoverable.
@@ -26,7 +44,89 @@ final class CaptureCoordinator {
             GestureHUD.shared.show(title: "Nothing to Restore", detail: "No recently closed captures.")
             return
         }
+        persistRecentlyClosed()
         showOverlay(for: restored)
+    }
+
+    var hasVisibleQuickAccess: Bool { !overlayControllers.isEmpty }
+    private(set) var areQuickAccessHidden = false
+
+    func toggleQuickAccessVisibility() {
+        guard !overlayControllers.isEmpty else { return }
+        areQuickAccessHidden.toggle()
+        for overlay in overlayControllers {
+            overlay.setTemporarilyHidden(areQuickAccessHidden)
+        }
+    }
+
+
+    func closeAllQuickAccess() {
+        for overlay in Array(overlayControllers.reversed()) {
+            overlay.dismiss(deleteFile: false)
+        }
+    }
+
+    /// Save only the cards whose files can be written. Keep failed cards on
+    /// screen so the user can retry, with no loss of captured pixels.
+    func saveAllQuickAccess() {
+        var success = 0
+        var failure = 0
+        for overlay in Array(overlayControllers) {
+            if overlay.saveWithoutPrompt() { success += 1 }
+            else { failure += 1 }
+        }
+        GestureHUD.shared.show(title: "Quick Access — Save All",
+            detail: "\(success) saved" + (failure > 0 ? ", \(failure) could not be saved" : ""))
+    }
+
+    /// Import an existing screenshot or MP4 into the Quick Access stack without
+    /// moving, rewriting or claiming ownership of the source file.
+    func importQuickAccessFiles(_ urls: [URL]) {
+        var added = 0
+        for url in urls.prefix(12) {
+            guard url.isFileURL, FileManager.default.isReadableFile(atPath: url.path) else { continue }
+            let ext = url.pathExtension.lowercased()
+            let image: CGImage?
+            let kind: CaptureKind
+            if ext == "mp4" || ext == "mov" || ext == "m4v" {
+                // Quick Access video operations currently require an MP4 source.
+                guard ext == "mp4" else { continue }
+                let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+                generator.appliesPreferredTrackTransform = true
+                image = try? generator.copyCGImage(at: .zero, actualTime: nil)
+                kind = .videoRecording
+            } else if ["png", "jpg", "jpeg", "heic", "tiff", "tif"].contains(ext) {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { continue }
+                image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                kind = .area
+            } else {
+                continue
+            }
+            guard let image else { continue }
+            let size = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            let result = CaptureResult(image: image, globalRect: size, scale: 1,
+                kind: kind, windowTitle: url.deletingPathExtension().lastPathComponent)
+            let entry = CaptureHistory.shared.add(result, url: url)
+            showOverlay(for: entry)
+            added += 1
+        }
+        if added == 0 {
+            GestureHUD.shared.show(title: "Import Failed", detail: "Select readable PNG, JPEG, HEIC, TIFF, or MP4 files.")
+        }
+    }
+
+    func chooseQuickAccessFiles() {
+        let picker = NSOpenPanel()
+        picker.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .mpeg4Movie]
+        picker.allowsMultipleSelection = true
+        picker.canChooseDirectories = false
+        picker.prompt = "Add to Quick Access"
+        picker.begin { [weak self] result in
+            guard result == .OK else { return }
+            Task { @MainActor [weak self] in
+                self?.importQuickAccessFiles(picker.urls)
+            }
+        }
     }
 
     // MARK: - Entry points
@@ -313,17 +413,28 @@ final class CaptureCoordinator {
                 if self.recentlyClosed.count > QuickAccessPolicy.maximumRestoreHistory {
                     self.recentlyClosed.removeFirst()
                 }
+                self.persistRecentlyClosed()
             }
             for (index, visible) in self.overlayControllers.enumerated() {
-                visible.setStackIndex(index)
+                visible.setStackIndex(index, total: self.overlayControllers.count)
             }
         }
         overlayControllers.append(controller)
+        if areQuickAccessHidden {
+            areQuickAccessHidden = false
+            for visible in overlayControllers.dropLast() {
+                visible.setTemporarilyHidden(false)
+            }
+        }
         if overlayControllers.count > QuickAccessPolicy.maximumVisible,
            let oldest = overlayControllers.first {
             oldest.dismiss(deleteFile: false)
         }
-        controller.setStackIndex(overlayControllers.count - 1)
+        controller.setStackIndex(overlayControllers.count - 1,
+                                 total: overlayControllers.count)
+        for (index, visible) in overlayControllers.enumerated() {
+            visible.setStackIndex(index, total: overlayControllers.count)
+        }
         controller.present()
     }
 

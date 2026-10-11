@@ -26,6 +26,21 @@ enum QuickAccessPolicy {
     }
 
     static let maximumVisible = 3
+
+    /// Bounded layout for 1–3 overlays on short displays.
+    /// Cards may overlap gracefully when their combined height exceeds the
+    /// usable screen, but they must never all collapse into one clamped origin.
+    static func stackStride(visibleHeight: CGFloat, cardHeight: CGFloat,
+                            count: Int, margin: CGFloat = 20) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let space = max(0, visibleHeight - 2 * margin - cardHeight)
+        return min(cardHeight + 12, space / CGFloat(count - 1))
+    }
+
+    static func restoredIDs(_ stored: [String], present: Set<UUID>) -> [UUID] {
+        Array(stored.compactMap(UUID.init(uuidString:))
+            .filter { present.contains($0) }.suffix(maximumRestoreHistory))
+    }
     static let maximumRestoreHistory = 20
 
     static func visibleAfterAdding<T>(_ items: [T], new item: T) -> (visible: [T], displaced: [T]) {
