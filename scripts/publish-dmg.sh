@@ -35,9 +35,9 @@ publish_one() (
   [ "$ident" = "com.kyw.allofmacos" ] || die "Refusing unrelated app: $dmg"
   codesign --verify --deep --strict "$app" || die "Bad code signature: $dmg"
   details="$(codesign -dv --verbose=2 "$app" 2>&1)"
-  if printf '%s\n' "$details" | grep -Fxq 'Authority=AOM Dev'; then
+  if printf '%s\n' "$details" | grep -Fx 'Authority=AOM Dev' >/dev/null; then
     signing="AOM Dev self-signed"
-  elif printf '%s\n' "$details" | grep -Fxq 'Signature=adhoc'; then
+  elif printf '%s\n' "$details" | grep -Fx 'Signature=adhoc' >/dev/null; then
     signing="ad-hoc"
   else
     die "Unrecognized code-signing identity: $dmg"
@@ -45,10 +45,10 @@ publish_one() (
   helper="$app/Contents/XPCServices/ScriptRunner.xpc"
   [ -d "$helper" ] || die "Missing XPC helper: $dmg"
   if [ "$signing" = "AOM Dev self-signed" ]; then
-    codesign -dv --verbose=2 "$helper" 2>&1 | grep -Fxq 'Authority=AOM Dev' ||
+    codesign -dv --verbose=2 "$helper" 2>&1 | grep -Fx 'Authority=AOM Dev' >/dev/null ||
       die "XPC helper has wrong signing identity: $dmg"
   else
-    codesign -dv --verbose=2 "$helper" 2>&1 | grep -Fxq 'Signature=adhoc' ||
+    codesign -dv --verbose=2 "$helper" 2>&1 | grep -Fx 'Signature=adhoc' >/dev/null ||
       die "Ad-hoc DMG has an inconsistent XPC helper: $dmg"
   fi
   version="$("$PB" -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
@@ -79,7 +79,7 @@ EOF
       --prerelease --notes-file "$tmp/notes.md"
   fi
   if gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name' |
-    grep -Fxq "$asset"; then
+    grep -Fx "$asset" >/dev/null; then
     echo "Already published: $tag / $asset"
   else
     gh release upload "$tag" "$dmg" "$tmp/$asset.sha256" --repo "$REPO"
@@ -96,7 +96,7 @@ case "$mode" in
     [ "$("$PB" -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "com.kyw.allofmacos" ] ||
       die "Unexpected app bundle"
     codesign --verify --deep --strict "$app" || die "App failed signature verification"
-    codesign -dv --verbose=2 "$app" 2>&1 | grep -Fxq 'Authority=AOM Dev' ||
+    codesign -dv --verbose=2 "$app" 2>&1 | grep -Fx 'Authority=AOM Dev' >/dev/null ||
       die "AOM Dev signature required; CI ad-hoc builds cannot use this channel"
     version="$("$PB" -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
     build="$("$PB" -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
