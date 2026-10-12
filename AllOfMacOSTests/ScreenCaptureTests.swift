@@ -388,6 +388,28 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertEqual(combined.image.height, 400 + combined.shift)
     }
 
+    func testHorizontalScrollStitchesThreeViewports() throws {
+        let first = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 0))
+        let next = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 12))
+        let third = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 24))
+        let one = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            next, after: first, to: first, direction: .horizontal))
+        XCTAssertEqual(one.shift, 12)
+        XCTAssertEqual(one.image.width, 92)
+        let two = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            third, after: next, to: one.image, direction: .horizontal))
+        XCTAssertEqual(two.shift, 12)
+        XCTAssertEqual(two.image.width, 104)
+        XCTAssertEqual(two.image.height, 40)
+    }
+
+    func testHorizontalShiftAtRetinaWidthReportsSourcePixels() throws {
+        let current = try XCTUnwrap(makeColumnGradientImage(width: 640, height: 240, offset: 0))
+        let next = try XCTUnwrap(makeColumnGradientImage(width: 640, height: 240, offset: 80))
+        let shift = try XCTUnwrap(ScrollingCaptureService.horizontalShift(from: current, to: next))
+        XCTAssertEqual(shift, 80, accuracy: 5)
+    }
+
     func testVerticalShiftIsNilForUnrelatedFrames() throws {
         let a = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 0))
         // Noise rather than a shifted copy: no offset should match confidently.
@@ -463,6 +485,19 @@ final class ScreenCaptureTests: XCTestCase {
             let value = CGFloat((row + offset) % 256) / 255
             context.setFillColor(NSColor(srgbRed: value, green: value, blue: value, alpha: 1).cgColor)
             context.fill(CGRect(x: 0, y: height - 1 - row, width: width, height: 1))
+        }
+        return context.makeImage()
+    }
+
+    private func makeColumnGradientImage(width: Int, height: Int, offset: Int) -> CGImage? {
+        guard let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        for column in 0..<width {
+            let value = CGFloat((column + offset) % 256) / 255
+            context.setFillColor(NSColor(srgbRed: value, green: value, blue: value, alpha: 1).cgColor)
+            context.fill(CGRect(x: column, y: 0, width: 1, height: height))
         }
         return context.makeImage()
     }
