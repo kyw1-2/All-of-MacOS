@@ -261,6 +261,13 @@ struct AnnotationDocument {
         objects.append(object)
     }
 
+    /// One undoable operation for multiple OCR-matched text highlight boxes.
+    mutating func addObjects(_ additions: [AnnotationObject]) {
+        guard !additions.isEmpty else { return }
+        beginChange()
+        objects.append(contentsOf: additions)
+    }
+
     mutating func update(_ object: AnnotationObject) {
         guard let index = objects.firstIndex(where: { $0.id == object.id }) else { return }
         objects[index] = object
