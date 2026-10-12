@@ -3,7 +3,7 @@ name: All of MacOS macOS CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'release/aom-studio-cursor-20261013']
   pull_request:
 
 permissions:
