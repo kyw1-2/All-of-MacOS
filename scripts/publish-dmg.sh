@@ -42,8 +42,80 @@ publish_one() (
   fi
   version="$("$PB" -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
   build="$("$PB" -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
-  printf '%s\n' "$version" "$build" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' ||
-    die "Invalid version: $dmg"
+  for value in "$version" "$build"; do
+    printf '%s\n' "$value" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*
+  sha="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+  short="$(printf '%s' "$sha" | cut -c1-12)"
+  tag="aom-dev-v$version-b$build-$short"
+  asset="$(basename "$dmg")"
+  cat > "$tmp/notes.md" <<EOF
+All of MacOS development build; NOT Apple-notarized.
+
+- App version: $version ($build)
+- Code signing: $signing
+- DMG SHA-256: $sha
+- Artifact is from a local build or historic archive; tag does not establish reproducible source provenance.
+- Intended for private testing. Keep macOS Gatekeeper enabled.
+EOF
+  if ! gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+    gh release create "$tag" --repo "$REPO" \
+      --title "All of MacOS $version ($build) - $signing" \
+      --prerelease --notes-file "$tmp/notes.md"
+  fi
+  if gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name' |
+    grep -Fxq "$asset"; then
+    echo "Already published: $tag / $asset"
+  else
+    gh release upload "$tag" "$dmg" --repo "$REPO"
+    echo "Published: $tag / $asset"
+  fi
+)
+
+mode="--from-build"
+if [ "$#" -gt 0 ]; then mode="$1"; fi
+case "$mode" in
+  --from-build)
+    app="$ROOT/build/All of MacOS.app"
+    [ -d "$app" ] || die "Build the application first"
+    [ "$("$PB" -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "com.kyw.allofmacos" ] ||
+      die "Unexpected app bundle"
+    codesign --verify --deep --strict "$app" || die "App failed signature verification"
+    codesign -dv --verbose=2 "$app" 2>&1 | grep -Fxq 'Authority=AOM Dev' ||
+      die "AOM Dev signature required; CI ad-hoc builds cannot use this channel"
+    version="$("$PB" -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+    build="$("$PB" -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$ROOT/build/releases"
+    dmg="$ROOT/build/releases/All-of-MacOS-$version-b$build-$stamp-$$-AOM-Dev.dmg"
+    [ ! -e "$dmg" ] || die "Existing output: $dmg"
+    hdiutil create -quiet -volname "All of MacOS $version" \
+      -srcfolder "$app" -format UDZO "$dmg"
+    publish_one "$dmg"
+    ;;
+  --import-existing)
+    found=0
+    for root in "$HOME/Downloads" "$HOME/Desktop" "$ROOT/build"; do
+      [ -d "$root" ] || continue
+      while IFS= read -r -d '' dmg; do
+        found=$((found + 1))
+        publish_one "$dmg"
+      done < <(find "$root" -maxdepth 4 -type f \( \
+        -iname 'All-of-MacOS*.dmg' -o -iname 'All of MacOS*.dmg' -o -iname 'AOM*.dmg' \
+      \) -print0)
+    done
+    echo "Historical DMGs examined: $found"
+    ;;
+  --file)
+    [ "$#" -eq 2 ] || die "Usage: $0 --file PATH_TO_DMG"
+    publish_one "$2"
+    ;;
+  *)
+    die "Usage: $0 [--from-build|--import-existing|--file PATH]"
+    ;;
+esac
+ ||
+      die "Invalid version or build number: $dmg"
+  done
   sha="$(shasum -a 256 "$dmg" | awk '{print $1}')"
   short="$(printf '%s' "$sha" | cut -c1-12)"
   tag="aom-dev-v$version-b$build-$short"
