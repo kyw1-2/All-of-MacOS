@@ -177,6 +177,35 @@ final class AnnotationResizeTests: XCTestCase {
         XCTAssertTrue(document.objects.isEmpty)
     }
 
+    func testVisionTextBoundingBoxConvertsToTopLeftCanvasPoints() {
+        let result = AnnotationSmartTextMatcher.annotationRect(
+            from: CGRect(x: 0.25, y: 0.40, width: 0.50, height: 0.20),
+            pixelSize: CGSize(width: 400, height: 200), scale: 2)
+        XCTAssertEqual(result.minX, 50, accuracy: 0.001)
+        XCTAssertEqual(result.minY, 40, accuracy: 0.001)
+        XCTAssertEqual(result.width, 100, accuracy: 0.001)
+        XCTAssertEqual(result.height, 20, accuracy: 0.001)
+        XCTAssertEqual(AnnotationSmartTextMatcher.annotationRect(
+            from: CGRect(x: 0, y: 0, width: 1, height: 1),
+            pixelSize: CGSize(width: 400, height: 200), scale: 0), .zero)
+    }
+
+    func testAddingMultipleSmartHighlightsIsSingleUndoOperation() {
+        var document = AnnotationDocument(baseImage: image())
+        let first = AnnotationObject(kind: .highlighter,
+                                     rect: CGRect(x: 5, y: 5, width: 10, height: 5))
+        let second = AnnotationObject(kind: .highlighter,
+                                      rect: CGRect(x: 5, y: 20, width: 14, height: 5))
+        document.addObjects([first, second])
+        XCTAssertEqual(document.objects.count, 2)
+        document.undo()
+        XCTAssertTrue(document.objects.isEmpty)
+        document.redo()
+        XCTAssertEqual(document.objects.count, 2)
+        document.addObjects([])
+        XCTAssertEqual(document.objects.count, 2)
+    }
+
     func testResizeUsesCroppedImageAsSource() {
         var document = AnnotationDocument(baseImage: image(width: 100, height: 80))
         document.setCrop(CGRect(x: 5, y: 5, width: 40, height: 20))
