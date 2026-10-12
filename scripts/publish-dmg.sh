@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Local AOM development distribution. No certificate or private key leaves the Mac.
 set -euo pipefail
+# Oracle remote shells do not inherit the interactive Homebrew PATH.
+if [ -x /opt/homebrew/bin/gh ]; then export PATH="/opt/homebrew/bin:$PATH"; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="kyw1-2/All-of-MacOS"
 PB="/usr/libexec/PlistBuddy"

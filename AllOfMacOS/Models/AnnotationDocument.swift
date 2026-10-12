@@ -189,7 +189,7 @@ enum ArrowStyle: String, CaseIterable, Identifiable, Codable {
 /// structural, so snapshots are both simpler and impossible to get wrong.
 struct AnnotationDocument {
     /// The unmodified capture. Every render starts from this.
-    let baseImage: CGImage
+    var baseImage: CGImage
     /// Crop applied to the base, in image pixel coordinates. Nil means uncropped.
     var cropRect: CGRect?
     var objects: [AnnotationObject] = []
@@ -200,6 +200,8 @@ struct AnnotationDocument {
     private var redoStack: [[AnnotationObject]] = []
     private var undoCrops: [CGRect?] = []
     private var redoCrops: [CGRect?] = []
+    private var undoImages: [CGImage] = []
+    private var redoImages: [CGImage] = []
     private let undoLimit = 50
 
     init(baseImage: CGImage) {
@@ -230,13 +232,16 @@ struct AnnotationDocument {
     mutating func beginChange() {
         undoStack.append(objects)
         undoCrops.append(cropRect)
+        undoImages.append(baseImage)
         if undoStack.count > undoLimit {
             undoStack.removeFirst()
             undoCrops.removeFirst()
+            undoImages.removeFirst()
         }
         // A new edit invalidates the redo branch, which is what every editor does.
         redoStack.removeAll()
         redoCrops.removeAll()
+        redoImages.removeAll()
     }
 
     mutating func add(_ object: AnnotationObject) {
@@ -264,6 +269,35 @@ struct AnnotationDocument {
         cropRect = rect
     }
 
+    /// Appends a screenshot below the cropped image without shifting annotations.
+    /// Undo restores both the previous base image and crop.
+    @discardableResult
+    mutating func appendScreenshot(_ image: CGImage, scale: CGFloat) -> Bool {
+        guard scale.isFinite && scale > 0 else { return false }
+        let old = croppedImage
+        let width = max(old.width, image.width)
+        let height = old.height + image.height
+        guard width > 0, height > 0, width <= 16000, height <= 16000,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(old, in: CGRect(x: 0, y: image.height,
+                                    width: old.width, height: old.height))
+        context.draw(image, in: CGRect(x: 0, y: 0,
+                                      width: image.width, height: image.height))
+        guard let combined = context.makeImage() else { return false }
+        beginChange()
+        baseImage = combined
+        cropRect = nil
+        return true
+    }
+
     /// Moves an object up or down the z-order.
     mutating func reorder(_ id: UUID, offset: Int) {
         guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
@@ -277,19 +311,31 @@ struct AnnotationDocument {
     var canRedo: Bool { !redoStack.isEmpty }
 
     mutating func undo() {
-        guard let previous = undoStack.popLast(), let previousCrop = undoCrops.popLast() else { return }
+        guard let previous = undoStack.last, let previousCrop = undoCrops.last,
+              let previousImage = undoImages.last else { return }
+        undoStack.removeLast()
+        undoCrops.removeLast()
+        undoImages.removeLast()
         redoStack.append(objects)
         redoCrops.append(cropRect)
+        redoImages.append(baseImage)
         objects = previous
         cropRect = previousCrop
+        baseImage = previousImage
     }
 
     mutating func redo() {
-        guard let next = redoStack.popLast(), let nextCrop = redoCrops.popLast() else { return }
+        guard let next = redoStack.last, let nextCrop = redoCrops.last,
+              let nextImage = redoImages.last else { return }
+        redoStack.removeLast()
+        redoCrops.removeLast()
+        redoImages.removeLast()
         undoStack.append(objects)
         undoCrops.append(cropRect)
+        undoImages.append(baseImage)
         objects = next
         cropRect = nextCrop
+        baseImage = nextImage
     }
 
     // MARK: - Rendering
@@ -414,8 +460,7 @@ struct AnnotationDocument {
             context.fillPath(using: .evenOdd)
         case .cursor:
             drawCursor(in: context, rect: rect, color: color, scale: scale)
-        case .move, .crop, .highlighter, .draw, .drawHighlight, .text, .counter, .cursor, .arrow, .line,
-             .rectangle, .filledRectangle, .ellipse, .pixelate, .spotlight:
+        case .move, .crop:
             break
         }
         context.restoreGState()
