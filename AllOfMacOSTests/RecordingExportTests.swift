@@ -108,7 +108,8 @@ final class RecordingExportTests: XCTestCase {
             source: original, start: 0.1, end: 1.3,
             muteAudio: true, quality: .compact, studio: studio)
         XCTAssertNotEqual(output, original)
-        XCTAssertGreaterThan(try await RecordingExportService.duration(for: output), 0.8)
+        let outputDuration = try await RecordingExportService.duration(for: output)
+        XCTAssertGreaterThan(outputDuration, 0.8)
         XCTAssertEqual(try Data(contentsOf: original), before)
         let tracks = try await AVURLAsset(url: output).loadTracks(withMediaType: .video)
         XCTAssertFalse(tracks.isEmpty)
