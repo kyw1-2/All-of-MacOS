@@ -47,9 +47,12 @@ struct AOMStudioSettings {
     var backdrop: AOMStudioBackdrop = .none
     var paddingFraction: Double = 0
     var motionBlurRadius: Double = 0
+    var cursorPoints: [AOMCursorPoint] = []
+    var cursorOverlaySize: Double = 1
 
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0)
+            || !cursorPoints.isEmpty
     }
 }
 
@@ -133,6 +136,43 @@ enum AOMStudioRenderer {
                 result = inner.composited(over: background).cropped(to: extent)
             }
         }
+        if !settings.cursorPoints.isEmpty, let glyph = cursorGlyph,
+           let cursor = AOMCursorTrack(points: settings.cursorPoints).smoothedPosition(at: time) {
+            let pointerSize = CGFloat(min(3, max(0.5, settings.cursorOverlaySize)))
+            // Normalized track uses top-left coordinates, CIImage bottom-left.
+            let x = extent.minX + cursor.x * extent.width
+            let y = extent.maxY - cursor.y * extent.height
+            let transformed = glyph.transformed(by:
+                    CGAffineTransform(scaleX: pointerSize, y: pointerSize))
+                .transformed(by: CGAffineTransform(translationX: x,
+                                                   y: y - pointerSize * 32))
+            result = transformed.composited(over: result).cropped(to: extent)
+        }
         return result
     }
+
+    private static let cursorGlyph: CIImage? = {
+        guard let context = CGContext(data: nil, width: 24, height: 32,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 2, y: 30))
+        for point in [
+            CGPoint(x: 2, y: 2), CGPoint(x: 9, y: 11),
+            CGPoint(x: 14, y: 3), CGPoint(x: 19, y: 6),
+            CGPoint(x: 14, y: 15), CGPoint(x: 22, y: 17)
+        ] { path.addLine(to: point) }
+        path.closeSubpath()
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.addPath(path); context.fillPath()
+        context.addPath(path)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1))
+        context.setLineWidth(1.7)
+        context.strokePath()
+        guard let image = context.makeImage() else { return nil }
+        return CIImage(cgImage: image)
+    }()
 }
