@@ -127,6 +127,56 @@ final class AnnotationResizeTests: XCTestCase {
                        baseline.colorAt(x: 40, y: 40)!.redComponent, accuracy: 0.01)
     }
 
+    func testQuarterTurnAndFlipsProduceExpectedPixelsAndUndo() {
+        let context = CGContext(data: nil, width: 10, height: 6,
+                                bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
+        context.setFillColor(NSColor.red.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 5, height: 6))
+        context.setFillColor(NSColor.blue.cgColor)
+        context.fill(CGRect(x: 5, y: 0, width: 5, height: 6))
+        let original = context.makeImage()!
+        var document = AnnotationDocument(baseImage: original)
+        XCTAssertTrue(document.transformImage(.flipHorizontal, scale: 1))
+        XCTAssertEqual(document.croppedImage.width, 10)
+        let flipped = NSBitmapImageRep(cgImage: document.croppedImage)
+        let left = flipped.colorAt(x: 1, y: 2)!.usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(left.blueComponent, 0.9)
+        XCTAssertLessThan(left.redComponent, 0.1)
+        document.undo()
+        let restored = NSBitmapImageRep(cgImage: document.croppedImage)
+        let restoredLeft = restored.colorAt(x: 1, y: 2)!.usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(restoredLeft.redComponent, 0.9)
+
+        XCTAssertTrue(document.transformImage(.rotateClockwise, scale: 1))
+        XCTAssertEqual(document.croppedImage.width, 6)
+        XCTAssertEqual(document.croppedImage.height, 10)
+        document.undo()
+        XCTAssertEqual(document.croppedImage.width, 10)
+        XCTAssertEqual(document.croppedImage.height, 6)
+        document.redo()
+        XCTAssertEqual(document.croppedImage.width, 6)
+        XCTAssertEqual(document.croppedImage.height, 10)
+    }
+
+    func testTransformFlattensCurrentMarkupButUndoRestoresEditableLayers() {
+        var document = AnnotationDocument(baseImage: image(width: 48, height: 32))
+        document.add(AnnotationObject(kind: .rectangle,
+                                      rect: CGRect(x: 4, y: 6, width: 12, height: 14)))
+        XCTAssertEqual(document.objects.count, 1)
+        XCTAssertFalse(document.transformImage(.flipVertical, scale: 0))
+        XCTAssertEqual(document.objects.count, 1)
+        XCTAssertTrue(document.transformImage(.flipVertical, scale: 1))
+        XCTAssertTrue(document.objects.isEmpty)
+        document.undo()
+        XCTAssertEqual(document.objects.count, 1)
+        XCTAssertEqual(document.objects[0].rect,
+                       CGRect(x: 4, y: 6, width: 12, height: 14))
+        document.redo()
+        XCTAssertTrue(document.objects.isEmpty)
+    }
+
     func testResizeUsesCroppedImageAsSource() {
         var document = AnnotationDocument(baseImage: image(width: 100, height: 80))
         document.setCrop(CGRect(x: 5, y: 5, width: 40, height: 20))
