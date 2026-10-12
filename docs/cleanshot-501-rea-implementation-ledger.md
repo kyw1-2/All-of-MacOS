@@ -33,7 +33,7 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 | Annotate media | crop, background expand, reorder, duplicate, undo/redo, export | AnnotationDocument + Editor | PARTIAL |
 | Resize | separate pixel/percent dimensions, preserve aspect | PR: AnnotationResizeDialog + resampling | PR |
 | Flatten layers | explicit Flatten Annotations with Undo/Redo | PR: undo-safe bitmap flattening | PR |
-| Pixelate / Secure Blur | mosaic, Gaussian blur, blackout choices | mosaic AOM; separate solid-black redact PR; Gaussian blur GAP | PARTIAL |
+| Pixelate / Blur / Redact | mosaic, Gaussian blur, opaque blackout choices | mosaic preexisting; PR adds a selectable Core Image Gaussian blur and a separate solid-black redact tool. UI/visual behavior not A/B verified | PR, UNKNOWN parity |
 | Smart Highlighter | word-aware highlighting | rectangular/highlight draw only | GAP |
 | Save editable project | proprietary .cleanshot format | editable in current session; no compatible persisted project | GAP (format intentionally not copied) |
 | Combine screenshots | append and position screenshot layers | append below implemented; general 2D composite not verified | PARTIAL |
@@ -68,3 +68,11 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 - Video record/stop/pause/audio track presence/quality; trim/GIF/export read-back, source-file nonmutation. Advanced 5.0 Studio keyframe/Smart Zoom/camera/cursor features remain independent gaps.
 - URL scheme accepts only `aom://` and registered commands, rejects duplicate or unexpected query params, and never silently performs a requested unsupported action.
 - Performance: capture memory retention, no extra resident OCR/Ghidra/rea workers; failures leave AOM's existing primary workflow intact.
+
+## 2026-10-13 update: Blur tool and connection verification
+
+- AOM editor now has an independently implemented **Blur** annotation using a bounded `CIGaussianBlur` compositing area, separate from the existing pixelation tool and opaque blackout tool. A deterministic checkerboard test checks that selected pixels change, outside pixels remain stable, and undo restores the original.
+- The REA CLI has a local `rea` launcher under `/home/ubuntu/.local/bin`, configured with on-demand Java/Ghidra environment and reduced scheduling priority for heavy analysis operations. No resident REA daemon.
+- Antigravity registration `~/.gemini/config/mcp_config.json` contains the official `rea mcp` registration with provider environment variables. Direct REA MCP initialize and tools/list returned 170 advertised tools.
+- A delegated WebGPT High worker used its terminal to run `rea --version` and `rea doctor --provider ghidra --json`, confirming 6.4.0 and `healthy:true`. In this harness, WebGPT invokes REA through its terminal rather than showing 170 REA operations as separate built-in tools.
+- macOS release/install checks and end-user pixel/gesture comparisons require the currently offline Mac. New code remains in Draft PR #2, not deployed.
