@@ -14,6 +14,14 @@ struct RecordingExportEditor: View {
     @State private var muteAudio = false
     @State private var quality: RecordingExportService.StudioQuality = .high
     @State private var previewPlayer: AVPlayer?
+    @State private var zoomKeyframes: [AOMStudioZoomKeyframe] = []
+    @State private var zoomAt = 0.0
+    @State private var zoomLevel = 1.6
+    @State private var focusX = 0.5
+    @State private var focusY = 0.5
+    @State private var backdrop: AOMStudioBackdrop = .none
+    @State private var backdropPadding = 0.08
+    @State private var motionBlurRadius = 0.0
     @State private var isExporting = false
     @State private var status = ""
     @State private var resultURL: URL?
@@ -71,6 +79,10 @@ struct RecordingExportEditor: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Divider()
+
+                studioControls
 
                 Divider()
 
@@ -162,6 +174,82 @@ struct RecordingExportEditor: View {
         }
     }
 
+    /// Time coordinates are converted to local trimmed video time on export.
+    /// The renderer never mutates the original MP4 or captures cursor events.
+    private var studioControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Studio Mode — Zoom Timeline", systemImage: "viewfinder")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                Text("At")
+                Slider(value: $zoomAt, in: 0...max(0.1, duration), step: 0.1)
+                Text(Self.clock(zoomAt)).monospacedDigit().frame(width: 60)
+            }
+            HStack(spacing: 12) {
+                Text("Zoom")
+                Slider(value: $zoomLevel, in: 1...3, step: 0.1)
+                Text(String(format: "%.1f×", zoomLevel)).monospacedDigit().frame(width: 42)
+                Button("Add Keyframe") {
+                    guard zoomAt >= start, zoomAt <= end else {
+                        status = "Select a zoom time inside the trim range."
+                        return
+                    }
+                    zoomKeyframes.append(AOMStudioZoomKeyframe(
+                        time: zoomAt - start, magnification: zoomLevel,
+                        focusX: focusX, focusY: focusY))
+                    zoomKeyframes.sort { $0.time < $1.time }
+                }
+                .disabled(isExporting || !validRange)
+            }
+            HStack(spacing: 10) {
+                Text("Focus X")
+                Slider(value: $focusX, in: 0...1)
+                Text("Y")
+                Slider(value: $focusY, in: 0...1)
+            }
+            .font(.caption)
+            ForEach(zoomKeyframes) { keyframe in
+                HStack {
+                    Text("\(Self.clock(keyframe.time + start)) — \(String(format: "%.1f×", keyframe.magnification))")
+                        .font(.caption.monospacedDigit())
+                    Spacer()
+                    Button(role: .destructive) {
+                        zoomKeyframes.removeAll { $0.id == keyframe.id }
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isExporting)
+                    .accessibilityLabel("Remove zoom keyframe")
+                }
+            }
+            HStack(spacing: 12) {
+                Picker("Background", selection: $backdrop) {
+                    ForEach(AOMStudioBackdrop.allCases) { item in
+                        Text(item.displayName).tag(item)
+                    }
+                }
+                .frame(width: 205)
+                .disabled(isExporting)
+                Text("Padding")
+                Slider(value: $backdropPadding, in: 0...0.20)
+                    .disabled(isExporting || backdrop == .none)
+                Text("\(Int(backdropPadding * 100))%")
+                    .monospacedDigit().frame(width: 35)
+            }
+            HStack(spacing: 10) {
+                Text("Zoom-transition blur").font(.caption)
+                Slider(value: $motionBlurRadius, in: 0...8)
+                    .disabled(isExporting)
+                Text(String(format: "%.1f", motionBlurRadius))
+                    .monospacedDigit().frame(width: 34)
+            }
+            Text("Zoom keyframes are manually positioned. Cursor-following automation and camera-track editing are not yet supported.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private func export(gif: Bool, rendered: Bool = false) {
         guard validRange, !isExporting else { return }
         isExporting = true
@@ -169,6 +257,10 @@ struct RecordingExportEditor: View {
         resultURL = nil
         let begin = start, finish = end, frames = fps
         let muted = muteAudio, selectedQuality = quality
+        let studio = AOMStudioSettings(keyframes: zoomKeyframes,
+                                       backdrop: backdrop,
+                                       paddingFraction: backdropPadding,
+                                       motionBlurRadius: motionBlurRadius)
         Task {
             do {
                 let exported: URL
@@ -178,7 +270,8 @@ struct RecordingExportEditor: View {
                 } else if rendered {
                     exported = try await RecordingExportService.render(
                         source: source, start: begin, end: finish,
-                        muteAudio: muted, quality: selectedQuality)
+                        muteAudio: muted, quality: selectedQuality,
+                        studio: studio)
                 } else {
                     exported = try await RecordingExportService.trim(
                         source: source, start: begin, end: finish)
