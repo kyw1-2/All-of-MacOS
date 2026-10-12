@@ -33,6 +33,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var isSessionStarted = false
     private var isStarting = false
     private var recordedScale: CGFloat = 1
+    private var cursorSampler: Timer?
+    private var cursorStartedAt: Date?
+    private var cursorPoints: [AOMCursorPoint] = []
     private let recordingQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording-audio", qos: .userInitiated)
 
@@ -195,7 +198,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         config.sourceRect = sourceRect
         config.width = pixelWidth
         config.height = pixelHeight
-        config.showsCursor = CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators
+        // Opt-in editing records cursor motion separately and hides the baked
+        // pointer to avoid two overlapping cursors in Studio exports.
+        config.showsCursor = !CaptureSettings.recordingCursorMotion &&
+            (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
         if #available(macOS 15.0, *) {
             config.showMouseClicks = CaptureSettings.recordingClickIndicators
         }
@@ -269,6 +275,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
         self.isRecording = true
         self.elapsedSeconds = 0
+        if CaptureSettings.recordingCursorMotion {
+            startCursorSampling()
+        }
 
         startTimer()
         ScreenRecordingBarController.shared.show()
@@ -279,6 +288,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         guard isRecording else { return nil }
         isRecording = false
         stopTimer()
+        stopCursorSampling()
 
         ScreenRecordingBarController.shared.hide()
 
@@ -317,6 +327,15 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         }
 
         if FileManager.default.fileExists(atPath: url.path) {
+            if !cursorPoints.isEmpty {
+                do {
+                    try AOMCursorTrack(points: cursorPoints).write(for: url)
+                } catch {
+                    GestureHUD.shared.show(title: "Cursor Metadata Warning",
+                                           detail: "The movie was saved, but editable pointer data could not be written.")
+                }
+            }
+            cursorPoints.removeAll()
             let result = CaptureResult(
                 image: thumb,
                 globalRect: rect,
@@ -338,6 +357,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         guard isRecording else { return }
         isRecording = false
         stopTimer()
+        stopCursorSampling()
+        cursorPoints.removeAll()
 
         ScreenRecordingBarController.shared.hide()
 
@@ -414,6 +435,34 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 input.append(sampleBuffer)
             }
         }
+    }
+
+    private func startCursorSampling() {
+        stopCursorSampling()
+        cursorPoints.removeAll(keepingCapacity: true)
+        cursorStartedAt = Date()
+        cursorSampler = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sampleCursor() }
+        }
+    }
+
+    private func sampleCursor() {
+        guard isRecording, let start = cursorStartedAt, cursorPoints.count < 60_000,
+              recordingRect.width > 0, recordingRect.height > 0 else { return }
+        let screenY = NSScreen.screens.first?.frame.maxY ?? 0
+        let mouse = NSEvent.mouseLocation
+        let sx = (mouse.x - recordingRect.minX) / recordingRect.width
+        let sy = (screenY - mouse.y - recordingRect.minY) / recordingRect.height
+        guard sx.isFinite, sy.isFinite, (0...1).contains(sx),
+              (0...1).contains(sy) else { return }
+        cursorPoints.append(AOMCursorPoint(time: Date().timeIntervalSince(start),
+                                          x: Double(sx), y: Double(sy)))
+    }
+
+    private func stopCursorSampling() {
+        cursorSampler?.invalidate()
+        cursorSampler = nil
+        cursorStartedAt = nil
     }
 
     private func startTimer() {
