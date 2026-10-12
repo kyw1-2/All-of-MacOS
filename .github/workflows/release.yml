@@ -1,0 +1,162 @@
+name: All of MacOS signed release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "AllOfMacOS/**"
+      - "XPC/**"
+      - "Package.swift"
+      - "Package.resolved"
+      - "build-and-sign.sh"
+      - "scripts/resolve-signing-identity.sh"
+      - "scripts/package-aom-dev.sh"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+# Private signing key is exposed only to trusted main branch builds, never PRs.
+permissions:
+  contents: write
+
+concurrency:
+  group: aom-release-main
+  cancel-in-progress: false
+
+jobs:
+  signed-release:
+    if: github.ref == 'refs/heads/main' && vars.AOM_SIGNING_READY == 'true'
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Ensure signing secrets exist
+        env:
+          CERT: ${{ secrets.AOM_DEV_P12_BASE64 }}
+          PASSWORD: ${{ secrets.AOM_DEV_P12_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$CERT" ] || [ -z "$PASSWORD" ]; then
+            echo "::error::AOM_DEV_P12_BASE64 and AOM_DEV_P12_PASSWORD must be configured before signed releases."
+            exit 1
+          fi
+
+      - name: Verify project identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' AllOfMacOS/App/Info.plist)" = "com.kyw.allofmacos"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          swift --version
+          xcodebuild -version
+
+      - name: Test application
+        run: swift test -j 2
+
+      - name: Import AOM Dev signing identity into ephemeral keychain
+        uses: apple-actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.AOM_DEV_P12_BASE64 }}
+          p12-password: ${{ secrets.AOM_DEV_P12_PASSWORD }}
+
+      - name: Trust self-signed AOM Dev for code-signing on ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert="$RUNNER_TEMP/aom-dev-public.cer"
+          security find-certificate -c "AOM Dev" -p > "$cert"
+          test -s "$cert"
+          # Self-signed local code-signing certificates lack Apple's public CA chain.
+          # User-domain trust only, restricted to code signing; never log the private key.
+          perl -e 'alarm 20; exec @ARGV' security add-trusted-cert -r trustRoot -p codeSign "$cert"
+          rm -f "$cert"
+          bash scripts/resolve-signing-identity.sh AOM\ Dev >/dev/null
+
+      - name: Build and sign app
+        env:
+          CI: "true"
+          ALLOFMACOS_SKIP_AUTO_RELEASE: "1"
+          ALLOFMACOS_SIGN_ID: "AOM Dev"
+          ALLOFMACOS_BUILD_JOBS: "2"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./build-and-sign.sh
+
+      - name: Verify app and XPC signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="build/All of MacOS.app"
+          helper="$app/Contents/XPCServices/ScriptRunner.xpc"
+          test -d "$helper"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "com.kyw.allofmacos"
+          codesign --verify --deep --strict "$app"
+          codesign -dv --verbose=2 "$app" 2>&1 | grep -Fx 'Authority=AOM Dev'
+          codesign -dv --verbose=2 "$helper" 2>&1 | grep -Fx 'Authority=AOM Dev'
+
+      - name: Package and verify DMG
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="build/All of MacOS.app"
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || exit 2
+          [[ "$build" =~ ^[0-9A-Za-z._-]+$ ]] || exit 2
+          [[ "$version" != "1.0.1" ]] || exit 2
+          short="${GITHUB_SHA:0:12}"
+          tag="aom-v${version}-b${build}-g${short}"
+          mkdir -p build/releases
+          dmg="$PWD/build/releases/All-of-MacOS-${version}-b${build}-g${short}-AOM-Dev.dmg"
+          hdiutil create -quiet -volname "All of MacOS ${version}" -srcfolder "$app" -format UDZO "$dmg"
+          hdiutil verify "$dmg"
+          test "$(stat -f %z "$dmg")" -lt 2147483648
+          checksum="$(shasum -a 256 "$dmg" | awk '{print $1}')"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "sha256=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Publish newest main build as GitHub Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.package.outputs.tag }}
+          DMG: ${{ steps.package.outputs.dmg }}
+          VERSION: ${{ steps.package.outputs.version }}
+          BUILD: ${{ steps.package.outputs.build }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Do not promote an older queued run after a newer commit arrives.
+          head_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [ "$head_sha" != "$GITHUB_SHA" ]; then
+            echo "Skipping obsolete release: main has advanced to $head_sha"
+            exit 0
+          fi
+          cat > "$RUNNER_TEMP/aom-release-notes.md" <<EOF
+          All of MacOS $VERSION ($BUILD) — private AOM Dev development release.
+
+          - Source commit: $GITHUB_SHA
+          - Code signing: AOM Dev (main app and XPC helper)
+          - DMG SHA-256: $SHA256 (also available in GitHub asset digest)
+          - Self-signed: not Apple Developer ID signed or notarized.
+          - Gatekeeper may require manual approval; no separate .sha256 asset is needed.
+          EOF
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx "$(basename "$DMG")" >/dev/null; then
+              gh release upload "$TAG" "$DMG" --repo "$GITHUB_REPOSITORY"
+            fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+          else
+            gh release create "$TAG" "$DMG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "All of MacOS $VERSION ($BUILD) - AOM Dev" \
+              --notes-file "$RUNNER_TEMP/aom-release-notes.md" --latest
+          fi

@@ -6,6 +6,8 @@ on:
       - "scripts/publish-dmg.sh"
       - "scripts/publish-aom-release.sh"
       - "scripts/upload-existing-aom-dmgs.sh"
+      - "scripts/setup-actions-signing.command"
+      - ".github/workflows/release.yml"
       - ".github/workflows/release-script-check.yml"
   pull_request:
     paths:
@@ -13,6 +15,8 @@ on:
       - "scripts/publish-dmg.sh"
       - "scripts/publish-aom-release.sh"
       - "scripts/upload-existing-aom-dmgs.sh"
+      - "scripts/setup-actions-signing.command"
+      - ".github/workflows/release.yml"
       - ".github/workflows/release-script-check.yml"
   workflow_dispatch:
 
@@ -33,6 +37,7 @@ jobs:
           bash -n scripts/publish-dmg.sh
           bash -n scripts/publish-aom-release.sh
           bash -n scripts/upload-existing-aom-dmgs.sh
+          bash -n scripts/setup-actions-signing.command
           grep -Fq 'bash "$PWD/scripts/publish-dmg.sh" --from-build' build-and-sign.sh
           grep -Fq 'ALLOFMACOS_SKIP_AUTO_RELEASE' build-and-sign.sh
           grep -Fq 'codesign --verify --deep --strict' scripts/publish-dmg.sh

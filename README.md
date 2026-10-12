@@ -41,6 +41,8 @@ This repository is private. Distribution of any third-party code or bundled asse
 
 ## Private development DMG releases
 
+**Headless build option:** GitHub Actions can now test, sign and publish a DMG from a trusted `main` push or Oracle dispatch, without leaving the MacBook on. One-time signing setup is required before activation. See [Oracle → GitHub Actions deployment guide](docs/oracle-actions-release.md). The existing local Mac build-and-sign workflow remains supported.
+
 All of MacOS uses the **local AOM Dev self-signed signing identity** for private development builds. This is not an Apple Developer ID or notarized distribution certificate. GitHub CI creates an **ad-hoc signed test artifact**; it does not publish that artifact as a stable AOM Dev release.
 
 On the Mac, install and authenticate GitHub CLI (gh) once with access to this private repository, and pull the latest source from main. Every successful local build-and-sign.sh run using AOM Dev then:
