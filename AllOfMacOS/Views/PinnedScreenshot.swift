@@ -164,7 +164,8 @@ private struct PinnedScreenshotView: View {
                 }
                 .shadow(color: hasShadow ? .black.opacity(0.3) : .clear, radius: hasShadow ? 12 : 0, y: hasShadow ? 4 : 0)
 
-            if isHovering { controls }
+            // Keep the control host alive when a popover takes pointer focus.
+            if isHovering || showingOpacity { controls }
         }
         .padding(hasShadow ? 6 : 0)
         .contentShape(Rectangle())
