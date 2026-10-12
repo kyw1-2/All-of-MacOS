@@ -363,6 +363,31 @@ final class ScreenCaptureTests: XCTestCase {
         }
     }
 
+    func testThreeFrameScrollStitchUsesLatestViewportInsteadOfAccumulatedHeight() throws {
+        let first = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 0))
+        let second = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 30))
+        let third = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 60))
+        let combined1 = try XCTUnwrap(ScrollingCaptureService.appendFrame(second, after: first, to: first))
+        XCTAssertEqual(combined1.shift, 30)
+        XCTAssertEqual(combined1.image.height, 230)
+        let combined2 = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            third, after: second, to: combined1.image))
+        XCTAssertEqual(combined2.shift, 30)
+        XCTAssertEqual(combined2.image.height, 260)
+        XCTAssertEqual(try XCTUnwrap(rowValues(combined2.image, row: 0)), 0)
+        XCTAssertEqual(try XCTUnwrap(rowValues(combined2.image, row: 259)), 3)
+    }
+
+    func testRetinaScrollMatchConvertsDownsampledShiftBackToSourcePixels() throws {
+        let first = try XCTUnwrap(makeGradientImage(width: 640, height: 400, offset: 0))
+        let second = try XCTUnwrap(makeGradientImage(width: 640, height: 400, offset: 80))
+        let delta = try XCTUnwrap(ScrollingCaptureService.verticalShift(from: first, to: second))
+        XCTAssertEqual(delta, 80, accuracy: 5,
+                       "The overlap detector must report source-image pixels, not 160px analysis pixels.")
+        let combined = try XCTUnwrap(ScrollingCaptureService.appendFrame(second, after: first, to: first))
+        XCTAssertEqual(combined.image.height, 400 + combined.shift)
+    }
+
     func testVerticalShiftIsNilForUnrelatedFrames() throws {
         let a = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 0))
         // Noise rather than a shifted copy: no offset should match confidently.
