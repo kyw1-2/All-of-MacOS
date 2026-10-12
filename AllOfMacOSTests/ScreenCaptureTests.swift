@@ -120,6 +120,25 @@ final class ScreenCaptureTests: XCTestCase {
         }
     }
 
+    func testCaptureFilenameTemplatesAreSafeAndDeterministic() {
+        let epoch = Date(timeIntervalSince1970: 0)
+        let name = CaptureNaming.templateName(
+            "{prefix}-{date}-{time}-{kind}-{width}x{height}",
+            date: epoch, kind: "Area", windowTitle: nil,
+            width: 640, height: 480, utc: true)
+        XCTAssertEqual(name, "Screenshot-1970-01-01-00.00.00-Area-640x480")
+        let attemptedTraversal = CaptureNaming.templateName(
+            "../../{window}/../../{kind}", date: epoch, kind: "Window",
+            windowTitle: "/private/secret", width: 2, height: 2, utc: true)
+        XCTAssertFalse(attemptedTraversal.contains("/"))
+        XCTAssertFalse(attemptedTraversal.hasPrefix("."))
+        XCTAssertFalse(attemptedTraversal.contains(":"))
+        XCTAssertTrue(attemptedTraversal.count <= 120)
+        XCTAssertEqual(CaptureNaming.templateName(" .. / ", date: epoch, kind: "",
+                                                  windowTitle: nil, width: 1, height: 1,
+                                                  utc: true), "")
+    }
+
     // MARK: - Annotation document
 
     private func makeImage(width: Int, height: Int) -> CGImage {
