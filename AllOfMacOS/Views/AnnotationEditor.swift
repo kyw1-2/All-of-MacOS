@@ -159,6 +159,29 @@ private struct AnnotationEditorView: View {
             capsuleButton("arrow.up.left.and.arrow.down.right", help: "Resize Image…") {
                 showingResize = true
             }
+            Menu {
+                Button("Rotate 90° Clockwise") {
+                    transformImage(.rotateClockwise)
+                }
+                Button("Rotate 90° Counterclockwise") {
+                    transformImage(.rotateCounterclockwise)
+                }
+                Divider()
+                Button("Flip Horizontally") {
+                    transformImage(.flipHorizontal)
+                }
+                Button("Flip Vertically") {
+                    transformImage(.flipVertical)
+                }
+            } label: {
+                Image(systemName: "rotate.right")
+                    .font(.system(size: 14))
+                    .frame(width: 32, height: 30)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Rotate / Flip (flattens existing annotations; Undo restores editable layers)")
+            .accessibilityLabel("Rotate and flip image")
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
             capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
                 .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
@@ -234,6 +257,21 @@ private struct AnnotationEditorView: View {
                 .frame(width: 38, height: 32)
                 .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: Capsule())
         }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+    }
+
+    private func transformImage(_ operation: AnnotationDocument.ImageTransform) {
+        guard document.transformImage(operation, scale: scale) else {
+            status = "Could not transform the screenshot."
+            return
+        }
+        // Undo retains the source image and its editable layers.
+        selectedID = nil
+        draft = nil
+        cropMode = false
+        cropRect = nil
+        tool = .move
+        zoom = nil
+        status = "Image transformed. Undo to restore original editable annotations."
     }
 
     private func selectTool(_ kind: AnnotationKind) {
