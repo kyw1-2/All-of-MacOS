@@ -370,6 +370,67 @@ struct AnnotationDocument {
         return true
     }
 
+    enum ImageTransform: CaseIterable {
+        case rotateClockwise
+        case rotateCounterclockwise
+        case flipHorizontal
+        case flipVertical
+    }
+
+    /// Pixel-accurate rotation and flipping. Rendering the editable layers
+    /// first preserves existing arrows, glyphs and freehand geometry without
+    /// silently rotating their selection handles incorrectly. Undo/redo saves
+    /// the original *editable* layers and the background.
+    @discardableResult
+    mutating func transformImage(_ operation: ImageTransform, scale: CGFloat) -> Bool {
+        guard scale.isFinite, scale > 0 else { return false }
+        let needsFlattening = !objects.isEmpty || background.isExpanded
+        guard let source = needsFlattening ? render(scale: scale) : Optional(croppedImage) else {
+            return false
+        }
+        let sourceWidth = source.width
+        let sourceHeight = source.height
+        guard sourceWidth > 0, sourceHeight > 0 else { return false }
+        let rotating = operation == .rotateClockwise || operation == .rotateCounterclockwise
+        let width = rotating ? sourceHeight : sourceWidth
+        let height = rotating ? sourceWidth : sourceHeight
+        guard width <= 16384, height <= 16384,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+
+        switch operation {
+        case .rotateClockwise:
+            context.translateBy(x: 0, y: CGFloat(sourceWidth))
+            context.rotate(by: -.pi / 2)
+        case .rotateCounterclockwise:
+            context.translateBy(x: CGFloat(sourceHeight), y: 0)
+            context.rotate(by: .pi / 2)
+        case .flipHorizontal:
+            context.translateBy(x: CGFloat(sourceWidth), y: 0)
+            context.scaleBy(x: -1, y: 1)
+        case .flipVertical:
+            context.translateBy(x: 0, y: CGFloat(sourceHeight))
+            context.scaleBy(x: 1, y: -1)
+        }
+        context.interpolationQuality = .none
+        context.draw(source, in: CGRect(x: 0, y: 0,
+                                        width: sourceWidth, height: sourceHeight))
+        guard let transformed = context.makeImage() else { return false }
+        beginChange()
+        baseImage = transformed
+        cropRect = nil
+        if needsFlattening {
+            objects.removeAll()
+            background = AnnotationBackground()
+        }
+        return true
+    }
+
     /// Moves an object up or down the z-order.
     mutating func reorder(_ id: UUID, offset: Int) {
         guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
