@@ -74,6 +74,29 @@ final class AnnotationResizeTests: XCTestCase {
         XCTAssertEqual(document.background.padding, 0)
     }
 
+    func testSolidRedactionReplacesUnderlyingPixelsEvenWithLowOpacity() {
+        var document = AnnotationDocument(baseImage: image(width: 50, height: 50))
+        var transparent = AnnotationStyle()
+        transparent.opacity = 0.1
+        transparent.color = .white
+        document.add(AnnotationObject(kind: .redact,
+                                      rect: CGRect(x: 10, y: 10, width: 20, height: 20),
+                                      style: transparent))
+        guard let output = document.render(scale: 1) else {
+            return XCTFail("Could not render redaction")
+        }
+        let bmp = NSBitmapImageRep(cgImage: output)
+        let center = bmp.colorAt(x: 20, y: 20)!.usingColorSpace(.deviceRGB)!
+        XCTAssertLessThan(center.redComponent, 0.02)
+        XCTAssertLessThan(center.greenComponent, 0.02)
+        XCTAssertLessThan(center.blueComponent, 0.02)
+        let outside = bmp.colorAt(x: 2, y: 2)!.usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(outside.redComponent, 0.95)
+        XCTAssertLessThan(outside.greenComponent, 0.05)
+        document.undo()
+        XCTAssertTrue(document.objects.isEmpty)
+    }
+
     func testResizeUsesCroppedImageAsSource() {
         var document = AnnotationDocument(baseImage: image(width: 100, height: 80))
         document.setCrop(CGRect(x: 5, y: 5, width: 40, height: 20))
