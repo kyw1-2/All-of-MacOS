@@ -115,6 +115,45 @@ final class RecordingExportTests: XCTestCase {
         XCTAssertFalse(tracks.isEmpty)
     }
 
+    func testCursorSidecarRoundTripInterpolationAndVisualOverlay() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AOM-cursor-motion-test-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("example.mp4")
+        let points = [
+            AOMCursorPoint(time: 0, x: 0.2, y: 0.2),
+            AOMCursorPoint(time: 0.5, x: 0.4, y: 0.6),
+            AOMCursorPoint(time: 1.0, x: 0.5, y: 0.7)
+        ]
+        try AOMCursorTrack(points: points).write(for: movie)
+        let track = try XCTUnwrap(AOMCursorTrack.read(for: movie))
+        XCTAssertEqual(track.points, points)
+        let position = try XCTUnwrap(track.smoothedPosition(at: 0.5))
+        XCTAssertGreaterThan(position.x, 0.2)
+        XCTAssertLessThan(position.x, 0.5)
+        let bounds = CGRect(x: 0, y: 0, width: 96, height: 72)
+        let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: bounds)
+        let settings = AOMStudioSettings(cursorPoints: points, cursorOverlaySize: 1.1)
+        XCTAssertTrue(settings.isActive)
+        let rendered = AOMStudioRenderer.frame(black, time: 0.5, settings: settings)
+        XCTAssertEqual(rendered.extent, bounds)
+        let context = CIContext()
+        let pixels = try XCTUnwrap(context.createCGImage(rendered, from: bounds))
+        let bitmap = NSBitmapImageRep(cgImage: pixels)
+        var hasLightCursor = false
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 3) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 3) {
+                if (bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)?.redComponent ?? 0) > 0.5 {
+                    hasLightCursor = true
+                    break
+                }
+            }
+            if hasLightCursor { break }
+        }
+        XCTAssertTrue(hasLightCursor, "The editable pointer should render on a black frame")
+    }
+
     func testRecordingSettingsValidateFrameRateQualityAudioAndClicks() {
         let savedFPS = CaptureSettings.recordingFPS
         let savedQuality = CaptureSettings.recordingQuality
