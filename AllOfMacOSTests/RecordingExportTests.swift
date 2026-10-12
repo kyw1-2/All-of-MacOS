@@ -53,8 +53,10 @@ final class RecordingExportTests: XCTestCase {
         XCTAssertGreaterThan(duration, 0.5)
         XCTAssertLessThan(duration, 1.3)
         let asset = AVURLAsset(url: rendered)
-        XCTAssertFalse(try await asset.loadTracks(withMediaType: .video).isEmpty)
-        XCTAssertTrue(try await asset.loadTracks(withMediaType: .audio).isEmpty)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(videoTracks.isEmpty)
+        XCTAssertTrue(audioTracks.isEmpty)
         XCTAssertEqual(try Data(contentsOf: original), originalBytes)
     }
 
