@@ -97,6 +97,36 @@ final class AnnotationResizeTests: XCTestCase {
         XCTAssertTrue(document.objects.isEmpty)
     }
 
+    func testBlurChangesOnlySelectedPixelsAndIsUndoable() {
+        let side = 80
+        let ctx = CGContext(data: nil, width: side, height: side,
+                            bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)!
+        for y in 0..<side {
+            for x in 0..<side {
+                ctx.setFillColor((x + y).isMultiple(of: 2) ? NSColor.white.cgColor : NSColor.black.cgColor)
+                ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        var document = AnnotationDocument(baseImage: ctx.makeImage()!)
+        let baseline = NSBitmapImageRep(cgImage: document.render(scale: 1)!)
+        document.add(AnnotationObject(kind: .blur,
+                                      rect: CGRect(x: 16, y: 16, width: 48, height: 48)))
+        let rendered = NSBitmapImageRep(cgImage: document.render(scale: 1)!)
+        let outside = rendered.colorAt(x: 4, y: 4)!.usingColorSpace(.deviceRGB)!
+        let outsideBefore = baseline.colorAt(x: 4, y: 4)!.usingColorSpace(.deviceRGB)!
+        XCTAssertEqual(outside.redComponent, outsideBefore.redComponent, accuracy: 0.01)
+        let inside = rendered.colorAt(x: 40, y: 40)!.usingColorSpace(.deviceRGB)!
+        let insideBefore = baseline.colorAt(x: 40, y: 40)!.usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(abs(inside.redComponent - insideBefore.redComponent), 0.15)
+        document.undo()
+        XCTAssertTrue(document.objects.isEmpty)
+        let restored = NSBitmapImageRep(cgImage: document.render(scale: 1)!)
+        XCTAssertEqual(restored.colorAt(x: 40, y: 40)!.redComponent,
+                       baseline.colorAt(x: 40, y: 40)!.redComponent, accuracy: 0.01)
+    }
+
     func testResizeUsesCroppedImageAsSource() {
         var document = AnnotationDocument(baseImage: image(width: 100, height: 80))
         document.setCrop(CGRect(x: 5, y: 5, width: 40, height: 20))
