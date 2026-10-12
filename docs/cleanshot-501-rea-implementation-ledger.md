@@ -43,7 +43,7 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 | Capture naming | template tokens/preview, UTC, increments | PR: configurable safe filename templates | PR |
 | Recorder | area/fullscreen, FPS/quality, microphone/system sound, clicks | ScreenRecordingService | AOM, UNKNOWN |
 | Recording editor | preview, trim, GIF, mute audio, quality | PR: video preview, MP4 re-encode options + existing trim/GIF | PR; verify CI |
-| 5.0 Studio Mode | Smart Zoom, cursor smoothing, motion blur, camera/keystrokes edit, timeline keyframes, backgrounds | native Smart Zoom/timeline/FFunction classes present in reference; no AOM implementation | GAP |
+| 5.0 Studio Mode | Smart Zoom, cursor smoothing, motion blur, camera/keystrokes edit, timeline keyframes, backgrounds | PR: manually placed smooth zoom keyframes, local editable cursor sidecar with smoothing and pointer resizing, bounded transition motion blur, solid video backdrop with inset; **automatic mouse tracking Smart Zoom**, camera track, editable keystrokes, different output aspect ratios are not implemented | PARTIAL; CI/runtime pending |
 | QuickLook extensions | Finder QuickLook and Share extensions | app-level preview and sharing only | PARTIAL |
 | URL command API | capture/open history/recording/open from clipboard/import | PR: independent `aom://` actions; does NOT register `cleanshot://` | PR |
 | Updates | updater, release feed | AOM GitHub Actions release system, signing gated | PARTIAL |
@@ -91,3 +91,13 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 | P0 | True Smart Zoom / timeline / camera editing absent | Major 5.0 Studio Mode parity deficit | Remains a documented gap; no false implementation claim | Explicitly not implemented |
 
 **Verification gate:** macOS CI for the *last* commit must be entirely green (test, build, identity, package), then owner-authorized live A/B GUI review. At this update the Mac host was offline. None of these code changes has been merged or deployed; the draft PR is the review surface. No proprietary binary, decompiled pseudocode, fonts or image assets were copied into AOM.
+
+## 2026-10-13 Studio source extension — release gates
+
+- **REA limitation:** CleanShot binary metadata confirms Studio class families. Ghidra's provider reports healthy, but this Oracle Linux host does not supply native macOS Swift demangling and timed full-program analysis ended without verified function pseudocode. Do not represent the metadata as recovered source.
+- **Manual timeline:** `AOMStudioZoomKeyframe` stores trim-local time, magnification and normalized focus; the compositor interpolates keyframes with smoothstep; the UI adds/removes keyframes. This does *not* automatically follow a mouse in an arbitrary existing MP4.
+- **Cursor telemetry:** a default-off recording preference can write a local capped normalized cursor `.mp4.aom-cursor.json` sidecar while hiding the in-video pointer; export can interpolate/smooth the editable cursor and change pointer size. No keystrokes are collected. Cursor sidecar is required — the original MP4's baked pixels cannot be algorithmically reconstructed. The feature has not been tested on the offline Mac.
+- **Motion blur and backgrounds:** composited with Core Image during local MP4 export. No recording source is overwritten. Render tests create a synthetic MP4 to assert valid output and source immutability, but latest macOS CI has not passed at this head.
+- **Key remaining P0 gaps:** automatically inferred Smart Zoom anchored to user actions, editable webcam track, keystroke overlays and keystroke event capture, independent platform output aspect ratios, advanced layered cursor effects, CleanShot Cloud, vendor's proprietary editable project format, exact UI interaction and animation fidelity.
+- **No full native decompilation:** `rea demangle-swift`/Mach-O inspector returned `capability_unavailable` on Oracle Linux for macOS native providers; bounded `inspect-native-dispatch-metadata` aborted by timeout. Existing full IB and class inventory evidence remains preserved under Oracle's private project folder.
+- **Release policy:** Do not label a new signed or production DMG complete without latest-head macOS test/build/package success, and AOM Dev signing. Previous successful CI artifact is an older snapshot and must be identified with its exact commit.
