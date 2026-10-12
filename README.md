@@ -38,3 +38,23 @@ Private repository: https://github.com/kyw1-2/All-of-MacOS . The independent sou
 ## Distribution
 
 This repository is private. Distribution of any third-party code or bundled assets is subject to the necessary licenses and permissions.
+
+
+## Private development DMG releases
+
+All of MacOS uses the **local AOM Dev self-signed signing identity** for private development builds. This is not an Apple Developer ID or notarized distribution certificate. GitHub CI creates an **ad-hoc signed test artifact**; it does not publish that artifact as a stable AOM Dev release.
+
+On the Mac, install and authenticate GitHub CLI (gh) once with access to this private repository, and pull the latest source from main. Every successful local build-and-sign.sh run using AOM Dev then:
+
+1. Verifies the app signature and bundle identifier.
+2. Creates a unique DMG under build/releases/.
+3. Verifies the DMG and its mounted app, computes SHA-256, and publishes it as a GitHub **prerelease**.
+4. On the first successful release, scans recognizable All of MacOS/AOM DMGs in Downloads, Desktop and the repository build directory. Each archive is validated before uploading, and originals are never modified. Failed imports can be retried.
+
+To import previously created DMGs without rebuilding: bash scripts/publish-dmg.sh --import-existing
+
+To publish one eligible DMG from elsewhere: bash scripts/publish-dmg.sh --file "/path/to/All-of-MacOS.dmg"
+
+To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. CI uses ALLOFMACOS_SIGN_ID=- and does not publish this development release channel.
+
+**Important:** GitHub releases remain private while the repository is private. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.
