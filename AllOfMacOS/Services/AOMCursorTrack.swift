@@ -27,7 +27,7 @@ struct AOMCursorTrack: Codable {
               track.points.allSatisfy({ $0.time.isFinite && $0.time >= 0 &&
                   $0.x.isFinite && $0.y.isFinite &&
                   (0...1).contains($0.x) && (0...1).contains($0.y) }),
-              zip(track.points, track.points.dropFirst()).allSatisfy({ $0.time <= $1.time })
+              zip(track.points, track.points.dropFirst()).allSatisfy({ $0.0.time <= $0.1.time })
               else { return nil }
         return track
     }
