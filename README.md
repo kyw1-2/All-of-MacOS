@@ -47,13 +47,15 @@ On the Mac, install and authenticate GitHub CLI (gh) once with access to this pr
 
 1. Verifies the app signature and bundle identifier.
 2. Creates a unique DMG under build/releases/.
-3. Verifies the DMG and its mounted app/XPC signatures, computes SHA-256, and publishes it along with a `.sha256` checksum file as a GitHub **prerelease**.
-4. On the first successful release, scans recognizable All of MacOS/AOM DMGs in Downloads, Desktop and the repository build directory. Each archive is validated before uploading, and originals are never modified. Failed imports can be retried.
+3. Verifies the DMG and its mounted app/XPC signatures, computes SHA-256 internally, and uploads **only the DMG**. Fresh local AOM Dev builds become GitHub **Latest** releases; older imported DMGs remain prereleases.
+4. On the first successful release, scans recognizable All of MacOS/AOM DMGs in Downloads, Desktop and the repository build directory. Each archive is validated before uploading, and originals are never modified. Failed imports can be retried. Retired version **1.0.1** is excluded permanently from this import.
 
 To import previously created DMGs without rebuilding: bash scripts/publish-dmg.sh --import-existing
 
 To publish one eligible DMG from elsewhere: bash scripts/publish-dmg.sh --file "/path/to/All-of-MacOS.dmg"
 
 To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. If GitHub authentication or network access is unavailable, the local build stays intact and the upload failure is logged rather than being mistaken for a compilation failure. CI uses ALLOFMACOS_SIGN_ID=- and does not publish this development release channel.
+
+Standalone `.sha256` assets are not generated; a DMG digest remains in release metadata and GitHub also publishes its own asset digest for independent verification. Version 1.0.1 was intentionally removed from GitHub Releases.
 
 **Important:** GitHub releases remain private while the repository is private. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.

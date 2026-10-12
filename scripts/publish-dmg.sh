@@ -54,6 +54,11 @@ publish_one() (
   fi
   version="$("$PB" -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
   build="$("$PB" -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"
+  # Version 1.0.1 was intentionally retired; never recreate its release.
+  if [ "$version" = "1.0.1" ]; then
+    echo "SKIPPED: 1.0.1 is retired and excluded from GitHub releases" >&2
+    exit 10
+  fi
   for value in "$version" "$build"; do
     printf '%s\n' "$value" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' ||
       die "Invalid version or build number: $dmg"
@@ -62,7 +67,6 @@ publish_one() (
   short="$(printf '%s' "$sha" | cut -c1-12)"
   tag="aom-dev-v$version-b$build-$short"
   asset="$(basename "$dmg")"
-  printf '%s  %s\n' "$sha" "$asset" > "$tmp/$asset.sha256"
   cat > "$tmp/notes.md" <<EOF
 All of MacOS development build; NOT Apple-notarized.
 
@@ -75,16 +79,27 @@ EOF
   command -v gh >/dev/null 2>&1 || die "Install gh to publish; DMG remains local"
   gh auth status -h github.com >/dev/null 2>&1 || die "Authenticate gh to publish; DMG remains local"
   if ! gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
-    gh release create "$tag" --repo "$REPO" \
-      --title "All of MacOS $version ($build) - $signing" \
-      --prerelease --notes-file "$tmp/notes.md"
+    if [ "$mode" = "--from-build" ]; then
+      # Only a successful fresh local AOM Dev build becomes Latest.
+      gh release create "$tag" --repo "$REPO" \
+        --title "All of MacOS $version ($build) - $signing" \
+        --latest --notes-file "$tmp/notes.md"
+    else
+      gh release create "$tag" --repo "$REPO" \
+        --title "All of MacOS $version ($build) - $signing" \
+        --prerelease --latest=false --notes-file "$tmp/notes.md"
+    fi
   fi
   if gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name' |
     grep -Fx "$asset" >/dev/null; then
     echo "Already published: $tag / $asset"
   else
-    gh release upload "$tag" "$dmg" "$tmp/$asset.sha256" --repo "$REPO"
+    gh release upload "$tag" "$dmg" --repo "$REPO"
     echo "Published: $tag / $asset"
+  fi
+  if [ "$mode" = "--from-build" ]; then
+    # Preserve Latest even when a matching release already existed.
+    gh release edit "$tag" --repo "$REPO" --prerelease=false --latest >/dev/null
   fi
 )
 
