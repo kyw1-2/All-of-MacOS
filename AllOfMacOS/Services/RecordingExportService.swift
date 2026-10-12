@@ -89,6 +89,79 @@ enum RecordingExportService {
         }
     }
 
+    /// Optional post-production rendering. Unlike passthrough trimming, this
+    /// creates a fresh timeline, allows audio removal, and re-encodes using an
+    /// explicit quality preset. The original file is never changed.
+    enum StudioQuality: String, CaseIterable, Identifiable {
+        case high, compact
+        var id: String { rawValue }
+        var displayName: String { self == .high ? "High Quality" : "Compact" }
+        var preset: String {
+            self == .high ? AVAssetExportPresetHighestQuality : AVAssetExportPresetMediumQuality
+        }
+    }
+
+    static func render(source: URL, start: Double, end: Double,
+                       muteAudio: Bool, quality: StudioQuality) async throws -> URL {
+        let total = try await duration(for: source)
+        let range = try validatedRange(start: start, end: end, duration: total)
+        let asset = AVURLAsset(url: source)
+        guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
+            throw ExportError.unsupportedFile
+        }
+        let composition = AVMutableComposition()
+        guard let video = composition.addMutableTrack(withMediaType: .video,
+                         preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw ExportError.failed("Could not create the video timeline.")
+        }
+        try video.insertTimeRange(range, of: sourceVideo, at: .zero)
+        video.preferredTransform = try await sourceVideo.load(.preferredTransform)
+
+        if !muteAudio {
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            for sourceAudio in audioTracks {
+                guard let audio = composition.addMutableTrack(withMediaType: .audio,
+                                  preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                    throw ExportError.failed("Could not create the audio timeline.")
+                }
+                try audio.insertTimeRange(range, of: sourceAudio, at: .zero)
+            }
+        }
+        guard let exporter = AVAssetExportSession(asset: composition,
+                                                  presetName: quality.preset) else {
+            throw ExportError.failed("A compatible video encoder is unavailable.")
+        }
+        let url = outputURL(for: source, suffix: "Edited", extension: "mp4")
+        guard exporter.supportedFileTypes.contains(.mp4) else {
+            throw ExportError.failed("The selected quality does not support MP4.")
+        }
+        exporter.outputURL = url
+        exporter.outputFileType = .mp4
+        exporter.shouldOptimizeForNetworkUse = true
+        do {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, Error>) in
+                exporter.exportAsynchronously {
+                    switch exporter.status {
+                    case .completed: continuation.resume()
+                    case .failed, .cancelled:
+                        continuation.resume(throwing: exporter.error ??
+                            ExportError.failed("Encoding was cancelled or failed."))
+                    default: continuation.resume(throwing:
+                        ExportError.failed("Unexpected encoding state."))
+                    }
+                }
+            }
+            guard (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0 > 0 else {
+                throw ExportError.failed("The rendered MP4 was empty.")
+            }
+            return url
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+    }
+
     /// Export the requested span as a GIF, capped at 30 seconds / 10 fps to keep
     /// memory and output file sizes bounded. Work runs off the main event loop.
     static func gif(source: URL, start: Double, end: Double, fps: Int = 8) async throws -> URL {
