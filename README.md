@@ -26,7 +26,6 @@ On macOS with Xcode:
 swift test
 ./build-and-sign.sh
 codesign --verify --deep --strict "build/All of MacOS.app"
-hdiutil create -volname "All of MacOS" -srcfolder "build/All of MacOS.app" -format UDZO "All-of-MacOS.dmg"
 ```
 
 Create a local Keychain Access **Self Signed Root / Code Signing** identity named `AOM Dev` before a local release build. CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only; it must never be confused with the local stable-signed DMG.
@@ -48,13 +47,13 @@ On the Mac, install and authenticate GitHub CLI (gh) once with access to this pr
 
 1. Verifies the app signature and bundle identifier.
 2. Creates a unique DMG under build/releases/.
-3. Verifies the DMG and its mounted app, computes SHA-256, and publishes it as a GitHub **prerelease**.
+3. Verifies the DMG and its mounted app/XPC signatures, computes SHA-256, and publishes it along with a `.sha256` checksum file as a GitHub **prerelease**.
 4. On the first successful release, scans recognizable All of MacOS/AOM DMGs in Downloads, Desktop and the repository build directory. Each archive is validated before uploading, and originals are never modified. Failed imports can be retried.
 
 To import previously created DMGs without rebuilding: bash scripts/publish-dmg.sh --import-existing
 
 To publish one eligible DMG from elsewhere: bash scripts/publish-dmg.sh --file "/path/to/All-of-MacOS.dmg"
 
-To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. CI uses ALLOFMACOS_SIGN_ID=- and does not publish this development release channel.
+To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. If GitHub authentication or network access is unavailable, the local build stays intact and the upload failure is logged rather than being mistaken for a compilation failure. CI uses ALLOFMACOS_SIGN_ID=- and does not publish this development release channel.
 
 **Important:** GitHub releases remain private while the repository is private. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.
