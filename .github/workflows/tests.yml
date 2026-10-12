@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Preserve the scarce macOS runners for the newest PR revision. Never cancel
+# main-branch runs, where a trusted signed release may be queued separately.
+concurrency:
+  group: aom-macos-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test-and-package:
     # After trusted signing is enabled, main pushes use the signed workflow instead.
