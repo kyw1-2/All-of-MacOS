@@ -36,11 +36,18 @@ final class ClipboardPanelState: ObservableObject {
 }
 
 struct ClipboardEditorRequest: Identifiable {
-    enum Operation { case renameEntry(UUID), editEntry(UUID), newBoard, renameBoard(UUID) }
+    enum Operation { case renameEntry(UUID), editEntry(UUID), newText, newBoard, renameBoard(UUID) }
     let id = UUID()
     var operation: Operation
     var title: String
     var text: String
+
+    var isTextEditor: Bool {
+        switch operation {
+        case .editEntry, .newText: return true
+        default: return false
+        }
+    }
 }
 
 @MainActor
@@ -104,7 +111,9 @@ final class ClipboardPanelController {
         panel.alphaValue = 1
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         if let bounds = screen?.visibleFrame {
-            let targetHeight: CGFloat = 260
+            let storedHeight = CGFloat(UserDefaults.standard.double(forKey: "AOMClipboardPanelHeight"))
+            let targetHeight = min(max(storedHeight > 0 ? storedHeight : 282, 175),
+                                   max(175, bounds.height - 28))
             panel.setFrame(NSRect(x: bounds.minX + 16, y: bounds.minY + 12,
                                   width: max(600, bounds.width - 32), height: targetHeight), display: true)
         }
@@ -283,6 +292,34 @@ final class ClipboardPanelController {
         let shift = event.modifierFlags.contains(.shift)
         if event.keyCode == 53 { hide(); return true }
         if command && event.charactersIgnoringModifiers?.lowercased() == "f" { state.searchFocusToken = UUID(); return true }
+        if command && event.charactersIgnoringModifiers?.lowercased() == "n" {
+            if shift {
+                state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "")
+            } else {
+                state.editor = .init(operation: .newText, title: "New Text Item", text: "")
+            }
+            return true
+        }
+        let activeEntries = state.results(in: store)
+        if command && event.charactersIgnoringModifiers?.lowercased() == "c",
+           let item = activeEntries.first(where: { state.selected.contains($0.id) }) {
+            do {
+                _ = try store.write(entryIDs: [item.id], plainText: shift)
+                state.status = "Copied to clipboard."
+            } catch {
+                state.status = error.localizedDescription
+            }
+            return true
+        }
+        if command && ["e", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? ""),
+           let item = activeEntries.first(where: { state.selected.contains($0.id) }) {
+            if event.charactersIgnoringModifiers?.lowercased() == "r" {
+                state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+            } else if let text = item.text {
+                state.editor = .init(operation: .editEntry(item.id), title: "Edit Text", text: text)
+            }
+            return true
+        }
         if command && (event.keyCode == 123 || event.keyCode == 124) {
             let boards: [UUID?] = [nil] + store.boards.map { Optional($0.id) }
             let index = boards.firstIndex(of: state.board) ?? 0
@@ -331,6 +368,15 @@ struct ClipboardPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            PastePanelResizeGrip()
+                .frame(height: 8)
+                .overlay(alignment: .center) {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.16))
+                        .frame(width: 46, height: 3)
+                        .allowsHitTesting(false)
+                }
+                .help("Drag to resize clipboard panel. Compact Mode starts automatically.")
             headerBar
             Divider().opacity(0.10)
             carouselContent
@@ -348,75 +394,75 @@ struct ClipboardPanelView: View {
         .sheet(item: $state.preview) { entry in ClipboardPreviewSheet(entry: entry) }
     }
 
-    // MARK: - Header Bar (True Centered Tabs with Right-Aligned Search & Icon-Only Filters)
+    // MARK: - Paste-inspired search, horizontal pinboards and filters
 
     private var headerBar: some View {
-        // Three *non-overlapping* hit-test regions. The previous ZStack placed
-        // full-width spacers above the pinboard buttons and ate mouse clicks.
-        HStack(spacing: 10) {
-            HStack(spacing: 5) {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text("\(store.entries.count)")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+        HStack(spacing: 12) {
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
+                TextField("Search Clipboard", text: $state.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($searchFocused)
+                    .onSubmit {
+                        searchFocused = false
+                        if let first = entries.first { state.selected = [first.id] }
+                    }
+                    .frame(minWidth: 95, idealWidth: 155, maxWidth: 175)
+                    .accessibilityIdentifier("PasteStyleClipboardSearch")
+                if !state.query.isEmpty {
+                    Button { state.query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
             }
-            .frame(width: 58, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: 29)
+            .background(Color.primary.opacity(0.065),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    boardButton("Clipboard History", icon: "clipboard.fill", id: nil)
+                HStack(spacing: 7) {
+                    boardButton("Clipboard History", color: .secondary,
+                                icon: "clock.arrow.circlepath", id: nil)
                     ForEach(store.boards) { board in
-                        boardButton(board.name, icon: board.name.caseInsensitiveCompare("IMPORTANT") == .orderedSame ? "pin.fill" : nil, id: board.id)
+                        boardButton(board.name, color: PasteClipboardPalette.board(board.color),
+                                    icon: nil, id: board.id)
                             .contextMenu {
-                                Button("Rename Pinboard…") { state.editor = .init(operation: .renameBoard(board.id), title: "Rename Pinboard", text: board.name) }
+                                Button("Rename Pinboard…") {
+                                    state.editor = .init(operation: .renameBoard(board.id),
+                                                         title: "Rename Pinboard", text: board.name)
+                                }
                                 Button("Delete Pinboard", role: .destructive) {
                                     store.deleteBoard(id: board.id)
                                     if state.board == board.id { state.board = nil }
                                 }
                             }
                     }
-                    Button { state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "") } label: {
+                    Button {
+                        state.editor = .init(operation: .newBoard,
+                                             title: "New Pinboard", text: "")
+                    } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 23, height: 23)
-                            .background(Color.primary.opacity(0.07), in: Circle())
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 26, height: 26)
+                            .background(Color.primary.opacity(0.055), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .help("New Pinboard")
+                    .help("Add Pinboard (⇧⌘N)")
                 }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 3)
                 .background(NativeScrollIndicatorsDisabled())
-                .background(Color.primary.opacity(0.045), in: Capsule())
             }
             .scrollIndicators(.hidden)
             .background(NativeScrollIndicatorsDisabled())
             .frame(maxWidth: .infinity)
 
-            HStack(spacing: 6) {
-                HStack(spacing: 5) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    TextField("Search clips…", text: $state.query)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11))
-                        .focused($searchFocused)
-                        .frame(width: 115)
-                    if !state.query.isEmpty {
-                        Button { state.query = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
-
+            HStack(spacing: 5) {
                 compactTypeMenu
                 compactTimeMenu
                 compactAppMenu
@@ -427,6 +473,11 @@ struct ClipboardPanelView: View {
                 }
                 .buttonStyle(.plain)
                 .help(store.paused ? "Resume Clipboard History" : "Pause Clipboard History")
+                Text("\(entries.count)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .frame(minWidth: 18)
                 Button { controller.hide() } label: {
                     Image(systemName: "xmark")
                         .foregroundStyle(.secondary)
@@ -438,46 +489,53 @@ struct ClipboardPanelView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
-        .frame(height: 42)
+        .frame(height: 45)
+        .accessibilityIdentifier("PasteStyleClipboardToolbar")
     }
 
-    private func boardButton(_ name: String, icon: String? = nil, id: UUID?) -> some View {
+    private func boardButton(_ name: String, color: Color, icon: String?, id: UUID?) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.16)) {
                 state.board = id
                 state.selected.removeAll()
             }
         } label: {
-            HStack(spacing: 4.5) {
+            HStack(spacing: 6) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11))
+                        .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
+                } else {
+                    Circle().fill(color).frame(width: 9, height: 9)
                 }
                 Text(name)
                     .font(.system(size: 11.5, weight: state.board == id ? .semibold : .regular))
                     .lineLimit(1)
-                let count = store.entries.filter { entry in
-                    if let id { return entry.pinboardIDs.contains(id) }
-                    return true
-                }.count
-                Text("\(count)")
-                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                    .opacity(0.7)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(
-                state.board == id
-                    ? Color.accentColor.opacity(0.22)
-                    : Color.clear,
-                in: Capsule()
-            )
-            .overlay(
-                Capsule().stroke(state.board == id ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 0.8)
-            )
-            .foregroundStyle(state.board == id ? Color.accentColor : Color.secondary)
+            .padding(.horizontal, 11)
+            .frame(height: 27)
+            .background(state.board == id
+                        ? Color.primary.opacity(0.12)
+                        : Color.primary.opacity(0.025),
+                        in: Capsule())
+            .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
         }
         .buttonStyle(.plain)
+        .help(name)
+        .onDrop(of: [PasteClipboardDrag.entryType], isTargeted: nil) { providers in
+            guard let id, let provider = providers.first(where: {
+                $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.entryType)
+            }) else { return false }
+            provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.entryType) {
+                data, _ in
+                guard let data, let raw = String(data: data, encoding: .utf8),
+                      let entryID = UUID(uuidString: raw) else { return }
+                Task { @MainActor in
+                    store.pin(entryID: entryID, boardID: id)
+                }
+            }
+            return true
+        }
     }
 
     // MARK: - Pure Icon-Only Filter Menus (No text labels, ultra-compact)
@@ -564,51 +622,57 @@ struct ClipboardPanelView: View {
             .help(tooltip)
     }
 
-    // MARK: - Carousel Content
+    // MARK: - Resizable timeline / automatic compact mode
 
     private var carouselContent: some View {
-        Group {
-            if entries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "clipboard").font(.system(size: 32)).foregroundStyle(.secondary)
-                    Text(store.isLoading ? "Loading Clipboard…" : "No clipboard items").font(.headline)
-                    Text(state.query.isEmpty ? "Copy text, links, images or files to keep them here." : "Try another search or clear the filters.").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 14) {
-                            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                                card(entry, number: index + 1).id(entry.id)
-                            }
-                        }
-                        .padding(.horizontal, 18)
-                        .padding(.top, 6)
-                        .padding(.bottom, 6)
-                        .background(NativeScrollIndicatorsDisabled())
+        GeometryReader { geometry in
+            let compact = geometry.size.height < 180
+            Group {
+                if entries.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clipboard")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary)
+                        Text(store.isLoading ? "Loading Clipboard…" : "No clipboard items")
+                            .font(.headline)
+                        Text(state.query.isEmpty
+                             ? "Copy text, links, images or files to keep them here."
+                             : "Try another search or clear the filters.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .scrollIndicators(.hidden)
-                    .background(NativeScrollIndicatorsDisabled())
-                    .onChange(of: state.selected) { _, selected in
-                        if let first = entries.first(where: { selected.contains($0.id) }) {
-                            searchFocused = false // Card selection owns Backspace, not search text editing.
-                            proxy.scrollTo(first.id, anchor: .center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: compact ? 10 : 13) {
+                                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                                    ClipboardCardView(entry: entry, number: index + 1,
+                                                      compact: compact, store: store,
+                                                      state: state, controller: controller)
+                                        .id(entry.id)
+                                }
+                            }
+                            .padding(.horizontal, 17)
+                            .padding(.vertical, compact ? 7 : 9)
+                            .frame(minHeight: geometry.size.height, alignment: .center)
+                            .background(NativeScrollIndicatorsDisabled())
+                        }
+                        .scrollIndicators(.hidden)
+                        .background(NativeScrollIndicatorsDisabled())
+                        .onChange(of: state.selected) { _, selected in
+                            if let first = entries.first(where: { selected.contains($0.id) }) {
+                                searchFocused = false
+                                withAnimation(.easeOut(duration: 0.16)) {
+                                    proxy.scrollTo(first.id, anchor: .center)
+                                }
+                            }
                         }
                     }
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-    }
-
-    private func card(_ entry: ClipboardEntry, number: Int) -> some View {
-        ClipboardCardView(
-            entry: entry,
-            number: number,
-            store: store,
-            state: state,
-            controller: controller
-        )
     }
 
     private func symbol(_ kind: ClipboardEntry.Kind) -> String {
@@ -721,170 +785,194 @@ private extension Color {
 private struct ClipboardCardView: View {
     let entry: ClipboardEntry
     let number: Int
+    let compact: Bool
     @ObservedObject var store: ClipboardStore
     @ObservedObject var state: ClipboardPanelState
     let controller: ClipboardPanelController
 
+    @State private var isHovered = false
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
 
     private var isSelected: Bool { state.selected.contains(entry.id) }
 
-    var body: some View {
-        let bannerColor = AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName)
-        let appIcon = AppMetadataCache.shared.icon(for: entry.sourceBundleID)
+    private var accent: Color { PasteClipboardPalette.type(entry.kind) }
+    private var appIcon: NSImage? {
+        AppMetadataCache.shared.icon(for: entry.sourceBundleID)
+    }
 
+    var body: some View {
         VStack(spacing: 0) {
-            // MARK: Top App Banner (App Info + Integrated Inline Editable Title + App Icon)
-            VStack(alignment: .leading, spacing: 5) {
-                // Top row: App Name & Relative Time & App Icon
-                HStack(spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text(entry.sourceName ?? entry.kind.rawValue.capitalized)
-                            .font(.system(size: 11, weight: .bold))
-                            .lineLimit(1)
-                            .foregroundStyle(.white.opacity(0.95))
+            HStack(alignment: .top, spacing: 7) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(entry.kind.displayName)
+                            .font(.system(size: 11, weight: .semibold))
                         if !entry.pinboardIDs.isEmpty {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 8.5))
-                                .foregroundStyle(.white.opacity(0.85))
+                                .font(.system(size: 8))
                         }
                     }
                     Text(entry.lastCopiedAt, style: .relative)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.75))
-
-                    Spacer(minLength: 4)
-
-                    // Top-right App Icon
-                    if let appIcon {
-                        Image(nsImage: appIcon)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 20, height: 20)
-                            .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
-                            .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
-                    } else {
-                        Image(systemName: symbol(entry.kind))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.95))
-                            .frame(width: 20, height: 20)
-                            .background(Color.white.opacity(0.22), in: Circle())
-                    }
+                        .font(.system(size: 9))
+                        .opacity(0.87)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { copyByDoubleClick() }
+                Spacer(minLength: 4)
+                if let appIcon {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .shadow(color: .black.opacity(0.15), radius: 1)
+                        .help(entry.sourceName ?? "Source App")
+                } else {
+                    Image(systemName: symbol(entry.kind))
+                        .font(.system(size: 13))
+                        .frame(width: 24, height: 24)
+                        .background(.white.opacity(0.17),
+                                    in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, compact ? 9 : 11)
+            .padding(.vertical, 7)
+            .frame(height: compact ? 40 : 46, alignment: .top)
+            .background(accent)
 
-                // Rename is an explicit pencil action. Double-clicking the
-                // title copies the clip just like double-clicking its content.
-                HStack(spacing: 6) {
+            ZStack(alignment: .topLeading) {
+                Color(nsColor: .textBackgroundColor)
+                previewContent
+                    .padding(compact ? 7 : 9)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { copyByDoubleClick() }
+            .onTapGesture { selectCard() }
+            .onDrag { dragProvider(entry) }
+
+            if !compact {
+                HStack(spacing: 5) {
                     if isEditingTitle {
                         TextField("Title", text: $editedTitle)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 10.5))
                             .focused($titleFocused)
                             .onSubmit { commitTitle() }
                             .onExitCommand { cancelTitle() }
                             .onChange(of: titleFocused) { _, focused in
                                 if !focused && isEditingTitle { commitTitle() }
                             }
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 5))
-                        Button { commitTitle() } label: {
-                            Image(systemName: "checkmark.circle.fill")
-                        }
-                        .help("Save title")
-                        Button { cancelTitle() } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .help("Cancel editing")
                     } else {
                         Text(entry.title)
+                            .font(.system(size: 10.5, weight: .medium))
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { copyByDoubleClick() }
+                            .help(entry.title)
                         Button { beginTitleEdit() } label: {
                             Image(systemName: "pencil")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 9))
                                 .frame(width: 20, height: 20)
-                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .help("Rename clipboard item")
+                        .help("Rename Item")
+                        .opacity(isHovered || isSelected ? 1 : 0)
                     }
                 }
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(.white)
+                .padding(.horizontal, 9)
+                .frame(height: 29)
+                .background(Color(nsColor: .controlBackgroundColor))
             }
-            .padding(.horizontal, 9)
-            .padding(.top, 6)
-            .padding(.bottom, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(bannerColor)
-
-            // MARK: Clipboard Content Area (Fills entire remaining card height)
-            VStack(alignment: .leading, spacing: 0) {
-                if let data = entry.imageData, let image = NSImage(data: data) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                } else if entry.kind == .color, let hex = entry.text {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(Color(hex: hex) ?? .clear)
-                            .frame(width: 22, height: 22)
-                            .overlay(Circle().stroke(Color.primary.opacity(0.15), lineWidth: 1))
-                        Text(hex)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                } else {
-                    Text(entry.previewText)
-                        .font(.system(size: 11.5, weight: .regular))
-                        .lineSpacing(2)
-                        .lineLimit(6)
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.top, 6)
-            .padding(.bottom, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { copyByDoubleClick() }
-            .onTapGesture {
-                guard !isEditingTitle else { return }
-                if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty {
-                    state.selected = [entry.id]
-                } else if !state.selected.insert(entry.id).inserted {
-                    state.selected.remove(entry.id)
-                }
-            }
-            .onDrag { dragProvider(entry) }
         }
-        .frame(width: 215, height: 200)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.96))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(
-                    isSelected ? Color.accentColor : Color.primary.opacity(0.08),
-                    lineWidth: isSelected ? 2 : 0.8
-                )
-        )
-        .shadow(color: Color.black.opacity(isSelected ? 0.20 : 0.06), radius: isSelected ? 6 : 3, y: 1.5)
+        .frame(width: compact ? 158 : 196,
+               height: compact ? 137 : 201)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.10),
+                              lineWidth: isSelected ? 2.5 : 0.7)
+        }
+        .shadow(color: .black.opacity(isSelected ? 0.18 : 0.08),
+                radius: isSelected ? 8 : 4, y: 2)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onHover { isHovered = $0 }
         .contextMenu { entryMenu(entry) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(entry.title), \(entry.kind.rawValue)")
+        .accessibilityLabel("\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityIdentifier("PasteStyleClipCard_\(entry.id.uuidString)")
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let data = entry.imageData, let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if entry.kind == .file {
+            VStack(spacing: 7) {
+                Image(systemName: "doc.zipper")
+                    .font(.system(size: compact ? 25 : 36, weight: .ultraLight))
+                    .foregroundStyle(.secondary)
+                Text(entry.fileURLs.first?.lastPathComponent ?? entry.title)
+                    .font(.system(size: 10))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if entry.kind == .link {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Image(systemName: "link")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.green)
+                    Spacer()
+                }
+                Text(entry.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(2)
+                Text(URL(string: entry.text ?? "")?.host ?? entry.previewText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if entry.kind == .color, let hex = entry.text {
+            VStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(hex: hex) ?? Color.clear)
+                    .overlay(RoundedRectangle(cornerRadius: 9)
+                        .strokeBorder(Color.primary.opacity(0.1)))
+                    .frame(height: compact ? 42 : 70)
+                Text(hex)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            Text(entry.previewText)
+                .font(.system(size: compact ? 10 : 11, design: .monospaced))
+                .lineSpacing(2)
+                .lineLimit(compact ? 5 : 8)
+                .multilineTextAlignment(.leading)
+                .foregroundStyle(.primary.opacity(0.88))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func selectCard() {
+        guard !isEditingTitle else { return }
+        if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty {
+            state.selected = [entry.id]
+        } else if !state.selected.insert(entry.id).inserted {
+            state.selected.remove(entry.id)
+        }
     }
 
     private func copyByDoubleClick() {
@@ -949,9 +1037,24 @@ private struct ClipboardCardView: View {
     }
 
     private func dragProvider(_ entry: ClipboardEntry) -> NSItemProvider {
-        if let url = entry.fileURLs.first { return NSItemProvider(object: url as NSURL) }
-        if let data = entry.imageData, let image = NSImage(data: data) { return NSItemProvider(object: image) }
-        return NSItemProvider(object: (entry.text ?? entry.previewText) as NSString)
+        let provider: NSItemProvider
+        if let url = entry.fileURLs.first {
+            provider = NSItemProvider(object: url as NSURL)
+        } else if let data = entry.imageData, let image = NSImage(data: data) {
+            provider = NSItemProvider(object: image)
+        } else {
+            provider = NSItemProvider(object: (entry.text ?? entry.previewText) as NSString)
+        }
+        // Internal pinboard drags supplement the user's original clipboard
+        // representation rather than replacing file/image/text export.
+        provider.registerDataRepresentation(
+            forTypeIdentifier: PasteClipboardDrag.entryType,
+            visibility: .ownProcess
+        ) { completion in
+            completion(Data(entry.id.uuidString.utf8), nil)
+            return nil
+        }
+        return provider
     }
 }
 
@@ -961,12 +1064,32 @@ private struct ClipboardEditorSheet: View {
     let store: ClipboardStore
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    @State private var newBoardColor = "blue"
+    private let colors = ["red", "orange", "yellow", "green", "blue", "purple"]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(request.title).font(.title2.weight(.semibold))
-            if case .editEntry = request.operation {
+            if request.isTextEditor {
                 TextEditor(text: $text).font(.body).frame(minHeight: 180).border(Color.secondary.opacity(0.2))
             } else { TextField("Name", text: $text).textFieldStyle(.roundedBorder) }
+            if case .newBoard = request.operation {
+                HStack(spacing: 10) {
+                    Text("Color").font(.caption).foregroundStyle(.secondary)
+                    ForEach(colors, id: \.self) { name in
+                        Button { newBoardColor = name } label: {
+                            Circle().fill(PasteClipboardPalette.board(name))
+                                .frame(width: 20, height: 20)
+                                .padding(4)
+                                .overlay(Circle().strokeBorder(
+                                    newBoardColor == name ? Color.primary : Color.clear,
+                                    lineWidth: 2))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(name) Pinboard")
+                    }
+                }
+            }
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save(); dismiss() }.keyboardShortcut(.defaultAction).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -976,7 +1099,8 @@ private struct ClipboardEditorSheet: View {
         switch request.operation {
         case .renameEntry(let id): store.rename(entryID: id, title: text)
         case .editEntry(let id): store.editText(entryID: id, text: text)
-        case .newBoard: _ = store.createBoard(name: text, color: "blue")
+        case .newText: store.createTextItem(text)
+        case .newBoard: _ = store.createBoard(name: text, color: newBoardColor)
         case .renameBoard(let id): store.renameBoard(id: id, name: text)
         }
     }
@@ -1032,4 +1156,67 @@ private struct NativeScrollIndicatorsDisabled: NSViewRepresentable {
     func updateNSView(_ nsView: NativeScrollIndicatorsDisabledView, context: Context) {
         nsView.updateScrollView()
     }
+}
+
+
+// MARK: - Paste-like palette and height resizing, using original UI primitives.
+
+private enum PasteClipboardPalette {
+    static func type(_ kind: ClipboardEntry.Kind) -> Color {
+        switch kind {
+        case .text: return Color(red: 0.96, green: 0.28, blue: 0.32)
+        case .link: return Color(red: 0.22, green: 0.76, blue: 0.37)
+        case .image: return Color(red: 0.11, green: 0.60, blue: 0.95)
+        case .file: return Color(red: 0.17, green: 0.55, blue: 0.97)
+        case .color: return Color(red: 0.65, green: 0.33, blue: 0.88)
+        }
+    }
+    static func board(_ name: String) -> Color {
+        switch name.lowercased() {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        case "green": return .green
+        case "purple": return .purple
+        case "pink": return .pink
+        default: return .blue
+        }
+    }
+}
+
+private struct PastePanelResizeGrip: NSViewRepresentable {
+    func makeNSView(context: Context) -> ResizableGripView { ResizableGripView() }
+    func updateNSView(_ nsView: ResizableGripView, context: Context) {}
+
+    final class ResizableGripView: NSView {
+        private var initialY: CGFloat = 0
+        private var initialHeight: CGFloat = 0
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeUpDown)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            initialY = window.convertPoint(toScreen: event.locationInWindow).y
+            initialHeight = window.frame.height
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let window else { return }
+            let y = window.convertPoint(toScreen: event.locationInWindow).y
+            let maxHeight = max(175, (window.screen?.visibleFrame.maxY ?? 680)
+                                - window.frame.minY - 12)
+            let height = min(max(175, initialHeight + y - initialY), maxHeight)
+            var frame = window.frame
+            frame.size.height = height
+            window.setFrame(frame, display: true)
+            UserDefaults.standard.set(Double(height), forKey: "AOMClipboardPanelHeight")
+        }
+    }
+}
+
+
+private enum PasteClipboardDrag {
+    static let entryType = "com.kyw.allofmacos.clipboard-pinboard-entry"
 }
