@@ -22,6 +22,9 @@ struct RecordingExportEditor: View {
     @State private var backdrop: AOMStudioBackdrop = .none
     @State private var backdropPadding = 0.08
     @State private var motionBlurRadius = 0.0
+    @State private var editableCursorTrack: AOMCursorTrack?
+    @State private var includeSmoothedCursor = true
+    @State private var cursorSize = 1.0
     @State private var isExporting = false
     @State private var status = ""
     @State private var resultURL: URL?
@@ -164,6 +167,7 @@ struct RecordingExportEditor: View {
         .task {
             do {
                 previewPlayer = AVPlayer(url: source)
+                editableCursorTrack = AOMCursorTrack.read(for: source)
                 let seconds = try await RecordingExportService.duration(for: source)
                 duration = seconds
                 start = 0
@@ -244,7 +248,20 @@ struct RecordingExportEditor: View {
                 Text(String(format: "%.1f", motionBlurRadius))
                     .monospacedDigit().frame(width: 34)
             }
-            Text("Zoom keyframes are manually positioned. Cursor-following automation and camera-track editing are not yet supported.")
+            if let track = editableCursorTrack {
+                HStack(spacing: 12) {
+                    Toggle("Smooth editable cursor", isOn: $includeSmoothedCursor)
+                    Text("\(track.points.count) cursor samples").font(.caption2)
+                    Text("Cursor size")
+                    Slider(value: $cursorSize, in: 0.5...2, step: 0.1)
+                    Text(String(format: "%.1f×", cursorSize))
+                        .monospacedDigit().frame(width: 42)
+                }
+            } else {
+                Text("Editable cursor motion requires a new recording with Cursor Track enabled in Capture Settings.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Text("Zoom keyframes are manually positioned. Automatic scene analysis and camera-track editing are not available.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -260,7 +277,10 @@ struct RecordingExportEditor: View {
         let studio = AOMStudioSettings(keyframes: zoomKeyframes,
                                        backdrop: backdrop,
                                        paddingFraction: backdropPadding,
-                                       motionBlurRadius: motionBlurRadius)
+                                       motionBlurRadius: motionBlurRadius,
+                                       cursorPoints: includeSmoothedCursor ?
+                                           (editableCursorTrack?.points ?? []) : [],
+                                       cursorOverlaySize: cursorSize)
         Task {
             do {
                 let exported: URL
