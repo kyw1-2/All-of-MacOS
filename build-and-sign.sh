@@ -59,10 +59,10 @@ echo "    Install separately to avoid overwriting an existing application"
 skip_auto_release="$(printenv ALLOFMACOS_SKIP_AUTO_RELEASE || true)"
 if [ "$SIGN_ID" != "-" ] && [ "$skip_auto_release" != "1" ]; then
     echo "==> Packaging and publishing verified AOM Dev DMG"
-    "$PWD/scripts/publish-dmg.sh" --from-build
+    bash "$PWD/scripts/publish-dmg.sh" --from-build
     # One-time historical import. Failures leave the marker unset for retry.
     if [ ! -f "$PWD/build/.aom-historical-release-imported" ]; then
-        if "$PWD/scripts/publish-dmg.sh" --import-existing; then
+        if bash "$PWD/scripts/publish-dmg.sh" --import-existing; then
             touch "$PWD/build/.aom-historical-release-imported"
         else
             echo "WARNING: Historical DMG import incomplete; will retry on the next build." >&2
