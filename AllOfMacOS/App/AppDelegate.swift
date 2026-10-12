@@ -133,7 +133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 GestureHUD.shared.show(title: "No Image", detail: "Copy an image first.")
                 return
             }
-            let entry = CaptureHistoryEntry(image: cg, kind: .area)
+            let entry = CaptureHistoryEntry(image: cg, kind: .area, capturedAt: Date(), windowTitle: nil, fileURL: nil)
             AnnotationEditorController.shared.open(capture: entry, url: nil)
         case .addQuickAccessOverlay(let url):
             guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
