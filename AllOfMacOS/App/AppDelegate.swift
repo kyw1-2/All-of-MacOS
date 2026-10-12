@@ -1,5 +1,58 @@
 import AppKit
 import SwiftUI
+import ImageIO
+import UniformTypeIdentifiers
+
+/// AOM's own link namespace; never claims cleanshot:// or executes arbitrary URLs.
+/// A URL is a request to show native UI or perform an already user-initiated capture.
+/// Unsupported parameters fail closed rather than silently changing capture behavior.
+enum AOMCaptureDeepLink: Equatable {
+    case captureArea, captureFullscreen, captureWindow, previousArea
+    case scrollingCapture, selfTimer, recordScreen
+    case captureText(keepsLineBreaks: Bool)
+    case openHistory, restoreRecentlyClosed, openSettings
+    case pin, openAnnotate, openFromClipboard, addQuickAccessOverlay(URL)
+
+    static func parse(_ url: URL) -> Self? {
+        guard url.scheme?.lowercased() == "aom",
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.user == nil, parts.password == nil, parts.port == nil,
+              parts.fragment == nil, parts.path.isEmpty || parts.path == "/",
+              let command = parts.host?.lowercased() else { return nil }
+        let items = parts.queryItems ?? []
+        // Duplicate query keys, unknown flags and unsupported remote files are
+        // never interpreted as commands.
+        guard Set(items.map(\.name)).count == items.count else { return nil }
+        let params = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        func exact(_ keys: Set<String> = []) -> Bool { Set(params.keys) == keys }
+        switch command {
+        case "capture-area" where exact(): return .captureArea
+        case "capture-fullscreen" where exact(): return .captureFullscreen
+        case "capture-window" where exact(): return .captureWindow
+        case "capture-previous-area" where exact(): return .previousArea
+        case "scrolling-capture" where exact(): return .scrollingCapture
+        case "self-timer" where exact(): return .selfTimer
+        case "record-screen" where exact(): return .recordScreen
+        case "capture-text" where exact(): return .captureText(keepsLineBreaks: true)
+        case "capture-text" where exact(["linebreaks"]):
+            guard let value = params["linebreaks"], ["true", "false"].contains(value) else { return nil }
+            return .captureText(keepsLineBreaks: value == "true")
+        case "open-history" where exact(): return .openHistory
+        case "restore-recently-closed" where exact(): return .restoreRecentlyClosed
+        case "open-settings" where exact(): return .openSettings
+        case "pin" where exact(): return .pin
+        case "open-annotate" where exact(): return .openAnnotate
+        case "open-from-clipboard" where exact(): return .openFromClipboard
+        case "add-quick-access-overlay" where exact(["filepath"]):
+            guard let path = params["filepath"], path.hasPrefix("/"), !path.contains("\0"),
+                  ["png", "jpg", "jpeg", "heic", "tif", "tiff", "mp4"].contains(
+                    URL(fileURLWithPath: path).pathExtension.lowercased()) else { return nil }
+            return .addQuickAccessOverlay(URL(fileURLWithPath: path))
+        default: return nil
+        }
+    }
+}
+
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var statusItem: NSStatusItem?
@@ -42,6 +95,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow = window
                 window.delegate = self
             }
+        }
+    }
+
+    // Action names follow the public screenshot-workflow terminology; the
+    // namespace remains AOM-only to avoid hijacking another app's URLs.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard !PresetManager.isUIPreview else { return }
+        for link in urls.prefix(8) {
+            guard let command = AOMCaptureDeepLink.parse(link) else { continue }
+            Task { @MainActor [weak self] in
+                self?.handleCaptureDeepLink(command)
+            }
+        }
+    }
+
+    @MainActor
+    private func handleCaptureDeepLink(_ command: AOMCaptureDeepLink) {
+        switch command {
+        case .captureArea: CaptureCoordinator.shared.captureArea()
+        case .captureFullscreen: CaptureCoordinator.shared.captureFullscreen()
+        case .captureWindow: CaptureCoordinator.shared.captureWindowFromPicker()
+        case .previousArea: CaptureCoordinator.shared.capturePreviousArea()
+        case .scrollingCapture: CaptureCoordinator.shared.captureScrolling()
+        case .selfTimer: CaptureCoordinator.shared.captureWithSelfTimer()
+        case .recordScreen: ScreenRecordingService.shared.promptAndStartRecording()
+        case .captureText(let keepsLineBreaks):
+            CaptureCoordinator.shared.captureText(keepsLineBreaks: keepsLineBreaks)
+        case .openHistory: CaptureHistoryWindowController.shared.present()
+        case .restoreRecentlyClosed: CaptureCoordinator.shared.restoreRecentlyClosedOverlay()
+        case .openSettings: openSettings()
+        case .pin: CaptureActions.pinLastCapture()
+        case .openAnnotate: AnnotationEditorController.shared.openMostRecent()
+        case .openFromClipboard:
+            guard let image = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
+                  let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                GestureHUD.shared.show(title: "No Image", detail: "Copy an image first.")
+                return
+            }
+            let entry = CaptureHistoryEntry(image: cg, kind: .area)
+            AnnotationEditorController.shared.open(capture: entry, url: nil)
+        case .addQuickAccessOverlay(let url):
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true,
+                  (values.fileSize ?? Int.max) <= 200_000_000 else {
+                GestureHUD.shared.show(title: "Import Rejected", detail: "Select a regular media file up to 200 MB.")
+                return
+            }
+            CaptureCoordinator.shared.importQuickAccessFiles([url])
         }
     }
 
