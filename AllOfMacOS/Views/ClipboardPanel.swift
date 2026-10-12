@@ -407,6 +407,15 @@ struct ClipboardPanelView: View {
 
     // MARK: - Paste-inspired search, horizontal pinboards and filters
 
+    // Keep layout arithmetic outside the SwiftUI view-builder expression.
+    private func pinboardScrollWidth(containerWidth: CGFloat) -> CGFloat {
+        let boardsWidth = store.boards.reduce(CGFloat(170)) { total, board in
+            total + min(CGFloat(190), CGFloat(board.name.count * 8 + 35))
+        }
+        let available = containerWidth - (state.searchExpanded ? CGFloat(360) : CGFloat(160))
+        return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
+    }
+
     private var headerBar: some View {
         GeometryReader { geometry in
         HStack(spacing: 12) {
@@ -468,7 +477,7 @@ struct ClipboardPanelView: View {
                     .background(NativeScrollIndicatorsDisabled())
                 }
                 .scrollIndicators(.hidden)
-                .frame(width: max(90, min(560, geometry.size.width - (state.searchExpanded ? 360 : 160), CGFloat(170 + store.boards.reduce(0) { $0 + min(190, $1.name.count * 8 + 35) }))))
+                .frame(width: pinboardScrollWidth(containerWidth: geometry.size.width))
             }
             Spacer(minLength: 30)
         }
