@@ -634,6 +634,49 @@ private struct PasteStyleCaptureCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            captureHeader
+            captureThumbnail
+            Divider().opacity(0.25)
+            captureFooter
+        }
+        .padding(11)
+        .frame(width: 225, height: 215)
+        .background(
+            isSelected
+                ? Color.accentColor.opacity(0.16)
+                : (isHovered ? Color.primary.opacity(0.06) : Color(nsColor: .controlBackgroundColor).opacity(0.82)),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    isSelected
+                        ? Color.accentColor
+                        : (isHovered ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.10)),
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08), radius: isHovered ? 10 : 4, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
+        }
+        .onTapGesture(count: 2) {
+            if entry.kind == .videoRecording { onPreview() }
+            else { onAnnotate() }
+        }
+        .onTapGesture {
+            onSelect()
+        }
+        .onDrag {
+            dragItemProvider()
+        }
+        .contextMenu { captureContextMenu }
+    }
+
+    // Small computed subviews avoid the SwiftUI type-checker timeout on
+    // macOS CI without modifying layout, gestures or actions.
+    private var captureHeader: some View {
             // Card Header: Kind Badge + Shortcut Tag (1..9)
             HStack(spacing: 6) {
                 HStack(spacing: 4) {
@@ -657,6 +700,9 @@ private struct PasteStyleCaptureCard: View {
                 }
             }
 
+    }
+
+    private var captureThumbnail: some View {
             // Thumbnail Image Area
             ZStack(alignment: .bottom) {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -697,8 +743,9 @@ private struct PasteStyleCaptureCard: View {
                 }
             }
 
-            Divider().opacity(0.25)
+    }
 
+    private var captureFooter: some View {
             // Card Footer: Display Name & Relative Time
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.displayName)
@@ -719,75 +766,44 @@ private struct PasteStyleCaptureCard: View {
                         .foregroundStyle(.secondary.opacity(0.7))
                 }
             }
-        }
-        .padding(11)
-        .frame(width: 225, height: 215)
-        .background(
-            isSelected
-                ? Color.accentColor.opacity(0.16)
-                : (isHovered ? Color.primary.opacity(0.06) : Color(nsColor: .controlBackgroundColor).opacity(0.82)),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    isSelected
-                        ? Color.accentColor
-                        : (isHovered ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.10)),
-                    lineWidth: isSelected ? 2 : 1
-                )
-        )
-        .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08), radius: isHovered ? 10 : 4, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
-        }
-        .onTapGesture(count: 2) {
-            if entry.kind == .videoRecording { onPreview() }
-            else { onAnnotate() }
-        }
-        .onTapGesture {
-            onSelect()
-        }
-        .onDrag {
-            dragItemProvider()
-        }
-        .contextMenu {
-            if entry.kind == .videoRecording {
-                Button("Play Recording…", action: onPreview)
-                Button("Copy MP4 File", action: onCopy)
-                if let url = entry.playableVideoURL {
-                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                }
-            } else {
-                Button("Copy Image", action: onCopy)
-                Button("Annotate…", action: onAnnotate)
-                Button("Pin to Screen", action: onPin)
-                Button("Preview…", action: onPreview)
-                Button("Copy QR Code") {
-                    Task { @MainActor in
-                        do {
-                            let codes = try await TextRecognitionService.detectQRCodes(entry.image)
-                            guard let value = codes.first else {
-                                GestureHUD.shared.show(title: "No QR Code", detail: "No QR code was detected.")
-                                return
-                            }
-                            let board = NSPasteboard.general
-                            board.clearContents()
-                            if board.setString(value, forType: .string) {
-                                GestureHUD.shared.show(title: "QR Copied", detail: "QR content copied as text.")
-                            } else {
-                                GestureHUD.shared.show(title: "Copy Failed", detail: "Cannot copy QR text.")
-                            }
-                        } catch {
-                            GestureHUD.shared.show(title: "QR Detection Failed", detail: error.localizedDescription)
+    }
+
+    @ViewBuilder
+    private var captureContextMenu: some View {
+        if entry.kind == .videoRecording {
+            Button("Play Recording…", action: onPreview)
+            Button("Copy MP4 File", action: onCopy)
+            if let url = entry.playableVideoURL {
+                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+        } else {
+            Button("Copy Image", action: onCopy)
+            Button("Annotate…", action: onAnnotate)
+            Button("Pin to Screen", action: onPin)
+            Button("Preview…", action: onPreview)
+            Button("Copy QR Code") {
+                Task { @MainActor in
+                    do {
+                        let codes = try await TextRecognitionService.detectQRCodes(entry.image)
+                        guard let value = codes.first else {
+                            GestureHUD.shared.show(title: "No QR Code", detail: "No QR code was detected.")
+                            return
                         }
+                        let board = NSPasteboard.general
+                        board.clearContents()
+                        if board.setString(value, forType: .string) {
+                            GestureHUD.shared.show(title: "QR Copied", detail: "QR content copied as text.")
+                        } else {
+                            GestureHUD.shared.show(title: "Copy Failed", detail: "Cannot copy QR text.")
+                        }
+                    } catch {
+                        GestureHUD.shared.show(title: "QR Detection Failed", detail: error.localizedDescription)
                     }
                 }
             }
-            Divider()
-            Button("Remove from History", role: .destructive, action: onDelete)
         }
+        Divider()
+        Button("Remove from History", role: .destructive, action: onDelete)
     }
 
     private func cardButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void, tint: Color = .primary) -> some View {

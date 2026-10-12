@@ -295,7 +295,9 @@ struct ContactSwipeRecognizer {
         let duration = timestamp - sample.0
         guard duration > 0 else { return nil }
         let distance = horizontal ? dx - sample.1 : dy - sample.2
-        let velocity = CGFloat(abs(distance)) * 1000 / duration
+        // Keep the velocity calculation in Double until the final conversion.
+        // macOS 15 toolchains otherwise see ambiguous Float/CGFloat operators.
+        let velocity = CGFloat(Double(abs(distance)) * 1000.0 / duration)
         guard velocity >= minVelocity(gesture) else { return nil }
         fired = true
         return gesture
