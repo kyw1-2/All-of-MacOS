@@ -23,7 +23,12 @@ struct AOMCursorTrack: Codable {
               let data = try? Data(contentsOf: url),
               data.count <= 8_000_000,
               let track = try? JSONDecoder().decode(AOMCursorTrack.self, from: data),
-              track.points.count <= 60_000 else { return nil }
+              track.points.count <= 60_000,
+              track.points.allSatisfy({ $0.time.isFinite && $0.time >= 0 &&
+                  $0.x.isFinite && $0.y.isFinite &&
+                  (0...1).contains($0.x) && (0...1).contains($0.y) }),
+              zip(track.points, track.points.dropFirst()).allSatisfy({ $0.time <= $1.time })
+              else { return nil }
         return track
     }
 
@@ -44,29 +49,30 @@ struct AOMCursorTrack: Codable {
     /// valid input prevents a corrupt sidecar from producing extreme transforms.
     func smoothedPosition(at seconds: Double) -> CGPoint? {
         guard seconds.isFinite, !points.isEmpty else { return nil }
-        let input = points.filter {
-            $0.time.isFinite && $0.time >= 0 &&
-            $0.x.isFinite && $0.y.isFinite &&
-            (0...1).contains($0.x) && (0...1).contains($0.y)
-        }
-        guard !input.isEmpty else { return nil }
-        let sorted = input.sorted { $0.time < $1.time }
-        func filtered(_ index: Int) -> CGPoint {
-            let a = sorted[index]
-            let b = sorted[max(0, index - 1)]
-            let c = sorted[max(0, index - 2)]
+        // The recorder always appends in timestamp order, so binary search is
+        // O(log n) per encoded video frame rather than resorting all samples.
+        let count = points.count
+        guard count <= 60_000,
+              points[0].time.isFinite, points[0].time >= 0 else { return nil }
+        func filtered(_ i: Int) -> CGPoint {
+            let a = points[i], b = points[max(0, i - 1)], c = points[max(0, i - 2)]
             return CGPoint(x: 0.6 * a.x + 0.3 * b.x + 0.1 * c.x,
                            y: 0.6 * a.y + 0.3 * b.y + 0.1 * c.y)
         }
-        guard seconds > sorted[0].time else { return filtered(0) }
-        for i in 1..<sorted.count where seconds <= sorted[i].time {
-            let from = filtered(i - 1), to = filtered(i)
-            let span = sorted[i].time - sorted[i-1].time
-            guard span > 0 else { return to }
-            let t = CGFloat(min(1, max(0, (seconds - sorted[i-1].time) / span)))
-            return CGPoint(x: from.x + (to.x - from.x) * t,
-                           y: from.y + (to.y - from.y) * t)
+        if seconds <= points[0].time { return filtered(0) }
+        if seconds >= points[count - 1].time { return filtered(count - 1) }
+        var lo = 1, hi = count - 1
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2
+            if points[mid].time < seconds { lo = mid + 1 }
+            else { hi = mid }
         }
-        return filtered(sorted.count - 1)
+        let before = points[lo - 1], after = points[lo]
+        let span = after.time - before.time
+        guard span > 0, span.isFinite else { return filtered(lo) }
+        let t = CGFloat(min(1, max(0, (seconds - before.time) / span)))
+        let from = filtered(lo - 1), to = filtered(lo)
+        return CGPoint(x: from.x + (to.x - from.x) * t,
+                       y: from.y + (to.y - from.y) * t)
     }
 }
