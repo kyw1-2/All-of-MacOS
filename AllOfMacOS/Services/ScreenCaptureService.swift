@@ -500,7 +500,54 @@ enum CaptureNaming {
         return f
     }()
 
+    /// Independent, optional filename template modeled on the controls visible
+    /// in the official UI. Tokens are plain text, not executable expressions.
+    /// An empty template deliberately preserves AOM's legacy naming format.
+    static func templateName(_ pattern: String, date: Date, kind: String,
+                             windowTitle: String?, width: Int, height: Int,
+                             prefix: String = "Screenshot", utc: Bool = false) -> String {
+        guard !pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ""
+        }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = utc ? TimeZone(secondsFromGMT: 0)! : .current
+        f.dateFormat = "yyyy-MM-dd"
+        let dateString = f.string(from: date)
+        f.dateFormat = "HH.mm.ss"
+        let timeString = f.string(from: date)
+        let substitutions: [String: String] = [
+            "{prefix}": prefix, "{date}": dateString, "{time}": timeString,
+            "{datetime}": dateString + " at " + timeString,
+            "{kind}": kind, "{window}": windowTitle ?? "",
+            "{width}": String(width), "{height}": String(height)
+        ]
+        var name = pattern
+        // Replace tokens longest first so similarly-prefixed names remain stable.
+        for key in substitutions.keys.sorted(by: { $0.count > $1.count }) {
+            name = name.replacingOccurrences(of: key, with: substitutions[key]!)
+        }
+        // Strip file separators, invisible control characters and platform-
+        // sensitive punctuation; never allow a user template to escape the
+        // configured capture directory or create hidden "." paths.
+        let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_()."))
+        let sanitized = name.unicodeScalars.map { safe.contains($0) ? String($0) : "-" }.joined()
+        let normalized = sanitized.replacingOccurrences(of: "--", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .-_"))
+        return String(normalized.prefix(120))
+    }
+
     static func defaultName(for result: CaptureResult, prefix: String = "Screenshot") -> String {
+        let pattern = UserDefaults.standard.string(forKey: "AOMCaptureFilenameTemplate") ?? ""
+        if !pattern.isEmpty {
+            let named = templateName(pattern, date: result.capturedAt,
+                                     kind: result.kind.displayName,
+                                     windowTitle: result.windowTitle,
+                                     width: result.image.width, height: result.image.height,
+                                     prefix: prefix,
+                                     utc: UserDefaults.standard.bool(forKey: "AOMCaptureFilenameUTC"))
+            if !named.isEmpty { return named }
+        }
         let stamp = formatter.string(from: result.capturedAt)
         // A window capture is easier to find again if it says which window it was.
         if let title = result.windowTitle, !title.isEmpty {

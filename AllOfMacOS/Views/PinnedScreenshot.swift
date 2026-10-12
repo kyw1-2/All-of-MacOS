@@ -52,20 +52,25 @@ private final class PinnedWindow: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = CaptureSettings.pinnedShadow
+        // Pinned references should be draggable by their image background.
+        isMovableByWindowBackground = true
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         minSize = NSSize(width: 80, height: 60)
 
         let view = PinnedScreenshotView(
-            image: entry.thumbnail,
+            // Use the full capture so zooming does not enlarge a cached thumbnail.
+            image: NSImage(cgImage: entry.image, size: entry.pointSize),
             rounded: CaptureSettings.pinnedRoundedCorners,
             bordered: CaptureSettings.pinnedBorder,
             hasShadow: CaptureSettings.pinnedShadow,
             onCopy: { [weak self] in self?.copyImage() },
             onSave: { [weak self] in self?.save() },
             onAnnotate: { [weak self] in self?.annotate() },
-            onClose: { [weak self] in self?.closePin() }
+            onClose: { [weak self] in self?.closePin() },
+            onLockChange: { [weak self] locked in self?.setLocked(locked) },
+            onOpacityChange: { [weak self] opacity in self?.alphaValue = CGFloat(opacity) }
         )
         contentView = NSHostingView(rootView: view)
     }
@@ -80,6 +85,11 @@ private final class PinnedWindow: NSPanel {
                              y: visible.midY - frame.height / 2 - offset)
         setFrameOrigin(origin)
         orderFrontRegardless()
+    }
+
+    private func setLocked(_ locked: Bool) {
+        isMovableByWindowBackground = !locked
+        styleMask = locked ? styleMask.subtracting(.resizable) : styleMask.union(.resizable)
     }
 
     /// Unpins this window. Deliberately not named `close()`: `NSWindow` already
@@ -127,8 +137,18 @@ private struct PinnedScreenshotView: View {
     let onSave: () -> Void
     let onAnnotate: () -> Void
     let onClose: () -> Void
+    let onLockChange: (Bool) -> Void
+    let onOpacityChange: (Double) -> Void
 
     @State private var isHovering = false
+    @State private var isLocked = false
+    @State private var opacity = 1.0
+    @State private var showingOpacity = false
+
+    private func toggleLock() {
+        isLocked.toggle()
+        onLockChange(isLocked)
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -144,7 +164,8 @@ private struct PinnedScreenshotView: View {
                 }
                 .shadow(color: hasShadow ? .black.opacity(0.3) : .clear, radius: hasShadow ? 12 : 0, y: hasShadow ? 4 : 0)
 
-            if isHovering { controls }
+            // Keep the control host alive when a popover takes pointer focus.
+            if isHovering || showingOpacity { controls }
         }
         .padding(hasShadow ? 6 : 0)
         .contentShape(Rectangle())
@@ -156,6 +177,11 @@ private struct PinnedScreenshotView: View {
             Button("Save As…", action: onSave)
             Divider()
             Button("Annotate", action: onAnnotate)
+            Button(isLocked ? "Unlock Position" : "Lock Position", action: toggleLock)
+            Button("Reset Opacity") {
+                opacity = 1
+                onOpacityChange(1)
+            }
             Button("Unpin", role: .destructive, action: onClose)
         }
         .accessibilityElement()
@@ -171,6 +197,26 @@ private struct PinnedScreenshotView: View {
             iconButton("doc.on.doc", "Copy", onCopy)
             iconButton("square.and.arrow.down", "Save", onSave)
             iconButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
+            iconButton(isLocked ? "lock.fill" : "lock.open", isLocked ? "Unlock Position" : "Lock Position", toggleLock)
+            Button { showingOpacity.toggle() } label: {
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 11))
+                    .frame(width: 22, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Opacity")
+            .accessibilityLabel("Pinned image opacity")
+            .popover(isPresented: $showingOpacity) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Opacity").font(.headline)
+                    Slider(value: $opacity, in: 0.25...1)
+                        .onChange(of: opacity) { _, value in onOpacityChange(value) }
+                    Text("\(Int(opacity * 100))%")
+                        .monospacedDigit().foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(width: 210)
+            }
             iconButton("xmark", "Unpin", onClose)
         }
         .padding(4)

@@ -58,6 +58,10 @@ enum CaptureMenu {
             shortcut: shortcuts.shortcut(for: .scrollingCapture)
         ))
         menu.addItem(item(
+            "Capture Scrolling Horizontally", "arrow.left.and.right",
+            #selector(AppDelegate.captureScrollingHorizontalAction)
+        ))
+        menu.addItem(item(
             "Capture All Displays", "display.2",
             #selector(AppDelegate.captureAllDisplaysAction)
         ))

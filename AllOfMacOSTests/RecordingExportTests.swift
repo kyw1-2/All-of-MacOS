@@ -36,6 +36,30 @@ final class RecordingExportTests: XCTestCase {
                        originalSize, "Export operations must not modify their source")
     }
 
+    func testStudioMP4RenderIsNondestructiveAndHasValidVideo() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AOM-studio-render-test-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = directory.appendingPathComponent("input.mp4")
+        try await makeSyntheticVideo(at: original)
+        let originalBytes = try Data(contentsOf: original)
+        let rendered = try await RecordingExportService.render(
+            source: original, start: 0.2, end: 1.1,
+            muteAudio: true, quality: .compact)
+        XCTAssertNotEqual(rendered, original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rendered.path))
+        let duration = try await RecordingExportService.duration(for: rendered)
+        XCTAssertGreaterThan(duration, 0.5)
+        XCTAssertLessThan(duration, 1.3)
+        let asset = AVURLAsset(url: rendered)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(videoTracks.isEmpty)
+        XCTAssertTrue(audioTracks.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: original), originalBytes)
+    }
+
     func testRecordingSettingsValidateFrameRateQualityAudioAndClicks() {
         let savedFPS = CaptureSettings.recordingFPS
         let savedQuality = CaptureSettings.recordingQuality

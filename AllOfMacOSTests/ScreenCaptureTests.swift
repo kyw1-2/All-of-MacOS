@@ -120,6 +120,60 @@ final class ScreenCaptureTests: XCTestCase {
         }
     }
 
+    func testCaptureFilenameTemplatesAreSafeAndDeterministic() {
+        let epoch = Date(timeIntervalSince1970: 0)
+        let name = CaptureNaming.templateName(
+            "{prefix}-{date}-{time}-{kind}-{width}x{height}",
+            date: epoch, kind: "Area", windowTitle: nil,
+            width: 640, height: 480, utc: true)
+        XCTAssertEqual(name, "Screenshot-1970-01-01-00.00.00-Area-640x480")
+        let attemptedTraversal = CaptureNaming.templateName(
+            "../../{window}/../../{kind}", date: epoch, kind: "Window",
+            windowTitle: "/private/secret", width: 2, height: 2, utc: true)
+        XCTAssertFalse(attemptedTraversal.contains("/"))
+        XCTAssertFalse(attemptedTraversal.hasPrefix("."))
+        XCTAssertFalse(attemptedTraversal.contains(":"))
+        XCTAssertTrue(attemptedTraversal.count <= 120)
+        XCTAssertEqual(CaptureNaming.templateName(" .. / ", date: epoch, kind: "",
+                                                  windowTitle: nil, width: 1, height: 1,
+                                                  utc: true), "")
+    }
+
+    func testAOMCaptureDeepLinksAreExplicitAndCollisionSafe() {
+        func parsed(_ value: String) -> AOMCaptureDeepLink? {
+            guard let url = URL(string: value) else { return nil }
+            return AOMCaptureDeepLink.parse(url)
+        }
+        XCTAssertEqual(parsed("aom://capture-area"), .captureArea)
+        XCTAssertEqual(parsed("aom://capture-fullscreen"), .captureFullscreen)
+        XCTAssertEqual(parsed("aom://capture-window"), .captureWindow)
+        XCTAssertEqual(parsed("aom://capture-previous-area"), .previousArea)
+        XCTAssertEqual(parsed("aom://scrolling-capture"), .scrollingCapture)
+        XCTAssertEqual(parsed("aom://self-timer"), .selfTimer)
+        XCTAssertEqual(parsed("aom://record-screen"), .recordScreen)
+        XCTAssertEqual(parsed("aom://capture-text"), .captureText(keepsLineBreaks: true))
+        XCTAssertEqual(parsed("aom://capture-text?linebreaks=false"), .captureText(keepsLineBreaks: false))
+        XCTAssertEqual(parsed("aom://open-history"), .openHistory)
+        XCTAssertEqual(parsed("aom://open-settings"), .openSettings)
+        XCTAssertEqual(parsed("aom://restore-recently-closed"), .restoreRecentlyClosed)
+        XCTAssertEqual(parsed("aom://pin"), .pin)
+        XCTAssertEqual(parsed("aom://open-annotate"), .openAnnotate)
+        XCTAssertEqual(parsed("aom://open-from-clipboard"), .openFromClipboard)
+        XCTAssertEqual(parsed("aom://add-quick-access-overlay?filepath=%2Ftmp%2Fclip.png"),
+                       .addQuickAccessOverlay(URL(fileURLWithPath: "/tmp/clip.png")))
+
+        // Never claim or intercept the reference application's URLs.
+        XCTAssertNil(parsed("cleanshot://capture-area"))
+        XCTAssertNil(parsed("https://capture-area"))
+        XCTAssertNil(parsed("aom://capture-area?filepath=%2Fetc%2Fpasswd"))
+        XCTAssertNil(parsed("aom://capture-text?linebreaks=garbage"))
+        XCTAssertNil(parsed("aom://capture-text?linebreaks=true&linebreaks=false"))
+        XCTAssertNil(parsed("aom://add-quick-access-overlay?filepath=https%3A%2F%2Fexample.com%2Ftest.png"))
+        XCTAssertNil(parsed("aom://add-quick-access-overlay?filepath=%2Ftmp%2Ffile.exe"))
+        XCTAssertNil(parsed("aom://capture-area/extra"))
+        XCTAssertNil(parsed("aom://unknown-action"))
+    }
+
     // MARK: - Annotation document
 
     private func makeImage(width: Int, height: Int) -> CGImage {
@@ -309,6 +363,53 @@ final class ScreenCaptureTests: XCTestCase {
         }
     }
 
+    func testThreeFrameScrollStitchUsesLatestViewportInsteadOfAccumulatedHeight() throws {
+        let first = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 0))
+        let second = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 30))
+        let third = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 60))
+        let combined1 = try XCTUnwrap(ScrollingCaptureService.appendFrame(second, after: first, to: first))
+        XCTAssertEqual(combined1.shift, 30)
+        XCTAssertEqual(combined1.image.height, 230)
+        let combined2 = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            third, after: second, to: combined1.image))
+        XCTAssertEqual(combined2.shift, 30)
+        XCTAssertEqual(combined2.image.height, 260)
+        XCTAssertEqual(try XCTUnwrap(rowValues(combined2.image, row: 0)), 0)
+        XCTAssertEqual(try XCTUnwrap(rowValues(combined2.image, row: 259)), 3)
+    }
+
+    func testRetinaScrollMatchConvertsDownsampledShiftBackToSourcePixels() throws {
+        let first = try XCTUnwrap(makeGradientImage(width: 640, height: 400, offset: 0))
+        let second = try XCTUnwrap(makeGradientImage(width: 640, height: 400, offset: 80))
+        let delta = try XCTUnwrap(ScrollingCaptureService.verticalShift(from: first, to: second))
+        XCTAssertEqual(delta, 80, accuracy: 5,
+                       "The overlap detector must report source-image pixels, not 160px analysis pixels.")
+        let combined = try XCTUnwrap(ScrollingCaptureService.appendFrame(second, after: first, to: first))
+        XCTAssertEqual(combined.image.height, 400 + combined.shift)
+    }
+
+    func testHorizontalScrollStitchesThreeViewports() throws {
+        let first = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 0))
+        let next = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 12))
+        let third = try XCTUnwrap(makeColumnGradientImage(width: 80, height: 40, offset: 24))
+        let one = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            next, after: first, to: first, direction: .horizontal))
+        XCTAssertEqual(one.shift, 12)
+        XCTAssertEqual(one.image.width, 92)
+        let two = try XCTUnwrap(ScrollingCaptureService.appendFrame(
+            third, after: next, to: one.image, direction: .horizontal))
+        XCTAssertEqual(two.shift, 12)
+        XCTAssertEqual(two.image.width, 104)
+        XCTAssertEqual(two.image.height, 40)
+    }
+
+    func testHorizontalShiftAtRetinaWidthReportsSourcePixels() throws {
+        let current = try XCTUnwrap(makeColumnGradientImage(width: 640, height: 240, offset: 0))
+        let next = try XCTUnwrap(makeColumnGradientImage(width: 640, height: 240, offset: 80))
+        let shift = try XCTUnwrap(ScrollingCaptureService.horizontalShift(from: current, to: next))
+        XCTAssertEqual(shift, 80, accuracy: 5)
+    }
+
     func testVerticalShiftIsNilForUnrelatedFrames() throws {
         let a = try XCTUnwrap(makeGradientImage(width: 40, height: 200, offset: 0))
         // Noise rather than a shifted copy: no offset should match confidently.
@@ -384,6 +485,19 @@ final class ScreenCaptureTests: XCTestCase {
             let value = CGFloat((row + offset) % 256) / 255
             context.setFillColor(NSColor(srgbRed: value, green: value, blue: value, alpha: 1).cgColor)
             context.fill(CGRect(x: 0, y: height - 1 - row, width: width, height: 1))
+        }
+        return context.makeImage()
+    }
+
+    private func makeColumnGradientImage(width: Int, height: Int, offset: Int) -> CGImage? {
+        guard let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        for column in 0..<width {
+            let value = CGFloat((column + offset) % 256) / 255
+            context.setFillColor(NSColor(srgbRed: value, green: value, blue: value, alpha: 1).cgColor)
+            context.fill(CGRect(x: column, y: 0, width: 1, height: height))
         }
         return context.makeImage()
     }

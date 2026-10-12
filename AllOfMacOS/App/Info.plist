@@ -18,6 +18,15 @@
 	<string>All of MacOS</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.kyw.allofmacos.capture</string>
+			<key>CFBundleURLSchemes</key>
+			<array><string>aom</string></array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.7</string>
 	<key>CFBundleVersion</key>

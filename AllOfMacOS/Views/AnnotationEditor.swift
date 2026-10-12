@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import UniformTypeIdentifiers
 
 /// Opens the annotate editor for a capture.
@@ -79,6 +80,10 @@ private struct AnnotationEditorView: View {
     @State private var selectedID: UUID?
     @State private var counterValue = 1
     @State private var cropMode = false
+    @State private var showingResize = false
+    @State private var showingSmartHighlight = false
+    @State private var smartHighlightQuery = ""
+    @State private var smartHighlightBusy = false
     @State private var cropRect: CGRect?
     @State private var status: String?
 
@@ -124,13 +129,52 @@ private struct AnnotationEditorView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .ignoresSafeArea(.container, edges: .top)
+        .sheet(isPresented: $showingResize) {
+            AnnotationResizeDialog(pixelWidth: document.croppedImage.width,
+                                   pixelHeight: document.croppedImage.height) { width, height, flatten in
+                if document.resize(toPixelWidth: width, height: height,
+                                   scale: scale, flattenAnnotations: flatten) {
+                    selectedID = nil
+                    cropMode = false
+                    cropRect = nil
+                    tool = .move
+                    zoom = nil
+                    showingResize = false
+                    status = "Resized to \(width) × \(height) px."
+                } else {
+                    status = "Resize failed. Check dimensions and memory."
+                }
+            }
+        }
+        .sheet(isPresented: $showingSmartHighlight) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Highlight Matching Text").font(.headline)
+                Text("Finds text in this screenshot locally with Apple's Vision OCR and adds editable highlights.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Words to highlight", text: $smartHighlightQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Text to highlight")
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showingSmartHighlight = false }
+                        .disabled(smartHighlightBusy)
+                    Button("Highlight") { highlightMatchingText() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(smartHighlightBusy ||
+                            smartHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if smartHighlightBusy { ProgressView("Recognizing text…").controlSize(.small) }
+            }
+            .padding(20)
+            .frame(width: 430)
+        }
     }
 
     // MARK: - Toolbar
 
     private let mainTools: [AnnotationKind] = [
         .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow,
-        .text, .pixelate, .highlighter, .counter, .draw, .drawHighlight
+        .text, .pixelate, .blur, .redact, .highlighter, .counter, .draw, .drawHighlight
     ]
 
     private var toolbar: some View {
@@ -138,6 +182,35 @@ private struct AnnotationEditorView: View {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Crop (C)", active: cropMode) { selectTool(.crop) }
                 .keyboardShortcut("c", modifiers: [])
+            capsuleButton("arrow.up.left.and.arrow.down.right", help: "Resize Image…") {
+                showingResize = true
+            }
+            Menu {
+                Button("Rotate 90° Clockwise") {
+                    transformImage(.rotateClockwise)
+                }
+                Button("Rotate 90° Counterclockwise") {
+                    transformImage(.rotateCounterclockwise)
+                }
+                Divider()
+                Button("Flip Horizontally") {
+                    transformImage(.flipHorizontal)
+                }
+                Button("Flip Vertically") {
+                    transformImage(.flipVertical)
+                }
+            } label: {
+                Image(systemName: "rotate.right")
+                    .font(.system(size: 14))
+                    .frame(width: 32, height: 30)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Rotate / Flip (flattens existing annotations; Undo restores editable layers)")
+            .accessibilityLabel("Rotate and flip image")
+            capsuleButton("text.magnifyingglass", help: "Smart Highlight Text…") {
+                showingSmartHighlight = true
+            }
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
             capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
                 .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
@@ -213,6 +286,55 @@ private struct AnnotationEditorView: View {
                 .frame(width: 38, height: 32)
                 .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: Capsule())
         }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+    }
+
+    private func highlightMatchingText() {
+        let requested = smartHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requested.isEmpty, !smartHighlightBusy else { return }
+        let source = document.croppedImage
+        let backing = scale
+        smartHighlightBusy = true
+        Task {
+            do {
+                let boxes = try await Task.detached(priority: .userInitiated) {
+                    try AnnotationSmartTextMatcher.matches(in: source, query: requested, scale: backing)
+                }.value
+                if boxes.isEmpty {
+                    status = "No matching text found."
+                } else {
+                    let additions = boxes.map { rect in
+                        var markerStyle = AnnotationStyle()
+                        markerStyle.color = .yellow
+                        markerStyle.opacity = 0.75
+                        return AnnotationObject(kind: .highlighter, rect: rect, style: markerStyle)
+                    }
+                    document.addObjects(additions)
+                    selectedID = nil
+                    cropMode = false
+                    tool = .move
+                    status = "Highlighted \(boxes.count) matching text line(s). Undo removes all."
+                    showingSmartHighlight = false
+                }
+            } catch {
+                status = "Text recognition failed: \(error.localizedDescription)"
+            }
+            smartHighlightBusy = false
+        }
+    }
+
+    private func transformImage(_ operation: AnnotationDocument.ImageTransform) {
+        guard document.transformImage(operation, scale: scale) else {
+            status = "Could not transform the screenshot."
+            return
+        }
+        // Undo retains the source image and its editable layers.
+        selectedID = nil
+        draft = nil
+        cropMode = false
+        cropRect = nil
+        tool = .move
+        zoom = nil
+        status = "Image transformed. Undo to restore original editable annotations."
     }
 
     private func selectTool(_ kind: AnnotationKind) {
@@ -925,6 +1047,12 @@ private struct DraftOverlay: View {
                     path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
                     path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
                 }.stroke(color, style: StrokeStyle(lineWidth: object.style.thickness * fit, lineCap: .round))
+            case .blur:
+                Rectangle().path(in: rect).fill(Color.gray.opacity(0.25))
+                    .overlay(Rectangle().path(in: rect).stroke(Color.white.opacity(0.5), lineWidth: 1))
+            case .redact:
+                // Preview matches the opaque export: no semi-transparent "privacy" mask.
+                Rectangle().path(in: rect).fill(Color.black)
             case .pixelate:
                 Rectangle().path(in: rect).fill(Color.black.opacity(0.35))
                     .overlay(Rectangle().path(in: rect).stroke(Color.white.opacity(0.6), lineWidth: 1))
@@ -999,5 +1127,159 @@ private extension CGPoint {
 private extension CGSize {
     func scaled(by factor: CGFloat) -> CGSize {
         CGSize(width: width * factor, height: height * factor)
+    }
+}
+
+/// Dedicated pixel-dimension dialog, separate from crop selection. Mirrors the
+/// source NIB's *functional* controls with an independently implemented UI.
+private struct AnnotationResizeDialog: View {
+    @Environment(\.dismiss) private var dismiss
+    private let originalWidth: Int
+    private let originalHeight: Int
+    private let onResize: (Int, Int, Bool) -> Void
+
+    @State private var width: Int
+    @State private var height: Int
+    @State private var keepAspect = true
+    @State private var flattenAnnotations = false
+    @State private var usePercent = false
+
+    init(pixelWidth: Int, pixelHeight: Int,
+         onResize: @escaping (Int, Int, Bool) -> Void) {
+        self.originalWidth = pixelWidth
+        self.originalHeight = pixelHeight
+        self.onResize = onResize
+        _width = State(initialValue: pixelWidth)
+        _height = State(initialValue: pixelHeight)
+    }
+
+    // TextField accepts arbitrary signed integers. Clamp intermediate Double
+    // conversions to avoid traps on excessively large entered percentages.
+    private func safePixels(_ value: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        let maxConvertible = Double(Int.max / 4)
+        return Int(min(maxConvertible, max(-maxConvertible, value.rounded())))
+    }
+
+    private var widthEntry: Binding<Int> {
+        Binding(
+            get: {
+                usePercent ? safePixels(Double(width) / Double(max(1, originalWidth)) * 100) : width
+            },
+            set: { entered in
+                width = safePixels(usePercent
+                    ? Double(entered) * Double(originalWidth) / 100
+                    : Double(entered))
+                if keepAspect {
+                    height = safePixels(Double(width) * Double(originalHeight) /
+                                        Double(max(1, originalWidth)))
+                }
+            }
+        )
+    }
+
+    private var heightEntry: Binding<Int> {
+        Binding(
+            get: {
+                usePercent ? safePixels(Double(height) / Double(max(1, originalHeight)) * 100) : height
+            },
+            set: { entered in
+                height = safePixels(usePercent
+                    ? Double(entered) * Double(originalHeight) / 100
+                    : Double(entered))
+                if keepAspect {
+                    width = safePixels(Double(height) * Double(originalWidth) /
+                                       Double(max(1, originalHeight)))
+                }
+            }
+        )
+    }
+
+    private var dimensionsValid: Bool {
+        width > 0 && height > 0 && width <= 16384 && height <= 16384 &&
+            Int64(width) * Int64(height) <= 100_000_000
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Resize Image").font(.headline)
+            Text("Original size: \(originalWidth) × \(originalHeight) pixels")
+                .font(.caption).foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                TextField("Width", value: widthEntry, format: .number)
+                    .accessibilityLabel("Resize width")
+                Image(systemName: keepAspect ? "link" : "link.slash")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                TextField("Height", value: heightEntry, format: .number)
+                    .accessibilityLabel("Resize height")
+                Picker("Units", selection: $usePercent) {
+                    Text("pixels").tag(false)
+                    Text("percent").tag(true)
+                }
+                .labelsHidden().frame(width: 100)
+            }
+            .textFieldStyle(.roundedBorder)
+
+            Toggle("Preserve aspect ratio", isOn: $keepAspect)
+                .onChange(of: keepAspect) { _, enabled in
+                    if enabled {
+                        height = safePixels(Double(width) * Double(originalHeight) /
+                                            Double(max(1, originalWidth)))
+                    }
+                }
+
+            Toggle("Flatten Annotations", isOn: $flattenAnnotations)
+            Text("Flattening merges annotations into the image. Undo restores the original layers.")
+                .font(.caption).foregroundStyle(.secondary)
+
+            if !dimensionsValid {
+                Text("Dimensions must be 1–16,384 pixels and at most 100 million pixels total.")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Resize") { onResize(width, height, flattenAnnotations) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!dimensionsValid)
+            }
+        }
+        .padding(22)
+        .frame(width: 510)
+    }
+}
+
+/// Normalized Vision bounding-box conversion, independent from view dimensions.
+/// Vision uses bottom-left origin; annotation objects use top-left points.
+enum AnnotationSmartTextMatcher {
+    static func annotationRect(from box: CGRect, pixelSize: CGSize, scale: CGFloat) -> CGRect {
+        guard scale.isFinite, scale > 0 else { return .zero }
+        let pointWidth = pixelSize.width / scale
+        let pointHeight = pixelSize.height / scale
+        return CGRect(x: box.minX * pointWidth,
+                      y: (1 - box.maxY) * pointHeight,
+                      width: box.width * pointWidth,
+                      height: box.height * pointHeight)
+    }
+
+    static func matches(in image: CGImage, query: String, scale: CGFloat) throws -> [CGRect] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty, needle.count <= 100, scale.isFinite, scale > 0 else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: image)
+        try handler.perform([request])
+        let pixelSize = CGSize(width: image.width, height: image.height)
+        return (request.results ?? []).compactMap { observation -> CGRect? in
+            guard let candidate = observation.topCandidates(1).first,
+                  candidate.string.localizedCaseInsensitiveContains(needle) else { return nil }
+            let bounds = annotationRect(from: observation.boundingBox, pixelSize: pixelSize, scale: scale)
+            guard bounds.width > 0, bounds.height > 0 else { return nil }
+            return bounds
+        }.prefix(100).map { $0 }
     }
 }

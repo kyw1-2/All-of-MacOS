@@ -305,11 +305,16 @@ final class CaptureCoordinator {
 
     /// Scrolling capture: stitches a tall region by repeatedly scrolling and
     /// grabbing, then trims the overlap.
-    func captureScrolling() {
+    func captureScrolling() { captureScrolling(direction: .vertical) }
+
+    func captureScrollingHorizontal() { captureScrolling(direction: .horizontal) }
+
+    private func captureScrolling(direction: ScrollingCaptureService.Direction) {
         run(kind: .scrolling) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
-            let result = try await ScrollingCaptureService.shared.capture(area: rect)
+            let result = try await ScrollingCaptureService.shared.capture(area: rect,
+                                                                           direction: direction)
             return (result, CaptureKind.scrolling)
         }
     }

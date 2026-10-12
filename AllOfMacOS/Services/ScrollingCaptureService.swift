@@ -21,11 +21,13 @@ final class ScrollingCaptureService {
     static let shared = ScrollingCaptureService()
     private init() {}
 
+    enum Direction { case vertical, horizontal }
+
     /// Scrolls the window under `area` and returns the stitched result.
     ///
     /// - Parameter area: the fixed screen region to capture, in global top-left
     ///   origin points. The caller picks it with the normal selection overlay.
-    func capture(area: CGRect, maxFrames: Int = 60) async throws -> CaptureResult {
+    func capture(area: CGRect, maxFrames: Int = 60, direction: Direction = .vertical) async throws -> CaptureResult {
         guard area.height >= 40, area.width >= 40 else { throw CaptureError.areaTooSmall }
 
         var frames: [CGImage] = []
@@ -40,7 +42,7 @@ final class ScrollingCaptureService {
         var previousOffset: CGFloat?
 
         while frames.count < maxFrames {
-            let scrolled = try await scrollOnce(at: area)
+            let scrolled = try await scrollOnce(at: area, direction: direction)
             guard scrolled else { break }
 
             // Give the window time to finish its scroll animation before reading
@@ -52,14 +54,17 @@ final class ScrollingCaptureService {
 
             // A frame identical to the last one means the scroll did nothing —
             // the region is not scrollable, or it is already at the end.
-            if let offset = Self.verticalShift(from: current, to: next.image), offset != 0 {
+            if let result = Self.appendFrame(next.image,
+                                              after: frames.last ?? first.image,
+                                              to: current, direction: direction) {
+                let offset = CGFloat(result.shift)
                 // Scrolling backwards is the "started scrolling up" case. Stop
                 // rather than appending a band that duplicates earlier content.
                 if let previousOffset, offset.sign != previousOffset.sign {
                     break
                 }
                 previousOffset = offset
-                accumulator = Self.append(next.image, to: current, shift: Int(offset))
+                accumulator = result.image
                 frames.append(next.image)
                 consecutiveFailures = 0
             } else {
@@ -85,7 +90,7 @@ final class ScrollingCaptureService {
     /// A synthetic wheel event is used rather than an AppleScript keystroke
     /// because it works on any app without accessibility scripting permission and
     /// respects the app's own scroll physics.
-    private func scrollOnce(at area: CGRect) async throws -> Bool {
+    private func scrollOnce(at area: CGRect, direction: Direction) async throws -> Bool {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return false }
         // Aim at the centre of the captured region so the scroll lands on the
         // intended window even if the pointer has drifted.
@@ -98,7 +103,10 @@ final class ScrollingCaptureService {
         // A short, smooth scroll: a large jump would move past the overlap the
         // stitcher needs to find.
         guard let scroll = CGEvent(scrollWheelEvent2Source: source, units: .pixel,
-                                   wheelCount: 1, wheel1: -120, wheel2: 0, wheel3: 0) else { return false }
+                                   wheelCount: 2,
+                                   wheel1: direction == .vertical ? -120 : 0,
+                                   wheel2: direction == .horizontal ? -120 : 0,
+                                   wheel3: 0) else { return false }
         scroll.location = centre
         scroll.post(tap: .cghidEventTap)
         return true
@@ -149,7 +157,89 @@ final class ScrollingCaptureService {
             let score = meanAbsoluteDifference(probe, candidate)
             if score < refinedScore { refinedScore = score; refined = offset }
         }
-        return CGFloat(refined)
+        // The search runs on a downsampled bitmap. Convert the detected
+        // shift back to original pixels before extracting the appended band.
+        let samplingScale = min(1, CGFloat(160) / CGFloat(current.width))
+        return (CGFloat(refined) / samplingScale).rounded()
+    }
+
+    /// Rightward scrolling matches grayscale columns instead of rows. The
+    /// subsampled search result is converted back to native Retina pixels.
+    nonisolated static func horizontalShift(from current: CGImage, to next: CGImage) -> CGFloat? {
+        guard current.width == next.width, current.height == next.height,
+              let rowsA = grayscaleRows(current), let rowsB = grayscaleRows(next),
+              rowsA.count == rowsB.count, let width = rowsA.first?.count,
+              width > 12, rowsA.count > 8 else { return nil }
+        let columnsA = (0..<width).map { column in rowsA.map { $0[column] } }
+        let columnsB = (0..<width).map { column in rowsB.map { $0[column] } }
+        let probeWidth = min(width / 2, 200)
+        guard probeWidth > 4, width - probeWidth > 5 else { return nil }
+        let probe = Array(columnsB[0..<probeWidth])
+        var best = 0
+        var bestScore = Int.max
+        for offset in stride(from: 4, to: width - probeWidth, by: 2) {
+            let score = meanAbsoluteDifference(probe,
+                Array(columnsA[offset..<(offset + probeWidth)]))
+            if score < bestScore { bestScore = score; best = offset }
+        }
+        guard bestScore < 6 else { return nil }
+        var refined = best
+        for offset in max(4, best - 3)...min(width - probeWidth, best + 3)
+            where offset != best {
+            let score = meanAbsoluteDifference(probe,
+                Array(columnsA[offset..<(offset + probeWidth)]))
+            if score < bestScore { bestScore = score; refined = offset }
+        }
+        let samplingScale = min(1, CGFloat(160) / CGFloat(current.width))
+        return (CGFloat(refined) / samplingScale).rounded()
+    }
+
+    /// Extend the accumulated image while matching against the *most recent
+    /// original viewport*, not the ever-growing accumulator. Otherwise the
+    /// source and next-frame heights differ after frame two and stitching stops.
+    nonisolated static func appendFrame(_ next: CGImage, after previous: CGImage,
+                                        to accumulated: CGImage,
+                                        direction: Direction = .vertical) -> (image: CGImage, shift: Int)? {
+        let detected: CGFloat?
+        switch direction {
+        case .vertical: detected = verticalShift(from: previous, to: next)
+        case .horizontal: detected = horizontalShift(from: previous, to: next)
+        }
+        guard let detected, detected > 0 else { return nil }
+        let shift = Int(detected.rounded())
+        let edge = direction == .vertical ? next.height : next.width
+        guard shift > 0, shift < edge else { return nil }
+        let joined: CGImage?
+        switch direction {
+        case .vertical: joined = append(next, to: accumulated, shift: shift)
+        case .horizontal: joined = appendHorizontal(next, to: accumulated, shift: shift)
+        }
+        guard let joined else { return nil }
+        switch direction {
+        case .vertical:
+            guard joined.height == accumulated.height + shift else { return nil }
+        case .horizontal:
+            guard joined.width == accumulated.width + shift else { return nil }
+        }
+        return (joined, shift)
+    }
+
+    nonisolated static func appendHorizontal(_ next: CGImage, to current: CGImage,
+                                             shift: Int) -> CGImage? {
+        guard shift > 0, shift < next.width, current.height == next.height else { return nil }
+        let width = current.width + shift
+        let height = current.height
+        guard width <= 16384, height <= 16384,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        context.draw(current, in: CGRect(x: 0, y: 0, width: current.width, height: height))
+        guard let band = next.cropping(to: CGRect(x: next.width - shift,
+                                                   y: 0, width: shift, height: height)) else { return nil }
+        context.draw(band, in: CGRect(x: current.width, y: 0, width: shift, height: height))
+        return context.makeImage()
     }
 
     /// Appends the non-overlapping part of `next` below `current`.
@@ -160,6 +250,9 @@ final class ScrollingCaptureService {
         // not the remaining height, which is what an inverted reading would give.
         let added = shift
         let width = current.width
+        let newHeight = current.height + added
+        guard newHeight <= 16384, width <= 16384,
+              Int64(width) * Int64(newHeight) <= 100_000_000 else { return nil }
         guard let context = CGContext(data: nil, width: width, height: current.height + added,
                                       bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(),

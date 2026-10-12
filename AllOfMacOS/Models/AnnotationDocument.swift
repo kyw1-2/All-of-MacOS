@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import CoreImage
 
 /// One drawn object on the annotate canvas.
 ///
@@ -55,6 +56,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     case draw
     case drawHighlight
     case pixelate
+    case blur
+    case redact
     case spotlight
     case counter
     case cursor
@@ -75,6 +78,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "Draw"
         case .drawHighlight: return "Highlight Draw"
         case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
+        case .redact: return "Redact (Solid)"
         case .spotlight: return "Spotlight"
         case .counter: return "Counter"
         case .cursor: return "Cursor"
@@ -95,6 +100,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "scribble"
         case .drawHighlight: return "scribble.variable"
         case .pixelate: return "squareshape.dotted.split.2x2"
+        case .blur: return "drop.halffull"
+        case .redact: return "rectangle.fill"
         case .spotlight: return "flashlight.on.fill"
         case .counter: return "1.circle"
         case .cursor: return "cursorarrow"
@@ -105,7 +112,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     var isShape: Bool {
         switch self {
         case .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-             .pixelate, .spotlight, .draw, .drawHighlight, .highlighter:
+             .pixelate, .blur, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
             return true
         case .move, .crop, .text, .counter, .cursor:
             return false
@@ -118,7 +125,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     /// The tools shown in the toolbar, in order.
     static var toolbarOrder: [AnnotationKind] {
         [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-         .text, .highlighter, .draw, .drawHighlight, .pixelate, .spotlight, .counter, .cursor]
+         .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .redact, .spotlight, .counter, .cursor]
     }
 }
 
@@ -202,6 +209,8 @@ struct AnnotationDocument {
     private var redoCrops: [CGRect?] = []
     private var undoImages: [CGImage] = []
     private var redoImages: [CGImage] = []
+    private var undoBackgrounds: [AnnotationBackground] = []
+    private var redoBackgrounds: [AnnotationBackground] = []
     private let undoLimit = 50
 
     init(baseImage: CGImage) {
@@ -233,20 +242,30 @@ struct AnnotationDocument {
         undoStack.append(objects)
         undoCrops.append(cropRect)
         undoImages.append(baseImage)
+        undoBackgrounds.append(background)
         if undoStack.count > undoLimit {
             undoStack.removeFirst()
             undoCrops.removeFirst()
             undoImages.removeFirst()
+            undoBackgrounds.removeFirst()
         }
         // A new edit invalidates the redo branch, which is what every editor does.
         redoStack.removeAll()
         redoCrops.removeAll()
         redoImages.removeAll()
+        redoBackgrounds.removeAll()
     }
 
     mutating func add(_ object: AnnotationObject) {
         beginChange()
         objects.append(object)
+    }
+
+    /// One undoable operation for multiple OCR-matched text highlight boxes.
+    mutating func addObjects(_ additions: [AnnotationObject]) {
+        guard !additions.isEmpty else { return }
+        beginChange()
+        objects.append(contentsOf: additions)
     }
 
     mutating func update(_ object: AnnotationObject) {
@@ -298,6 +317,127 @@ struct AnnotationDocument {
         return true
     }
 
+    /// Changes the image's physical pixel dimensions. Unlike a crop, resize
+    /// resamples the bitmap, preserving editable annotations unless flattening
+    /// is explicitly requested. All source validation happens before beginChange,
+    /// so an invalid or failed resize leaves the document and undo history intact.
+    @discardableResult
+    mutating func resize(toPixelWidth width: Int, height: Int,
+                         scale: CGFloat, flattenAnnotations: Bool = false) -> Bool {
+        guard scale.isFinite, scale > 0,
+              width > 0, height > 0, width <= 16384, height <= 16384,
+              Int64(width) * Int64(height) <= 100_000_000 else { return false }
+
+        let source: CGImage
+        if flattenAnnotations {
+            guard let rendered = render(scale: scale) else { return false }
+            source = rendered
+        } else {
+            source = croppedImage
+        }
+        guard source.width > 0, source.height > 0,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let resampled = context.makeImage() else { return false }
+
+        let horizontal = CGFloat(width) / CGFloat(source.width)
+        let vertical = CGFloat(height) / CGFloat(source.height)
+        beginChange()
+        baseImage = resampled
+        cropRect = nil
+        if flattenAnnotations {
+            objects.removeAll()
+            background = AnnotationBackground()
+        } else {
+            objects = objects.map { original in
+                var updated = original
+                updated.rect = CGRect(x: original.rect.minX * horizontal,
+                                      y: original.rect.minY * vertical,
+                                      width: original.rect.width * horizontal,
+                                      height: original.rect.height * vertical)
+                // Freehand points are absolute canvas positions, not local
+                // offsets. The bounding rect and stroke path must both move.
+                updated.points = original.points.map {
+                    CGPoint(x: $0.x * horizontal, y: $0.y * vertical)
+                }
+                let thicknessFactor = min(horizontal, vertical)
+                updated.style.thickness *= thicknessFactor
+                updated.style.fontSize *= thicknessFactor
+                updated.style.pixelBlockSize *= thicknessFactor
+                updated.style.cornerRadius *= thicknessFactor
+                return updated
+            }
+        }
+        return true
+    }
+
+    enum ImageTransform: CaseIterable {
+        case rotateClockwise
+        case rotateCounterclockwise
+        case flipHorizontal
+        case flipVertical
+    }
+
+    /// Pixel-accurate rotation and flipping. Rendering the editable layers
+    /// first preserves existing arrows, glyphs and freehand geometry without
+    /// silently rotating their selection handles incorrectly. Undo/redo saves
+    /// the original *editable* layers and the background.
+    @discardableResult
+    mutating func transformImage(_ operation: ImageTransform, scale: CGFloat) -> Bool {
+        guard scale.isFinite, scale > 0 else { return false }
+        let needsFlattening = !objects.isEmpty || background.isExpanded
+        guard let source = needsFlattening ? render(scale: scale) : Optional(croppedImage) else {
+            return false
+        }
+        let sourceWidth = source.width
+        let sourceHeight = source.height
+        guard sourceWidth > 0, sourceHeight > 0 else { return false }
+        let rotating = operation == .rotateClockwise || operation == .rotateCounterclockwise
+        let width = rotating ? sourceHeight : sourceWidth
+        let height = rotating ? sourceWidth : sourceHeight
+        guard width <= 16384, height <= 16384,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+
+        switch operation {
+        case .rotateClockwise:
+            context.translateBy(x: 0, y: CGFloat(sourceWidth))
+            context.rotate(by: -.pi / 2)
+        case .rotateCounterclockwise:
+            context.translateBy(x: CGFloat(sourceHeight), y: 0)
+            context.rotate(by: .pi / 2)
+        case .flipHorizontal:
+            context.translateBy(x: CGFloat(sourceWidth), y: 0)
+            context.scaleBy(x: -1, y: 1)
+        case .flipVertical:
+            context.translateBy(x: 0, y: CGFloat(sourceHeight))
+            context.scaleBy(x: 1, y: -1)
+        }
+        context.interpolationQuality = .none
+        context.draw(source, in: CGRect(x: 0, y: 0,
+                                        width: sourceWidth, height: sourceHeight))
+        guard let transformed = context.makeImage() else { return false }
+        beginChange()
+        baseImage = transformed
+        cropRect = nil
+        if needsFlattening {
+            objects.removeAll()
+            background = AnnotationBackground()
+        }
+        return true
+    }
+
     /// Moves an object up or down the z-order.
     mutating func reorder(_ id: UUID, offset: Int) {
         guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
@@ -312,30 +452,38 @@ struct AnnotationDocument {
 
     mutating func undo() {
         guard let previous = undoStack.last, let previousCrop = undoCrops.last,
-              let previousImage = undoImages.last else { return }
+              let previousImage = undoImages.last,
+              let previousBackground = undoBackgrounds.last else { return }
         undoStack.removeLast()
         undoCrops.removeLast()
         undoImages.removeLast()
+        undoBackgrounds.removeLast()
         redoStack.append(objects)
         redoCrops.append(cropRect)
         redoImages.append(baseImage)
+        redoBackgrounds.append(background)
         objects = previous
         cropRect = previousCrop
         baseImage = previousImage
+        background = previousBackground
     }
 
     mutating func redo() {
         guard let next = redoStack.last, let nextCrop = redoCrops.last,
-              let nextImage = redoImages.last else { return }
+              let nextImage = redoImages.last,
+              let nextBackground = redoBackgrounds.last else { return }
         redoStack.removeLast()
         redoCrops.removeLast()
         redoImages.removeLast()
+        redoBackgrounds.removeLast()
         undoStack.append(objects)
         undoCrops.append(cropRect)
         undoImages.append(baseImage)
+        undoBackgrounds.append(background)
         objects = next
         cropRect = nextCrop
         baseImage = nextImage
+        background = nextBackground
     }
 
     // MARK: - Rendering
@@ -445,6 +593,16 @@ struct AnnotationDocument {
             context.fill(rect)
         case .draw, .drawHighlight:
             drawFreehand(object, in: context, imageRect: imageRect, color: color, scale: scale)
+        case .redact:
+            // Flattened opaque replacement. Never depend on the annotation's
+            // alpha or editable layer color for privacy-sensitive redaction.
+            context.setBlendMode(.normal)
+            context.setAlpha(1)
+            context.setFillColor(NSColor.black.cgColor)
+            context.fill(rect.intersection(imageRect))
+        case .blur:
+            drawGaussianBlur(in: context, rect: rect, scale: scale,
+                             baseImage: baseImage, imageRect: imageRect)
         case .pixelate:
             drawPixelate(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
                          blockSize: object.style.pixelBlockSize)
@@ -591,6 +749,41 @@ struct AnnotationDocument {
         }
         context.strokePath()
     }
+
+    /// Non-destructive soft blur. Render a bounded slice of the underlying
+    /// capture and composite it only inside the selected rectangle. Unlike
+    /// .redact this is visual obfuscation, NOT irreversible privacy removal.
+    private func drawGaussianBlur(in context: CGContext, rect: CGRect,
+                                  scale: CGFloat, baseImage: CGImage,
+                                  imageRect: CGRect) {
+        guard scale.isFinite, scale > 0, rect.width > 1, rect.height > 1 else { return }
+        let clipped = rect.intersection(imageRect)
+        guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
+
+        // Editor coordinates are top-left; CIImage uses a bottom-left extent.
+        let inputX = (clipped.minX - imageRect.minX) / scale
+        let inputY = (clipped.minY - imageRect.minY) / scale
+        let inputRect = CGRect(x: inputX, y: inputY,
+                               width: clipped.width / scale,
+                               height: clipped.height / scale).integral
+        let source = CIImage(cgImage: baseImage)
+        guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
+        let radius = max(3, 8 * scale)
+        filter.setValue(source.clampedToExtent(), forKey: kCIInputImageKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = filter.outputImage else { return }
+        let within = inputRect.intersection(source.extent)
+        guard !within.isNull, within.width > 0, within.height > 0,
+              let blurred = Self.blurCIContext.createCGImage(output, from: within) else { return }
+        context.saveGState()
+        context.setAlpha(1)
+        context.setBlendMode(.normal)
+        context.clip(to: clipped)
+        context.draw(blurred, in: clipped)
+        context.restoreGState()
+    }
+
+    private static let blurCIContext = CIContext(options: [.cacheIntermediates: false])
 
     /// Pixelates by drawing the source region scaled down and back up with no
     /// interpolation, which is both faster and blockier than a real mosaic filter.

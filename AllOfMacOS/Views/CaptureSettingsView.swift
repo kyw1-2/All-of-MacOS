@@ -35,6 +35,8 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMPinnedShadow") private var pinnedShadow = true
     @AppStorage("AOMPinnedCorners") private var pinnedCorners = true
     @AppStorage("AOMPinnedBorder") private var pinnedBorder = false
+    @AppStorage("AOMCaptureFilenameTemplate") private var filenameTemplate = ""
+    @AppStorage("AOMCaptureFilenameUTC") private var filenameUTC = false
 
     @State private var saveDirectory: String = CaptureSettings.saveDirectory.path
     @State private var permissionGranted = ScreenCaptureService.hasPermission
@@ -51,6 +53,7 @@ struct CaptureSettingsView: View {
                 captureGroup
                 recordingGroup
                 afterCaptureGroup
+                namingGroup
                 overlayGroup
                 textRecognitionGroup
                 pinnedGroup
@@ -225,6 +228,48 @@ struct CaptureSettingsView: View {
                 .pickerStyle(.menu).labelsHidden().frame(width: 90)
             }
         }
+    }
+
+    // MARK: - File Naming
+
+    private var namingGroup: some View {
+        AppleSettingsGroup("File Naming") {
+            AppleSettingsRow(icon: "character.cursor.ibeam", iconColor: .blue,
+                             title: "Capture File Name",
+                             subtitle: "Leave blank to use the current Screenshot timestamp format",
+                             showDivider: true) {
+                TextField("Name template", text: $filenameTemplate)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .accessibilityLabel("Capture filename template")
+            }
+            AppleSettingsRow(icon: "globe", iconColor: .indigo,
+                             title: "Use UTC",
+                             subtitle: "Apply UTC instead of your Mac's local time to filename tokens",
+                             showDivider: true) {
+                Toggle("", isOn: $filenameUTC)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tokens: {prefix} {date} {time} {datetime} {kind} {window} {width} {height}")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Preview: " + namingPreview)
+                    .font(.caption.monospaced())
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+        }
+    }
+
+    private var namingPreview: String {
+        let result = CaptureNaming.templateName(
+            filenameTemplate, date: Date(), kind: "Area",
+            windowTitle: nil, width: 1280, height: 720, utc: filenameUTC)
+        return result.isEmpty ? "Screenshot yyyy-MM-dd at HH.mm.ss" : result
     }
 
     // MARK: - Overlay
