@@ -715,7 +715,7 @@ struct AnnotationDocument {
         context.restoreGState()
     }
 
-    private static let blurCIContext = CIContext(options: [.useSoftwareRenderer: true])
+    private static let blurCIContext = CIContext(options: [.cacheIntermediates: false])
 
     /// Pixelates by drawing the source region scaled down and back up with no
     /// interpolation, which is both faster and blockier than a real mosaic filter.
