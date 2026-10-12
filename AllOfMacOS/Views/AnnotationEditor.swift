@@ -148,7 +148,7 @@ private struct AnnotationEditorView: View {
 
     private let mainTools: [AnnotationKind] = [
         .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow,
-        .text, .pixelate, .redact, .highlighter, .counter, .draw, .drawHighlight
+        .text, .pixelate, .blur, .redact, .highlighter, .counter, .draw, .drawHighlight
     ]
 
     private var toolbar: some View {
@@ -946,6 +946,9 @@ private struct DraftOverlay: View {
                     path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
                     path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
                 }.stroke(color, style: StrokeStyle(lineWidth: object.style.thickness * fit, lineCap: .round))
+            case .blur:
+                Rectangle().path(in: rect).fill(Color.gray.opacity(0.25))
+                    .overlay(Rectangle().path(in: rect).stroke(Color.white.opacity(0.5), lineWidth: 1))
             case .redact:
                 // Preview matches the opaque export: no semi-transparent "privacy" mask.
                 Rectangle().path(in: rect).fill(Color.black)
