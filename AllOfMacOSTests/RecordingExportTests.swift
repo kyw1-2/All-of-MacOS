@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CoreImage
 import CoreVideo
 import ImageIO
 import XCTest
@@ -58,6 +59,59 @@ final class RecordingExportTests: XCTestCase {
         XCTAssertFalse(videoTracks.isEmpty)
         XCTAssertTrue(audioTracks.isEmpty)
         XCTAssertEqual(try Data(contentsOf: original), originalBytes)
+    }
+
+    func testStudioZoomKeyframeSamplingAndFrameComposition() throws {
+        let points = [
+            AOMStudioZoomKeyframe(time: 2, magnification: 2, focusX: 0.2, focusY: 0.8),
+            AOMStudioZoomKeyframe(time: 4, magnification: 1.5, focusX: 0.5, focusY: 0.5)
+        ]
+        let atStart = AOMStudioRenderer.sampledFocus(at: 0, keyframes: points)
+        XCTAssertEqual(atStart.magnification, 1, accuracy: 0.001)
+        let atPoint = AOMStudioRenderer.sampledFocus(at: 2, keyframes: points)
+        XCTAssertEqual(atPoint.magnification, 2, accuracy: 0.001)
+        XCTAssertEqual(atPoint.x, 0.2, accuracy: 0.001)
+        let middle = AOMStudioRenderer.sampledFocus(at: 1, keyframes: points)
+        XCTAssertEqual(middle.magnification, 1.5, accuracy: 0.001)
+        let end = AOMStudioRenderer.sampledFocus(at: 5, keyframes: points)
+        XCTAssertEqual(end.magnification, 1.5, accuracy: 0.001)
+
+        let bounds = CGRect(x: 0, y: 0, width: 80, height: 60)
+        let input = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: bounds)
+        let style = AOMStudioSettings(keyframes: points, backdrop: .midnight,
+                                      paddingFraction: 0.15, motionBlurRadius: 0)
+        let result = AOMStudioRenderer.frame(input, time: 2, settings: style)
+        XCTAssertEqual(result.extent, bounds)
+        let renderer = CIContext(options: [.useSoftwareRenderer: true])
+        guard let bitmap = renderer.createCGImage(result, from: bounds) else {
+            return XCTFail("Studio composition created no image")
+        }
+        let rep = NSBitmapImageRep(cgImage: bitmap)
+        let corner = try XCTUnwrap(rep.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB))
+        XCTAssertLessThan(corner.redComponent, 0.2, "outside video should use background")
+        let center = try XCTUnwrap(rep.colorAt(x: 40, y: 30)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(center.redComponent, 0.6)
+    }
+
+    func testStudioZoomRenderProducesPlayableNonDestructiveMP4() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AOM-studio-zoom-test-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let original = folder.appendingPathComponent("sample.mp4")
+        try await makeSyntheticVideo(at: original)
+        let before = try Data(contentsOf: original)
+        let studio = AOMStudioSettings(
+            keyframes: [AOMStudioZoomKeyframe(time: 0.45, magnification: 1.6)],
+            backdrop: .graphite, paddingFraction: 0.1, motionBlurRadius: 0)
+        let output = try await RecordingExportService.render(
+            source: original, start: 0.1, end: 1.3,
+            muteAudio: true, quality: .compact, studio: studio)
+        XCTAssertNotEqual(output, original)
+        XCTAssertGreaterThan(try await RecordingExportService.duration(for: output), 0.8)
+        XCTAssertEqual(try Data(contentsOf: original), before)
+        let tracks = try await AVURLAsset(url: output).loadTracks(withMediaType: .video)
+        XCTAssertFalse(tracks.isEmpty)
     }
 
     func testRecordingSettingsValidateFrameRateQualityAudioAndClicks() {
