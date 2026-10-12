@@ -40,7 +40,8 @@ publish_one() (
   elif printf '%s\n' "$details" | grep -Fx 'Signature=adhoc' >/dev/null; then
     signing="ad-hoc"
   else
-    die "Unrecognized code-signing identity: $dmg"
+    echo "SKIPPED: Historical DMG has a different signing identity: $dmg" >&2
+    exit 10
   fi
   helper="$app/Contents/XPCServices/ScriptRunner.xpc"
   [ -d "$helper" ] || die "Missing XPC helper: $dmg"
@@ -110,20 +111,28 @@ case "$mode" in
     ;;
   --import-existing)
     found=0
+    skipped=0
     failed=0
     for root in "$HOME/Downloads" "$HOME/Desktop" "$HOME/Documents" "$ROOT/build"; do
       [ -d "$root" ] || continue
       while IFS= read -r -d '' dmg; do
         found=$((found + 1))
-        if ! publish_one "$dmg"; then
-          failed=$((failed + 1))
-          echo "WARNING: Skipped invalid or unpublished AOM DMG: $dmg" >&2
+        if publish_one "$dmg"; then
+          :
+        else
+          result=$?
+          if [ "$result" -eq 10 ]; then
+            skipped=$((skipped + 1))
+          else
+            failed=$((failed + 1))
+            echo "WARNING: Invalid or unpublished AOM DMG: $dmg" >&2
+          fi
         fi
       done < <(find "$root" -maxdepth 4 -type f \( \
         -iname 'All-of-MacOS*.dmg' -o -iname 'All of MacOS*.dmg' -o -iname 'AOM*.dmg' \
       \) -print0)
     done
-    printf 'Historical DMGs examined: %s, failed: %s\n' "$found" "$failed"
+    printf 'Historical DMGs examined: %s, skipped other identities: %s, failed: %s\n' "$found" "$skipped" "$failed"
     [ "$failed" -eq 0 ]
     ;;
   --file)
