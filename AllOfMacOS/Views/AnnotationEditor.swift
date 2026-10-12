@@ -1057,7 +1057,7 @@ private struct AnnotationResizeDialog: View {
     private var widthEntry: Binding<Int> {
         Binding(
             get: {
-                usePercent ? Int((Double(width) / Double(max(1, originalWidth)) * 100).rounded()) : width
+                usePercent ? safePixels(Double(width) / Double(max(1, originalWidth)) * 100) : width
             },
             set: { entered in
                 width = safePixels(usePercent
@@ -1074,7 +1074,7 @@ private struct AnnotationResizeDialog: View {
     private var heightEntry: Binding<Int> {
         Binding(
             get: {
-                usePercent ? Int((Double(height) / Double(max(1, originalHeight)) * 100).rounded()) : height
+                usePercent ? safePixels(Double(height) / Double(max(1, originalHeight)) * 100) : height
             },
             set: { entered in
                 height = safePixels(usePercent
