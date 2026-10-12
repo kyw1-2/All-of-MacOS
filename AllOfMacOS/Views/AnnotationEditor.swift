@@ -79,6 +79,7 @@ private struct AnnotationEditorView: View {
     @State private var selectedID: UUID?
     @State private var counterValue = 1
     @State private var cropMode = false
+    @State private var showingResize = false
     @State private var cropRect: CGRect?
     @State private var status: String?
 
@@ -124,6 +125,23 @@ private struct AnnotationEditorView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .ignoresSafeArea(.container, edges: .top)
+        .sheet(isPresented: $showingResize) {
+            AnnotationResizeDialog(pixelWidth: document.croppedImage.width,
+                                   pixelHeight: document.croppedImage.height) { width, height, flatten in
+                if document.resize(toPixelWidth: width, height: height,
+                                   scale: scale, flattenAnnotations: flatten) {
+                    selectedID = nil
+                    cropMode = false
+                    cropRect = nil
+                    tool = .move
+                    zoom = nil
+                    showingResize = false
+                    status = "Resized to \(width) × \(height) px."
+                } else {
+                    status = "Resize failed. Check dimensions and memory."
+                }
+            }
+        }
     }
 
     // MARK: - Toolbar
@@ -138,6 +156,9 @@ private struct AnnotationEditorView: View {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Crop (C)", active: cropMode) { selectTool(.crop) }
                 .keyboardShortcut("c", modifiers: [])
+            capsuleButton("arrow.up.left.and.arrow.down.right", help: "Resize Image…") {
+                showingResize = true
+            }
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
             capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
                 .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
@@ -999,5 +1020,119 @@ private extension CGPoint {
 private extension CGSize {
     func scaled(by factor: CGFloat) -> CGSize {
         CGSize(width: width * factor, height: height * factor)
+    }
+}
+
+/// Dedicated pixel-dimension dialog, separate from crop selection. Mirrors the
+/// source NIB's *functional* controls with an independently implemented UI.
+private struct AnnotationResizeDialog: View {
+    @Environment(\.dismiss) private var dismiss
+    private let originalWidth: Int
+    private let originalHeight: Int
+    private let onResize: (Int, Int, Bool) -> Void
+
+    @State private var width: Int
+    @State private var height: Int
+    @State private var keepAspect = true
+    @State private var flattenAnnotations = false
+    @State private var usePercent = false
+
+    init(pixelWidth: Int, pixelHeight: Int,
+         onResize: @escaping (Int, Int, Bool) -> Void) {
+        self.originalWidth = pixelWidth
+        self.originalHeight = pixelHeight
+        self.onResize = onResize
+        _width = State(initialValue: pixelWidth)
+        _height = State(initialValue: pixelHeight)
+    }
+
+    private var widthEntry: Binding<Int> {
+        Binding(
+            get: {
+                usePercent ? Int((Double(width) / Double(max(1, originalWidth)) * 100).rounded()) : width
+            },
+            set: { entered in
+                width = usePercent
+                    ? max(1, Int((Double(entered) * Double(originalWidth) / 100).rounded()))
+                    : entered
+                if keepAspect {
+                    height = max(1, Int((Double(width) * Double(originalHeight) /
+                                         Double(max(1, originalWidth))).rounded()))
+                }
+            }
+        )
+    }
+
+    private var heightEntry: Binding<Int> {
+        Binding(
+            get: {
+                usePercent ? Int((Double(height) / Double(max(1, originalHeight)) * 100).rounded()) : height
+            },
+            set: { entered in
+                height = usePercent
+                    ? max(1, Int((Double(entered) * Double(originalHeight) / 100).rounded()))
+                    : entered
+                if keepAspect {
+                    width = max(1, Int((Double(height) * Double(originalWidth) /
+                                        Double(max(1, originalHeight))).rounded()))
+                }
+            }
+        )
+    }
+
+    private var dimensionsValid: Bool {
+        width > 0 && height > 0 && width <= 16384 && height <= 16384 &&
+            Int64(width) * Int64(height) <= 100_000_000
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Resize Image").font(.headline)
+            Text("Original size: \(originalWidth) × \(originalHeight) pixels")
+                .font(.caption).foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                TextField("Width", value: widthEntry, format: .number)
+                    .accessibilityLabel("Resize width")
+                Image(systemName: keepAspect ? "link" : "link.slash")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                TextField("Height", value: heightEntry, format: .number)
+                    .accessibilityLabel("Resize height")
+                Picker("Units", selection: $usePercent) {
+                    Text("pixels").tag(false)
+                    Text("percent").tag(true)
+                }
+                .labelsHidden().frame(width: 100)
+            }
+            .textFieldStyle(.roundedBorder)
+
+            Toggle("Preserve aspect ratio", isOn: $keepAspect)
+                .onChange(of: keepAspect) { _, enabled in
+                    if enabled {
+                        height = max(1, Int((Double(width) * Double(originalHeight) /
+                                             Double(max(1, originalWidth))).rounded()))
+                    }
+                }
+
+            Toggle("Flatten Annotations", isOn: $flattenAnnotations)
+            Text("Flattening merges annotations into the image. Undo restores the original layers.")
+                .font(.caption).foregroundStyle(.secondary)
+
+            if !dimensionsValid {
+                Text("Dimensions must be 1–16,384 pixels and at most 100 million pixels total.")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Resize") { onResize(width, height, flattenAnnotations) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!dimensionsValid)
+            }
+        }
+        .padding(22)
+        .frame(width: 510)
     }
 }
