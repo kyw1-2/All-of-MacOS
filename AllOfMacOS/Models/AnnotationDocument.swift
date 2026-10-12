@@ -55,6 +55,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     case draw
     case drawHighlight
     case pixelate
+    case redact
     case spotlight
     case counter
     case cursor
@@ -75,6 +76,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "Draw"
         case .drawHighlight: return "Highlight Draw"
         case .pixelate: return "Pixelate"
+        case .redact: return "Redact (Solid)"
         case .spotlight: return "Spotlight"
         case .counter: return "Counter"
         case .cursor: return "Cursor"
@@ -95,6 +97,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "scribble"
         case .drawHighlight: return "scribble.variable"
         case .pixelate: return "squareshape.dotted.split.2x2"
+        case .redact: return "rectangle.fill"
         case .spotlight: return "flashlight.on.fill"
         case .counter: return "1.circle"
         case .cursor: return "cursorarrow"
@@ -105,7 +108,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     var isShape: Bool {
         switch self {
         case .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-             .pixelate, .spotlight, .draw, .drawHighlight, .highlighter:
+             .pixelate, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
             return true
         case .move, .crop, .text, .counter, .cursor:
             return false
@@ -118,7 +121,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     /// The tools shown in the toolbar, in order.
     static var toolbarOrder: [AnnotationKind] {
         [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-         .text, .highlighter, .draw, .drawHighlight, .pixelate, .spotlight, .counter, .cursor]
+         .text, .highlighter, .draw, .drawHighlight, .pixelate, .redact, .spotlight, .counter, .cursor]
     }
 }
 
@@ -518,6 +521,13 @@ struct AnnotationDocument {
             context.fill(rect)
         case .draw, .drawHighlight:
             drawFreehand(object, in: context, imageRect: imageRect, color: color, scale: scale)
+        case .redact:
+            // Flattened opaque replacement. Never depend on the annotation's
+            // alpha or editable layer color for privacy-sensitive redaction.
+            context.setBlendMode(.normal)
+            context.setAlpha(1)
+            context.setFillColor(NSColor.black.cgColor)
+            context.fill(rect.intersection(imageRect))
         case .pixelate:
             drawPixelate(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
                          blockSize: object.style.pixelBlockSize)
