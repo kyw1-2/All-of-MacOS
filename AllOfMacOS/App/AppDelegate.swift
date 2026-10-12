@@ -207,6 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func captureWindowUnderCursorAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowUnderCursor() } }
     @objc func capturePreviousAreaAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.capturePreviousArea() } }
     @objc func captureScrollingAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureScrolling() } }
+    @objc func captureScrollingHorizontalAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureScrollingHorizontal() } }
     @objc func captureAllDisplaysAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllDisplays() } }
     @objc func captureTextWithBreaksAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureText(keepsLineBreaks: true) } }
     @objc func captureTextWithoutBreaksAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureText(keepsLineBreaks: false) } }
