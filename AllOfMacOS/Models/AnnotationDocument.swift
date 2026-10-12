@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import CoreImage
 
 /// One drawn object on the annotate canvas.
 ///
@@ -55,6 +56,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     case draw
     case drawHighlight
     case pixelate
+    case blur
     case redact
     case spotlight
     case counter
@@ -76,6 +78,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "Draw"
         case .drawHighlight: return "Highlight Draw"
         case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
         case .redact: return "Redact (Solid)"
         case .spotlight: return "Spotlight"
         case .counter: return "Counter"
@@ -97,6 +100,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .draw: return "scribble"
         case .drawHighlight: return "scribble.variable"
         case .pixelate: return "squareshape.dotted.split.2x2"
+        case .blur: return "drop.halffull"
         case .redact: return "rectangle.fill"
         case .spotlight: return "flashlight.on.fill"
         case .counter: return "1.circle"
@@ -108,7 +112,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     var isShape: Bool {
         switch self {
         case .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-             .pixelate, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
+             .pixelate, .blur, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
             return true
         case .move, .crop, .text, .counter, .cursor:
             return false
@@ -121,7 +125,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     /// The tools shown in the toolbar, in order.
     static var toolbarOrder: [AnnotationKind] {
         [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-         .text, .highlighter, .draw, .drawHighlight, .pixelate, .redact, .spotlight, .counter, .cursor]
+         .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .redact, .spotlight, .counter, .cursor]
     }
 }
 
@@ -528,6 +532,9 @@ struct AnnotationDocument {
             context.setAlpha(1)
             context.setFillColor(NSColor.black.cgColor)
             context.fill(rect.intersection(imageRect))
+        case .blur:
+            drawGaussianBlur(in: context, rect: rect, scale: scale,
+                             baseImage: baseImage, imageRect: imageRect)
         case .pixelate:
             drawPixelate(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
                          blockSize: object.style.pixelBlockSize)
@@ -674,6 +681,41 @@ struct AnnotationDocument {
         }
         context.strokePath()
     }
+
+    /// Non-destructive soft blur. Render a bounded slice of the underlying
+    /// capture and composite it only inside the selected rectangle. Unlike
+    /// .redact this is visual obfuscation, NOT irreversible privacy removal.
+    private func drawGaussianBlur(in context: CGContext, rect: CGRect,
+                                  scale: CGFloat, baseImage: CGImage,
+                                  imageRect: CGRect) {
+        guard scale.isFinite, scale > 0, rect.width > 1, rect.height > 1 else { return }
+        let clipped = rect.intersection(imageRect)
+        guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
+
+        // Editor coordinates are top-left; CIImage uses a bottom-left extent.
+        let inputX = (clipped.minX - imageRect.minX) / scale
+        let inputY = (clipped.minY - imageRect.minY) / scale
+        let inputRect = CGRect(x: inputX, y: inputY,
+                               width: clipped.width / scale,
+                               height: clipped.height / scale).integral
+        let source = CIImage(cgImage: baseImage)
+        guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
+        let radius = max(3, 8 * scale)
+        filter.setValue(source.clampedToExtent(), forKey: kCIInputImageKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = filter.outputImage else { return }
+        let within = inputRect.intersection(source.extent)
+        guard !within.isNull, within.width > 0, within.height > 0,
+              let blurred = Self.blurCIContext.createCGImage(output, from: within) else { return }
+        context.saveGState()
+        context.setAlpha(1)
+        context.setBlendMode(.normal)
+        context.clip(to: clipped)
+        context.draw(blurred, in: clipped)
+        context.restoreGState()
+    }
+
+    private static let blurCIContext = CIContext(options: [.useSoftwareRenderer: true])
 
     /// Pixelates by drawing the source region scaled down and back up with no
     /// interpolation, which is both faster and blockier than a real mosaic filter.
