@@ -1046,18 +1046,26 @@ private struct AnnotationResizeDialog: View {
         _height = State(initialValue: pixelHeight)
     }
 
+    // TextField accepts arbitrary signed integers. Clamp intermediate Double
+    // conversions to avoid traps on excessively large entered percentages.
+    private func safePixels(_ value: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        let maxConvertible = Double(Int.max / 4)
+        return Int(min(maxConvertible, max(-maxConvertible, value.rounded())))
+    }
+
     private var widthEntry: Binding<Int> {
         Binding(
             get: {
                 usePercent ? Int((Double(width) / Double(max(1, originalWidth)) * 100).rounded()) : width
             },
             set: { entered in
-                width = usePercent
-                    ? max(1, Int((Double(entered) * Double(originalWidth) / 100).rounded()))
-                    : entered
+                width = safePixels(usePercent
+                    ? Double(entered) * Double(originalWidth) / 100
+                    : Double(entered))
                 if keepAspect {
-                    height = max(1, Int((Double(width) * Double(originalHeight) /
-                                         Double(max(1, originalWidth))).rounded()))
+                    height = safePixels(Double(width) * Double(originalHeight) /
+                                        Double(max(1, originalWidth)))
                 }
             }
         )
@@ -1069,12 +1077,12 @@ private struct AnnotationResizeDialog: View {
                 usePercent ? Int((Double(height) / Double(max(1, originalHeight)) * 100).rounded()) : height
             },
             set: { entered in
-                height = usePercent
-                    ? max(1, Int((Double(entered) * Double(originalHeight) / 100).rounded()))
-                    : entered
+                height = safePixels(usePercent
+                    ? Double(entered) * Double(originalHeight) / 100
+                    : Double(entered))
                 if keepAspect {
-                    width = max(1, Int((Double(height) * Double(originalWidth) /
-                                        Double(max(1, originalHeight))).rounded()))
+                    width = safePixels(Double(height) * Double(originalWidth) /
+                                       Double(max(1, originalHeight)))
                 }
             }
         )
@@ -1110,8 +1118,8 @@ private struct AnnotationResizeDialog: View {
             Toggle("Preserve aspect ratio", isOn: $keepAspect)
                 .onChange(of: keepAspect) { _, enabled in
                     if enabled {
-                        height = max(1, Int((Double(width) * Double(originalHeight) /
-                                             Double(max(1, originalWidth))).rounded()))
+                        height = safePixels(Double(width) * Double(originalHeight) /
+                                            Double(max(1, originalWidth)))
                     }
                 }
 
