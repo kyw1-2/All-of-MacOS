@@ -52,3 +52,21 @@ codesign --verify --deep --strict "$APP" 2>&1
 
 echo "==> Done: $APP"
 echo "    Install separately to avoid overwriting an existing application"
+
+# CI uses ad-hoc signing for disposable test artifacts. Only a local AOM Dev
+# identity can publish to the private development release channel.
+# Set ALLOFMACOS_SKIP_AUTO_RELEASE=1 to build without publishing.
+skip_auto_release="$(printenv ALLOFMACOS_SKIP_AUTO_RELEASE || true)"
+if [ "$SIGN_ID" != "-" ] && [ "$skip_auto_release" != "1" ]; then
+    echo "==> Packaging and publishing verified AOM Dev DMG"
+    "$PWD/scripts/publish-dmg.sh" --from-build
+    # One-time historical import. Failures leave the marker unset for retry.
+    if [ ! -f "$PWD/build/.aom-historical-release-imported" ]; then
+        if "$PWD/scripts/publish-dmg.sh" --import-existing; then
+            touch "$PWD/build/.aom-historical-release-imported"
+        else
+            echo "WARNING: Historical DMG import incomplete; will retry on the next build." >&2
+        fi
+    fi
+fi
+
