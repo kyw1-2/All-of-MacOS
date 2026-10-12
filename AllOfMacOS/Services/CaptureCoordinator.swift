@@ -144,8 +144,35 @@ final class CaptureCoordinator {
 
     // MARK: - Entry points
 
-    func captureArea() {
-        run(kind: .area) { [weak self] in
+    /// Combined entry point for a one-off capture outcome. Deliberately does
+    /// not overwrite the user's persistent After Capture preference.
+    func captureAllInOne() {
+        guard !isCapturing else {
+            GestureHUD.shared.show(title: "Capture In Progress", detail: "Finish the active capture first.")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "All-In-One Capture"
+        alert.informativeText = "Choose what happens after selecting the screenshot area."
+        for title in ["Quick Access", "Copy", "Save", "Annotate", "Cancel"] {
+            alert.addButton(withTitle: title)
+        }
+        let response = alert.runModal()
+        let action: AfterCaptureAction?
+        switch response {
+        case .alertFirstButtonReturn: action = .showOverlay
+        case .alertSecondButtonReturn: action = .copyToClipboard
+        case .alertThirdButtonReturn: action = .saveToDisk
+        case NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3):
+            action = .openAnnotate
+        default: action = nil
+        }
+        guard let action else { return }
+        captureArea(afterCaptureOverride: action)
+    }
+
+    func captureArea(afterCaptureOverride: AfterCaptureAction? = nil) {
+        run(kind: .area, afterCaptureOverride: afterCaptureOverride) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
             let result = try await ScreenCaptureService.shared.captureArea(rect)
@@ -326,6 +353,7 @@ final class CaptureCoordinator {
     /// `body` returns the capture plus its kind, or `nil` when the user cancelled
     /// — a cancel is not an error and must not surface as one.
     private func run(kind: CaptureKind, appliesSelfTimer: Bool = true,
+                     afterCaptureOverride: AfterCaptureAction? = nil,
                      _ body: @escaping () async throws -> (CaptureResult, CaptureKind)?) {
         guard !isCapturing else {
             GestureHUD.shared.show(title: "Capture In Progress", detail: "Finish or cancel the current capture first.")
@@ -347,7 +375,7 @@ final class CaptureCoordinator {
                 defer { restoreDesktopIconsIfNeeded(hiddenIcons) }
 
                 guard let (result, resolvedKind) = try await body() else { return }
-                await finish(result, kind: resolvedKind)
+                await finish(result, kind: resolvedKind, actionOverride: afterCaptureOverride)
             } catch CaptureError.cancelled {
                 // A cancelled capture is a normal outcome, not a failure to report.
             } catch {
@@ -369,11 +397,12 @@ final class CaptureCoordinator {
         GestureHUD.shared.dismiss()
     }
 
-    private func finish(_ result: CaptureResult, kind: CaptureKind) async {
+    private func finish(_ result: CaptureResult, kind: CaptureKind,
+                        actionOverride: AfterCaptureAction? = nil) async {
         if CaptureSettings.playsSound { playCaptureSound() }
 
         let stored = CaptureHistory.shared.add(result, url: nil)
-        let action = CaptureSettings.afterCapture
+        let action = actionOverride ?? CaptureSettings.afterCapture
 
         // Annotate and Pin both need the file on disk, because the editor and the
         // pin window reload from a URL and can outlive this process's memory of
