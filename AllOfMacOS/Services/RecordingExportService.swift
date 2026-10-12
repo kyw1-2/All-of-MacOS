@@ -102,7 +102,8 @@ enum RecordingExportService {
     }
 
     static func render(source: URL, start: Double, end: Double,
-                       muteAudio: Bool, quality: StudioQuality) async throws -> URL {
+                       muteAudio: Bool, quality: StudioQuality,
+                       studio: AOMStudioSettings = AOMStudioSettings()) async throws -> URL {
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let asset = AVURLAsset(url: source)
@@ -138,6 +139,20 @@ enum RecordingExportService {
         exporter.outputURL = url
         exporter.outputFileType = .mp4
         exporter.shouldOptimizeForNetworkUse = true
+        if studio.isActive {
+            // AVFoundation owns the composition timeline. Core Image effects
+            // execute on its render queue; no app/window capture or file I/O
+            // happens within this callback.
+            let effect = studio
+            exporter.videoComposition = AVVideoComposition(
+                asset: composition, applyingCIFiltersWithHandler: { request in
+                    let t = CMTimeGetSeconds(request.compositionTime)
+                    let timestamp = t.isFinite ? t : 0
+                    let result = AOMStudioRenderer.frame(request.sourceImage,
+                                                          time: timestamp, settings: effect)
+                    request.finish(with: result, context: nil)
+                })
+        }
         do {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
