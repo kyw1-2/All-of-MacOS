@@ -211,6 +211,35 @@ final class ClipboardStore: ObservableObject {
         }
     }
 
+    /// Creates a local reusable clip without changing the system pasteboard.
+    /// Pinboards and history share the same stored entry format.
+    @discardableResult
+    func createTextItem(_ text: String) -> ClipboardEntry? {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, text.utf8.count <= Self.maximumEntryBytes else {
+            if text.utf8.count > Self.maximumEntryBytes {
+                lastError = StoreError.tooLarge.localizedDescription
+            }
+            return nil
+        }
+        let entry = ClipboardEntry.captured(
+            items: [[NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]],
+            sourceName: "All of MacOS", sourceBundleID: "com.kyw.allofmacos",
+            at: now())
+        entries.insert(entry, at: 0)
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let digest = await onQueue { entry.payloadDigest }
+            if entries.contains(where: { $0.id == entry.id }) {
+                digests[entry.id] = digest
+            }
+        }
+        captureTasks.append(task)
+        trim()
+        scheduleSave()
+        return entries.first { $0.id == entry.id }
+    }
+
     @discardableResult
     func createBoard(name: String, color: String = "blue") -> ClipboardPinboard {
         let board = ClipboardPinboard(name: String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100)), color: color)

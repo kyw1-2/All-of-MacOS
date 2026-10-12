@@ -41,7 +41,11 @@ final class Runner: NSObject, ScriptRunnerProtocol {
         var attr: posix_spawnattr_t?; posix_spawnattr_init(&attr)
         defer { posix_spawnattr_destroy(&attr) }
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP)); posix_spawnattr_setpgroup(&attr, 0)
-        let strings = [executable, file.path].map { strdup($0) }
+        // Keep the Swift String array distinct from the C argv pointers.
+        // macOS 15 Xcode otherwise infers UnsafePointer<CChar> for the literal.
+        let arguments: [String] = [executable, file.path]
+        let strings: [UnsafeMutablePointer<CChar>?] =
+            arguments.map { value in value.withCString { strdup($0) } }
         defer { strings.forEach { free($0) } }
         let environment = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
         defer { environment.forEach { free($0) } }
