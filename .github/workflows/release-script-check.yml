@@ -1,0 +1,32 @@
+name: Verify development release scripts
+on:
+  push:
+    paths:
+      - "build-and-sign.sh"
+      - "scripts/publish-dmg.sh"
+      - ".github/workflows/release-script-check.yml"
+  pull_request:
+    paths:
+      - "build-and-sign.sh"
+      - "scripts/publish-dmg.sh"
+      - ".github/workflows/release-script-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check publisher and build-hook shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n build-and-sign.sh
+          bash -n scripts/publish-dmg.sh
+          grep -Fq 'bash "$PWD/scripts/publish-dmg.sh" --from-build' build-and-sign.sh
+          grep -Fq 'ALLOFMACOS_SKIP_AUTO_RELEASE' build-and-sign.sh
+          grep -Fq 'codesign --verify --deep --strict' scripts/publish-dmg.sh
