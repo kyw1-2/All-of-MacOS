@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 
 /// Non-destructive MP4 trimming and short animated-GIF export from Capture History.
@@ -10,6 +11,9 @@ struct RecordingExportEditor: View {
     @State private var start = 0.0
     @State private var end = 0.0
     @State private var fps = 8
+    @State private var muteAudio = false
+    @State private var quality: RecordingExportService.StudioQuality = .high
+    @State private var previewPlayer: AVPlayer?
     @State private var isExporting = false
     @State private var status = ""
     @State private var resultURL: URL?
@@ -34,6 +38,12 @@ struct RecordingExportEditor: View {
                 .lineLimit(1)
 
             if duration > 0 {
+                if let previewPlayer {
+                    VideoPlayer(player: previewPlayer)
+                        .frame(height: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .accessibilityLabel("Recording preview")
+                }
                 VStack(alignment: .leading, spacing: 11) {
                     HStack(spacing: 16) {
                         Text("Start")
@@ -63,6 +73,26 @@ struct RecordingExportEditor: View {
                 }
 
                 Divider()
+
+                HStack(spacing: 16) {
+                    Toggle("Mute Audio", isOn: $muteAudio)
+                        .disabled(isExporting)
+                    Picker("MP4 Quality", selection: $quality) {
+                        ForEach(RecordingExportService.StudioQuality.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                    .frame(width: 215)
+                    .disabled(isExporting)
+                    Spacer(minLength: 0)
+                    Button {
+                        export(gif: false, rendered: true)
+                    } label: {
+                        Label("Render Edited MP4", systemImage: "film.stack")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isExporting || !validRange)
+                }
 
                 HStack(spacing: 12) {
                     Button {
@@ -117,9 +147,11 @@ struct RecordingExportEditor: View {
             }
         }
         .padding(24)
-        .frame(width: 540)
+        .frame(width: 680)
+        .onDisappear { previewPlayer?.pause() }
         .task {
             do {
+                previewPlayer = AVPlayer(url: source)
                 let seconds = try await RecordingExportService.duration(for: source)
                 duration = seconds
                 start = 0
@@ -130,18 +162,23 @@ struct RecordingExportEditor: View {
         }
     }
 
-    private func export(gif: Bool) {
+    private func export(gif: Bool, rendered: Bool = false) {
         guard validRange, !isExporting else { return }
         isExporting = true
         status = ""
         resultURL = nil
         let begin = start, finish = end, frames = fps
+        let muted = muteAudio, selectedQuality = quality
         Task {
             do {
                 let exported: URL
                 if gif {
                     exported = try await RecordingExportService.gif(
                         source: source, start: begin, end: finish, fps: frames)
+                } else if rendered {
+                    exported = try await RecordingExportService.render(
+                        source: source, start: begin, end: finish,
+                        muteAudio: muted, quality: selectedQuality)
                 } else {
                     exported = try await RecordingExportService.trim(
                         source: source, start: begin, end: finish)
