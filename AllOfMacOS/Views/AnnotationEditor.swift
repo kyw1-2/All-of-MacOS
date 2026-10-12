@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 import UniformTypeIdentifiers
 
 /// Opens the annotate editor for a capture.
@@ -80,6 +81,9 @@ private struct AnnotationEditorView: View {
     @State private var counterValue = 1
     @State private var cropMode = false
     @State private var showingResize = false
+    @State private var showingSmartHighlight = false
+    @State private var smartHighlightQuery = ""
+    @State private var smartHighlightBusy = false
     @State private var cropRect: CGRect?
     @State private var status: String?
 
@@ -142,6 +146,28 @@ private struct AnnotationEditorView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingSmartHighlight) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Highlight Matching Text").font(.headline)
+                Text("Finds text in this screenshot locally with Apple's Vision OCR and adds editable highlights.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Words to highlight", text: $smartHighlightQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Text to highlight")
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showingSmartHighlight = false }
+                        .disabled(smartHighlightBusy)
+                    Button("Highlight") { highlightMatchingText() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(smartHighlightBusy ||
+                            smartHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if smartHighlightBusy { ProgressView("Recognizing text…").controlSize(.small) }
+            }
+            .padding(20)
+            .frame(width: 430)
+        }
     }
 
     // MARK: - Toolbar
@@ -182,6 +208,9 @@ private struct AnnotationEditorView: View {
             .fixedSize()
             .help("Rotate / Flip (flattens existing annotations; Undo restores editable layers)")
             .accessibilityLabel("Rotate and flip image")
+            capsuleButton("text.magnifyingglass", help: "Smart Highlight Text…") {
+                showingSmartHighlight = true
+            }
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
             capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
                 .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
@@ -257,6 +286,40 @@ private struct AnnotationEditorView: View {
                 .frame(width: 38, height: 32)
                 .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: Capsule())
         }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+    }
+
+    private func highlightMatchingText() {
+        let requested = smartHighlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requested.isEmpty, !smartHighlightBusy else { return }
+        let source = document.croppedImage
+        let backing = scale
+        smartHighlightBusy = true
+        Task {
+            do {
+                let boxes = try await Task.detached(priority: .userInitiated) {
+                    try AnnotationSmartTextMatcher.matches(in: source, query: requested, scale: backing)
+                }.value
+                if boxes.isEmpty {
+                    status = "No matching text found."
+                } else {
+                    let additions = boxes.map { rect in
+                        var markerStyle = AnnotationStyle()
+                        markerStyle.color = .yellow
+                        markerStyle.opacity = 0.75
+                        return AnnotationObject(kind: .highlighter, rect: rect, style: markerStyle)
+                    }
+                    document.addObjects(additions)
+                    selectedID = nil
+                    cropMode = false
+                    tool = .move
+                    status = "Highlighted \(boxes.count) matching text line(s). Undo removes all."
+                    showingSmartHighlight = false
+                }
+            } catch {
+                status = "Text recognition failed: \(error.localizedDescription)"
+            }
+            smartHighlightBusy = false
+        }
     }
 
     private func transformImage(_ operation: AnnotationDocument.ImageTransform) {
@@ -1186,5 +1249,37 @@ private struct AnnotationResizeDialog: View {
         }
         .padding(22)
         .frame(width: 510)
+    }
+}
+
+/// Normalized Vision bounding-box conversion, independent from view dimensions.
+/// Vision uses bottom-left origin; annotation objects use top-left points.
+enum AnnotationSmartTextMatcher {
+    static func annotationRect(from box: CGRect, pixelSize: CGSize, scale: CGFloat) -> CGRect {
+        guard scale.isFinite, scale > 0 else { return .zero }
+        let pointWidth = pixelSize.width / scale
+        let pointHeight = pixelSize.height / scale
+        return CGRect(x: box.minX * pointWidth,
+                      y: (1 - box.maxY) * pointHeight,
+                      width: box.width * pointWidth,
+                      height: box.height * pointHeight)
+    }
+
+    static func matches(in image: CGImage, query: String, scale: CGFloat) throws -> [CGRect] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty, needle.count <= 100, scale.isFinite, scale > 0 else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        let handler = VNImageRequestHandler(cgImage: image)
+        try handler.perform([request])
+        let pixelSize = CGSize(width: image.width, height: image.height)
+        return (request.results ?? []).compactMap { observation -> CGRect? in
+            guard let candidate = observation.topCandidates(1).first,
+                  candidate.string.localizedCaseInsensitiveContains(needle) else { return nil }
+            let bounds = annotationRect(from: observation.boundingBox, pixelSize: pixelSize, scale: scale)
+            guard bounds.width > 0, bounds.height > 0 else { return nil }
+            return bounds
+        }.prefix(100).map { $0 }
     }
 }
