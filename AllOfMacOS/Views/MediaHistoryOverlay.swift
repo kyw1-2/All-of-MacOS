@@ -634,29 +634,17 @@ private struct PasteStyleCaptureCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            captureHeader
-            captureThumbnail
+            header
+            thumbnail
             Divider().opacity(0.25)
-            captureFooter
+            footer
         }
         .padding(11)
         .frame(width: 225, height: 215)
-        .background(
-            isSelected
-                ? Color.accentColor.opacity(0.16)
-                : (isHovered ? Color.primary.opacity(0.06) : Color(nsColor: .controlBackgroundColor).opacity(0.82)),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(
-                    isSelected
-                        ? Color.accentColor
-                        : (isHovered ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.10)),
-                    lineWidth: isSelected ? 2 : 1
-                )
-        )
-        .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08), radius: isHovered ? 10 : 4, y: 3)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(selectionOutline)
+        .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08),
+                radius: isHovered ? 10 : 4, y: 3)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
@@ -665,74 +653,60 @@ private struct PasteStyleCaptureCard: View {
             if entry.kind == .videoRecording { onPreview() }
             else { onAnnotate() }
         }
-        .onTapGesture {
-            onSelect()
-        }
-        .onDrag {
-            dragItemProvider()
-        }
-        .contextMenu { captureContextMenu }
+        .onTapGesture { onSelect() }
+        .onDrag { dragItemProvider() }
+        .contextMenu { cardMenu }
     }
 
-    // Small computed subviews avoid the SwiftUI type-checker timeout on
-    // macOS CI without modifying layout, gestures or actions.
-    private var captureHeader: some View {
-            // Card Header: Kind Badge + Shortcut Tag (1..9)
-            HStack(spacing: 6) {
-                HStack(spacing: 4) {
-                    Image(systemName: iconForKind(entry.kind))
-                        .font(.system(size: 9, weight: .bold))
-                    Text(entry.kind.displayName)
-                        .font(.system(size: 10, weight: .semibold))
-                }
+    private var cardBackground: Color {
+        if isSelected { return Color.accentColor.opacity(0.16) }
+        return isHovered ? Color.primary.opacity(0.06)
+                         : Color(nsColor: .controlBackgroundColor).opacity(0.82)
+    }
+
+    private var selectionOutline: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(isSelected ? Color.accentColor
+                   : (isHovered ? Color.accentColor.opacity(0.4)
+                                : Color.primary.opacity(0.10)),
+                    lineWidth: isSelected ? 2 : 1)
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Label(entry.kind.displayName, systemImage: iconForKind(entry.kind))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-
-                Spacer()
-
-                Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))")
-                    .font(.system(size: 9.5).monospacedDigit())
+            Spacer()
+            Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))")
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(.secondary)
+            if index <= 9 {
+                Text("⌘\(index)")
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     .foregroundStyle(.secondary)
-
-                if index <= 9 {
-                    Text("⌘\(index)")
-                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.secondary.opacity(0.8))
-                }
             }
-
+        }
     }
 
-    private var captureThumbnail: some View {
-            // Thumbnail Image Area
-            ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                    .frame(height: 125)
-
-                Image(nsImage: entry.thumbnail)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 125)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                if entry.kind == .videoRecording {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 37, weight: .light))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.7), radius: 5)
-                }
-
-                // Hover Actions Pill
-                if isHovered {
-                    HStack(spacing: 6) {
-                        cardButton("doc.on.doc", entry.kind == .videoRecording ? "Copy MP4 File" : "Copy Image", onCopy)
-                        if entry.kind == .videoRecording {
-                            cardButton("play.fill", "Play Recording", onPreview)
-                        } else {
-                            cardButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
-                            cardButton("pin.fill", "Pin to Screen", onPin)
-                        }
-                        cardButton("trash", "Delete", onDelete, tint: .red.opacity(0.9))
-                    }
+    private var thumbnail: some View {
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .frame(height: 125)
+            Image(nsImage: entry.thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: 125)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            if entry.kind == .videoRecording {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 37, weight: .light))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.7), radius: 5)
+            }
+            if isHovered {
+                hoverActions
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -740,41 +714,51 @@ private struct PasteStyleCaptureCard: View {
                     .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
                     .padding(.bottom, 6)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
             }
-
+        }
     }
 
-    private var captureFooter: some View {
-            // Card Footer: Display Name & Relative Time
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.primary)
-
-                HStack(spacing: 4) {
-                    Text(relativeTimeString(entry.capturedAt))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-
-                    Spacer(minLength: 2)
-
-                    Text(entry.kind == .videoRecording ? "MP4" : "PNG")
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.secondary.opacity(0.7))
-                }
+    private var hoverActions: some View {
+        HStack(spacing: 6) {
+            cardButton("doc.on.doc",
+                       entry.kind == .videoRecording ? "Copy MP4 File" : "Copy Image", onCopy)
+            if entry.kind == .videoRecording {
+                cardButton("play.fill", "Play Recording", onPreview)
+            } else {
+                cardButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
+                cardButton("pin.fill", "Pin to Screen", onPin)
             }
+            cardButton("trash", "Delete", onDelete, tint: .red.opacity(0.9))
+        }
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(entry.displayName)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            HStack(spacing: 4) {
+                Text(relativeTimeString(entry.capturedAt))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Text(entry.kind == .videoRecording ? "MP4" : "PNG")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder
-    private var captureContextMenu: some View {
+    private var cardMenu: some View {
         if entry.kind == .videoRecording {
             Button("Play Recording…", action: onPreview)
             Button("Copy MP4 File", action: onCopy)
             if let url = entry.playableVideoURL {
-                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             }
         } else {
             Button("Copy Image", action: onCopy)
@@ -786,18 +770,22 @@ private struct PasteStyleCaptureCard: View {
                     do {
                         let codes = try await TextRecognitionService.detectQRCodes(entry.image)
                         guard let value = codes.first else {
-                            GestureHUD.shared.show(title: "No QR Code", detail: "No QR code was detected.")
+                            GestureHUD.shared.show(title: "No QR Code",
+                                                   detail: "No QR code was detected.")
                             return
                         }
                         let board = NSPasteboard.general
                         board.clearContents()
                         if board.setString(value, forType: .string) {
-                            GestureHUD.shared.show(title: "QR Copied", detail: "QR content copied as text.")
+                            GestureHUD.shared.show(title: "QR Copied",
+                                                   detail: "QR content copied as text.")
                         } else {
-                            GestureHUD.shared.show(title: "Copy Failed", detail: "Cannot copy QR text.")
+                            GestureHUD.shared.show(title: "Copy Failed",
+                                                   detail: "Cannot copy QR text.")
                         }
                     } catch {
-                        GestureHUD.shared.show(title: "QR Detection Failed", detail: error.localizedDescription)
+                        GestureHUD.shared.show(title: "QR Detection Failed",
+                                               detail: error.localizedDescription)
                     }
                 }
             }
