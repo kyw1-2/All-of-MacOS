@@ -139,6 +139,41 @@ final class ScreenCaptureTests: XCTestCase {
                                                   utc: true), "")
     }
 
+    func testAOMCaptureDeepLinksAreExplicitAndCollisionSafe() {
+        func parsed(_ value: String) -> AOMCaptureDeepLink? {
+            guard let url = URL(string: value) else { return nil }
+            return AOMCaptureDeepLink.parse(url)
+        }
+        XCTAssertEqual(parsed("aom://capture-area"), .captureArea)
+        XCTAssertEqual(parsed("aom://capture-fullscreen"), .captureFullscreen)
+        XCTAssertEqual(parsed("aom://capture-window"), .captureWindow)
+        XCTAssertEqual(parsed("aom://capture-previous-area"), .previousArea)
+        XCTAssertEqual(parsed("aom://scrolling-capture"), .scrollingCapture)
+        XCTAssertEqual(parsed("aom://self-timer"), .selfTimer)
+        XCTAssertEqual(parsed("aom://record-screen"), .recordScreen)
+        XCTAssertEqual(parsed("aom://capture-text"), .captureText(keepsLineBreaks: true))
+        XCTAssertEqual(parsed("aom://capture-text?linebreaks=false"), .captureText(keepsLineBreaks: false))
+        XCTAssertEqual(parsed("aom://open-history"), .openHistory)
+        XCTAssertEqual(parsed("aom://open-settings"), .openSettings)
+        XCTAssertEqual(parsed("aom://restore-recently-closed"), .restoreRecentlyClosed)
+        XCTAssertEqual(parsed("aom://pin"), .pin)
+        XCTAssertEqual(parsed("aom://open-annotate"), .openAnnotate)
+        XCTAssertEqual(parsed("aom://open-from-clipboard"), .openFromClipboard)
+        XCTAssertEqual(parsed("aom://add-quick-access-overlay?filepath=%2Ftmp%2Fclip.png"),
+                       .addQuickAccessOverlay(URL(fileURLWithPath: "/tmp/clip.png")))
+
+        // Never claim or intercept the reference application's URLs.
+        XCTAssertNil(parsed("cleanshot://capture-area"))
+        XCTAssertNil(parsed("https://capture-area"))
+        XCTAssertNil(parsed("aom://capture-area?filepath=%2Fetc%2Fpasswd"))
+        XCTAssertNil(parsed("aom://capture-text?linebreaks=garbage"))
+        XCTAssertNil(parsed("aom://capture-text?linebreaks=true&linebreaks=false"))
+        XCTAssertNil(parsed("aom://add-quick-access-overlay?filepath=https%3A%2F%2Fexample.com%2Ftest.png"))
+        XCTAssertNil(parsed("aom://add-quick-access-overlay?filepath=%2Ftmp%2Ffile.exe"))
+        XCTAssertNil(parsed("aom://capture-area/extra"))
+        XCTAssertNil(parsed("aom://unknown-action"))
+    }
+
     // MARK: - Annotation document
 
     private func makeImage(width: Int, height: Int) -> CGImage {
