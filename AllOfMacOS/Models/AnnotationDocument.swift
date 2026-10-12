@@ -202,6 +202,8 @@ struct AnnotationDocument {
     private var redoCrops: [CGRect?] = []
     private var undoImages: [CGImage] = []
     private var redoImages: [CGImage] = []
+    private var undoBackgrounds: [AnnotationBackground] = []
+    private var redoBackgrounds: [AnnotationBackground] = []
     private let undoLimit = 50
 
     init(baseImage: CGImage) {
@@ -233,15 +235,18 @@ struct AnnotationDocument {
         undoStack.append(objects)
         undoCrops.append(cropRect)
         undoImages.append(baseImage)
+        undoBackgrounds.append(background)
         if undoStack.count > undoLimit {
             undoStack.removeFirst()
             undoCrops.removeFirst()
             undoImages.removeFirst()
+            undoBackgrounds.removeFirst()
         }
         // A new edit invalidates the redo branch, which is what every editor does.
         redoStack.removeAll()
         redoCrops.removeAll()
         redoImages.removeAll()
+        redoBackgrounds.removeAll()
     }
 
     mutating func add(_ object: AnnotationObject) {
@@ -298,6 +303,66 @@ struct AnnotationDocument {
         return true
     }
 
+    /// Changes the image's physical pixel dimensions. Unlike a crop, resize
+    /// resamples the bitmap, preserving editable annotations unless flattening
+    /// is explicitly requested. All source validation happens before beginChange,
+    /// so an invalid or failed resize leaves the document and undo history intact.
+    @discardableResult
+    mutating func resize(toPixelWidth width: Int, height: Int,
+                         scale: CGFloat, flattenAnnotations: Bool = false) -> Bool {
+        guard scale.isFinite, scale > 0,
+              width > 0, height > 0, width <= 16384, height <= 16384,
+              Int64(width) * Int64(height) <= 100_000_000 else { return false }
+
+        let source: CGImage
+        if flattenAnnotations {
+            guard let rendered = render(scale: scale) else { return false }
+            source = rendered
+        } else {
+            source = croppedImage
+        }
+        guard source.width > 0, source.height > 0,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let resampled = context.makeImage() else { return false }
+
+        let horizontal = CGFloat(width) / CGFloat(source.width)
+        let vertical = CGFloat(height) / CGFloat(source.height)
+        beginChange()
+        baseImage = resampled
+        cropRect = nil
+        if flattenAnnotations {
+            objects.removeAll()
+            background = AnnotationBackground()
+        } else {
+            objects = objects.map { original in
+                var updated = original
+                updated.rect = CGRect(x: original.rect.minX * horizontal,
+                                      y: original.rect.minY * vertical,
+                                      width: original.rect.width * horizontal,
+                                      height: original.rect.height * vertical)
+                // Freehand points are absolute canvas positions, not local
+                // offsets. The bounding rect and stroke path must both move.
+                updated.points = original.points.map {
+                    CGPoint(x: $0.x * horizontal, y: $0.y * vertical)
+                }
+                let thicknessFactor = min(horizontal, vertical)
+                updated.style.thickness *= thicknessFactor
+                updated.style.fontSize *= thicknessFactor
+                updated.style.pixelBlockSize *= thicknessFactor
+                updated.style.cornerRadius *= thicknessFactor
+                return updated
+            }
+        }
+        return true
+    }
+
     /// Moves an object up or down the z-order.
     mutating func reorder(_ id: UUID, offset: Int) {
         guard let index = objects.firstIndex(where: { $0.id == id }) else { return }
@@ -312,30 +377,38 @@ struct AnnotationDocument {
 
     mutating func undo() {
         guard let previous = undoStack.last, let previousCrop = undoCrops.last,
-              let previousImage = undoImages.last else { return }
+              let previousImage = undoImages.last,
+              let previousBackground = undoBackgrounds.last else { return }
         undoStack.removeLast()
         undoCrops.removeLast()
         undoImages.removeLast()
+        undoBackgrounds.removeLast()
         redoStack.append(objects)
         redoCrops.append(cropRect)
         redoImages.append(baseImage)
+        redoBackgrounds.append(background)
         objects = previous
         cropRect = previousCrop
         baseImage = previousImage
+        background = previousBackground
     }
 
     mutating func redo() {
         guard let next = redoStack.last, let nextCrop = redoCrops.last,
-              let nextImage = redoImages.last else { return }
+              let nextImage = redoImages.last,
+              let nextBackground = redoBackgrounds.last else { return }
         redoStack.removeLast()
         redoCrops.removeLast()
         redoImages.removeLast()
+        redoBackgrounds.removeLast()
         undoStack.append(objects)
         undoCrops.append(cropRect)
         undoImages.append(baseImage)
+        undoBackgrounds.append(background)
         objects = next
         cropRect = nextCrop
         baseImage = nextImage
+        background = nextBackground
     }
 
     // MARK: - Rendering
