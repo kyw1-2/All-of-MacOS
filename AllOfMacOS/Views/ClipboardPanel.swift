@@ -21,6 +21,7 @@ final class ClipboardPanelState: ObservableObject {
     @Published var stackMode = false
     @Published var status = ""
     @Published var searchFocusToken = UUID()
+    @Published var searchExpanded = false
     @Published var editor: ClipboardEditorRequest?
     @Published var preview: ClipboardEntry?
     @Published var editingTitleID: UUID?
@@ -32,6 +33,13 @@ final class ClipboardPanelState: ObservableObject {
 
     func selectedIDs(in store: ClipboardStore) -> [UUID] {
         results(in: store).filter { selected.contains($0.id) }.map(\.id)
+    }
+
+    /// Keep pinboard tab changes atomic, without leaving stale selection
+    /// attached to clips from the previously displayed collection.
+    func selectBoard(_ id: UUID?) {
+        board = id
+        selected.removeAll()
     }
 }
 
@@ -112,13 +120,13 @@ final class ClipboardPanelController {
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         if let bounds = screen?.visibleFrame {
             let storedHeight = CGFloat(UserDefaults.standard.double(forKey: "AOMClipboardPanelHeight"))
-            let targetHeight = min(max(storedHeight > 0 ? storedHeight : 282, 175),
+            let targetHeight = min(max(storedHeight > 0 ? storedHeight : 332, 175),
                                    max(175, bounds.height - 28))
             panel.setFrame(NSRect(x: bounds.minX + 16, y: bounds.minY + 12,
-                                  width: max(600, bounds.width - 32), height: targetHeight), display: true)
+                                  width: max(1, bounds.width - 32), height: targetHeight), display: true)
         }
         state.status = destination == nil ? "Choose an item to copy. Open history from another app to paste directly." : ""
-        state.searchFocusToken = UUID()
+        state.searchExpanded = !state.query.isEmpty
         panel.makeKeyAndOrderFront(nil)
         installMonitors()
     }
@@ -176,6 +184,7 @@ final class ClipboardPanelController {
         clearPanelInteractionState()
 
         // Paste sits just above the bottom screen edge; exit beneath that edge.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { hide(); return }
         let bottomEdge = (panel.screen ?? NSScreen.main)?.visibleFrame.minY ?? panel.frame.minY
         var offscreenFrame = panel.frame
         offscreenFrame.origin.y = bottomEdge - offscreenFrame.height - 20
@@ -323,8 +332,7 @@ final class ClipboardPanelController {
         if command && (event.keyCode == 123 || event.keyCode == 124) {
             let boards: [UUID?] = [nil] + store.boards.map { Optional($0.id) }
             let index = boards.firstIndex(of: state.board) ?? 0
-            state.board = boards[(index + (event.keyCode == 124 ? 1 : boards.count - 1)) % boards.count]
-            state.selected.removeAll()
+            state.selectBoard(boards[(index + (event.keyCode == 124 ? 1 : boards.count - 1)) % boards.count])
             return true
         }
         let entries = state.results(in: store)
@@ -385,9 +393,12 @@ struct ClipboardPanelView: View {
         .background(
             VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .shadow(color: Color.black.opacity(0.25), radius: 20, x: 0, y: 8)
-        .onChange(of: state.searchFocusToken) { _, _ in searchFocused = true }
+        .onChange(of: state.searchFocusToken) { _, _ in
+            state.searchExpanded = true
+            DispatchQueue.main.async { searchFocused = true }
+        }
         .onChange(of: state.query) { _, _ in state.selected.removeAll() }
         .onChange(of: state.kind) { _, _ in state.selected.removeAll() }
         .sheet(item: $state.editor) { request in ClipboardEditorSheet(request: request, store: store) }
@@ -397,107 +408,104 @@ struct ClipboardPanelView: View {
     // MARK: - Paste-inspired search, horizontal pinboards and filters
 
     private var headerBar: some View {
+        GeometryReader { geometry in
         HStack(spacing: 12) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Search Clipboard", text: $state.query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($searchFocused)
-                    .onSubmit {
-                        searchFocused = false
-                        if let first = entries.first { state.selected = [first.id] }
-                    }
-                    .frame(minWidth: 95, idealWidth: 155, maxWidth: 175)
-                    .accessibilityIdentifier("PasteStyleClipboardSearch")
-                if !state.query.isEmpty {
-                    Button { state.query = "" } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+            Spacer(minLength: 30)
+            HStack(spacing: 10) {
+                Button { state.searchFocusToken = UUID() } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .regular))
+                        .frame(width: 30, height: 30)
                 }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 29)
-            .background(Color.primary.opacity(0.065),
-                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    boardButton("Clipboard History", color: .secondary,
-                                icon: "clock.arrow.circlepath", id: nil)
-                    ForEach(store.boards) { board in
-                        boardButton(board.name, color: PasteClipboardPalette.board(board.color),
-                                    icon: nil, id: board.id)
-                            .contextMenu {
-                                Button("Rename Pinboard…") {
-                                    state.editor = .init(operation: .renameBoard(board.id),
-                                                         title: "Rename Pinboard", text: board.name)
-                                }
-                                Button("Delete Pinboard", role: .destructive) {
-                                    store.deleteBoard(id: board.id)
-                                    if state.board == board.id { state.board = nil }
-                                }
-                            }
-                    }
+                .buttonStyle(.plain)
+                .help("Search Clipboard (⌘F)")
+                .accessibilityLabel("Search Clipboard")
+                if state.searchExpanded {
+                    TextField("Search Clipboard", text: $state.query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused($searchFocused)
+                        .frame(width: 170)
+                        .accessibilityIdentifier("PasteStyleClipboardSearch")
+                        .onSubmit {
+                            searchFocused = false
+                            if let first = entries.first { state.selected = [first.id] }
+                        }
                     Button {
-                        state.editor = .init(operation: .newBoard,
-                                             title: "New Pinboard", text: "")
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 26, height: 26)
-                            .background(Color.primary.opacity(0.055), in: Circle())
-                    }
+                        state.query = ""
+                        state.searchExpanded = false
+                        searchFocused = false
+                    } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
-                    .help("Add Pinboard (⇧⌘N)")
+                    .help("Close Search")
                 }
-                .padding(.horizontal, 3)
-                .background(NativeScrollIndicatorsDisabled())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        boardButton("Clipboard", color: .secondary, icon: "clock.arrow.circlepath", id: nil)
+                        ForEach(store.boards) { board in
+                            boardButton(board.name, color: PasteClipboardPalette.board(board.color), icon: nil, id: board.id)
+                                .contextMenu {
+                                    Button("Rename Pinboard…") {
+                                        state.editor = .init(operation: .renameBoard(board.id), title: "Rename Pinboard", text: board.name)
+                                    }
+                                    Button("Delete Pinboard", role: .destructive) {
+                                        store.deleteBoard(id: board.id)
+                                        if state.board == board.id { state.selectBoard(nil) }
+                                    }
+                                }
+                        }
+                        Button {
+                            state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "")
+                        } label: {
+                            Image(systemName: "plus").font(.system(size: 19, weight: .regular))
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add Pinboard (⇧⌘N)")
+                        .accessibilityLabel("Add Pinboard")
+                    }
+                    .padding(.horizontal, 3)
+                    .background(NativeScrollIndicatorsDisabled())
+                }
+                .scrollIndicators(.hidden)
+                .frame(width: max(90, min(560, geometry.size.width - (state.searchExpanded ? 360 : 160), CGFloat(170 + store.boards.reduce(0) { $0 + min(190, $1.name.count * 8 + 35) }))))
             }
-            .scrollIndicators(.hidden)
-            .background(NativeScrollIndicatorsDisabled())
-            .frame(maxWidth: .infinity)
-
-            HStack(spacing: 5) {
+            Spacer(minLength: 30)
+        }
+        .overlay(alignment: .trailing) {
+            Menu {
                 compactTypeMenu
                 compactTimeMenu
                 compactAppMenu
-                Button { store.paused.toggle() } label: {
-                    Image(systemName: store.paused ? "play.circle.fill" : "pause.circle")
-                        .foregroundStyle(store.paused ? Color.orange : Color.secondary)
-                        .frame(width: 22, height: 22)
+                if state.kind != nil || state.source != nil || state.recentDays != 0 {
+                    Button("Clear Filters") { state.kind = nil; state.source = nil; state.recentDays = 0 }
                 }
-                .buttonStyle(.plain)
-                .help(store.paused ? "Resume Clipboard History" : "Pause Clipboard History")
-                Text("\(entries.count)")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .frame(minWidth: 18)
-                Button { controller.hide() } label: {
-                    Image(systemName: "xmark")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .help("Close (Esc)")
+                Divider()
+                Button(store.paused ? "Resume Clipboard History" : "Pause Clipboard History") { store.paused.toggle() }
+                Button("New Text…") { state.editor = .init(operation: .newText, title: "New Text", text: "") }
+                Button("Close (Esc)") { controller.hide() }
+                Text("\(entries.count) items")
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(store.paused || state.kind != nil || state.source != nil || state.recentDays != 0 ? Color.accentColor : Color.primary)
+                    .frame(width: 30, height: 30)
             }
-            .fixedSize(horizontal: true, vertical: false)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Clipboard Options and Filters")
         }
-        .padding(.horizontal, 14)
-        .frame(height: 45)
+        .padding(.horizontal, 20)
+        .frame(height: 48)
+        }
+        .frame(height: 48)
         .accessibilityIdentifier("PasteStyleClipboardToolbar")
     }
 
     private func boardButton(_ name: String, color: Color, icon: String?, id: UUID?) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.16)) {
-                state.board = id
-                state.selected.removeAll()
+                state.selectBoard(id)
             }
         } label: {
             HStack(spacing: 6) {
@@ -506,22 +514,25 @@ struct ClipboardPanelView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
                 } else {
-                    Circle().fill(color).frame(width: 9, height: 9)
+                    Circle().fill(color).frame(width: 11, height: 11)
                 }
                 Text(name)
-                    .font(.system(size: 11.5, weight: state.board == id ? .semibold : .regular))
+                    .font(.system(size: 14, weight: state.board == id ? .medium : .regular))
                     .lineLimit(1)
             }
             .padding(.horizontal, 11)
-            .frame(height: 27)
+            .frame(height: 30)
             .background(state.board == id
                         ? Color.primary.opacity(0.12)
-                        : Color.primary.opacity(0.025),
+                        : Color.clear,
                         in: Capsule())
             .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(name)
+        .accessibilityIdentifier("PasteStylePinboard_\(id?.uuidString ?? "clipboard-history")")
+        .accessibilityAddTraits(state.board == id ? [.isSelected] : [])
         .onDrop(of: [PasteClipboardDrag.entryType], isTargeted: nil) { providers in
             guard let id, let provider = providers.first(where: {
                 $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.entryType)
@@ -538,95 +549,54 @@ struct ClipboardPanelView: View {
         }
     }
 
-    // MARK: - Pure Icon-Only Filter Menus (No text labels, ultra-compact)
+    // MARK: - Filters in the overflow menu
 
     private var compactTypeMenu: some View {
-        Menu {
+        Menu("Filter by Type") {
             Button("All Types") { state.kind = nil }
             Divider()
-            ForEach([ClipboardEntry.Kind.text, .link, .image, .file, .color], id: \.self) { kind in
-                Button {
-                    state.kind = kind
-                } label: {
+            ForEach(ClipboardEntry.Kind.allCases) { kind in
+                Button { state.kind = kind } label: {
                     HStack {
-                        Text(kind.rawValue.capitalized)
+                        Text(kind.displayName)
                         if state.kind == kind { Image(systemName: "checkmark") }
                     }
                 }
             }
-        } label: {
-            ultraCompactFilterBadge(
-                icon: state.kind == nil ? "square.grid.2x2" : symbol(state.kind!),
-                tooltip: state.kind == nil ? "Filter by Type" : "Type: \(state.kind!.rawValue.capitalized)",
-                isActive: state.kind != nil
-            )
         }
-        .menuStyle(.borderlessButton)
     }
 
     private var compactAppMenu: some View {
-        Menu {
+        Menu("Filter by App") {
             Button("All Apps") { state.source = nil }
             Divider()
             ForEach(sources, id: \.self) { source in
-                let name = store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source
-                Button {
-                    state.source = source
-                } label: {
+                Button { state.source = source } label: {
                     HStack {
-                        Text(name)
+                        Text(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source)
                         if state.source == source { Image(systemName: "checkmark") }
                     }
                 }
             }
-        } label: {
-            ultraCompactFilterBadge(
-                icon: "app.badge",
-                tooltip: state.source == nil ? "Filter by App" : "App: \(store.entries.first { $0.sourceBundleID == state.source }?.sourceName ?? state.source!)",
-                isActive: state.source != nil
-            )
         }
-        .menuStyle(.borderlessButton)
     }
 
     private var compactTimeMenu: some View {
-        Menu {
+        Menu("Filter by Time") {
             Button("Any Time") { state.recentDays = 0 }
             Divider()
             Button("Last 24 Hours") { state.recentDays = 1 }
             Button("Last 7 Days") { state.recentDays = 7 }
             Button("Last 30 Days") { state.recentDays = 30 }
-        } label: {
-            ultraCompactFilterBadge(
-                icon: "clock",
-                tooltip: state.recentDays == 0 ? "Filter by Time" : "Time: \(state.recentDays)d",
-                isActive: state.recentDays != 0
-            )
         }
-        .menuStyle(.borderlessButton)
-    }
-
-    private func ultraCompactFilterBadge(icon: String, tooltip: String, isActive: Bool) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: 9.5, weight: .medium))
-            .frame(width: 20, height: 20)
-            .background(
-                isActive ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.04),
-                in: RoundedRectangle(cornerRadius: 4, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(isActive ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 0.8)
-            )
-            .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-            .help(tooltip)
     }
 
     // MARK: - Resizable timeline / automatic compact mode
 
     private var carouselContent: some View {
         GeometryReader { geometry in
-            let compact = geometry.size.height < 180
+            let compact = geometry.size.height < 205
+            let cardSide = min(300, max(100, geometry.size.height - 24))
             Group {
                 if entries.isEmpty {
                     VStack(spacing: 8) {
@@ -645,21 +615,22 @@ struct ClipboardPanelView: View {
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: compact ? 10 : 13) {
+                            LazyHStack(spacing: compact ? 14 : 22) {
                                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                                     ClipboardCardView(entry: entry, number: index + 1,
-                                                      compact: compact, store: store,
+                                                      compact: compact, side: cardSide, store: store,
                                                       state: state, controller: controller)
                                         .id(entry.id)
                                 }
                             }
-                            .padding(.horizontal, 17)
+                            .padding(.horizontal, 24)
                             .padding(.vertical, compact ? 7 : 9)
                             .frame(minHeight: geometry.size.height, alignment: .center)
                             .background(NativeScrollIndicatorsDisabled())
                         }
                         .scrollIndicators(.hidden)
                         .background(NativeScrollIndicatorsDisabled())
+                        .id(state.board?.uuidString ?? "clipboard-history")
                         .onChange(of: state.selected) { _, selected in
                             if let first = entries.first(where: { selected.contains($0.id) }) {
                                 searchFocused = false
@@ -739,7 +710,7 @@ final class AppMetadataCache {
             return Color(red: 0.12, green: 0.40, blue: 0.76)
         }
 
-        let hash = abs((key.isEmpty ? "default" : key).hashValue)
+        let hash = (key.isEmpty ? "default" : key).utf8.reduce(UInt64(5381)) { ($0 &* 33) &+ UInt64($1) }
         let palette: [Color] = [
             Color(red: 0.12, green: 0.45, blue: 0.90),
             Color(red: 0.46, green: 0.22, blue: 0.76),
@@ -749,7 +720,7 @@ final class AppMetadataCache {
             Color(red: 0.25, green: 0.45, blue: 0.85),
             Color(red: 0.22, green: 0.58, blue: 0.36)
         ]
-        return palette[hash % palette.count]
+        return palette[Int(hash % UInt64(palette.count))]
     }
 }
 
@@ -786,6 +757,7 @@ private struct ClipboardCardView: View {
     let entry: ClipboardEntry
     let number: Int
     let compact: Bool
+    let side: CGFloat
     @ObservedObject var store: ClipboardStore
     @ObservedObject var state: ClipboardPanelState
     let controller: ClipboardPanelController
@@ -797,7 +769,7 @@ private struct ClipboardCardView: View {
 
     private var isSelected: Bool { state.selected.contains(entry.id) }
 
-    private var accent: Color { PasteClipboardPalette.type(entry.kind) }
+    private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
     private var appIcon: NSImage? {
         AppMetadataCache.shared.icon(for: entry.sourceBundleID)
     }
@@ -807,15 +779,29 @@ private struct ClipboardCardView: View {
             HStack(alignment: .top, spacing: 7) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
-                        Text(entry.kind.displayName)
-                            .font(.system(size: 11, weight: .semibold))
+                        if isEditingTitle {
+                            TextField("Title", text: $editedTitle)
+                                .textFieldStyle(.plain)
+                                .focused($titleFocused)
+                                .onSubmit { commitTitle() }
+                                .onExitCommand { cancelTitle() }
+                                .onChange(of: titleFocused) { _, focused in
+                                    if !focused && isEditingTitle { commitTitle() }
+                                }
+                        } else {
+                            Text(entry.title)
+                                .font(.system(size: compact ? 12 : 15, weight: .semibold))
+                                .lineLimit(1)
+                                .onTapGesture(count: 2) { beginTitleEdit() }
+                                .help("Double-click to rename")
+                        }
                         if !entry.pinboardIDs.isEmpty {
                             Image(systemName: "pin.fill")
                                 .font(.system(size: 8))
                         }
                     }
                     Text(entry.lastCopiedAt, style: .relative)
-                        .font(.system(size: 9))
+                        .font(.system(size: compact ? 10 : 12))
                         .opacity(0.87)
                 }
                 Spacer(minLength: 4)
@@ -823,7 +809,7 @@ private struct ClipboardCardView: View {
                     Image(nsImage: appIcon)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 24, height: 24)
+                        .frame(width: compact ? 32 : 48, height: compact ? 32 : 48)
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                         .shadow(color: .black.opacity(0.15), radius: 1)
                         .help(entry.sourceName ?? "Source App")
@@ -838,7 +824,7 @@ private struct ClipboardCardView: View {
             .foregroundStyle(Color.white)
             .padding(.horizontal, compact ? 9 : 11)
             .padding(.vertical, 7)
-            .frame(height: compact ? 40 : 46, alignment: .top)
+            .frame(height: compact ? 44 : 56, alignment: .top)
             .background(accent)
 
             ZStack(alignment: .topLeading) {
@@ -853,47 +839,31 @@ private struct ClipboardCardView: View {
             .onTapGesture { selectCard() }
             .onDrag { dragProvider(entry) }
 
-            if !compact {
-                HStack(spacing: 5) {
-                    if isEditingTitle {
-                        TextField("Title", text: $editedTitle)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 10.5))
-                            .focused($titleFocused)
-                            .onSubmit { commitTitle() }
-                            .onExitCommand { cancelTitle() }
-                            .onChange(of: titleFocused) { _, focused in
-                                if !focused && isEditingTitle { commitTitle() }
-                            }
-                    } else {
-                        Text(entry.title)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .help(entry.title)
-                        Button { beginTitleEdit() } label: {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 9))
-                                .frame(width: 20, height: 20)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Rename Item")
-                        .opacity(isHovered || isSelected ? 1 : 0)
+            HStack(spacing: 5) {
+                Spacer(minLength: 0)
+                Text(metadataLabel)
+                    .font(.system(size: compact ? 10 : 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isHovered || isSelected {
+                    Button { beginTitleEdit() } label: {
+                        Image(systemName: "pencil").font(.system(size: 10))
                     }
+                    .buttonStyle(.plain)
+                    .help("Rename Item")
                 }
-                .padding(.horizontal, 9)
-                .frame(height: 29)
-                .background(Color(nsColor: .controlBackgroundColor))
             }
+            .padding(.horizontal, 10)
+            .frame(height: compact ? 22 : 28)
+            .background(Color(nsColor: .textBackgroundColor))
         }
-        .frame(width: compact ? 158 : 196,
-               height: compact ? 137 : 201)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.10),
-                              lineWidth: isSelected ? 2.5 : 0.7)
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.06),
+                              lineWidth: isSelected ? 3 : 0.5)
         }
         .shadow(color: .black.opacity(isSelected ? 0.18 : 0.08),
                 radius: isSelected ? 8 : 4, y: 2)
@@ -906,9 +876,30 @@ private struct ClipboardCardView: View {
         .accessibilityIdentifier("PasteStyleClipCard_\(entry.id.uuidString)")
     }
 
+    private var metadataLabel: String {
+        if entry.kind == .image, let data = entry.imageData,
+           let rep = NSBitmapImageRep(data: data) { return "\(rep.pixelsWide) × \(rep.pixelsHigh)" }
+        if entry.kind == .file { return "\(entry.fileURLs.count) files" }
+        if entry.kind == .link { return URL(string: entry.text ?? "")?.host ?? "Link" }
+        return "\(entry.text?.count ?? 0) characters"
+    }
+
     @ViewBuilder
     private var previewContent: some View {
-        if let data = entry.imageData, let image = NSImage(data: data) {
+        if compact && side < 150 {
+            if entry.kind == .color, let hex = entry.text {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(hex: hex) ?? .clear)
+                    .overlay { Text(hex).font(.system(size: 10)).padding(.horizontal, 3).background(.regularMaterial, in: Capsule()) }
+            } else if let data = entry.imageData, let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Text(entry.kind == .link ? (URL(string: entry.text ?? "")?.host ?? entry.previewText) : entry.previewText)
+                    .font(.system(size: 10))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        } else if let data = entry.imageData, let image = NSImage(data: data) {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
@@ -957,9 +948,9 @@ private struct ClipboardCardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Text(entry.previewText)
-                .font(.system(size: compact ? 10 : 11, design: .monospaced))
+                .font(.system(size: compact ? 11 : 14))
                 .lineSpacing(2)
-                .lineLimit(compact ? 5 : 8)
+                .lineLimit(compact ? 5 : 10)
                 .multilineTextAlignment(.leading)
                 .foregroundStyle(.primary.opacity(0.88))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

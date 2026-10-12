@@ -13,6 +13,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupMenuBarIcon()
         }
         observeMenuBarSetting()
+        if PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-clipboard-preview") {
+            Task { @MainActor in
+                let store = ClipboardStore.shared
+                await store.ready()
+                let board = store.createBoard(name: "Important", color: "green")
+                for text in ["A calm place for everything you copy.", "https://developer.apple.com/swift/", "#4A90D9", "Meeting notes\nDesign review at 10:30\nRefine the clipboard cards\nKeep existing shortcuts", "Hello, clipboard.\n안녕하세요, 클립보드."] {
+                    if let entry = store.createTextItem(text) { store.pin(entryID: entry.id, boardID: board.id) }
+                }
+                // Keep some items unpinned in the isolated preview so the
+                // Important tab is distinguishable from Clipboard History.
+                _ = store.createTextItem("Recent clipboard entry — not pinned")
+                _ = store.createTextItem("Draft text available only in Clipboard History")
+                ClipboardPanelController.shared.show()
+            }
+        }
+
         if !PresetManager.isUIPreview {
             requestAccessibilityPermissions()
             GestureHUD.shared.start()

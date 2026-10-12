@@ -15,11 +15,7 @@ fi
 
 # Stable local self-signed Code Signing certificate, created in Keychain Access.
 # CI passes ALLOFMACOS_SIGN_ID=- for an ad-hoc, non-distributable test build.
-SIGN_ID="${ALLOFMACOS_SIGN_ID:-AOM Dev}"
-if [ "$SIGN_ID" != "AOM Dev" ] && [ "$SIGN_ID" != "-" ]; then
-    echo "ERROR: Expected AOM Dev (local) or - (CI test only)." >&2
-    exit 1
-fi
+SIGN_ID="$("$PWD/scripts/resolve-signing-identity.sh" "${ALLOFMACOS_SIGN_ID:-AOM Dev}")"
 APP="build/All of MacOS.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"

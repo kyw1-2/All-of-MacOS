@@ -7,8 +7,8 @@ final class ClipboardPasteStyleTests: XCTestCase {
     func testNewTextItemAndColoredPinboardRoundTripWithoutTouchingSystemClipboard() async throws {
         let token = UUID().uuidString
         let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AOM-PasteUI-(token)")
-        let suite = "AOM-PasteUI-(token)"
+            .appendingPathComponent("AOM-PasteUI-\(token)")
+        let suite = "AOM-PasteUI-\(token)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let pasteboard = NSPasteboard(name: .init(suite))
         defer {
@@ -18,7 +18,8 @@ final class ClipboardPasteStyleTests: XCTestCase {
         }
         let store = ClipboardStore(directory: folder, pasteboard: pasteboard, defaults: defaults)
         await store.ready()
-        pasteboard.setString("Original text", forType: .string)
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("Original text", forType: .string))
 
         let board = store.createBoard(name: "Important Notes", color: "orange")
         let newItem = try XCTUnwrap(store.createTextItem("Reusable Korean 텍스트\nSecond line"))
@@ -31,7 +32,7 @@ final class ClipboardPasteStyleTests: XCTestCase {
         await store.flush()
 
         let reloaded = ClipboardStore(directory: folder,
-            pasteboard: NSPasteboard(name: .init("Reload-(token)")),
+            pasteboard: NSPasteboard(name: .init("Reload-\(token)")),
             defaults: defaults)
         await reloaded.ready()
         XCTAssertEqual(reloaded.boards.first?.name, "Important Notes")
@@ -40,12 +41,43 @@ final class ClipboardPasteStyleTests: XCTestCase {
         XCTAssertEqual(reloaded.entries.first?.pinboardIDs, Set([board.id]))
     }
 
+    func testImportantPinboardSwitchKeepsItemsAndClearsStaleSelection() async throws {
+        let token = UUID().uuidString
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AOM-Important-\(token)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = ClipboardStore(directory: folder,
+            pasteboard: NSPasteboard(name: .init("AOM-Important-\(token)")))
+        await store.ready()
+        let important = store.createBoard(name: "Important", color: "green")
+        let pinned = try XCTUnwrap(store.createTextItem("Pinned example"))
+        let ordinary = try XCTUnwrap(store.createTextItem("Recent, not pinned"))
+        store.pin(entryID: pinned.id, boardID: important.id)
+
+        let state = ClipboardPanelState()
+        XCTAssertEqual(Set(state.results(in: store).map(\.id)), Set([pinned.id, ordinary.id]))
+
+        state.selected = [ordinary.id]
+        state.selectBoard(important.id)
+        XCTAssertTrue(state.selected.isEmpty)
+        XCTAssertEqual(state.results(in: store).map(\.id), [pinned.id],
+                       "Important must display pinned clips, not the full Clipboard history")
+
+        state.selected = [pinned.id]
+        state.selectBoard(nil)
+        XCTAssertTrue(state.selected.isEmpty)
+        XCTAssertEqual(Set(state.results(in: store).map(\.id)), Set([pinned.id, ordinary.id]))
+        XCTAssertEqual(store.boards.first?.name, "Important")
+        XCTAssertTrue(store.entries.contains(where: { $0.id == ordinary.id }),
+                      "Switching pinboards must never erase ordinary clipboard history")
+    }
+
     func testPinboardColorAndSearchAreDataDriven() async throws {
         let token = UUID().uuidString
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("AOM-pin-(token)")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("AOM-pin-\(token)")
         defer { try? FileManager.default.removeItem(at: folder) }
         let store = ClipboardStore(directory: folder, pasteboard:
-            NSPasteboard(name: .init("AOM-pin-(token)")))
+            NSPasteboard(name: .init("AOM-pin-\(token)")))
         await store.ready()
         let one = try XCTUnwrap(store.createTextItem("Email template A"))
         let two = try XCTUnwrap(store.createTextItem("Accounting case B"))
