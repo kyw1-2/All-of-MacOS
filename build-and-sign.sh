@@ -57,16 +57,21 @@ echo "    Install separately to avoid overwriting an existing application"
 # identity can publish to the private development release channel.
 # Set ALLOFMACOS_SKIP_AUTO_RELEASE=1 to build without publishing.
 skip_auto_release="$(printenv ALLOFMACOS_SKIP_AUTO_RELEASE || true)"
-if [ "$SIGN_ID" != "-" ] && [ "$skip_auto_release" != "1" ]; then
+if [ "$SIGN_ID" != "-" ] && [ "$skip_auto_release" != "1" ] && [ "${CI:-false}" != "true" ]; then
     echo "==> Packaging and publishing verified AOM Dev DMG"
-    bash "$PWD/scripts/publish-dmg.sh" --from-build
-    # One-time historical import. Failures leave the marker unset for retry.
-    if [ ! -f "$PWD/build/.aom-historical-release-imported" ]; then
-        if bash "$PWD/scripts/publish-dmg.sh" --import-existing; then
-            touch "$PWD/build/.aom-historical-release-imported"
-        else
-            echo "WARNING: Historical DMG import incomplete; will retry on the next build." >&2
+    if bash "$PWD/scripts/publish-dmg.sh" --from-build; then
+        echo "==> DMG uploaded to the private GitHub development release"
+        # One-time historical import. Failures leave the marker unset for retry.
+        if [ ! -f "$PWD/build/.aom-historical-release-imported" ]; then
+            if bash "$PWD/scripts/publish-dmg.sh" --import-existing; then
+                touch "$PWD/build/.aom-historical-release-imported"
+            else
+                echo "WARNING: Historical DMG import incomplete; will retry on the next build." >&2
+            fi
         fi
+    else
+        echo "WARNING: Application was built and signed, but GitHub publishing failed." >&2
+        echo "         Check gh auth, network and release permissions; no build output was deleted." >&2
     fi
 fi
 
