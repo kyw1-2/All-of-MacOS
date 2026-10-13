@@ -61,7 +61,7 @@ final class QuickAccessOverlayController {
     func present() {
         guard panel == nil else { return }
         let width = CaptureSettings.overlaySize.panelWidth
-        let height = CaptureSettings.overlaySize.thumbnailSide + 48
+        let height = CaptureSettings.overlaySize.thumbnailSide + 8
         let size = NSSize(width: width, height: height)
         let panel = QuickAccessPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel],
@@ -644,7 +644,6 @@ private struct QuickAccessOverlayView: View {
     let onOpenWith: () -> Void
 
     @State private var hovered = false
-    @State private var dragOffset: CGFloat = 0
     private var side: CGFloat { CaptureSettings.overlaySize.thumbnailSide }
     private var width: CGFloat { CaptureSettings.overlaySize.panelWidth }
     private var isVideo: Bool { entry.kind == .videoRecording }
@@ -653,7 +652,7 @@ private struct QuickAccessOverlayView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: 13)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(Color(nsColor: .controlBackgroundColor))
                 Image(nsImage: entry.thumbnail)
                     .resizable()
@@ -666,12 +665,13 @@ private struct QuickAccessOverlayView: View {
                                               didFinish: onDragOut,
                                               didDoubleClick: onAnnotate,
                                               didSwipe: onSwipeDismiss,
-                                              isLeftCorner: isLeft)
+                                              isLeftCorner: isLeft,
+                                              didClick: onPreview)
                     }
 
                 if hovered {
-                    RoundedRectangle(cornerRadius: 13)
-                        .fill(Color.black.opacity(0.38))
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.black.opacity(0.44))
                         .allowsHitTesting(false)
                 }
                 if isVideo && !hovered {
@@ -726,31 +726,15 @@ private struct QuickAccessOverlayView: View {
                 .accessibilityHidden(!hovered)
             }
             .frame(height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 13))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
             .contextMenu { quickActions }
-            HStack(spacing: 6) {
-                Image(systemName: isVideo ? "video.fill" : "photo.fill")
-                    .font(.system(size: 9))
-                Text(entry.displayName)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 3)
-                Text("\(entry.image.width) × \(entry.image.height)")
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 7)
         }
-        .padding(7)
+        .padding(4)
         .frame(width: width)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17)
-            .stroke(Color.white.opacity(0.17), lineWidth: 1))
-        .shadow(color: .black.opacity(0.30), radius: 15, y: 6)
-        .offset(x: dragOffset)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(Color.white.opacity(0.30), lineWidth: 1))
+        .help("Click to preview · Double-click to edit · Drag to export")
         .onHover { state in
             withAnimation(.easeOut(duration: 0.15)) { hovered = state }
             onHoverChange(state)
@@ -766,10 +750,10 @@ private struct QuickAccessOverlayView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .foregroundStyle(Color.black.opacity(0.85))
                 .padding(.horizontal, 20)
                 .frame(minWidth: 92, minHeight: 29)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .background(Color.white.opacity(0.96), in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
