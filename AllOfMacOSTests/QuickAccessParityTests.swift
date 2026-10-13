@@ -59,6 +59,37 @@ final class QuickAccessParityTests: XCTestCase {
                          separateToggle: false, succeeded: true))
     }
 
+    func testOptionReversesDragCloseOnlyAfterSuccessfulDrop() {
+        let choices: [(OverlayAutoClose, Bool, Bool)] = [
+            (.never, false, false),
+            (.never, true, true),
+            (.afterDrag, false, true),
+            (.afterDrag, true, true)
+        ]
+        for (mode, toggle, baseClose) in choices {
+            XCTAssertEqual(QuickAccessPolicy.shouldCloseAfterDrag(
+                mode: mode, separateToggle: toggle, succeeded: true,
+                optionPressed: false), baseClose)
+            XCTAssertEqual(QuickAccessPolicy.shouldCloseAfterDrag(
+                mode: mode, separateToggle: toggle, succeeded: true,
+                optionPressed: true), !baseClose)
+            XCTAssertFalse(QuickAccessPolicy.shouldCloseAfterDrag(
+                mode: mode, separateToggle: toggle, succeeded: false,
+                optionPressed: true))
+        }
+    }
+
+    func testOptionReversesSaveDestinationPromptWithoutChangingPreference() {
+        XCTAssertFalse(QuickAccessPolicy.shouldPromptSave(
+            asksForName: false, optionPressed: false))
+        XCTAssertTrue(QuickAccessPolicy.shouldPromptSave(
+            asksForName: false, optionPressed: true))
+        XCTAssertTrue(QuickAccessPolicy.shouldPromptSave(
+            asksForName: true, optionPressed: false))
+        XCTAssertFalse(QuickAccessPolicy.shouldPromptSave(
+            asksForName: true, optionPressed: true))
+    }
+
     func testSaveBeforeAutoCloseAndTenMinuteIntervalPreferences() {
         let old = CaptureSettings.overlayAutoCloseSave
         let oldSeconds = CaptureSettings.overlayIntervalSeconds
