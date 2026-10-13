@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Searchable capture gallery with the same preview and actions as Quick Access.
+/// A top-edge capture shelf, separate from the bottom-edge clipboard history.
 private final class MediaHistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -54,11 +54,11 @@ final class MediaHistoryOverlayController: NSObject {
 
         guard let screen = targetScreen else { return }
 
-        let panelHeight: CGFloat = min(680, screen.visibleFrame.height - 48)
-        let panelWidth: CGFloat = min(1000, screen.visibleFrame.width - 48)
+        let panelHeight: CGFloat = min(332, max(120, (screen.visibleFrame.height - 36) / 2))
+        let panelWidth: CGFloat = max(1, screen.visibleFrame.width - 32)
 
         let targetX = screen.visibleFrame.midX - panelWidth / 2
-        let targetY = screen.visibleFrame.midY - panelHeight / 2
+        let targetY = screen.visibleFrame.maxY - panelHeight - 12
         let endFrame = NSRect(x: targetX, y: targetY, width: panelWidth, height: panelHeight)
         let startFrame = NSRect(x: targetX, y: targetY + 12, width: panelWidth, height: panelHeight)
 
@@ -74,7 +74,7 @@ final class MediaHistoryOverlayController: NSObject {
             p.isOpaque = false
             p.backgroundColor = .clear
             p.hasShadow = true
-            p.isMovableByWindowBackground = true
+            p.isMovableByWindowBackground = false
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             p.contentView = NSHostingView(rootView: MediaHistoryOverlayView(controller: self))
             panel = p
@@ -89,7 +89,7 @@ final class MediaHistoryOverlayController: NSObject {
         isPresented = true
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.26
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.14
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().setFrame(endFrame, display: true)
             panel.animator().alphaValue = 1.0
@@ -109,7 +109,7 @@ final class MediaHistoryOverlayController: NSObject {
         let exitFrame = NSRect(x: currentFrame.minX, y: offscreenY, width: currentFrame.width, height: currentFrame.height)
 
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.18
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.12
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().setFrame(exitFrame, display: true)
             panel.animator().alphaValue = 0.0
@@ -231,7 +231,6 @@ struct MediaHistoryOverlayView: View {
     @State private var selectedID: UUID?
     @State private var showingClearConfirmation = false
     @State private var previewEntry: CaptureHistoryEntry?
-    @State private var gridColumns = 4
 
     private var filteredEntries: [CaptureHistoryEntry] {
         var result: [CaptureHistoryEntry]
@@ -267,9 +266,9 @@ struct MediaHistoryOverlayView: View {
             footerBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12)))
+        .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(Color.primary.opacity(0.10)))
         .sheet(item: $previewEntry) { entry in
             CapturePreviewSheet(entry: entry)
         }
@@ -279,7 +278,7 @@ struct MediaHistoryOverlayView: View {
                 let index = filteredEntries.firstIndex { $0.id == selectedID }
                 switch key {
                 case 123, 124, 125, 126:
-                    let delta = key == 123 ? -1 : key == 124 ? 1 : key == 125 ? gridColumns : -gridColumns
+                    let delta = key == 123 ? -1 : key == 124 ? 1 : key == 125 ? 1 : -1
                     let next = index.map { min(filteredEntries.count - 1, max(0, $0 + delta)) } ?? 0
                     selectedID = filteredEntries[next].id
                 case 49:
@@ -325,96 +324,77 @@ struct MediaHistoryOverlayView: View {
     }
 
     private var headerBar: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                Text("Capture History").font(.system(size: 16, weight: .semibold))
-                Spacer()
-                Menu {
-                    Button("Clear All History…", role: .destructive) { showingClearConfirmation = true }
-                        .disabled(history.entries.isEmpty)
-                } label: { Image(systemName: "ellipsis.circle").font(.system(size: 17)) }
-                .menuStyle(.borderlessButton).frame(width: 24)
-                Button { controller?.dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                        .background(Color.primary.opacity(0.06), in: Circle())
-                }.buttonStyle(.plain).help("Close (Esc)")
+        HStack(spacing: 14) {
+            Label("Captures", systemImage: "photo.on.rectangle.angled")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search captures", text: $searchQuery)
+                    .focused($searchFocused).textFieldStyle(.plain)
+                if !searchQuery.isEmpty {
+                    Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                }
             }
-            HStack(spacing: 20) {
-                Picker("Capture type", selection: $selectedFilter) {
-                    // A pinned filter needs persistent pin membership; do not show an All alias.
+            .font(.system(size: 12)).padding(.horizontal, 10).frame(width: 190, height: 30)
+            .background(Color.primary.opacity(0.065), in: Capsule())
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
                     ForEach([MediaHistoryFilter.all, .screenshots, .recordings, .scrolling]) { filter in
-                        Text(filter.rawValue).tag(filter)
-                    }
-                }.labelsHidden().pickerStyle(.segmented).frame(maxWidth: 420)
-                Spacer(minLength: 0)
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search captures", text: $searchQuery)
-                        .focused($searchFocused).textFieldStyle(.plain)
-                    if !searchQuery.isEmpty {
-                        Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                        Button { selectedFilter = filter } label: {
+                            Label(filter.rawValue, systemImage: filter.icon)
+                                .font(.system(size: 12, weight: selectedFilter == filter ? .semibold : .regular))
+                                .padding(.horizontal, 10).frame(height: 30)
+                                .background(selectedFilter == filter ? Color.primary.opacity(0.12) : Color.clear, in: Capsule())
+                        }.buttonStyle(.plain)
                     }
                 }
-                .font(.system(size: 12)).padding(7).frame(width: 210)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-            }
-        }
-        .padding(20)
-    }
-
-    private var captureDays: [Date] {
-        Array(Set(filteredEntries.map { Calendar.current.startOfDay(for: $0.capturedAt) })).sorted(by: >)
-    }
-
-    private func dayTitle(_ day: Date) -> String {
-        if Calendar.current.isDateInToday(day) { return "Today" }
-        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
-        return day.formatted(date: .abbreviated, time: .omitted)
+            }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: 470)
+            Spacer(minLength: 0)
+            Menu {
+                Button("Clear All History…", role: .destructive) { showingClearConfirmation = true }
+                    .disabled(history.entries.isEmpty)
+            } label: { Image(systemName: "ellipsis").frame(width: 25, height: 28) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            Button { controller?.dismiss() } label: {
+                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).frame(width: 25, height: 28)
+            }.buttonStyle(.plain).help("Close (Esc)")
+        }.padding(.horizontal, 20).frame(height: 52)
     }
 
     private var galleryContent: some View {
         GeometryReader { geometry in
+            let side = min(280, max(120, geometry.size.height - 20))
             Group {
                 if filteredEntries.isEmpty {
                     emptyState
                 } else {
                     ScrollViewReader { proxy in
-                        ScrollView(.vertical) {
-                            LazyVStack(alignment: .leading, spacing: 20) {
-                                ForEach(captureDays, id: \.self) { day in
-                                    VStack(alignment: .leading, spacing: 10) {
-                                        Text(dayTitle(day)).font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.secondary)
-                                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: gridColumns), spacing: 16) {
-                                            ForEach(filteredEntries.filter { Calendar.current.isDate($0.capturedAt, inSameDayAs: day) }) { entry in
-                                                CaptureHistoryCard(
-                                                    entry: entry,
-                                                    isSelected: selectedID == entry.id,
-                                                    onSelect: { selectedID = entry.id },
-                                                    onCopy: { copyEntry(entry) },
-                                                    onAnnotate: { annotateEntry(entry) },
-                                                    onPin: { pinEntry(entry) },
-                                                    onDelete: { deleteEntry(entry) },
-                                                    onPreview: { previewEntry = entry }
-                                                ).id(entry.id)
-                                            }
-                                        }
-                                    }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 18) {
+                                ForEach(filteredEntries) { entry in
+                                    CaptureHistoryCard(
+                                        entry: entry,
+                                        isSelected: selectedID == entry.id,
+                                        thumbnailHeight: max(60, side - 58),
+                                        onSelect: { selectedID = entry.id },
+                                        onCopy: { copyEntry(entry) },
+                                        onAnnotate: { annotateEntry(entry) },
+                                        onPin: { pinEntry(entry) },
+                                        onDelete: { deleteEntry(entry) },
+                                        onPreview: { previewEntry = entry }
+                                    ).frame(width: side).id(entry.id)
                                 }
-                            }.padding(20)
+                            }.padding(.horizontal, 24).padding(.vertical, 10)
                         }
-                        .onChange(of: selectedID) { _, id in
-                            if let id { proxy.scrollTo(id) }
+                        .onChange(of: selectedFilter) { _, _ in
+                            if let first = filteredEntries.first { proxy.scrollTo(first.id, anchor: .leading) }
                         }
                     }
                 }
-            }
-            .onAppear { gridColumns = max(1, Int((geometry.size.width - 24) / 220)) }
-            .onChange(of: geometry.size.width) { _, width in gridColumns = max(1, Int((width - 24) / 220)) }
+            }.frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .background(Color(nsColor: .underPageBackgroundColor).opacity(0.45))
     }
 
     // MARK: - Empty State
@@ -535,6 +515,7 @@ struct MediaHistoryOverlayView: View {
 private struct CaptureHistoryCard: View {
     let entry: CaptureHistoryEntry
     let isSelected: Bool
+    var thumbnailHeight: CGFloat = 140
     let onSelect: () -> Void
     let onCopy: () -> Void
     let onAnnotate: () -> Void
@@ -562,7 +543,7 @@ private struct CaptureHistoryCard: View {
         .onTapGesture(count: 2) {
             onAnnotate()
         }
-        .onTapGesture { onSelect() }
+        .background(ImmediateMouseSelection(select: onSelect))
         .onDrag { dragItemProvider() }
         .contextMenu { cardMenu }
     }
@@ -585,11 +566,11 @@ private struct CaptureHistoryCard: View {
         ZStack {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                .frame(height: 140)
+                .frame(height: thumbnailHeight)
             Image(nsImage: entry.thumbnail)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: 140)
+                .frame(maxWidth: .infinity, maxHeight: thumbnailHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             if entry.kind == .videoRecording {
                 Image(systemName: "play.circle.fill")
@@ -609,7 +590,7 @@ private struct CaptureHistoryCard: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
-        .frame(height: 140)
+        .frame(height: thumbnailHeight)
     }
 
     private var hoverActions: some View {

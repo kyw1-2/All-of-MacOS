@@ -18,6 +18,7 @@ final class ClipboardPanelState: ObservableObject {
     @Published var recentDays = 0
     @Published var selected = Set<UUID>()
     @Published var focusedID: UUID?
+    @Published var keyboardScrollTarget: UUID?
     private var selectionAnchor: UUID?
     @Published var searchFieldActive = false
     @Published var filtersExpanded = false
@@ -202,7 +203,7 @@ final class ClipboardPanelController {
         if let bounds = screen?.visibleFrame {
             let storedHeight = CGFloat(UserDefaults.standard.double(forKey: "AOMClipboardPanelHeight"))
             let targetHeight = min(max(storedHeight > 0 ? storedHeight : 332, 175),
-                                   max(175, bounds.height - 28))
+                                   max(120, (bounds.height - 36) / 2))
             panel.setFrame(NSRect(x: bounds.minX + 16, y: bounds.minY + 12,
                                   width: max(1, bounds.width - 32), height: targetHeight), display: true)
         }
@@ -459,6 +460,7 @@ final class ClipboardPanelController {
                 ?? entries.firstIndex { state.selected.contains($0.id) } ?? -1
             let next = min(max(current + (event.keyCode == 124 ? 1 : -1), 0), entries.count - 1)
             state.select(entries[next].id, in: entries, extend: shift)
+            state.keyboardScrollTarget = entries[next].id
             return true
         }
         if !editingText && command && event.charactersIgnoringModifiers?.lowercased() == "a" { state.selected = Set(entries.map(\.id)); return true }
@@ -661,9 +663,7 @@ struct ClipboardPanelView: View {
 
     private func boardButton(_ name: String, color: Color, icon: String?, id: UUID?) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                state.selectBoard(id)
-            }
+            state.selectBoard(id)
         } label: {
             HStack(spacing: 6) {
                 if let icon {
@@ -840,14 +840,10 @@ struct ClipboardPanelView: View {
                         .scrollIndicators(.hidden)
                         .background(NativeScrollIndicatorsDisabled())
                         .id(state.board?.uuidString ?? "clipboard-history")
-                        .onChange(of: state.selected) { _, selected in
-                            if let first = entries.first(where: { $0.id == state.focusedID })
-                                ?? entries.first(where: { selected.contains($0.id) }) {
-                                searchFocused = false
-                                withAnimation(.easeOut(duration: 0.16)) {
-                                    proxy.scrollTo(first.id, anchor: .center)
-                                }
-                            }
+                        .onChange(of: state.keyboardScrollTarget) { _, id in
+                            guard let id else { return }
+                            searchFocused = false
+                            proxy.scrollTo(id)
                         }
                     }
                 }
@@ -975,6 +971,7 @@ private struct ClipboardCardView: View {
     @State private var isHovered = false
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
+    @State private var imagePreview: ClipboardThumbnailCache.Preview?
     @FocusState private var titleFocused: Bool
 
     private var isSelected: Bool { state.selected.contains(entry.id) }
@@ -1046,7 +1043,7 @@ private struct ClipboardCardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { copyByDoubleClick() }
-            .onTapGesture { selectCard() }
+            .background(ImmediateMouseSelection(select: selectCard))
             .onDrag { dragProvider(entry) }
 
             HStack(spacing: 5) {
@@ -1087,6 +1084,12 @@ private struct ClipboardCardView: View {
                 radius: isSelected ? 8 : 4, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onHover { isHovered = $0 }
+        .task(id: entry.id) {
+            guard let data = entry.imageData else { imagePreview = nil; return }
+            let preview = await ClipboardThumbnailCache.shared.preview(id: entry.id, data: data)
+            guard !Task.isCancelled else { return }
+            imagePreview = preview
+        }
         .contextMenu { entryMenu(entry) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
@@ -1095,8 +1098,7 @@ private struct ClipboardCardView: View {
     }
 
     private var metadataLabel: String {
-        if entry.kind == .image, let data = entry.imageData,
-           let rep = NSBitmapImageRep(data: data) { return "\(rep.pixelsWide) × \(rep.pixelsHigh)" }
+        if entry.kind == .image { return imagePreview?.dimensions ?? "Image" }
         if entry.kind == .file { return "\(entry.fileURLs.count) files" }
         if entry.kind == .link { return URL(string: entry.text ?? "")?.host ?? "Link" }
         return "\(entry.text?.count ?? 0) characters"
@@ -1109,20 +1111,16 @@ private struct ClipboardCardView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(hex: hex) ?? .clear)
                     .overlay { Text(hex).font(.system(size: 10)).padding(.horizontal, 3).background(.regularMaterial, in: Capsule()) }
-            } else if let data = entry.imageData, let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().scaledToFit()
+            } else if entry.kind == .image {
+                thumbnailContent
             } else {
                 Text(entry.kind == .link ? (URL(string: entry.text ?? "")?.host ?? entry.previewText) : entry.previewText)
                     .font(.system(size: 10))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-        } else if let data = entry.imageData, let image = NSImage(data: data) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if entry.kind == .image {
+            thumbnailContent
         } else if entry.kind == .file {
             VStack(spacing: 7) {
                 Image(systemName: "doc.zipper")
@@ -1172,6 +1170,16 @@ private struct ClipboardCardView: View {
                 .multilineTextAlignment(.leading)
                 .foregroundStyle(.primary.opacity(0.88))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    @ViewBuilder private var thumbnailContent: some View {
+        if let image = imagePreview?.image {
+            Image(decorative: image, scale: 1).resizable().interpolation(.high).scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            Image(systemName: "photo").foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -1412,8 +1420,7 @@ private struct PastePanelResizeGrip: NSViewRepresentable {
         override func mouseDragged(with event: NSEvent) {
             guard let window else { return }
             let y = window.convertPoint(toScreen: event.locationInWindow).y
-            let maxHeight = max(175, (window.screen?.visibleFrame.maxY ?? 680)
-                                - window.frame.minY - 12)
+            let maxHeight = max(120, ((window.screen?.visibleFrame.height ?? 900) - 36) / 2)
             let height = min(max(175, initialHeight + y - initialY), maxHeight)
             var frame = window.frame
             frame.size.height = height
