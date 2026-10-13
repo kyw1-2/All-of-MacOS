@@ -39,8 +39,9 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
 
     init(capture: CaptureHistoryEntry, url: URL?) {
         self.capture = capture
-        let width = min(1440, max(1180, capture.pixelSize.width / 2 + 320))
-        let height = min(900, max(640, capture.pixelSize.height / 2 + 140))
+        let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        let width = min(screen.width - 40, min(1280, max(900, capture.pixelSize.width / 2 + 180)))
+        let height = min(screen.height - 60, min(900, max(560, capture.pixelSize.height / 2 + 160)))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -50,7 +51,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
         window.toolbarStyle = .unified
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 1120, height: 560)
+        window.minSize = NSSize(width: 740, height: 480)
         super.init(window: window)
         window.contentView = NSHostingView(rootView: AnnotationEditorView(capture: capture, fileURL: url))
         window.delegate = self
@@ -178,6 +179,7 @@ private struct AnnotationEditorView: View {
     ]
 
     private var toolbar: some View {
+        VStack(spacing: 6) {
         HStack(spacing: 8) {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Crop (C)", active: cropMode) { selectTool(.crop) }
@@ -214,7 +216,19 @@ private struct AnnotationEditorView: View {
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
             capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
                 .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
-
+            Spacer(minLength: 8)
+            capsuleButton("arrow.uturn.backward", help: "Undo") { document.undo() }
+                .disabled(!document.canUndo)
+            capsuleButton("arrow.uturn.forward", help: "Redo") { document.redo() }
+                .disabled(!document.canRedo)
+            Button { saveAs() } label: {
+                Text("Save as…").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
+                    .background(Color.accentColor, in: Capsule())
+            }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command)
+        }
+        ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 8) {
             HStack(spacing: 0) {
                 ForEach(mainTools) { kind in
                     toolButton(kind)
@@ -268,14 +282,12 @@ private struct AnnotationEditorView: View {
             } label: { Image(systemName: "ellipsis").frame(width: 26, height: 30) }
             .menuStyle(.borderlessButton).fixedSize().help("More Options")
             .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
-            Spacer(minLength: 0)
-            Button { saveAs() } label: {
-                Text("Save as…").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
-                    .background(Color.accentColor, in: Capsule())
-            }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command)
         }
-        .padding(.horizontal, 12).frame(height: 54)
+        .padding(.vertical, 2)
+        }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.bar)
     }
 
     private func capsuleButton(_ symbol: String, help: String, active: Bool = false,
@@ -410,6 +422,7 @@ private struct AnnotationEditorView: View {
     }
 
     private var cropToolbar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 12) {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Crop", active: true) { }
@@ -443,6 +456,7 @@ private struct AnnotationEditorView: View {
             }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: [])
                 .disabled(cropRect == nil || (cropRect?.width ?? 0) < 1 || (cropRect?.height ?? 0) < 1)
         }.font(.system(size: 13)).padding(.horizontal, 12).frame(height: 54)
+        }
     }
 
     private func cropDimension(_ label: String, width: Bool) -> some View {

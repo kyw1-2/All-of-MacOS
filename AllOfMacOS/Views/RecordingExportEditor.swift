@@ -6,6 +6,7 @@ import SwiftUI
 /// Non-destructive MP4 trimming and short animated-GIF export from Capture History.
 struct RecordingExportEditor: View {
     let source: URL
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var duration = 0.0
@@ -44,7 +45,7 @@ struct RecordingExportEditor: View {
                     .foregroundStyle(Color.accentColor)
                 Text("Edit Recording").font(.headline)
                 Spacer()
-                Button("Close") { dismiss() }.disabled(isExporting)
+                Button("Close") { if let onClose { onClose() } else { dismiss() } }.disabled(isExporting)
             }
 
             Text(source.lastPathComponent)
@@ -384,5 +385,39 @@ struct RecordingExportEditor: View {
         let minutes = Int(time) / 60
         let seconds = time.truncatingRemainder(dividingBy: 60)
         return String(format: "%02d:%04.1f", minutes, seconds)
+    }
+}
+
+/// Direct Quick Access entry point; each movie keeps its own editing window.
+@MainActor
+final class RecordingExportEditorController: NSObject, NSWindowDelegate {
+    static let shared = RecordingExportEditorController()
+    private var windows: [URL: NSWindow] = [:]
+
+    func open(source: URL) {
+        if let existing = windows[source] {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let height = min(820, max(480, (NSScreen.main?.visibleFrame.height ?? 940) - 120))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: height),
+                              styleMask: [.titled, .closable, .miniaturizable],
+                              backing: .buffered, defer: false)
+        window.title = "Edit Recording — \(source.lastPathComponent)"
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: RecordingExportEditor(source: source,
+            onClose: { [weak window] in window?.close() }))
+        windows[source] = window
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              let source = windows.first(where: { $0.value === window })?.key else { return }
+        windows.removeValue(forKey: source)
     }
 }

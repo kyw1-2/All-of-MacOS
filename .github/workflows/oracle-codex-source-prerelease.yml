@@ -6,6 +6,8 @@ on:
       - release/aom-studio-cursor-20261013
     paths:
       - .github/workflows/oracle-codex-source-prerelease.yml
+      - 'AllOfMacOS/**'
+      - 'docs/1.0.8-capture-studio-ui.md'
 
 # This workflow can only publish a source prerelease; it NEVER builds,
 # signs, or publishes a DMG and does not alter the existing Latest release.
@@ -39,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="aom-studio-20261013-oracle-codex-rc1"
+          tag="aom-v1.0.8-source-${GITHUB_SHA:0:12}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')
             test "$existing" = "$GITHUB_SHA" || {
@@ -52,8 +54,8 @@ jobs:
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AOM Studio / Oracle Codex source preview — 2026-10-13" \
-            --notes-file docs/AOM-20261013-oracle-codex-release-notes.md \
+            --title "AOM 1.0.8 — Capture / Studio UI source preview" \
+            --notes-file docs/1.0.8-capture-studio-ui.md \
             --prerelease --latest=false
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease,tagName,targetCommitish,url \
             --jq '{prerelease:.isPrerelease,tag:.tagName,target:.targetCommitish,url:.url}'

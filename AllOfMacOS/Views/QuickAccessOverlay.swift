@@ -299,7 +299,15 @@ final class QuickAccessOverlayController {
     }
 
     private func annotate() {
-        guard entry.kind != .videoRecording else { save(); return }
+        if entry.kind == .videoRecording {
+            guard let url = entry.playableVideoURL else {
+                GestureHUD.shared.show(title: "Recording Missing", detail: "The video file could not be found.")
+                return
+            }
+            RecordingExportEditorController.shared.open(source: url)
+            dismiss(deleteFile: false)
+            return
+        }
         let url = ensureFile()
         AnnotationEditorController.shared.open(capture: entry, url: url)
         dismiss(deleteFile: false)
@@ -656,7 +664,7 @@ private struct QuickAccessOverlayView: View {
                         QuickAccessDragSource(preview: entry.thumbnail,
                                               prepareFile: prepareDragFile,
                                               didFinish: onDragOut,
-                                              didDoubleClick: onPreview,
+                                              didDoubleClick: onAnnotate,
                                               didSwipe: onSwipeDismiss,
                                               isLeftCorner: isLeft)
                     }
@@ -666,7 +674,12 @@ private struct QuickAccessOverlayView: View {
                         .fill(Color.black.opacity(0.38))
                         .allowsHitTesting(false)
                 }
-                VStack {
+                if isVideo && !hovered {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 34)).foregroundStyle(.white.opacity(0.9))
+                        .shadow(radius: 4).allowsHitTesting(false)
+                }
+                VStack(spacing: 0) {
                     HStack {
                         if !isVideo {
                             overlayIcon("pin.fill", hint: "Pin screenshot", onPin)
@@ -676,18 +689,22 @@ private struct QuickAccessOverlayView: View {
                         Spacer(minLength: 4)
                         overlayIcon("xmark", hint: "Close", onClose)
                     }
-                    Spacer(minLength: 4)
-                    if hovered {
-                        VStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    if side < 160 {
+                        HStack(spacing: 8) {
                             centralButton("Copy", action: isVideo ? onCopyFile : onCopy)
                             centralButton("Save", action: onSave)
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    } else {
+                        VStack(spacing: 8) {
+                            centralButton("Copy", action: isVideo ? onCopyFile : onCopy)
+                            centralButton("Save", action: onSave)
+                        }
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 0)
                     HStack {
                         overlayIcon(isVideo ? "film.stack" : "pencil",
-                                    hint: isVideo ? "Preview video" : "Annotate", isVideo ? onPreview : onAnnotate)
+                                    hint: isVideo ? "Edit recording (double-click)" : "Annotate (double-click)", onAnnotate)
                         Spacer(minLength: 4)
                         Menu {
                             quickActions
@@ -703,7 +720,10 @@ private struct QuickAccessOverlayView: View {
                         .help("More actions")
                     }
                 }
-                .padding(8)
+                .padding(side < 160 ? 6 : 8)
+                .opacity(hovered ? 1 : 0)
+                .allowsHitTesting(hovered)
+                .accessibilityHidden(!hovered)
             }
             .frame(height: side)
             .clipShape(RoundedRectangle(cornerRadius: 13))
@@ -753,7 +773,7 @@ private struct QuickAccessOverlayView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
-        .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S)")
+        .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S, Option-click switches destination behavior)")
     }
 
     private func overlayIcon(_ symbol: String, hint: String, _ action: @escaping () -> Void) -> some View {
@@ -777,9 +797,9 @@ private struct QuickAccessOverlayView: View {
         Button("File Information", action: onInfo)
         Button("Open with Default App", action: onOpenWith)
         Button("Share…", action: onShare)
+        Divider()
+        Button(isVideo ? "Edit Recording…" : "Annotate", action: onAnnotate)
         if !isVideo {
-            Divider()
-            Button("Annotate", action: onAnnotate)
             Button("Pin to Screen", action: onPin)
             Button("Copy Text (OCR)", action: onOCR)
             Button("Copy QR Code", action: onQR)
