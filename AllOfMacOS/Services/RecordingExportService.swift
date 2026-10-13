@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -40,6 +41,7 @@ enum RecordingExportService {
               start >= 0, end > start, duration > 0,
               end <= duration + 0.05 else { throw ExportError.invalidRange }
         let safeEnd = min(duration, end)
+        guard start < safeEnd else { throw ExportError.invalidRange }
         return CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
                            end: CMTime(seconds: safeEnd, preferredTimescale: 600))
     }
@@ -56,6 +58,14 @@ enum RecordingExportService {
 
     /// Trim MP4 losslessly when possible; AVFoundation preserves any audio track.
     static func trim(source: URL, start: Double, end: Double) async throws -> URL {
+        // Cursor-track recordings intentionally omit the baked pointer. Render
+        // it into standalone trims so playback never depends on a missing sidecar.
+        if let track = AOMCursorTrack.read(for: source), !track.points.isEmpty {
+            return try await render(source: source, start: start, end: end,
+                                    muteAudio: false, quality: .high,
+                                    studio: AOMStudioSettings(cursorPoints: track.points),
+                                    outputSuffix: "Trimmed")
+        }
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let asset = AVURLAsset(url: source)
@@ -102,7 +112,9 @@ enum RecordingExportService {
     }
 
     static func render(source: URL, start: Double, end: Double,
-                       muteAudio: Bool, quality: StudioQuality) async throws -> URL {
+                       muteAudio: Bool, quality: StudioQuality,
+                       studio: AOMStudioSettings = AOMStudioSettings(),
+                       outputSuffix: String = "Edited") async throws -> URL {
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let asset = AVURLAsset(url: source)
@@ -131,13 +143,27 @@ enum RecordingExportService {
                                                   presetName: quality.preset) else {
             throw ExportError.failed("A compatible video encoder is unavailable.")
         }
-        let url = outputURL(for: source, suffix: "Edited", extension: "mp4")
+        let url = outputURL(for: source, suffix: outputSuffix, extension: "mp4")
         guard exporter.supportedFileTypes.contains(.mp4) else {
             throw ExportError.failed("The selected quality does not support MP4.")
         }
         exporter.outputURL = url
         exporter.outputFileType = .mp4
         exporter.shouldOptimizeForNetworkUse = true
+        if studio.isActive {
+            // AVFoundation owns the composition timeline. Core Image effects
+            // execute on its render queue; no app/window capture or file I/O
+            // happens within this callback.
+            let effect = studio
+            exporter.videoComposition = AVVideoComposition(
+                asset: composition, applyingCIFiltersWithHandler: { request in
+                    let t = CMTimeGetSeconds(request.compositionTime)
+                    let timestamp = t.isFinite ? t : 0
+                    let result = AOMStudioRenderer.frame(request.sourceImage,
+                                                          time: start + timestamp, settings: effect)
+                    request.finish(with: result, context: nil)
+                })
+        }
         do {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
@@ -164,18 +190,21 @@ enum RecordingExportService {
 
     /// Export the requested span as a GIF, capped at 30 seconds / 10 fps to keep
     /// memory and output file sizes bounded. Work runs off the main event loop.
-    static func gif(source: URL, start: Double, end: Double, fps: Int = 8) async throws -> URL {
+    static func gif(source: URL, start: Double, end: Double, fps: Int = 8,
+                    studio: AOMStudioSettings = AOMStudioSettings()) async throws -> URL {
         let total = try await duration(for: source)
-        _ = try validatedRange(start: start, end: end, duration: total)
-        guard end - start <= 30.05, (1...10).contains(fps) else {
+        let range = try validatedRange(start: start, end: end, duration: total)
+        let safeEnd = CMTimeGetSeconds(range.end)
+        guard safeEnd - start <= 30.05, (1...10).contains(fps) else {
             throw ExportError.failed("GIFs support up to 30 seconds at 1–10 fps.")
         }
         return try await Task.detached(priority: .userInitiated) {
-            try generateGIF(source: source, start: start, end: end, fps: fps)
+            try generateGIF(source: source, start: start, end: safeEnd, fps: fps, studio: studio)
         }.value
     }
 
-    private static func generateGIF(source: URL, start: Double, end: Double, fps: Int) throws -> URL {
+    private static func generateGIF(source: URL, start: Double, end: Double, fps: Int,
+                                    studio: AOMStudioSettings) throws -> URL {
         let target = outputURL(for: source, suffix: "Animated", extension: "gif")
         let temporary = target.deletingLastPathComponent()
             .appendingPathComponent(".\(UUID().uuidString).gif")
@@ -184,6 +213,13 @@ enum RecordingExportService {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 960, height: 960)
+        if studio.isActive {
+            generator.videoComposition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+                let result = AOMStudioRenderer.frame(request.sourceImage,
+                    time: CMTimeGetSeconds(request.compositionTime), settings: studio)
+                request.finish(with: result, context: nil)
+            })
+        }
         generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
         let frames = min(300, max(1, Int(((end - start) * Double(fps)).rounded(.down))))

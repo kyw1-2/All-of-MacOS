@@ -144,6 +144,7 @@ final class ScreenCaptureTests: XCTestCase {
             guard let url = URL(string: value) else { return nil }
             return AOMCaptureDeepLink.parse(url)
         }
+        XCTAssertEqual(parsed("aom://all-in-one"), .allInOne)
         XCTAssertEqual(parsed("aom://capture-area"), .captureArea)
         XCTAssertEqual(parsed("aom://capture-fullscreen"), .captureFullscreen)
         XCTAssertEqual(parsed("aom://capture-window"), .captureWindow)

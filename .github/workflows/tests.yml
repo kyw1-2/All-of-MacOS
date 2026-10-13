@@ -3,18 +3,24 @@ name: All of MacOS macOS CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 'release/aom-studio-cursor-20261013']
   pull_request:
 
 permissions:
   contents: read
+
+# Preserve the scarce macOS runners for the newest PR revision. Never cancel
+# main-branch runs, where a trusted signed release may be queued separately.
+concurrency:
+  group: aom-macos-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-and-package:
     # After trusted signing is enabled, main pushes use the signed workflow instead.
     # PRs and explicit CI requests stay ad-hoc and never receive signing secrets.
     if: github.event_name != 'push' || vars.AOM_SIGNING_READY != 'true'
-    runs-on: macos-15
+    runs-on: ${{ startsWith(github.ref, 'refs/heads/release/') && 'macos-14' || 'macos-15' }}
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4

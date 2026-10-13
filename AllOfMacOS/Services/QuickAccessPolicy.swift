@@ -64,7 +64,18 @@ enum QuickAccessPolicy {
         return mode == .afterInterval ? TimeInterval(max(1, configured)) : nil
     }
 
-    static func shouldCloseAfterDrag(mode: OverlayAutoClose, separateToggle: Bool, succeeded: Bool) -> Bool {
-        succeeded && (mode == .afterDrag || separateToggle)
+    /// The reference application advertises Option as the temporary inverse
+    /// of its saved drag-close preference. Only a successful drop can close.
+    /// This AOM behavior is independently specified, not runtime parity proof.
+    static func shouldCloseAfterDrag(mode: OverlayAutoClose, separateToggle: Bool,
+                                     succeeded: Bool, optionPressed: Bool = false) -> Bool {
+        guard succeeded else { return false }
+        return (mode == .afterDrag || separateToggle) != optionPressed
+    }
+
+    /// Option temporarily inverts whether Save asks for a destination/name.
+    /// An explicit Save As action must always show the panel instead.
+    static func shouldPromptSave(asksForName: Bool, optionPressed: Bool) -> Bool {
+        asksForName != optionPressed
     }
 }

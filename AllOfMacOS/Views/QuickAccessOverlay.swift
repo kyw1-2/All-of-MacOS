@@ -61,7 +61,7 @@ final class QuickAccessOverlayController {
     func present() {
         guard panel == nil else { return }
         let width = CaptureSettings.overlaySize.panelWidth
-        let height = CaptureSettings.overlaySize.thumbnailSide + 48
+        let height = CaptureSettings.overlaySize.thumbnailSide + 8
         let size = NSSize(width: width, height: height)
         let panel = QuickAccessPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel],
@@ -273,7 +273,9 @@ final class QuickAccessOverlayController {
     }
 
     private func save() {
-        if CaptureSettings.asksForNameAfterCapture || NSEvent.modifierFlags.contains(.option) {
+        if QuickAccessPolicy.shouldPromptSave(
+            asksForName: CaptureSettings.asksForNameAfterCapture,
+            optionPressed: NSEvent.modifierFlags.contains(.option)) {
             saveAs()
             return
         }
@@ -297,7 +299,15 @@ final class QuickAccessOverlayController {
     }
 
     private func annotate() {
-        guard entry.kind != .videoRecording else { save(); return }
+        if entry.kind == .videoRecording {
+            guard let url = entry.playableVideoURL else {
+                GestureHUD.shared.show(title: "Recording Missing", detail: "The video file could not be found.")
+                return
+            }
+            RecordingExportEditorController.shared.open(source: url)
+            dismiss(deleteFile: false)
+            return
+        }
         let url = ensureFile()
         AnnotationEditorController.shared.open(capture: entry, url: url)
         dismiss(deleteFile: false)
@@ -526,7 +536,8 @@ final class QuickAccessOverlayController {
         dragging = false
         setHovering(hovering)
         if QuickAccessPolicy.shouldCloseAfterDrag(mode: CaptureSettings.overlayAutoClose,
-                separateToggle: CaptureSettings.overlayCloseAfterDrag, succeeded: success) {
+                separateToggle: CaptureSettings.overlayCloseAfterDrag,
+                succeeded: success, optionPressed: NSEvent.modifierFlags.contains(.option)) {
             dismiss(deleteFile: false)
         }
     }
@@ -633,7 +644,6 @@ private struct QuickAccessOverlayView: View {
     let onOpenWith: () -> Void
 
     @State private var hovered = false
-    @State private var dragOffset: CGFloat = 0
     private var side: CGFloat { CaptureSettings.overlaySize.thumbnailSide }
     private var width: CGFloat { CaptureSettings.overlaySize.panelWidth }
     private var isVideo: Bool { entry.kind == .videoRecording }
@@ -642,7 +652,7 @@ private struct QuickAccessOverlayView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: 13)
+                RoundedRectangle(cornerRadius: 9)
                     .fill(Color(nsColor: .controlBackgroundColor))
                 Image(nsImage: entry.thumbnail)
                     .resizable()
@@ -653,17 +663,23 @@ private struct QuickAccessOverlayView: View {
                         QuickAccessDragSource(preview: entry.thumbnail,
                                               prepareFile: prepareDragFile,
                                               didFinish: onDragOut,
-                                              didDoubleClick: onPreview,
+                                              didDoubleClick: onAnnotate,
                                               didSwipe: onSwipeDismiss,
-                                              isLeftCorner: isLeft)
+                                              isLeftCorner: isLeft,
+                                              didClick: onPreview)
                     }
 
                 if hovered {
-                    RoundedRectangle(cornerRadius: 13)
-                        .fill(Color.black.opacity(0.38))
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.black.opacity(0.44))
                         .allowsHitTesting(false)
                 }
-                VStack {
+                if isVideo && !hovered {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 34)).foregroundStyle(.white.opacity(0.9))
+                        .shadow(radius: 4).allowsHitTesting(false)
+                }
+                VStack(spacing: 0) {
                     HStack {
                         if !isVideo {
                             overlayIcon("pin.fill", hint: "Pin screenshot", onPin)
@@ -673,18 +689,22 @@ private struct QuickAccessOverlayView: View {
                         Spacer(minLength: 4)
                         overlayIcon("xmark", hint: "Close", onClose)
                     }
-                    Spacer(minLength: 4)
-                    if hovered {
-                        VStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    if side < 160 {
+                        HStack(spacing: 8) {
                             centralButton("Copy", action: isVideo ? onCopyFile : onCopy)
                             centralButton("Save", action: onSave)
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    } else {
+                        VStack(spacing: 8) {
+                            centralButton("Copy", action: isVideo ? onCopyFile : onCopy)
+                            centralButton("Save", action: onSave)
+                        }
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 0)
                     HStack {
                         overlayIcon(isVideo ? "film.stack" : "pencil",
-                                    hint: isVideo ? "Preview video" : "Annotate", isVideo ? onPreview : onAnnotate)
+                                    hint: isVideo ? "Edit recording (double-click)" : "Annotate (double-click)", onAnnotate)
                         Spacer(minLength: 4)
                         Menu {
                             quickActions
@@ -700,34 +720,21 @@ private struct QuickAccessOverlayView: View {
                         .help("More actions")
                     }
                 }
-                .padding(8)
+                .padding(side < 160 ? 6 : 8)
+                .opacity(hovered ? 1 : 0)
+                .allowsHitTesting(hovered)
+                .accessibilityHidden(!hovered)
             }
             .frame(height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 13))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
             .contextMenu { quickActions }
-            HStack(spacing: 6) {
-                Image(systemName: isVideo ? "video.fill" : "photo.fill")
-                    .font(.system(size: 9))
-                Text(entry.displayName)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 3)
-                Text("\(entry.image.width) × \(entry.image.height)")
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 7)
         }
-        .padding(7)
+        .padding(4)
         .frame(width: width)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17)
-            .stroke(Color.white.opacity(0.17), lineWidth: 1))
-        .shadow(color: .black.opacity(0.30), radius: 15, y: 6)
-        .offset(x: dragOffset)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(Color.white.opacity(0.30), lineWidth: 1))
+        .help("Click to preview · Double-click to edit · Drag to export")
         .onHover { state in
             withAnimation(.easeOut(duration: 0.15)) { hovered = state }
             onHoverChange(state)
@@ -743,14 +750,14 @@ private struct QuickAccessOverlayView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(nsColor: .labelColor))
+                .foregroundStyle(Color.black.opacity(0.85))
                 .padding(.horizontal, 20)
                 .frame(minWidth: 92, minHeight: 29)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .background(Color.white.opacity(0.96), in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
-        .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S)")
+        .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S, Option-click switches destination behavior)")
     }
 
     private func overlayIcon(_ symbol: String, hint: String, _ action: @escaping () -> Void) -> some View {
@@ -774,9 +781,9 @@ private struct QuickAccessOverlayView: View {
         Button("File Information", action: onInfo)
         Button("Open with Default App", action: onOpenWith)
         Button("Share…", action: onShare)
+        Divider()
+        Button(isVideo ? "Edit Recording…" : "Annotate", action: onAnnotate)
         if !isVideo {
-            Divider()
-            Button("Annotate", action: onAnnotate)
             Button("Pin to Screen", action: onPin)
             Button("Copy Text (OCR)", action: onOCR)
             Button("Copy QR Code", action: onQR)

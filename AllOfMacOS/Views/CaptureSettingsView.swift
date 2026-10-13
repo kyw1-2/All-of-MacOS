@@ -14,6 +14,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureRecordingFPS") private var recordingFPS = 30
     @AppStorage("AOMCaptureRecordingQuality") private var recordingQuality = 2
     @AppStorage("AOMCaptureRecordingClickIndicators") private var recordingClickIndicators = false
+    @AppStorage("AOMCaptureRecordingCursorMotion") private var recordingCursorMotion = false
     @AppStorage("AOMCaptureWindowShadow") private var windowShadow = true
     @AppStorage("AOMCaptureHidesDesktopIcons") private var hidesDesktopIcons = false
     @AppStorage("AOMCapturePlaysSound") private var playsSound = true
@@ -183,6 +184,12 @@ struct CaptureSettingsView: View {
                              title: "Show Mouse Clicks",
                              subtitle: "Highlight clicks during screen recordings", showDivider: true) {
                 Toggle("", isOn: $recordingClickIndicators)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "cursorarrow.motionlines", iconColor: .teal,
+                             title: "Editable Cursor Track",
+                             subtitle: "Opt-in local cursor positions; video cursor hidden for later editing", showDivider: true) {
+                Toggle("", isOn: $recordingCursorMotion)
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,

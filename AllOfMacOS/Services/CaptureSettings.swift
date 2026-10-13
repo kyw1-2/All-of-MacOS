@@ -179,6 +179,7 @@ enum CaptureSettings {
         static let recordingFPS = "AOMCaptureRecordingFPS"
         static let recordingQuality = "AOMCaptureRecordingQuality"
         static let recordingClickIndicators = "AOMCaptureRecordingClickIndicators"
+        static let recordingCursorMotion = "AOMCaptureRecordingCursorMotion"
         static let pinnedShadow = "AOMPinnedShadow"
         static let pinnedCorners = "AOMPinnedCorners"
         static let pinnedBorder = "AOMPinnedBorder"
@@ -372,6 +373,11 @@ enum CaptureSettings {
             return [1, 2, 3].contains(value) ? value : 2
         }
         set { d.set(min(3, max(1, newValue)), forKey: Key.recordingQuality) }
+    }
+
+    static var recordingCursorMotion: Bool {
+        get { d.bool(forKey: Key.recordingCursorMotion) }
+        set { d.set(newValue, forKey: Key.recordingCursorMotion) }
     }
 
     static var recordingClickIndicators: Bool {

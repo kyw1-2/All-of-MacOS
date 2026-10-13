@@ -48,6 +48,11 @@ enum CaptureMenu {
         menu.addItem(.separator())
 
         menu.addItem(item(
+            "All-In-One Capture", "square.dashed.inset.filled",
+            #selector(AppDelegate.captureAllInOneAction)
+        ))
+
+        menu.addItem(item(
             "Capture Previous Area", "arrow.counterclockwise.square",
             #selector(AppDelegate.capturePreviousAreaAction),
             shortcut: shortcuts.shortcut(for: .capturePreviousArea)

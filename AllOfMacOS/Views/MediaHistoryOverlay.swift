@@ -1,18 +1,7 @@
 import SwiftUI
 import AppKit
-import AVKit
 
-/// Paste-style horizontal slide-in Capture History Overlay (`MediaHistoryOverlay`).
-///
-/// Features:
-/// - Floating acrylic glass bar anchored to the top of the active screen (Paste-style presentation)
-/// - Slide-down from the top screen edge with smooth spring physics
-/// - Centered category/filter tabs: All, Screenshots, Scrolling, Pinned
-/// - Live instant search across capture file names and window titles
-/// - Horizontal scrollable carousel (`ScrollView(.horizontal)`) of large rich thumbnail cards
-/// - Keyboard navigation: Arrow keys to browse, Enter to copy & close, Space to preview, Esc to dismiss
-/// - Hover quick actions: Copy, Annotate, Pin, Delete
-/// - Native Drag & Drop: Drag any capture card directly into Finder, Slack, Discord, etc.
+/// Searchable capture gallery with the same preview and actions as Quick Access.
 private final class MediaHistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -42,6 +31,7 @@ final class MediaHistoryOverlayController: NSObject {
     var isShowingSheet = false
     var onEscape: (() -> Bool)?
     var onDeleteSelection: (() -> Bool)?
+    var onNavigate: ((UInt16) -> Bool)?
 
     private override init() {
         super.init()
@@ -64,14 +54,13 @@ final class MediaHistoryOverlayController: NSObject {
 
         guard let screen = targetScreen else { return }
 
-        // Paste-style top edge floating panel
-        let panelHeight: CGFloat = min(360, max(300, screen.visibleFrame.height * 0.42))
-        let panelWidth: CGFloat = max(600, screen.visibleFrame.width - 32)
+        let panelHeight: CGFloat = min(680, screen.visibleFrame.height - 48)
+        let panelWidth: CGFloat = min(1000, screen.visibleFrame.width - 48)
 
-        let targetX = screen.visibleFrame.minX + 16
-        let targetY = screen.visibleFrame.maxY - panelHeight - 12
+        let targetX = screen.visibleFrame.midX - panelWidth / 2
+        let targetY = screen.visibleFrame.midY - panelHeight / 2
         let endFrame = NSRect(x: targetX, y: targetY, width: panelWidth, height: panelHeight)
-        let startFrame = NSRect(x: targetX, y: screen.visibleFrame.maxY + 30, width: panelWidth, height: panelHeight)
+        let startFrame = NSRect(x: targetX, y: targetY + 12, width: panelWidth, height: panelHeight)
 
         if panel == nil {
             let p = MediaHistoryPanel(
@@ -85,7 +74,7 @@ final class MediaHistoryOverlayController: NSObject {
             p.isOpaque = false
             p.backgroundColor = .clear
             p.hasShadow = true
-            p.isMovableByWindowBackground = false
+            p.isMovableByWindowBackground = true
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             p.contentView = NSHostingView(rootView: MediaHistoryOverlayView(controller: self))
             panel = p
@@ -116,8 +105,7 @@ final class MediaHistoryOverlayController: NSObject {
         teardownDismissMonitors()
 
         let currentFrame = panel.frame
-        let screen = panel.screen ?? NSScreen.main
-        let offscreenY = (screen?.visibleFrame.maxY ?? currentFrame.maxY) + 30
+        let offscreenY = currentFrame.minY + 12
         let exitFrame = NSRect(x: currentFrame.minX, y: offscreenY, width: currentFrame.width, height: currentFrame.height)
 
         NSAnimationContext.runAnimationGroup({ context in
@@ -161,6 +149,9 @@ final class MediaHistoryOverlayController: NSObject {
                     self.handleEscape()
                     return nil
                 }
+                if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                   (panel.firstResponder as? NSTextView)?.isEditable != true,
+                   self.onNavigate?(event.keyCode) == true { return nil }
                 if Self.isDeleteKey(event.keyCode),
                    event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                    (panel.firstResponder as? NSTextView)?.isEditable != true,
@@ -228,7 +219,7 @@ enum MediaHistoryFilter: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - SwiftUI Overlay View (Paste-Style Top Shelf)
+// MARK: - Capture Gallery
 
 struct MediaHistoryOverlayView: View {
     weak var controller: MediaHistoryOverlayController?
@@ -240,6 +231,7 @@ struct MediaHistoryOverlayView: View {
     @State private var selectedID: UUID?
     @State private var showingClearConfirmation = false
     @State private var previewEntry: CaptureHistoryEntry?
+    @State private var gridColumns = 4
 
     private var filteredEntries: [CaptureHistoryEntry] {
         var result: [CaptureHistoryEntry]
@@ -270,38 +262,36 @@ struct MediaHistoryOverlayView: View {
         VStack(spacing: 0) {
             headerBar
             Divider().opacity(0.18)
-            carouselContent
+            galleryContent
             Divider().opacity(0.18)
             footerBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            ZStack {
-                VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow, state: .active)
-                Color(nsColor: .windowBackgroundColor).opacity(0.40)
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.35),
-                            Color.white.opacity(0.12),
-                            Color.white.opacity(0.18)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: Color.black.opacity(0.38), radius: 30, x: 0, y: 12)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12)))
         .sheet(item: $previewEntry) { entry in
             CapturePreviewSheet(entry: entry)
         }
         .onAppear {
+            controller?.onNavigate = { key in
+                guard !searchFocused, !filteredEntries.isEmpty else { return false }
+                let index = filteredEntries.firstIndex { $0.id == selectedID }
+                switch key {
+                case 123, 124, 125, 126:
+                    let delta = key == 123 ? -1 : key == 124 ? 1 : key == 125 ? gridColumns : -gridColumns
+                    let next = index.map { min(filteredEntries.count - 1, max(0, $0 + delta)) } ?? 0
+                    selectedID = filteredEntries[next].id
+                case 49:
+                    guard let index else { return false }
+                    previewEntry = filteredEntries[index]
+                case 36, 76:
+                    guard let index else { return false }
+                    copyEntry(filteredEntries[index])
+                default: return false
+                }
+                return true
+            }
             controller?.onEscape = {
                 guard selectedID != nil else { return false }
                 selectedID = nil
@@ -316,6 +306,8 @@ struct MediaHistoryOverlayView: View {
             }
             updateSheetState()
         }
+        .onChange(of: selectedFilter) { _, _ in selectedID = nil }
+        .onChange(of: searchQuery) { _, _ in selectedID = nil }
         .onChange(of: previewEntry?.id) { _, _ in updateSheetState() }
         .onChange(of: showingClearConfirmation) { _, _ in updateSheetState() }
         .alert("Clear Capture History?", isPresented: $showingClearConfirmation) {
@@ -332,170 +324,97 @@ struct MediaHistoryOverlayView: View {
         controller?.isShowingSheet = previewEntry != nil || showingClearConfirmation
     }
 
-    // MARK: - Header Bar (Centered Paste-Style Categories)
-
     private var headerBar: some View {
-        HStack(spacing: 14) {
-            // Left: Title & Badge
-            HStack(spacing: 8) {
-                Image(systemName: "camera.viewfinder")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.accentColor)
-
-                Text("Capture History")
-                    .font(.system(size: 14, weight: .bold))
-
-                Text("\(history.entries.count)")
-                    .font(.system(size: 11, weight: .bold).monospacedDigit())
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            // Center: Filter Segment Bar (Centered like Paste pinboards)
-            HStack(spacing: 4) {
-                ForEach(MediaHistoryFilter.allCases) { filter in
-                    let count: Int = {
-                        switch filter {
-                        case .all: return history.entries.count
-                        case .screenshots: return history.entries.filter { $0.kind != .scrolling && $0.kind != .videoRecording }.count
-                        case .recordings: return history.entries.filter { $0.kind == .videoRecording }.count
-                        case .scrolling: return history.entries.filter { $0.kind == .scrolling }.count
-                        case .pinned: return history.entries.count
-                        }
-                    }()
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            selectedFilter = filter
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: filter.icon)
-                                .font(.system(size: 11, weight: .medium))
-                            Text(filter.rawValue)
-                                .font(.system(size: 12, weight: selectedFilter == filter ? .semibold : .regular))
-                            Text("\(count)")
-                                .font(.system(size: 10, weight: .medium).monospacedDigit())
-                                .opacity(0.7)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            selectedFilter == filter
-                                ? Color.accentColor.opacity(0.22)
-                                : Color.clear,
-                            in: Capsule()
-                        )
-                        .overlay(
-                            Capsule().stroke(selectedFilter == filter ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 0.8)
-                        )
-                        .foregroundStyle(selectedFilter == filter ? Color.accentColor : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(3)
-            .background(Color.primary.opacity(0.05), in: Capsule())
-
-            Spacer()
-
-            // Right: Search & Actions
-            HStack(spacing: 8) {
-                // Search Input
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    TextField("Search captures…", text: $searchQuery)
-                        .focused($searchFocused)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .frame(width: 130)
-                    if !searchQuery.isEmpty {
-                        Button { searchQuery = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                // Clear button
-                Button {
-                    showingClearConfirmation = true
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Text("Capture History").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Menu {
+                    Button("Clear All History…", role: .destructive) { showingClearConfirmation = true }
+                        .disabled(history.entries.isEmpty)
+                } label: { Image(systemName: "ellipsis.circle").font(.system(size: 17)) }
+                .menuStyle(.borderlessButton).frame(width: 24)
+                Button { controller?.dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                         .frame(width: 24, height: 24)
                         .background(Color.primary.opacity(0.06), in: Circle())
+                }.buttonStyle(.plain).help("Close (Esc)")
+            }
+            HStack(spacing: 20) {
+                Picker("Capture type", selection: $selectedFilter) {
+                    // A pinned filter needs persistent pin membership; do not show an All alias.
+                    ForEach([MediaHistoryFilter.all, .screenshots, .recordings, .scrolling]) { filter in
+                        Text(filter.rawValue).tag(filter)
+                    }
+                }.labelsHidden().pickerStyle(.segmented).frame(maxWidth: 420)
+                Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search captures", text: $searchQuery)
+                        .focused($searchFocused).textFieldStyle(.plain)
+                    if !searchQuery.isEmpty {
+                        Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(history.entries.isEmpty)
-                .help("Clear All History")
-
-                // Close button
-                Button {
-                    controller?.dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(Color.primary.opacity(0.07), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Close (⌘⇧6 / Esc)")
+                .font(.system(size: 12)).padding(7).frame(width: 210)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+        .padding(20)
     }
 
-    // MARK: - Carousel Content (Paste Horizontal Cards)
+    private var captureDays: [Date] {
+        Array(Set(filteredEntries.map { Calendar.current.startOfDay(for: $0.capturedAt) })).sorted(by: >)
+    }
 
-    private var carouselContent: some View {
-        Group {
-            if filteredEntries.isEmpty {
-                emptyState
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 14) {
-                            ForEach(Array(filteredEntries.enumerated()), id: \.element.id) { index, entry in
-                                PasteStyleCaptureCard(
-                                    entry: entry,
-                                    index: index + 1,
-                                    isSelected: selectedID == entry.id,
-                                    onSelect: { selectedID = entry.id },
-                                    onCopy: { copyEntry(entry) },
-                                    onAnnotate: { annotateEntry(entry) },
-                                    onPin: { pinEntry(entry) },
-                                    onDelete: { deleteEntry(entry) },
-                                    onPreview: { previewEntry = entry }
-                                )
-                                .id(entry.id)
-                            }
+    private func dayTitle(_ day: Date) -> String {
+        if Calendar.current.isDateInToday(day) { return "Today" }
+        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private var galleryContent: some View {
+        GeometryReader { geometry in
+            Group {
+                if filteredEntries.isEmpty {
+                    emptyState
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical) {
+                            LazyVStack(alignment: .leading, spacing: 20) {
+                                ForEach(captureDays, id: \.self) { day in
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text(dayTitle(day)).font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: gridColumns), spacing: 16) {
+                                            ForEach(filteredEntries.filter { Calendar.current.isDate($0.capturedAt, inSameDayAs: day) }) { entry in
+                                                CaptureHistoryCard(
+                                                    entry: entry,
+                                                    isSelected: selectedID == entry.id,
+                                                    onSelect: { selectedID = entry.id },
+                                                    onCopy: { copyEntry(entry) },
+                                                    onAnnotate: { annotateEntry(entry) },
+                                                    onPin: { pinEntry(entry) },
+                                                    onDelete: { deleteEntry(entry) },
+                                                    onPreview: { previewEntry = entry }
+                                                ).id(entry.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }.padding(20)
                         }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 14)
-                    }
-                    .scrollIndicators(.hidden)
-                    .onChange(of: selectedID) { _, newID in
-                        if let newID {
-                            searchFocused = false
-                            proxy.scrollTo(newID, anchor: .center)
+                        .onChange(of: selectedID) { _, id in
+                            if let id { proxy.scrollTo(id) }
                         }
                     }
                 }
             }
+            .onAppear { gridColumns = max(1, Int((geometry.size.width - 24) / 220)) }
+            .onChange(of: geometry.size.width) { _, width in gridColumns = max(1, Int((width - 24) / 220)) }
         }
+        .background(Color(nsColor: .underPageBackgroundColor).opacity(0.45))
     }
 
     // MARK: - Empty State
@@ -523,30 +442,23 @@ struct MediaHistoryOverlayView: View {
     // MARK: - Footer Bar
 
     private var footerBar: some View {
-        HStack {
-            Text("Capacity: \(history.entries.count)/\(CaptureSettings.historyCapacity)")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-
+        HStack(spacing: 12) {
+            Text("\(filteredEntries.count) captures").foregroundStyle(.secondary)
             Spacer()
-
-            HStack(spacing: 10) {
-                Text("↵ Copy")
-                Text("•")
-                Text("⎵ Preview")
-                Text("•")
-                Text("⌫ Remove selected")
-                Text("•")
-                Text("Drag to apps")
-                Text("•")
-                Text("⇧⌘6 / Esc to Close")
+            if let entry = filteredEntries.first(where: { $0.id == selectedID }) {
+                Button("Preview") { previewEntry = entry }
+                Button(entry.kind == .videoRecording ? "Edit Recording" : "Annotate") { annotateEntry(entry) }
+                Button("Copy") { copyEntry(entry) }
+                Button("Save") {
+                    controller?.isShowingSheet = true
+                    CapturePreviewActions.save(entry) { updateSheetState() }
+                }
+            } else {
+                Text("Select a capture · Space to preview · Drag to export").foregroundStyle(.secondary)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary.opacity(0.85))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.02))
+        .font(.system(size: 11)).buttonStyle(.bordered).controlSize(.small)
+        .frame(height: 28).padding(.horizontal, 20).padding(.vertical, 8)
     }
 
     // MARK: - Action Helpers
@@ -583,12 +495,12 @@ struct MediaHistoryOverlayView: View {
     }
 
     private func annotateEntry(_ entry: CaptureHistoryEntry) {
-        if entry.kind == .videoRecording {
+        guard entry.kind != .videoRecording || entry.playableVideoURL != nil else {
             previewEntry = entry
-        } else {
-            AnnotationEditorController.shared.open(capture: entry, url: entry.fileURL)
-            controller?.dismiss()
+            return
         }
+        controller?.dismiss()
+        CapturePreviewActions.edit(entry)
     }
 
     private func pinEntry(_ entry: CaptureHistoryEntry) {
@@ -612,16 +524,16 @@ struct MediaHistoryOverlayView: View {
 
     private func deleteEntry(_ entry: CaptureHistoryEntry) {
         withAnimation {
+            if selectedID == entry.id { selectedID = nil }
             CaptureHistory.shared.remove(entry)
         }
     }
 }
 
-// MARK: - Paste-Style Horizontal Capture Card
+// MARK: - Capture Thumbnail
 
-private struct PasteStyleCaptureCard: View {
+private struct CaptureHistoryCard: View {
     let entry: CaptureHistoryEntry
-    let index: Int
     let isSelected: Bool
     let onSelect: () -> Void
     let onCopy: () -> Void
@@ -634,24 +546,21 @@ private struct PasteStyleCaptureCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            header
             thumbnail
-            Divider().opacity(0.25)
-            footer
+            footer.padding(.horizontal, 4).padding(.bottom, 4)
         }
-        .padding(11)
-        .frame(width: 225, height: 215)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(5)
+        .frame(maxWidth: .infinity)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(selectionOutline)
         .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08),
                 radius: isHovered ? 10 : 4, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
         }
         .onTapGesture(count: 2) {
-            if entry.kind == .videoRecording { onPreview() }
-            else { onAnnotate() }
+            onAnnotate()
         }
         .onTapGesture { onSelect() }
         .onDrag { dragItemProvider() }
@@ -665,39 +574,22 @@ private struct PasteStyleCaptureCard: View {
     }
 
     private var selectionOutline: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
             .stroke(isSelected ? Color.accentColor
                    : (isHovered ? Color.accentColor.opacity(0.4)
                                 : Color.primary.opacity(0.10)),
                     lineWidth: isSelected ? 2 : 1)
     }
 
-    private var header: some View {
-        HStack(spacing: 6) {
-            Label(entry.kind.displayName, systemImage: iconForKind(entry.kind))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-            Spacer()
-            Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.secondary)
-            if index <= 9 {
-                Text("⌘\(index)")
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     private var thumbnail: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                .frame(height: 125)
+                .frame(height: 140)
             Image(nsImage: entry.thumbnail)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: 125)
+                .frame(maxWidth: .infinity, maxHeight: 140)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             if entry.kind == .videoRecording {
                 Image(systemName: "play.circle.fill")
@@ -712,10 +604,12 @@ private struct PasteStyleCaptureCard: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.5))
                     .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
                     .padding(.bottom, 6)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
+        .frame(height: 140)
     }
 
     private var hoverActions: some View {
@@ -723,12 +617,12 @@ private struct PasteStyleCaptureCard: View {
             cardButton("doc.on.doc",
                        entry.kind == .videoRecording ? "Copy MP4 File" : "Copy Image", onCopy)
             if entry.kind == .videoRecording {
-                cardButton("play.fill", "Play Recording", onPreview)
+                cardButton("film.stack", "Edit Recording", onAnnotate)
             } else {
                 cardButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
                 cardButton("pin.fill", "Pin to Screen", onPin)
             }
-            cardButton("trash", "Delete", onDelete, tint: .red.opacity(0.9))
+            cardButton("arrow.up.left.and.arrow.down.right", "Preview (Space)", onPreview)
         }
     }
 
@@ -743,7 +637,7 @@ private struct PasteStyleCaptureCard: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 2)
-                Text(entry.kind == .videoRecording ? "MP4" : "PNG")
+                Text("\(entry.image.width) × \(entry.image.height)")
                     .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -754,6 +648,7 @@ private struct PasteStyleCaptureCard: View {
     private var cardMenu: some View {
         if entry.kind == .videoRecording {
             Button("Play Recording…", action: onPreview)
+            Button("Edit Recording…", action: onAnnotate)
             Button("Copy MP4 File", action: onCopy)
             if let url = entry.playableVideoURL {
                 Button("Reveal in Finder") {
@@ -855,79 +750,15 @@ private struct PasteStyleCaptureCard: View {
     }
 }
 
-// MARK: - Capture Preview Sheet
+// MARK: - Shared Capture Preview
 
 private struct CapturePreviewSheet: View {
     let entry: CaptureHistoryEntry
     @Environment(\.dismiss) private var dismiss
-    @State private var showingRecordingEditor = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text(entry.displayName).font(.headline)
-                Spacer()
-                if let file = entry.playableVideoURL {
-                    Button("Edit Video…") { showingRecordingEditor = true }
-                        .help("Trim the original MP4 or export a short animated GIF")
-                        .sheet(isPresented: $showingRecordingEditor) {
-                            RecordingExportEditor(source: file)
-                        }
-                }
-                Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal)
-            .padding(.top)
-
-            if entry.kind == .videoRecording {
-                if let url = entry.playableVideoURL {
-                    CaptureVideoPlayer(url: url)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                } else {
-                    ContentUnavailableView("Recording Missing", systemImage: "video.slash",
-                        description: Text("The recorded MP4 file can no longer be found."))
-                }
-            } else {
-                Image(decorative: entry.image, scale: 1.0)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-            }
-        }
-        .frame(minWidth: 700, minHeight: 480)
-        .background(VisualEffectBackground(material: .hudWindow, state: .active))
-        .onExitCommand { dismiss() }
-    }
-}
-
-
-// MARK: - MP4 playback using the actual recording instead of its still thumbnail.
-
-private struct CaptureVideoPlayer: View {
-    let url: URL
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        Group {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                ProgressView("Opening recording…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .onAppear {
-            let newPlayer = AVPlayer(url: url)
-            player = newPlayer
-            newPlayer.play()
-        }
-        .onDisappear {
-            player?.pause()
-            player?.replaceCurrentItem(with: nil)
-            player = nil
-        }
+        CapturePreviewContent(entry: entry, onClose: { dismiss() })
+            .frame(minWidth: 720, idealWidth: 840, minHeight: 480, idealHeight: 560)
+            .onExitCommand { dismiss() }
     }
 }

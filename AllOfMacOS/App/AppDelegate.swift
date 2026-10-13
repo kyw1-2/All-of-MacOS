@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// A URL is a request to show native UI or perform an already user-initiated capture.
 /// Unsupported parameters fail closed rather than silently changing capture behavior.
 enum AOMCaptureDeepLink: Equatable {
-    case captureArea, captureFullscreen, captureWindow, previousArea
+    case allInOne, captureArea, captureFullscreen, captureWindow, previousArea
     case scrollingCapture, selfTimer, recordScreen
     case captureText(keepsLineBreaks: Bool)
     case openHistory, restoreRecentlyClosed, openSettings
@@ -26,6 +26,7 @@ enum AOMCaptureDeepLink: Equatable {
         let params = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
         func exact(_ keys: Set<String> = []) -> Bool { Set(params.keys) == keys }
         switch command {
+        case "all-in-one" where exact(): return .allInOne
         case "capture-area" where exact(): return .captureArea
         case "capture-fullscreen" where exact(): return .captureFullscreen
         case "capture-window" where exact(): return .captureWindow
@@ -113,6 +114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @MainActor
     private func handleCaptureDeepLink(_ command: AOMCaptureDeepLink) {
         switch command {
+        case .allInOne: CaptureCoordinator.shared.captureAllInOne()
         case .captureArea: CaptureCoordinator.shared.captureArea()
         case .captureFullscreen: CaptureCoordinator.shared.captureFullscreen()
         case .captureWindow: CaptureCoordinator.shared.captureWindowFromPicker()
@@ -198,6 +200,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MainActor.assumeIsolated { CaptureCoordinator.shared.closeAllQuickAccess() }
     }
 
+    @objc func captureAllInOneAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllInOne() } }
     @objc func captureAreaAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureArea() } }
     @objc func captureFullscreenAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureFullscreen() } }
     @objc func captureWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowFromPicker() } }

@@ -21,20 +21,20 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 | Group | Reference features | AOM implementation / evidence | Status |
 |---|---|---|---|
 | Capture | area, full screen, window, previous area, multi-display | CaptureCoordinator + ScreenCaptureService | AOM, UNKNOWN parity |
-| All-in-One | combined selection, interface and post-capture action | separate capture modes; no full equivalent verified | PARTIAL |
+| All-in-One | combined selection and post-capture action | PR: one-off Quick Access/Copy/Save/Annotate decision then native area picker; reference inline UI parity NOT verified | PR, PARTIAL visual |
 | Capture details | pixel snapping, magnifier, freeze screen, cursor, window shadows | Settings + selection overlay | AOM, UNKNOWN parity |
-| Scrolling | capture and stitching across apps | ScrollingCaptureService | AOM, UNKNOWN parity |
+| Scrolling | vertical and horizontal capture and stitching | PR: repaired third-frame failure and retina shift conversion; added horizontal scroll, menu, 3-frame tests | PR, RUNTIME UNKNOWN |
 | OCR | Vision on-device recognition, linebreak modes, QR | capture text, Quick Access OCR/QR | AOM, UNKNOWN parity |
 | Self timer | delayed screenshots | CaptureCoordinator self-timer | AOM |
 | Quick Access | copy, save, more menu, annotate, pin, OCR, multi overlay, restore, auto close | QuickAccessOverlay, Coordinator, Policy | AOM; P0 visual+gesture gap |
 | Quick Access file import | external PNG/JPG/MP4, drag out | Coordinator import + NSDraggingSource | AOM |
 | Preview positioning | corners, sizes, auto close, multi-monitor | QuickAccessGeometry + CaptureSettings | AOM; measured visuals UNKNOWN |
 | Annotate shapes | rectangle, ellipse, arrows, lines, text, counters, freehand, highlighter | AnnotationKind + Editor | AOM; behavior/graphics UNKNOWN |
-| Annotate media | crop, background expand, reorder, duplicate, undo/redo, export | AnnotationDocument + Editor | PARTIAL |
+| Annotate media | crop, background expand, reorder, duplicate, undo/redo, export | PR: added clockwise/counterclockwise rotation and horizontal/vertical flip, flattening existing markup while Undo restores editable layers | PARTIAL |
 | Resize | separate pixel/percent dimensions, preserve aspect | PR: AnnotationResizeDialog + resampling | PR |
 | Flatten layers | explicit Flatten Annotations with Undo/Redo | PR: undo-safe bitmap flattening | PR |
 | Pixelate / Blur / Redact | mosaic, Gaussian blur, opaque blackout choices | mosaic preexisting; PR adds a selectable Core Image Gaussian blur and a separate solid-black redact tool. UI/visual behavior not A/B verified | PR, UNKNOWN parity |
-| Smart Highlighter | word-aware highlighting | rectangular/highlight draw only | GAP |
+| Smart Highlighter | word-aware highlighting | PR: Vision OCR query and line bounding boxes with grouped Undo; not word-perfect highlight inside a line | PR, PARTIAL |
 | Save editable project | proprietary .cleanshot format | editable in current session; no compatible persisted project | GAP (format intentionally not copied) |
 | Combine screenshots | append and position screenshot layers | append below implemented; general 2D composite not verified | PARTIAL |
 | Pinned floating image | window, position lock, opacity, multiple panels | PR: original-res pin, lock and opacity; rest preexisting | PR; click-through lock UNKNOWN |
@@ -43,7 +43,7 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 | Capture naming | template tokens/preview, UTC, increments | PR: configurable safe filename templates | PR |
 | Recorder | area/fullscreen, FPS/quality, microphone/system sound, clicks | ScreenRecordingService | AOM, UNKNOWN |
 | Recording editor | preview, trim, GIF, mute audio, quality | PR: video preview, MP4 re-encode options + existing trim/GIF | PR; verify CI |
-| 5.0 Studio Mode | Smart Zoom, cursor smoothing, motion blur, camera/keystrokes edit, timeline keyframes, backgrounds | native Smart Zoom/timeline/FFunction classes present in reference; no AOM implementation | GAP |
+| 5.0 Studio Mode | Smart Zoom, cursor smoothing, motion blur, camera/keystrokes edit, timeline keyframes, backgrounds | PR: manually placed smooth zoom keyframes, local editable cursor sidecar with smoothing and pointer resizing, bounded transition motion blur, solid video backdrop with inset; **automatic mouse tracking Smart Zoom**, camera track, editable keystrokes, different output aspect ratios are not implemented | PARTIAL; CI/runtime pending |
 | QuickLook extensions | Finder QuickLook and Share extensions | app-level preview and sharing only | PARTIAL |
 | URL command API | capture/open history/recording/open from clipboard/import | PR: independent `aom://` actions; does NOT register `cleanshot://` | PR |
 | Updates | updater, release feed | AOM GitHub Actions release system, signing gated | PARTIAL |
@@ -76,3 +76,28 @@ Status codes: `AOM` implemented preexisting; `PR` implemented in this feature br
 - Antigravity registration `~/.gemini/config/mcp_config.json` contains the official `rea mcp` registration with provider environment variables. Direct REA MCP initialize and tools/list returned 170 advertised tools.
 - A delegated WebGPT High worker used its terminal to run `rea --version` and `rea doctor --provider ghidra --json`, confirming 6.4.0 and `healthy:true`. In this harness, WebGPT invokes REA through its terminal rather than showing 170 REA operations as separate built-in tools.
 - macOS release/install checks and end-user pixel/gesture comparisons require the currently offline Mac. New code remains in Draft PR #2, not deployed.
+
+## 2026-10-13 full-sweep code findings (new commits, CI pending)
+
+| Severity | Finding | Failure mode | Change | Confidence |
+| --- | --- | --- | --- | --- |
+| P0 | Vertical scrolling compared the next viewport with the ever-growing accumulated bitmap | Two viewport heights cease to match after the first stitch; multi-frame capture stops prematurely | Shift detection compares the preceding full-size viewport, append grows the accumulator | Source-proven; synthetic 3-frame regression added |
+| P0 | Scrolling displacement was measured in a downscaled luminance bitmap but applied directly in original pixels | Retina/high-resolution scrolling inserts too few rows and breaks the stitch | Convert shift to source-pixel scale before band extraction | Source-proven; Retina synthetic regression added |
+| P1 | No horizontal scrolling implementation despite vendor feature | Wide content cannot be captured | Horizontal wheel, grayscale-column correlation, horizontal band assembly, separate menu action and tests | Source-implemented; macOS event compatibility not yet tested |
+| P1 | Image rotation and flipping absent | Cannot reorient screenshot without another tool | Native quarter-turns and mirroring, flattened composite, Undo restores original editable layers | Source-implemented; pixel-level tests added |
+| P1 | No text-aware highlight entry | Can draw rectangles manually but cannot OCR-match labels | Vision OCR query, bounding-box conversion and atomic undo | Source-implemented; per-word recognition remains gap |
+| P1 | No combined capture entry point | Every capture mode requires separate menu choice | Basic All-In-One prompt selects post-capture action and opens area picker | Source-implemented; differs from vendor UI sequencing |
+| P2 | Native external app-to-AOM command workflow absent | Cannot trigger capture from URL automations | `aom://` URL parser and supported actions; never registers competitor's URL scheme | Tests cover invalid and duplicate query parameters |
+| P0 | True Smart Zoom / timeline / camera editing absent | Major 5.0 Studio Mode parity deficit | Remains a documented gap; no false implementation claim | Explicitly not implemented |
+
+**Verification gate:** macOS CI for the *last* commit must be entirely green (test, build, identity, package), then owner-authorized live A/B GUI review. At this update the Mac host was offline. None of these code changes has been merged or deployed; the draft PR is the review surface. No proprietary binary, decompiled pseudocode, fonts or image assets were copied into AOM.
+
+## 2026-10-13 Studio source extension — release gates
+
+- **REA limitation:** CleanShot binary metadata confirms Studio class families. Ghidra's provider reports healthy, but this Oracle Linux host does not supply native macOS Swift demangling and timed full-program analysis ended without verified function pseudocode. Do not represent the metadata as recovered source.
+- **Manual timeline:** `AOMStudioZoomKeyframe` stores trim-local time, magnification and normalized focus; the compositor interpolates keyframes with smoothstep; the UI adds/removes keyframes. This does *not* automatically follow a mouse in an arbitrary existing MP4.
+- **Cursor telemetry:** a default-off recording preference can write a local capped normalized cursor `.mp4.aom-cursor.json` sidecar while hiding the in-video pointer; export can interpolate/smooth the editable cursor and change pointer size. No keystrokes are collected. Cursor sidecar is required — the original MP4's baked pixels cannot be algorithmically reconstructed. The feature has not been tested on the offline Mac.
+- **Motion blur and backgrounds:** composited with Core Image during local MP4 export. No recording source is overwritten. Render tests create a synthetic MP4 to assert valid output and source immutability, but latest macOS CI has not passed at this head.
+- **Key remaining P0 gaps:** automatically inferred Smart Zoom anchored to user actions, editable webcam track, keystroke overlays and keystroke event capture, independent platform output aspect ratios, advanced layered cursor effects, CleanShot Cloud, vendor's proprietary editable project format, exact UI interaction and animation fidelity.
+- **No full native decompilation:** `rea demangle-swift`/Mach-O inspector returned `capability_unavailable` on Oracle Linux for macOS native providers; bounded `inspect-native-dispatch-metadata` aborted by timeout. Existing full IB and class inventory evidence remains preserved under Oracle's private project folder.
+- **Release policy:** Do not label a new signed or production DMG complete without latest-head macOS test/build/package success, and AOM Dev signing. Previous successful CI artifact is an older snapshot and must be identified with its exact commit.
