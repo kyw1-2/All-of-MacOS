@@ -52,6 +52,7 @@ final class ClipboardPanelState: ObservableObject {
     func clearSelection() {
         selected.removeAll()
         focusedID = nil
+        keyboardScrollTarget = nil
         selectionAnchor = nil
     }
 

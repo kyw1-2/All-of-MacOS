@@ -229,6 +229,7 @@ struct MediaHistoryOverlayView: View {
     @State private var searchQuery = ""
     @FocusState private var searchFocused: Bool
     @State private var selectedID: UUID?
+    @State private var keyboardScrollTarget: UUID?
     @State private var showingClearConfirmation = false
     @State private var previewEntry: CaptureHistoryEntry?
 
@@ -281,6 +282,7 @@ struct MediaHistoryOverlayView: View {
                     let delta = key == 123 ? -1 : key == 124 ? 1 : key == 125 ? 1 : -1
                     let next = index.map { min(filteredEntries.count - 1, max(0, $0 + delta)) } ?? 0
                     selectedID = filteredEntries[next].id
+                    keyboardScrollTarget = selectedID
                 case 49:
                     guard let index else { return false }
                     previewEntry = filteredEntries[index]
@@ -387,6 +389,9 @@ struct MediaHistoryOverlayView: View {
                                     ).frame(width: side).id(entry.id)
                                 }
                             }.padding(.horizontal, 24).padding(.vertical, 10)
+                        }
+                        .onChange(of: keyboardScrollTarget) { _, id in
+                            if let id { proxy.scrollTo(id) }
                         }
                         .onChange(of: selectedFilter) { _, _ in
                             if let first = filteredEntries.first { proxy.scrollTo(first.id, anchor: .leading) }
