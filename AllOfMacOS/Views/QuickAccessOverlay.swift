@@ -273,7 +273,9 @@ final class QuickAccessOverlayController {
     }
 
     private func save() {
-        if CaptureSettings.asksForNameAfterCapture || NSEvent.modifierFlags.contains(.option) {
+        if QuickAccessPolicy.shouldPromptSave(
+            asksForName: CaptureSettings.asksForNameAfterCapture,
+            optionPressed: NSEvent.modifierFlags.contains(.option)) {
             saveAs()
             return
         }
@@ -526,7 +528,8 @@ final class QuickAccessOverlayController {
         dragging = false
         setHovering(hovering)
         if QuickAccessPolicy.shouldCloseAfterDrag(mode: CaptureSettings.overlayAutoClose,
-                separateToggle: CaptureSettings.overlayCloseAfterDrag, succeeded: success) {
+                separateToggle: CaptureSettings.overlayCloseAfterDrag,
+                succeeded: success, optionPressed: NSEvent.modifierFlags.contains(.option)) {
             dismiss(deleteFile: false)
         }
     }
