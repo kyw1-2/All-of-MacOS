@@ -28,9 +28,9 @@
 		</dict>
 	</array>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.7</string>
+	<string>1.0.8</string>
 	<key>CFBundleVersion</key>
-	<string>2026101301</string>
+	<string>2026101302</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AOM records microphone audio only when you select Microphone in Capture Settings and start screen recording.</string>
 	<key>LSMinimumSystemVersion</key>

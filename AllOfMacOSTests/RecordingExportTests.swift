@@ -154,6 +154,73 @@ final class RecordingExportTests: XCTestCase {
         XCTAssertTrue(hasLightCursor, "The editable pointer should render on a black frame")
     }
 
+    func testCursorHotspotFollowsZoomAndBackgroundPadding() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 120)
+        let input = CIImage(color: CIColor(red: 0, green: 0, blue: 0)).cropped(to: bounds)
+        let settings = AOMStudioSettings(
+            keyframes: [AOMStudioZoomKeyframe(time: 0, magnification: 2, focusX: 0.4, focusY: 0.3)],
+            backdrop: .midnight, paddingFraction: 0.1,
+            cursorPoints: [AOMCursorPoint(time: 0, x: 0.4, y: 0.3)])
+        let output = AOMStudioRenderer.frame(input, time: 0, settings: settings)
+        let cgImage = try XCTUnwrap(CIContext().createCGImage(output, from: bounds))
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        var lightPixels: [CGPoint] = []
+        for y in 0..<120 {
+            for x in 0..<200 {
+                let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                if color.redComponent > 0.8 && color.greenComponent > 0.8 && color.blueComponent > 0.8 {
+                    lightPixels.append(CGPoint(x: x, y: y))
+                }
+            }
+        }
+        XCTAssertGreaterThan(lightPixels.count, 30)
+        XCTAssertTrue(lightPixels.allSatisfy { $0.x >= 98 && $0.x <= 123 },
+                      "Cursor must follow the focus target to the viewport center")
+        XCTAssertTrue(lightPixels.allSatisfy { $0.y >= 58 && $0.y <= 91 })
+    }
+
+    func testTrimAndGIFRenderCursorAtSourceTime() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AOM-cursor-trim-test-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("sample.mp4")
+        try await makeSyntheticVideo(at: source)
+        let before = try Data(contentsOf: source)
+        let track = AOMCursorTrack(points: (0..<32).map { index in
+            AOMCursorPoint(time: Double(index) * 0.05,
+                           x: index < 8 ? 0.1 : 0.75, y: 0.3)
+        })
+        try track.write(for: source)
+        let trimmed = try await RecordingExportService.trim(source: source, start: 0.65, end: 1.3)
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: trimmed))
+        let image = try generator.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil)
+        try assertCursorOnRight(image)
+        let gif = try await RecordingExportService.gif(source: source, start: 0.65, end: 1.3, fps: 5,
+            studio: AOMStudioSettings(cursorPoints: track.points))
+        let gifSource = try XCTUnwrap(CGImageSourceCreateWithURL(gif as CFURL, nil))
+        let first = try XCTUnwrap(CGImageSourceCreateImageAtIndex(gifSource, 0, nil))
+        try assertCursorOnRight(first)
+        XCTAssertEqual(try Data(contentsOf: source), before)
+        XCTAssertEqual(AOMCursorTrack.read(for: source)?.points, track.points)
+    }
+
+    private func assertCursorOnRight(_ image: CGImage) throws {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        var whiteX: [Int] = []
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                if color.redComponent > 0.85 && color.greenComponent > 0.85 && color.blueComponent > 0.85 {
+                    whiteX.append(x)
+                }
+            }
+        }
+        XCTAssertGreaterThan(whiteX.count, 10, "Export must include the editable cursor")
+        XCTAssertTrue(whiteX.allSatisfy { $0 > bitmap.pixelsWide / 2 },
+                      "Trimmed frames must use cursor samples from the selected source range")
+    }
+
     func testRecordingSettingsValidateFrameRateQualityAudioAndClicks() {
         let savedFPS = CaptureSettings.recordingFPS
         let savedQuality = CaptureSettings.recordingQuality
@@ -191,6 +258,7 @@ final class RecordingExportTests: XCTestCase {
     func testRangeValidationAndCollisionFreeOutput() throws {
         XCTAssertThrowsError(try RecordingExportService.validatedRange(start: 2, end: 1, duration: 4))
         XCTAssertThrowsError(try RecordingExportService.validatedRange(start: -1, end: 1, duration: 4))
+        XCTAssertThrowsError(try RecordingExportService.validatedRange(start: 4.01, end: 4.04, duration: 4))
         XCTAssertThrowsError(try RecordingExportService.validatedRange(start: 0, end: 100, duration: 4))
         XCTAssertEqual(CMTimeGetSeconds(try RecordingExportService.validatedRange(
             start: 1, end: 2.5, duration: 4).duration), 1.5, accuracy: 0.01)

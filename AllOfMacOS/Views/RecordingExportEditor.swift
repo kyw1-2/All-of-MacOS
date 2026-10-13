@@ -1,5 +1,6 @@
 import AppKit
 import AVKit
+import CoreImage
 import SwiftUI
 
 /// Non-destructive MP4 trimming and short animated-GIF export from Capture History.
@@ -14,6 +15,8 @@ struct RecordingExportEditor: View {
     @State private var muteAudio = false
     @State private var quality: RecordingExportService.StudioQuality = .high
     @State private var previewPlayer: AVPlayer?
+    @State private var previousZoomKeyframes: [AOMStudioZoomKeyframe]?
+    @State private var loadFailed = false
     @State private var zoomKeyframes: [AOMStudioZoomKeyframe] = []
     @State private var zoomAt = 0.0
     @State private var zoomLevel = 1.6
@@ -34,6 +37,7 @@ struct RecordingExportEditor: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "film.stack.fill")
@@ -85,7 +89,7 @@ struct RecordingExportEditor: View {
 
                 Divider()
 
-                studioControls
+                studioControls.disabled(isExporting)
 
                 Divider()
 
@@ -139,6 +143,8 @@ struct RecordingExportEditor: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+            } else if loadFailed {
+                Label("Could not open this recording.", systemImage: "exclamationmark.triangle")
             } else {
                 ProgressView("Reading recording…")
             }
@@ -162,7 +168,20 @@ struct RecordingExportEditor: View {
             }
         }
         .padding(24)
-        .frame(width: 680)
+        }
+        .frame(width: 720, height: min(820, max(480, (NSScreen.main?.visibleFrame.height ?? 940) - 120)))
+        .onChange(of: start) { _, value in
+            previewPlayer?.seek(to: CMTime(seconds: value, preferredTimescale: 600),
+                                toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        .onChange(of: end) { _, value in
+            previewPlayer?.currentItem?.forwardPlaybackEndTime = CMTime(seconds: value, preferredTimescale: 600)
+        }
+        .task(id: studioSettings) {
+            // Coalesce slider events; cancelled tasks cannot install stale effects.
+            do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+            updatePreview()
+        }
         .onDisappear { previewPlayer?.pause() }
         .task {
             do {
@@ -172,14 +191,15 @@ struct RecordingExportEditor: View {
                 duration = seconds
                 start = 0
                 end = seconds
+                updatePreview()
             } catch {
+                loadFailed = true
                 status = error.localizedDescription
             }
         }
     }
 
-    /// Time coordinates are converted to local trimmed video time on export.
-    /// The renderer never mutates the original MP4 or captures cursor events.
+    /// All edits remain anchored to source time, including after changing trim bounds.
     private var studioControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Studio Mode — Zoom Timeline", systemImage: "viewfinder")
@@ -187,6 +207,11 @@ struct RecordingExportEditor: View {
             HStack(spacing: 10) {
                 Text("At")
                 Slider(value: $zoomAt, in: 0...max(0.1, duration), step: 0.1)
+                    .onChange(of: zoomAt) { _, value in
+                        previewPlayer?.pause()
+                        previewPlayer?.seek(to: CMTime(seconds: value, preferredTimescale: 600),
+                                            toleranceBefore: .zero, toleranceAfter: .zero)
+                    }
                 Text(Self.clock(zoomAt)).monospacedDigit().frame(width: 60)
             }
             HStack(spacing: 12) {
@@ -198,8 +223,10 @@ struct RecordingExportEditor: View {
                         status = "Select a zoom time inside the trim range."
                         return
                     }
+                    previousZoomKeyframes = zoomKeyframes
+                    zoomKeyframes.removeAll { abs($0.time - zoomAt) < 0.001 }
                     zoomKeyframes.append(AOMStudioZoomKeyframe(
-                        time: zoomAt - start, magnification: zoomLevel,
+                        time: zoomAt, magnification: zoomLevel,
                         focusX: focusX, focusY: focusY))
                     zoomKeyframes.sort { $0.time < $1.time }
                 }
@@ -212,12 +239,42 @@ struct RecordingExportEditor: View {
                 Slider(value: $focusY, in: 0...1)
             }
             .font(.caption)
+            HStack {
+                Button("Suggest Zooms from Cursor") {
+                    guard let track = editableCursorTrack else { return }
+                    let suggested = AOMStudioTimeline.suggestedZooms(track: track, start: start, end: end)
+                    guard !suggested.isEmpty else {
+                        status = "No sustained cursor pauses found in this range. Add a keyframe manually."
+                        return
+                    }
+                    previousZoomKeyframes = zoomKeyframes
+                    zoomKeyframes = suggested
+                    status = "Added \(suggested.count / 4) editable zoom suggestions."
+                }
+                .disabled(editableCursorTrack == nil || !validRange)
+                Button("Undo Zoom Edit") {
+                    guard let previous = previousZoomKeyframes else { return }
+                    zoomKeyframes = previous
+                    previousZoomKeyframes = nil
+                }
+                .disabled(previousZoomKeyframes == nil)
+            }
             ForEach(zoomKeyframes) { keyframe in
                 HStack {
-                    Text("\(Self.clock(keyframe.time + start)) — \(String(format: "%.1f×", keyframe.magnification))")
-                        .font(.caption.monospacedDigit())
+                    Button {
+                        zoomAt = keyframe.time
+                        zoomLevel = keyframe.magnification
+                        focusX = keyframe.focusX
+                        focusY = keyframe.focusY
+                    } label: {
+                        Text("\(Self.clock(keyframe.time)) — \(String(format: "%.1f×", keyframe.magnification))")
+                            .font(.caption.monospacedDigit())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Load this keyframe for editing; Add Keyframe replaces it at the same time")
                     Spacer()
                     Button(role: .destructive) {
+                        previousZoomKeyframes = zoomKeyframes
                         zoomKeyframes.removeAll { $0.id == keyframe.id }
                     } label: {
                         Image(systemName: "minus.circle")
@@ -261,9 +318,32 @@ struct RecordingExportEditor: View {
                 Text("Editable cursor motion requires a new recording with Cursor Track enabled in Capture Settings.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            Text("Zoom keyframes are manually positioned. Automatic scene analysis and camera-track editing are not available.")
+            Text("Zoom suggestions follow pauses in the recorded cursor. Adjust or remove any keyframe; the preview shows the edited result.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var studioSettings: AOMStudioSettings {
+        AOMStudioSettings(keyframes: zoomKeyframes, backdrop: backdrop,
+                          paddingFraction: backdropPadding, motionBlurRadius: motionBlurRadius,
+                          cursorPoints: includeSmoothedCursor ? (editableCursorTrack?.points ?? []) : [],
+                          cursorOverlaySize: cursorSize)
+    }
+
+    private func updatePreview() {
+        guard let player = previewPlayer, let item = player.currentItem else { return }
+        let effect = studioSettings
+        item.videoComposition = effect.isActive ? AVVideoComposition(
+            asset: item.asset, applyingCIFiltersWithHandler: { request in
+                let image = AOMStudioRenderer.frame(request.sourceImage,
+                    time: CMTimeGetSeconds(request.compositionTime), settings: effect)
+                request.finish(with: image, context: nil)
+            }) : nil
+        // Refresh even while paused so changing a slider changes the image.
+        let time = player.currentTime()
+        if time.isNumeric {
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
@@ -274,19 +354,13 @@ struct RecordingExportEditor: View {
         resultURL = nil
         let begin = start, finish = end, frames = fps
         let muted = muteAudio, selectedQuality = quality
-        let studio = AOMStudioSettings(keyframes: zoomKeyframes,
-                                       backdrop: backdrop,
-                                       paddingFraction: backdropPadding,
-                                       motionBlurRadius: motionBlurRadius,
-                                       cursorPoints: includeSmoothedCursor ?
-                                           (editableCursorTrack?.points ?? []) : [],
-                                       cursorOverlaySize: cursorSize)
+        let studio = studioSettings
         Task {
             do {
                 let exported: URL
                 if gif {
                     exported = try await RecordingExportService.gif(
-                        source: source, start: begin, end: finish, fps: frames)
+                        source: source, start: begin, end: finish, fps: frames, studio: studio)
                 } else if rendered {
                     exported = try await RecordingExportService.render(
                         source: source, start: begin, end: finish,

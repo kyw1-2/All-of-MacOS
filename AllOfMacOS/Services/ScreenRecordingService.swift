@@ -32,9 +32,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var timer: Timer?
     private var isSessionStarted = false
     private var isStarting = false
+    private var isStopping = false
     private var recordedScale: CGFloat = 1
     private var cursorSampler: Timer?
-    private var cursorStartedAt: Date?
     private var cursorPoints: [AOMCursorPoint] = []
     private let recordingQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording-audio", qos: .userInitiated)
@@ -68,7 +68,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
     /// Record the full display beneath the pointer, without opening a region picker.
     func recordFullscreenUnderPointer() {
-        guard !isRecording, !isStarting, !SelectionOverlayController.isActive else { return }
+        guard !isRecording, !isStarting, !isStopping, !SelectionOverlayController.isActive else { return }
         Task {
             do {
                 let content = try await SCShareableContent.current
@@ -82,7 +82,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func promptAndStartRecording() {
-        guard !isRecording, !isStarting, !SelectionOverlayController.isActive else { return }
+        guard !isRecording, !isStarting, !isStopping, !SelectionOverlayController.isActive else { return }
 
         // Use SelectionOverlayController (CleanShot X style) to let user drag rectangle or press Space to select a window
         SelectionOverlayController { [weak self] rect in
@@ -102,7 +102,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func startRecording(globalRect: CGRect) async throws {
-        guard !isRecording, !isStarting else { return }
+        guard !isRecording, !isStarting, !isStopping else { return }
         isStarting = true
         defer { isStarting = false }
 
@@ -200,7 +200,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         config.height = pixelHeight
         // Opt-in editing records cursor motion separately and hides the baked
         // pointer to avoid two overlapping cursors in Studio exports.
-        config.showsCursor = !CaptureSettings.recordingCursorMotion &&
+        let recordsEditableCursor = CaptureSettings.recordingCursorMotion
+        config.showsCursor = !recordsEditableCursor &&
             (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
         if #available(macOS 15.0, *) {
             config.showMouseClicks = CaptureSettings.recordingClickIndicators
@@ -246,7 +247,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         self.audioInput = audioInput
         self.recordingAudioEnabled = wantsAudio
         self.outputURL = fileURL
-        self.recordingRect = globalRect
+        self.recordingRect = sourceRect.offsetBy(dx: display.frame.minX, dy: display.frame.minY)
+        self.cursorPoints.removeAll(keepingCapacity: true)
         self.recordedScale = scale
         self.firstSampleTime = nil
         self.firstImage = nil
@@ -275,7 +277,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
         self.isRecording = true
         self.elapsedSeconds = 0
-        if CaptureSettings.recordingCursorMotion {
+        if recordsEditableCursor {
             startCursorSampling()
         }
 
@@ -285,7 +287,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func stopRecording() async throws -> URL? {
-        guard isRecording else { return nil }
+        guard isRecording, !isStopping else { return nil }
+        isStopping = true
+        defer { isStopping = false }
         isRecording = false
         stopTimer()
         stopCursorSampling()
@@ -354,7 +358,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func cancelRecording() {
-        guard isRecording else { return }
+        guard isRecording, !isStopping else { return }
+        isStopping = true
         isRecording = false
         stopTimer()
         stopCursorSampling()
@@ -373,6 +378,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         self.isSessionStarted = false
 
         Task {
+            defer { self.isStopping = false }
             try? await activeStream?.stopCapture()
             activeWriter?.cancelWriting()
             if let url {
@@ -389,7 +395,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if type != .screen {
             // The recorder registers only one sound source at a time.
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.isRecording, self.recordingAudioEnabled,
+                guard let self, self.stream === stream, self.isRecording, self.recordingAudioEnabled,
                       self.isSessionStarted,
                       let audioInput = self.audioInput,
                       audioInput.isReadyForMoreMediaData,
@@ -415,7 +421,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 
         // Process directly on recordingQueue for maximum throughput & zero-latency encoding
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.stream === stream, self.isRecording || self.isStarting else { return }
             if !self.isSessionStarted, let writer = self.writer, writer.status == .writing {
                 writer.startSession(atSourceTime: pts)
                 self.isSessionStarted = true
@@ -440,29 +446,29 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private func startCursorSampling() {
         stopCursorSampling()
         cursorPoints.removeAll(keepingCapacity: true)
-        cursorStartedAt = Date()
         cursorSampler = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sampleCursor() }
         }
     }
 
     private func sampleCursor() {
-        guard isRecording, let start = cursorStartedAt, cursorPoints.count < 60_000,
+        guard isRecording, let start = firstSampleTime, cursorPoints.count < 60_000,
               recordingRect.width > 0, recordingRect.height > 0 else { return }
         let screenY = NSScreen.screens.first?.frame.maxY ?? 0
         let mouse = NSEvent.mouseLocation
         let sx = (mouse.x - recordingRect.minX) / recordingRect.width
         let sy = (screenY - mouse.y - recordingRect.minY) / recordingRect.height
-        guard sx.isFinite, sy.isFinite, (0...1).contains(sx),
-              (0...1).contains(sy) else { return }
-        cursorPoints.append(AOMCursorPoint(time: Date().timeIntervalSince(start),
-                                          x: Double(sx), y: Double(sy)))
+        let seconds = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), start))
+        guard sx.isFinite, sy.isFinite, seconds.isFinite, seconds >= 0 else { return }
+        let visible = (0...1).contains(sx) && (0...1).contains(sy)
+        cursorPoints.append(AOMCursorPoint(time: seconds,
+                                          x: Double(min(1, max(0, sx))),
+                                          y: Double(min(1, max(0, sy))), visible: visible))
     }
 
     private func stopCursorSampling() {
         cursorSampler?.invalidate()
         cursorSampler = nil
-        cursorStartedAt = nil
     }
 
     private func startTimer() {
