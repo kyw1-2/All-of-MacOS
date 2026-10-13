@@ -18,15 +18,17 @@ final class QuickAccessExpandedPreview: NSObject, NSWindowDelegate {
         let size = CGSize(width: min(visible.width - 48, max(720, min(1100, entry.pointSize.width + 48))),
                           height: min(visible.height - 80, max(480, min(780, entry.pointSize.height + 100))))
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
-                              styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                              styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = entry.displayName
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.toolbarStyle = .unified
         window.contentMinSize = NSSize(width: 600, height: 380)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
-        window.contentView = NSHostingView(rootView: CapturePreviewContent(entry: entry,
+        window.contentView = NSHostingView(rootView: CapturePreviewContent(entry: entry, fullSizeChrome: true,
             onClose: { [weak window] in window?.close() }))
         window.makeKeyAndOrderFront(nil)
         windows[entry.id] = window
@@ -40,6 +42,7 @@ final class QuickAccessExpandedPreview: NSObject, NSWindowDelegate {
 
 struct CapturePreviewContent: View {
     let entry: CaptureHistoryEntry
+    var fullSizeChrome = false
     var onClose: () -> Void = {}
     @State private var actualSize = false
     @State private var player: AVPlayer?
@@ -47,58 +50,86 @@ struct CapturePreviewContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Label(isVideo ? "Recording" : "Screenshot", systemImage: isVideo ? "video" : "photo")
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                Spacer(minLength: 12)
+            HStack(spacing: 9) {
+                if fullSizeChrome { Color.clear.frame(width: 68, height: 32) }
+                Text(entry.displayName).font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
                 Button { CapturePreviewActions.edit(entry); onClose() } label: {
                     Label(isVideo ? "Edit Recording" : "Annotate", systemImage: isVideo ? "film.stack" : "pencil")
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 13).frame(height: 32)
+                        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(isVideo && entry.playableVideoURL == nil)
-                if !isVideo {
-                    Button { PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL) } label: {
-                        Image(systemName: "pin")
-                    }.help("Pin to Screen")
-                }
-                Divider().frame(height: 18).padding(.horizontal, 3)
-                Button { CapturePreviewActions.copy(entry) } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }.keyboardShortcut("c", modifiers: .command)
-                Button { CapturePreviewActions.save(entry) } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                Button { CapturePreviewActions.saveAs(entry) } label: {
+                    Text("Save as…").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
+                        .background(Color.accentColor, in: Capsule())
                 }.keyboardShortcut("s", modifiers: .command)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .padding(.horizontal, 16).padding(.vertical, 10)
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.bar)
             Divider()
             canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .underPageBackgroundColor))
             Divider()
-            HStack(spacing: 12) {
-                Text(entry.displayName).lineLimit(1).truncationMode(.middle)
-                Text("\(entry.image.width) × \(entry.image.height) px").monospacedDigit()
+            HStack(spacing: 9) {
+                if !isVideo {
+                    Menu {
+                        Button("Fit to Window") { actualSize = false }
+                        Button("100%") { actualSize = true }
+                    } label: {
+                        Text(actualSize ? "100%" : "Fit").font(.system(size: 12))
+                            .padding(.horizontal, 12).frame(height: 30)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                    .help("Zoom")
+                }
                 Spacer(minLength: 8)
                 if !isVideo {
-                    Picker("Zoom", selection: $actualSize) {
-                        Text("Fit").tag(false)
-                        Text("100%").tag(true)
-                    }
-                    .labelsHidden().pickerStyle(.segmented).frame(width: 112)
-                    .help("Fit to window or display at original screen size")
+                    Button { PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL) } label: {
+                        previewAction("pin.fill")
+                    }.help("Pin to Screen")
                 }
-                Button("Done", action: onClose).keyboardShortcut(.escape, modifiers: [])
+                if let url = entry.playableVideoURL ?? entry.fileURL {
+                    ShareLink(item: url) { previewAction("square.and.arrow.up") }.help("Share")
+                }
+                Button { CapturePreviewActions.copy(entry) } label: {
+                    previewAction("doc.on.doc.fill")
+                }.keyboardShortcut("c", modifiers: .command).help("Copy")
+                Button(action: onClose) { previewAction("xmark") }
+                    .keyboardShortcut(.escape, modifiers: []).help("Close Preview")
             }
-            .font(.system(size: 11)).foregroundStyle(.secondary)
-            .padding(.horizontal, 16).padding(.vertical, 9)
+            .overlay {
+                Label("Drag Me", systemImage: "line.3.horizontal")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 17).frame(height: 32)
+                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                    .onDrag {
+                        if let url = entry.playableVideoURL ?? entry.fileURL { return NSItemProvider(object: url as NSURL) }
+                        return NSItemProvider(object: NSImage(cgImage: entry.image, size: entry.pointSize))
+                    }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(.bar)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             if let url = entry.playableVideoURL { player = AVPlayer(url: url) }
         }
         .onDisappear { player?.pause(); player = nil }
+    }
+
+    private func previewAction(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.system(size: 14, weight: .medium))
+            .frame(width: 36, height: 30)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
     }
 
     @ViewBuilder private var canvas: some View {
@@ -194,7 +225,7 @@ enum CapturePreviewActions {
         }
     }
 
-    private static func saveAs(_ entry: CaptureHistoryEntry, completion: @escaping () -> Void) {
+    static func saveAs(_ entry: CaptureHistoryEntry, completion: @escaping () -> Void = {}) {
         let panel = NSSavePanel()
         let isVideo = entry.kind == .videoRecording
         panel.allowedContentTypes = [isVideo ? .mpeg4Movie : CaptureSettings.format.contentType]

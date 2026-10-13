@@ -175,60 +175,22 @@ private struct AnnotationEditorView: View {
 
     private let mainTools: [AnnotationKind] = [
         .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow,
-        .text, .pixelate, .blur, .redact, .highlighter, .counter, .draw, .drawHighlight
+        .text, .pixelate, .highlighter, .counter, .draw, .drawHighlight
     ]
 
     private var toolbar: some View {
-        VStack(spacing: 6) {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             Color.clear.frame(width: 68, height: 32)
-            capsuleButton("crop", help: "Crop (C)", active: cropMode) { selectTool(.crop) }
+            capsuleButton("crop", help: "Crop & Resize (C)", active: cropMode) { selectTool(.crop) }
                 .keyboardShortcut("c", modifiers: [])
-            capsuleButton("arrow.up.left.and.arrow.down.right", help: "Resize Image…") {
-                showingResize = true
-            }
-            Menu {
-                Button("Rotate 90° Clockwise") {
-                    transformImage(.rotateClockwise)
-                }
-                Button("Rotate 90° Counterclockwise") {
-                    transformImage(.rotateCounterclockwise)
-                }
-                Divider()
-                Button("Flip Horizontally") {
-                    transformImage(.flipHorizontal)
-                }
-                Button("Flip Vertically") {
-                    transformImage(.flipVertical)
-                }
-            } label: {
-                Image(systemName: "rotate.right")
-                    .font(.system(size: 14))
-                    .frame(width: 32, height: 30)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Rotate / Flip (flattens existing annotations; Undo restores editable layers)")
-            .accessibilityLabel("Rotate and flip image")
-            capsuleButton("text.magnifyingglass", help: "Smart Highlight Text…") {
-                showingSmartHighlight = true
-            }
             capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
-            capsuleButton("photo", help: "Background", active: backgroundPopover) { if !backgroundPopover { document.beginChange() }; backgroundPopover.toggle() }
-                .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
-            Spacer(minLength: 8)
-            capsuleButton("arrow.uturn.backward", help: "Undo") { document.undo() }
-                .disabled(!document.canUndo)
-            capsuleButton("arrow.uturn.forward", help: "Redo") { document.redo() }
-                .disabled(!document.canRedo)
-            Button { saveAs() } label: {
-                Text("Save as…").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
-                    .background(Color.accentColor, in: Capsule())
-            }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command)
-        }
-        ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 8) {
+            capsuleButton("photo", help: "Background", active: backgroundPopover) {
+                if !backgroundPopover { document.beginChange() }
+                backgroundPopover.toggle()
+            }
+            .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
+            ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 9) {
             HStack(spacing: 0) {
                 ForEach(mainTools) { kind in
                     toolButton(kind)
@@ -273,7 +235,19 @@ private struct AnnotationEditorView: View {
                 Button("Undo") { document.undo() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
                 Button("Redo") { document.redo() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                 Divider()
+                Button("Resize Image…") { showingResize = true }
+                Menu("Rotate / Flip") {
+                    Button("Rotate 90° Clockwise") { transformImage(.rotateClockwise) }
+                    Button("Rotate 90° Counterclockwise") { transformImage(.rotateCounterclockwise) }
+                    Divider()
+                    Button("Flip Horizontally") { transformImage(.flipHorizontal) }
+                    Button("Flip Vertically") { transformImage(.flipVertical) }
+                }
+                Button("Smart Highlight Text…") { showingSmartHighlight = true }
+                Divider()
                 Button("Layers…") { layersPopover = true }
+                Button("Blur") { selectTool(.blur) }
+                Button("Redact") { selectTool(.redact) }
                 Button("Spotlight") { selectTool(.spotlight) }
                 Button("Delete Selected") { deleteSelection() }.disabled(selectedID == nil).keyboardShortcut(.delete, modifiers: [])
                 Divider()
@@ -283,8 +257,14 @@ private struct AnnotationEditorView: View {
             .menuStyle(.borderlessButton).fixedSize().help("More Options")
             .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
         }
-        .padding(.vertical, 2)
-        }
+            .padding(.vertical, 2)
+            }
+            Spacer(minLength: 0)
+            Button { saveAs() } label: {
+                Text("Save as…").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
+                    .background(Color.accentColor, in: Capsule())
+            }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command).fixedSize()
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(.bar)

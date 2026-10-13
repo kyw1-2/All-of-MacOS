@@ -17,6 +17,11 @@ final class ClipboardPanelState: ObservableObject {
     @Published var board: UUID?
     @Published var recentDays = 0
     @Published var selected = Set<UUID>()
+    @Published var focusedID: UUID?
+    private var selectionAnchor: UUID?
+    @Published var searchFieldActive = false
+    @Published var filtersExpanded = false
+    @Published var commandHeld = false
     @Published var stack: [UUID] = []
     @Published var stackMode = false
     @Published var status = ""
@@ -27,7 +32,8 @@ final class ClipboardPanelState: ObservableObject {
     @Published var editingTitleID: UUID?
 
     func results(in store: ClipboardStore) -> [ClipboardEntry] {
-        store.filtered(query: query, kind: kind, source: source, board: board,
+        store.filtered(query: query, kind: kind, source: source,
+                       board: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? board : nil,
                        since: recentDays == 0 ? nil : Date().addingTimeInterval(-Double(recentDays) * 86400))
     }
 
@@ -39,7 +45,41 @@ final class ClipboardPanelState: ObservableObject {
     /// attached to clips from the previously displayed collection.
     func selectBoard(_ id: UUID?) {
         board = id
+        clearSelection()
+    }
+
+    func clearSelection() {
         selected.removeAll()
+        focusedID = nil
+        selectionAnchor = nil
+    }
+
+    func select(_ id: UUID, in entries: [ClipboardEntry], extend: Bool = false, toggle: Bool = false) {
+        guard let next = entries.firstIndex(where: { $0.id == id }) else { return }
+        if extend, let anchor = selectionAnchor,
+           let start = entries.firstIndex(where: { $0.id == anchor }) {
+            selected = Set(entries[min(start, next)...max(start, next)].map(\.id))
+        } else if toggle {
+            if !selected.insert(id).inserted { selected.remove(id) }
+            selectionAnchor = id
+        } else {
+            selected = [id]
+            selectionAnchor = id
+        }
+        focusedID = id
+    }
+
+    func showIn(_ board: UUID?, entryID: UUID) {
+        query = ""
+        kind = nil
+        source = nil
+        recentDays = 0
+        searchExpanded = false
+        filtersExpanded = false
+        selectBoard(board)
+        selected = [entryID]
+        focusedID = entryID
+        selectionAnchor = entryID
     }
 }
 
@@ -63,6 +103,7 @@ final class ClipboardPanelController {
     static let shared = ClipboardPanelController()
     let state = ClipboardPanelState()
     private var panel: ClipboardHistoryPanel?
+    private var stackPanel: NSPanel?
     private var destination: NSRunningApplication?
     private var keyMonitor: Any?
     private var outsideMonitor: Any?
@@ -75,7 +116,39 @@ final class ClipboardPanelController {
     var isVisible: Bool { panel?.isVisible == true }
 
     func toggle() { isVisible ? hide() : show() }
-    func showStack() { state.stackMode = true; show() }
+    func showStack() {
+        state.stackMode = true
+        store.onCapture = { [weak self] id in
+            guard let self, self.state.stackMode else { return }
+            if !self.state.stack.contains(id) { self.state.stack.append(id) }
+        }
+        if stackPanel == nil {
+            let window = ClipboardStackPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 420),
+                styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            window.level = .floating
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = true
+            window.hidesOnDeactivate = false
+            window.isReleasedWhenClosed = false
+            window.isMovableByWindowBackground = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window.contentView = NSHostingView(rootView: ClipboardStackView(store: store, state: state, controller: self))
+            stackPanel = window
+        }
+        if let panel = stackPanel, !panel.isVisible,
+           let bounds = (NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main)?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(x: bounds.maxX - panel.frame.width - 20,
+                                         y: bounds.maxY - panel.frame.height - 20))
+        }
+        stackPanel?.orderFrontRegardless()
+    }
+
+    func stopStack() {
+        state.stackMode = false
+        store.onCapture = nil
+        stackPanel?.orderOut(nil)
+    }
 
     /// Clear selected cards with Escape before dismissing the history.
     /// A sheet or inline title editor must receive Escape itself.
@@ -85,8 +158,16 @@ final class ClipboardPanelController {
         if state.editor != nil || state.preview != nil || state.editingTitleID != nil {
             return false
         }
-        if !state.selected.isEmpty {
-            state.selected.removeAll()
+        if state.filtersExpanded {
+            state.filtersExpanded = false
+        } else if state.searchExpanded {
+            state.query = ""
+            state.searchExpanded = false
+            state.searchFieldActive = false
+            panel?.makeFirstResponder(nil)
+            state.clearSelection()
+        } else if !state.selected.isEmpty {
+            state.clearSelection()
         } else {
             hide()
         }
@@ -127,6 +208,7 @@ final class ClipboardPanelController {
         }
         state.status = destination == nil ? "Choose an item to copy. Open history from another app to paste directly." : ""
         state.searchExpanded = !state.query.isEmpty
+        state.commandHeld = NSEvent.modifierFlags.contains(.command)
         panel.makeKeyAndOrderFront(nil)
         installMonitors()
     }
@@ -149,7 +231,8 @@ final class ClipboardPanelController {
         state.editor = nil
         state.preview = nil
         state.editingTitleID = nil
-        state.selected.removeAll()
+        state.clearSelection()
+        state.commandHeld = false
     }
 
     /// Copy the chosen rich clipboard item without sending Cmd-V to any app.
@@ -225,7 +308,7 @@ final class ClipboardPanelController {
 
     func enqueueSelection() {
         for id in state.selectedIDs(in: store) where !state.stack.contains(id) { state.stack.append(id) }
-        state.stackMode = true
+        showStack()
         state.status = "\(state.stack.count) items queued. Paste Next inserts one item at a time."
     }
 
@@ -274,8 +357,25 @@ final class ClipboardPanelController {
 
     private func installMonitors() {
         guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self, event.window === self.panel, self.state.editor == nil, self.state.preview == nil else { return event }
+            if event.type == .flagsChanged {
+                self.state.commandHeld = event.modifierFlags.contains(.command)
+                return event
+            }
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "f" {
+                if self.state.searchFieldActive { self.state.filtersExpanded.toggle() }
+                else { self.state.searchFocusToken = UUID() }
+                return nil
+            }
+            if self.state.searchFieldActive && [48, 125].contains(event.keyCode) {
+                self.state.searchFieldActive = false
+                self.panel?.makeFirstResponder(nil)
+                if let first = self.state.results(in: self.store).first {
+                    self.state.select(first.id, in: self.state.results(in: self.store))
+                }
+                return nil
+            }
             if event.keyCode == 53 {
                 // Inline text renaming uses its own Escape-to-cancel behavior.
                 if self.state.editingTitleID != nil { return event }
@@ -291,7 +391,8 @@ final class ClipboardPanelController {
             }
         }
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            if let self, event.window !== self.panel, self.state.editor == nil, self.state.preview == nil { self.hide() }
+            if let self, event.window !== self.panel, event.window?.level != .popUpMenu,
+               !self.state.filtersExpanded, self.state.editor == nil, self.state.preview == nil { self.hide() }
             return event
         }
     }
@@ -310,14 +411,26 @@ final class ClipboardPanelController {
             return true
         }
         let activeEntries = state.results(in: store)
-        if command && event.charactersIgnoringModifiers?.lowercased() == "c",
-           let item = activeEntries.first(where: { state.selected.contains($0.id) }) {
+        if command && event.charactersIgnoringModifiers?.lowercased() == "c" {
+            let ids = state.selectedIDs(in: store)
+            guard !ids.isEmpty else { return false }
             do {
-                _ = try store.write(entryIDs: [item.id], plainText: shift)
-                state.status = "Copied to clipboard."
-            } catch {
-                state.status = error.localizedDescription
-            }
+                _ = try store.write(entryIDs: ids, plainText: shift)
+                state.status = "Copied \(ids.count == 1 ? "item" : "\(ids.count) items") to clipboard."
+            } catch { state.status = error.localizedDescription }
+            return true
+        }
+        if command && event.charactersIgnoringModifiers?.lowercased() == "t" {
+            store.paused.toggle()
+            return true
+        }
+        if command && event.charactersIgnoringModifiers?.lowercased() == "g",
+           state.selected.count == 1, let id = state.selected.first {
+            state.showIn(nil, entryID: id)
+            return true
+        }
+        if event.keyCode == 48 {
+            state.searchFocusToken = UUID()
             return true
         }
         if command && ["e", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? ""),
@@ -342,10 +455,10 @@ final class ClipboardPanelController {
         if event.keyCode == 36 || event.keyCode == 76 { pasteSelected(plainText: shift); return true }
         let editingText = (panel?.firstResponder as? NSTextView)?.isEditable == true
         if !editingText && (event.keyCode == 123 || event.keyCode == 124), !entries.isEmpty {
-            let current = entries.firstIndex { state.selected.contains($0.id) } ?? -1
+            let current = entries.firstIndex { $0.id == state.focusedID }
+                ?? entries.firstIndex { state.selected.contains($0.id) } ?? -1
             let next = min(max(current + (event.keyCode == 124 ? 1 : -1), 0), entries.count - 1)
-            if !shift { state.selected.removeAll() }
-            state.selected.insert(entries[next].id)
+            state.select(entries[next].id, in: entries, extend: shift)
             return true
         }
         if !editingText && command && event.charactersIgnoringModifiers?.lowercased() == "a" { state.selected = Set(entries.map(\.id)); return true }
@@ -359,6 +472,13 @@ final class ClipboardPanelController {
         }
         if !editingText && event.keyCode == 49, let entry = entries.first(where: { state.selected.contains($0.id) }) {
             state.preview = entry; return true
+        }
+        if event.modifierFlags.intersection([.command, .control]).isEmpty,
+           let characters = event.characters, !characters.isEmpty,
+           characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) && $0.value < 0xF700 }) {
+            state.query += characters
+            state.searchFocusToken = UUID()
+            return true
         }
         return false
     }
@@ -399,8 +519,13 @@ struct ClipboardPanelView: View {
             state.searchExpanded = true
             DispatchQueue.main.async { searchFocused = true }
         }
-        .onChange(of: state.query) { _, _ in state.selected.removeAll() }
-        .onChange(of: state.kind) { _, _ in state.selected.removeAll() }
+        .onChange(of: searchFocused) { _, focused in state.searchFieldActive = focused }
+        .onChange(of: state.searchFieldActive) { _, focused in searchFocused = focused }
+        .onChange(of: state.searchExpanded) { _, expanded in if !expanded { searchFocused = false } }
+        .onChange(of: state.query) { _, _ in state.clearSelection() }
+        .onChange(of: state.kind) { _, _ in state.clearSelection() }
+        .onChange(of: state.source) { _, _ in state.clearSelection() }
+        .onChange(of: state.recentDays) { _, _ in state.clearSelection() }
         .sheet(item: $state.editor) { request in ClipboardEditorSheet(request: request, store: store) }
         .sheet(item: $state.preview) { entry in ClipboardPreviewSheet(entry: entry) }
     }
@@ -412,7 +537,7 @@ struct ClipboardPanelView: View {
         let boardsWidth = store.boards.reduce(CGFloat(170)) { total, board in
             total + min(CGFloat(190), CGFloat(board.name.count * 8 + 35))
         }
-        let available = containerWidth - (state.searchExpanded ? CGFloat(360) : CGFloat(160))
+        let available = containerWidth - (state.searchExpanded ? CGFloat(530) : CGFloat(160))
         return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
     }
 
@@ -421,6 +546,7 @@ struct ClipboardPanelView: View {
         HStack(spacing: 12) {
             Spacer(minLength: 30)
             HStack(spacing: 10) {
+                HStack(spacing: 7) {
                 Button { state.searchFocusToken = UUID() } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 17, weight: .regular))
@@ -434,11 +560,11 @@ struct ClipboardPanelView: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .focused($searchFocused)
-                        .frame(width: 170)
+                        .frame(width: min(300, max(140, geometry.size.width * 0.22)))
                         .accessibilityIdentifier("PasteStyleClipboardSearch")
                         .onSubmit {
                             searchFocused = false
-                            if let first = entries.first { state.selected = [first.id] }
+                            if let first = entries.first { state.select(first.id, in: entries) }
                         }
                     Button {
                         state.query = ""
@@ -447,7 +573,20 @@ struct ClipboardPanelView: View {
                     } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
                     .help("Close Search")
+                    Button { state.filtersExpanded.toggle() } label: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .foregroundStyle(hasFilters ? Color.accentColor : Color.secondary)
+                            .frame(width: 25, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Filters (⌘F)")
+                    .accessibilityLabel("Filters")
+                    .popover(isPresented: $state.filtersExpanded, arrowEdge: .top) { filterPopover }
                 }
+                }
+                .padding(.horizontal, state.searchExpanded ? 9 : 0)
+                .frame(height: 34)
+                .background(state.searchExpanded ? Color.primary.opacity(0.075) : Color.clear, in: Capsule())
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         boardButton("Clipboard", color: .secondary, icon: "clock.arrow.circlepath", id: nil)
@@ -456,6 +595,11 @@ struct ClipboardPanelView: View {
                                 .contextMenu {
                                     Button("Rename Pinboard…") {
                                         state.editor = .init(operation: .renameBoard(board.id), title: "Rename Pinboard", text: board.name)
+                                    }
+                                    Menu("Color") {
+                                        ForEach(["red", "orange", "yellow", "green", "blue", "purple"], id: \.self) { color in
+                                            Button(color.capitalized) { store.setBoardColor(id: board.id, color: color) }
+                                        }
                                     }
                                     Button("Delete Pinboard", role: .destructive) {
                                         store.deleteBoard(id: board.id)
@@ -490,6 +634,9 @@ struct ClipboardPanelView: View {
                     Button("Clear Filters") { state.kind = nil; state.source = nil; state.recentDays = 0 }
                 }
                 Divider()
+                Button("Paste Stack…") { controller.showStack() }
+                Button("Add Selection to Stack") { controller.enqueueSelection() }
+                    .disabled(state.selected.isEmpty)
                 Button(store.paused ? "Resume Clipboard History" : "Pause Clipboard History") { store.paused.toggle() }
                 Button("New Text…") { state.editor = .init(operation: .newText, title: "New Text", text: "") }
                 Button("Close (Esc)") { controller.hide() }
@@ -502,6 +649,7 @@ struct ClipboardPanelView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .fixedSize()
             .help("Clipboard Options and Filters")
         }
         .padding(.horizontal, 20)
@@ -525,9 +673,11 @@ struct ClipboardPanelView: View {
                 } else {
                     Circle().fill(color).frame(width: 11, height: 11)
                 }
+                if !state.searchExpanded {
                 Text(name)
                     .font(.system(size: 14, weight: state.board == id ? .medium : .regular))
                     .lineLimit(1)
+                }
             }
             .padding(.horizontal, 11)
             .frame(height: 30)
@@ -556,6 +706,56 @@ struct ClipboardPanelView: View {
             }
             return true
         }
+    }
+
+    private var hasFilters: Bool { state.kind != nil || state.source != nil || state.recentDays != 0 }
+
+    private var filterPopover: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Filters").font(.headline)
+                Spacer()
+                Button("Clear") { state.kind = nil; state.source = nil; state.recentDays = 0 }
+                    .buttonStyle(.plain).foregroundStyle(Color.accentColor).disabled(!hasFilters)
+            }
+            Text("Type").font(.caption).foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 80))], spacing: 6) {
+                filterChip("All", icon: "square.grid.2x2", selected: state.kind == nil) { state.kind = nil }
+                ForEach(ClipboardEntry.Kind.allCases) { kind in
+                    filterChip(kind.displayName, icon: symbol(kind), selected: state.kind == kind) { state.kind = kind }
+                }
+            }
+            Text("App").font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112))], spacing: 6) {
+                    filterChip("All Apps", icon: "app", selected: state.source == nil) { state.source = nil }
+                    ForEach(sources, id: \.self) { source in
+                        filterChip(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source,
+                                   icon: "app", selected: state.source == source) { state.source = source }
+                    }
+                }
+            }.frame(maxHeight: 142)
+            Text("Date").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 5) {
+                ForEach([0, 1, 7, 30], id: \.self) { days in
+                    filterChip(days == 0 ? "Any" : days == 1 ? "Today" : "\(days) days", icon: nil,
+                               selected: state.recentDays == days) { state.recentDays = days }
+                }
+            }
+        }.padding(18).frame(width: 340)
+    }
+
+    private func filterChip(_ title: String, icon: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let icon { Image(systemName: icon) }
+                Text(title).lineLimit(1)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .frame(maxWidth: .infinity).padding(.vertical, 7).padding(.horizontal, 7)
+            .foregroundStyle(selected ? Color.white : Color.primary)
+            .background(selected ? Color.accentColor : Color.primary.opacity(0.065), in: Capsule())
+        }.buttonStyle(.plain)
     }
 
     // MARK: - Filters in the overflow menu
@@ -641,7 +841,8 @@ struct ClipboardPanelView: View {
                         .background(NativeScrollIndicatorsDisabled())
                         .id(state.board?.uuidString ?? "clipboard-history")
                         .onChange(of: state.selected) { _, selected in
-                            if let first = entries.first(where: { selected.contains($0.id) }) {
+                            if let first = entries.first(where: { $0.id == state.focusedID })
+                                ?? entries.first(where: { selected.contains($0.id) }) {
                                 searchFocused = false
                                 withAnimation(.easeOut(duration: 0.16)) {
                                     proxy.scrollTo(first.id, anchor: .center)
@@ -869,6 +1070,14 @@ private struct ClipboardCardView: View {
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            if state.commandHeld && number <= 9 {
+                Text("⌘\(number)").font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                    .padding(8).allowsHitTesting(false)
+            }
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.06),
@@ -968,11 +1177,9 @@ private struct ClipboardCardView: View {
 
     private func selectCard() {
         guard !isEditingTitle else { return }
-        if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty {
-            state.selected = [entry.id]
-        } else if !state.selected.insert(entry.id).inserted {
-            state.selected.remove(entry.id)
-        }
+        state.select(entry.id, in: state.results(in: store),
+                     extend: NSEvent.modifierFlags.contains(.shift),
+                     toggle: NSEvent.modifierFlags.contains(.command))
     }
 
     private func copyByDoubleClick() {
@@ -1013,7 +1220,7 @@ private struct ClipboardCardView: View {
         Button("Paste") { controller.paste(ids: [entry.id]) }
         Button("Paste as Plain Text") { controller.paste(ids: [entry.id], plainText: true) }.disabled(entry.text == nil)
         Button("Copy") { do { _ = try store.write(entryIDs: [entry.id]); state.status = "Copied to clipboard." } catch { state.status = error.localizedDescription } }
-        Button("Add to Paste Stack") { if !state.stack.contains(entry.id) { state.stack.append(entry.id) }; state.stackMode = true }
+        Button("Add to Paste Stack") { if !state.stack.contains(entry.id) { state.stack.append(entry.id) }; controller.showStack() }
         Divider()
         Menu("Pinboard") {
             ForEach(store.boards) { board in

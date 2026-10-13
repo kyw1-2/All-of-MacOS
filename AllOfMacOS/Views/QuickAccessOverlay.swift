@@ -716,6 +716,8 @@ private struct QuickAccessOverlayView: View {
                                 .background(.black.opacity(0.50), in: Circle())
                         }
                         .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
                         .frame(width: 28, height: 28)
                         .help("More actions")
                     }
@@ -751,8 +753,7 @@ private struct QuickAccessOverlayView: View {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.black.opacity(0.85))
-                .padding(.horizontal, 20)
-                .frame(minWidth: 92, minHeight: 29)
+                .frame(width: side < 160 ? min(92, (width - 44) / 2) : 104, height: 29)
                 .background(Color.white.opacity(0.96), in: Capsule())
         }
         .buttonStyle(.plain)

@@ -57,6 +57,8 @@ final class ClipboardStore: ObservableObject {
     ]
 
     @Published private(set) var entries: [ClipboardEntry] = []
+    /// A completed capture transaction, including a repeated copy of an existing item.
+    var onCapture: ((UUID) -> Void)?
     @Published private(set) var boards: [ClipboardPinboard] = []
     @Published private(set) var isLoading = true
     @Published var lastError: String?
@@ -179,18 +181,22 @@ final class ClipboardStore: ObservableObject {
             guard let self else { return }
             let digest: String = await onQueue { entry.payloadDigest }
             guard generation == captureGeneration, settings.enabled, !paused else { return }
+            let capturedID: UUID
             if let index = entries.firstIndex(where: { digests[$0.id] == digest }) {
                 var existing = entries.remove(at: index)
                 existing.lastCopiedAt = entry.lastCopiedAt
                 existing.sourceName = entry.sourceName
                 existing.sourceBundleID = entry.sourceBundleID
                 entries.insert(existing, at: 0)
+                capturedID = existing.id
             } else {
+                capturedID = entry.id
                 entries.insert(entry, at: 0)
                 digests[entry.id] = digest
             }
             trim()
             scheduleSave()
+            if entries.contains(where: { $0.id == capturedID }) { onCapture?(capturedID) }
         }
         captureTasks.append(task)
         if captureTasks.count > 64 { captureTasks.removeFirst(captureTasks.count - 64) }
@@ -253,6 +259,13 @@ final class ClipboardStore: ObservableObject {
         let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(100))
         guard !name.isEmpty, let index = boards.firstIndex(where: { $0.id == id }) else { return }
         boards[index].name = name
+        scheduleSave()
+    }
+
+    func setBoardColor(id: UUID, color: String) {
+        guard ["red", "orange", "yellow", "green", "blue", "purple"].contains(color),
+              let index = boards.firstIndex(where: { $0.id == id }) else { return }
+        boards[index].color = color
         scheduleSave()
     }
 
