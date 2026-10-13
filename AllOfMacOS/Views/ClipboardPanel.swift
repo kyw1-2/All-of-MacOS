@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import QuickLookUI
 
 /// The history window takes keyboard focus without activating AOM. The original
 /// application remains the destination; selecting a card never guesses a new one.
@@ -96,6 +97,28 @@ struct ClipboardEditorRequest: Identifiable {
         switch operation {
         case .editEntry, .newText: return true
         default: return false
+        }
+    }
+}
+
+/// Paste-inspired contextual shortcuts, isolated for deterministic tests.
+/// A user must explicitly select a card before Space or Command-E is handled.
+enum ClipboardHistoryKeyboard {
+    enum Action: Equatable { case preview, edit, rename }
+
+    static func selectionAction(keyCode: UInt16, characters: String?,
+                                modifiers: NSEvent.ModifierFlags) -> Action? {
+        let blocked: NSEvent.ModifierFlags = [.option, .control]
+        guard modifiers.intersection(blocked).isEmpty else { return nil }
+        if keyCode == 49, !modifiers.contains(.command) { return .preview }
+        guard modifiers.contains(.command), !modifiers.contains(.shift) else { return nil }
+        // Hardware key codes survive Korean and other IME composition.
+        if keyCode == 14 { return .edit }   // ANSI E
+        if keyCode == 15 { return .rename } // ANSI R
+        switch characters?.lowercased() {
+        case "e": return .edit
+        case "r": return .rename
+        default: return nil
         }
     }
 }
@@ -383,7 +406,17 @@ final class ClipboardPanelController {
                 if self.state.editingTitleID != nil { return event }
                 return self.handleEscape() ? nil : event
             }
-            if (self.panel?.firstResponder as? NSTextView)?.isEditable == true { return event }
+            // Selection commands must work even if SwiftUI's search field still
+            // owns the NSTextView first responder after a card mouse-down.
+            // Ordinary typing/editing in the search field remains untouched.
+            if (self.panel?.firstResponder as? NSTextView)?.isEditable == true {
+                let hasSelection = !self.state.selectedIDs(in: self.store).isEmpty
+                guard hasSelection,
+                      ClipboardHistoryKeyboard.selectionAction(
+                        keyCode: event.keyCode,
+                        characters: event.charactersIgnoringModifiers,
+                        modifiers: event.modifierFlags) != nil else { return event }
+            }
             return self.handleKey(event) ? nil : event
         }
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
@@ -435,13 +468,23 @@ final class ClipboardPanelController {
             state.searchFocusToken = UUID()
             return true
         }
-        if command && ["e", "r"].contains(event.charactersIgnoringModifiers?.lowercased() ?? ""),
+        if let action = ClipboardHistoryKeyboard.selectionAction(
+            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+            modifiers: event.modifierFlags),
            let item = activeEntries.first(where: { state.selected.contains($0.id) }) {
-            if event.charactersIgnoringModifiers?.lowercased() == "r" {
+            switch action {
+            case .preview:
+                state.preview = item
+            case .edit:
+                if let text = item.text, [.text, .link, .color].contains(item.kind) {
+                    state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: text)
+                } else {
+                    state.preview = item // binary and file content opens safely, not as text
+                }
+            case .rename:
                 state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
-            } else if let text = item.text {
-                state.editor = .init(operation: .editEntry(item.id), title: "Edit Text", text: text)
             }
+            state.searchFieldActive = false
             return true
         }
         if command && (event.keyCode == 123 || event.keyCode == 124) {
@@ -472,9 +515,6 @@ final class ClipboardPanelController {
             for id in selectedIDs { store.delete(entryID: id) }
             state.selected.removeAll()
             return true
-        }
-        if !editingText && event.keyCode == 49, let entry = entries.first(where: { state.selected.contains($0.id) }) {
-            state.preview = entry; return true
         }
         if event.modifierFlags.intersection([.command, .control]).isEmpty,
            let characters = event.characters, !characters.isEmpty,
@@ -525,12 +565,19 @@ struct ClipboardPanelView: View {
         .onChange(of: searchFocused) { _, focused in state.searchFieldActive = focused }
         .onChange(of: state.searchFieldActive) { _, focused in searchFocused = focused }
         .onChange(of: state.searchExpanded) { _, expanded in if !expanded { searchFocused = false } }
+        .onChange(of: state.focusedID) { _, id in
+            if id != nil {
+                // Card selection has priority over the old search cursor.
+                searchFocused = false
+                state.searchFieldActive = false
+            }
+        }
         .onChange(of: state.query) { _, _ in state.clearSelection() }
         .onChange(of: state.kind) { _, _ in state.clearSelection() }
         .onChange(of: state.source) { _, _ in state.clearSelection() }
         .onChange(of: state.recentDays) { _, _ in state.clearSelection() }
         .sheet(item: $state.editor) { request in ClipboardEditorSheet(request: request, store: store) }
-        .sheet(item: $state.preview) { entry in ClipboardPreviewSheet(entry: entry) }
+        .sheet(item: $state.preview) { entry in ClipboardPreviewSheet(entry: entry, store: store) }
     }
 
     // MARK: - Paste-inspired search, horizontal pinboards and filters
@@ -732,7 +779,8 @@ struct ClipboardPanelView: View {
                     filterChip("All Apps", icon: "app", selected: state.source == nil) { state.source = nil }
                     ForEach(sources, id: \.self) { source in
                         filterChip(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source,
-                                   icon: "app", selected: state.source == source) { state.source = source }
+                                   icon: nil, appIcon: AppMetadataCache.shared.icon(for: source),
+                                   selected: state.source == source) { state.source = source }
                     }
                 }
             }.frame(maxHeight: 142)
@@ -746,10 +794,18 @@ struct ClipboardPanelView: View {
         }.padding(18).frame(width: 340)
     }
 
-    private func filterChip(_ title: String, icon: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func filterChip(_ title: String, icon: String?, appIcon: NSImage? = nil,
+                            selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                if let icon { Image(systemName: icon) }
+                if let appIcon {
+                    Image(nsImage: appIcon).resizable().scaledToFit()
+                        .frame(width: 15, height: 15).accessibilityHidden(true)
+                } else if let icon {
+                    Image(systemName: icon)
+                } else {
+                    Image(systemName: "app")
+                }
                 Text(title).lineLimit(1)
             }
             .font(.system(size: 11, weight: .medium))
@@ -783,6 +839,12 @@ struct ClipboardPanelView: View {
             ForEach(sources, id: \.self) { source in
                 Button { state.source = source } label: {
                     HStack {
+                        if let appIcon = AppMetadataCache.shared.icon(for: source) {
+                            Image(nsImage: appIcon).resizable().scaledToFit()
+                                .frame(width: 16, height: 16).accessibilityHidden(true)
+                        } else {
+                            Image(systemName: "app")
+                        }
                         Text(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source)
                         if state.source == source { Image(systemName: "checkmark") }
                     }
@@ -1322,17 +1384,122 @@ private struct ClipboardEditorSheet: View {
     }
 }
 
+@MainActor
 private struct ClipboardPreviewSheet: View {
     let entry: ClipboardEntry
+    @ObservedObject var store: ClipboardStore
     @Environment(\.dismiss) private var dismiss
+    @State private var editing = false
+    @State private var draftText = ""
+
+    private var current: ClipboardEntry {
+        store.entries.first(where: { $0.id == entry.id }) ?? entry
+    }
+    private var canEditText: Bool {
+        current.text != nil && [.text, .link, .color].contains(current.kind)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { Text(entry.title).font(.headline); Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.cancelAction) }
-            if let data = entry.imageData, let image = NSImage(data: data) {
-                Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 400)
-            } else { ScrollView { Text(entry.text ?? entry.previewText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(height: 300) }
-            Text(entry.sourceName ?? "Clipboard").font(.caption).foregroundStyle(.secondary)
-        }.padding(24).frame(width: 600)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: current.kind.symbol).foregroundStyle(Color.accentColor)
+                Text(current.title).font(.headline).lineLimit(1)
+                Spacer()
+                if canEditText && !editing {
+                    Button("Edit Content") {
+                        draftText = current.text ?? ""
+                        editing = true
+                    }
+                    .keyboardShortcut("e", modifiers: .command)
+                    .help("Edit selected clipboard text (⌘E)")
+                }
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+
+            if editing {
+                TextEditor(text: $draftText)
+                    .font(.body)
+                    .frame(minHeight: 270)
+                    .overlay(Rectangle().strokeBorder(Color.secondary.opacity(0.2)))
+                HStack {
+                    Spacer()
+                    Button("Discard Changes") { editing = false }
+                    Button("Save Changes") {
+                        store.editText(entryID: current.id, text: draftText)
+                        editing = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(draftText.utf8.count > ClipboardStore.maximumEntryBytes)
+                }
+            } else if let data = current.imageData, let image = NSImage(data: data) {
+                Image(nsImage: image).resizable().scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                    .accessibilityLabel("Image preview: \(current.title)")
+            } else if !current.fileURLs.isEmpty {
+                VStack(spacing: 12) {
+                    // Paste's file preview can be built with public QuickLookUI.
+                    if current.fileURLs.count == 1, let url = current.fileURLs.first,
+                       FileManager.default.fileExists(atPath: url.path) {
+                        ClipboardFileQuickLookView(url: url).frame(height: 290)
+                    }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(current.fileURLs, id: \.self) { url in
+                                HStack(spacing: 10) {
+                                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                        .resizable().scaledToFit().frame(width: 28, height: 28)
+                                    Text(url.lastPathComponent).lineLimit(2).textSelection(.enabled)
+                                    Spacer()
+                                    Button("Reveal") {
+                                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                                    }
+                                }
+                            }
+                        }
+                    }.frame(minHeight: 56, maxHeight: 125)
+                }
+            } else {
+                ScrollView {
+                    Text(current.text ?? current.previewText)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(height: 300)
+            }
+
+            HStack(spacing: 8) {
+                if let icon = AppMetadataCache.shared.icon(for: current.sourceBundleID) {
+                    Image(nsImage: icon).resizable().scaledToFit()
+                        .frame(width: 16, height: 16)
+                }
+                Text(current.sourceName ?? "Clipboard")
+                Spacer()
+                Text(current.kind.displayName)
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(24)
+        .frame(width: 650)
+    }
+}
+
+/// Native system renderer for previews of user-selected local file URLs.
+private struct ClipboardFileQuickLookView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> NSView {
+        guard let view = QLPreviewView(frame: .zero, style: .normal) else {
+            return NSTextField(labelWithString: "Quick Look preview unavailable")
+        }
+        view.previewItem = url as NSURL
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? QLPreviewView)?.previewItem = url as NSURL
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
+        (nsView as? QLPreviewView)?.close()
     }
 }
 
