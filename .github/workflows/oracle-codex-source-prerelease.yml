@@ -1,0 +1,59 @@
+name: AOM Studio source-only candidate release
+
+on:
+  push:
+    branches:
+      - release/aom-studio-cursor-20261013
+    paths:
+      - .github/workflows/oracle-codex-source-prerelease.yml
+
+# This workflow can only publish a source prerelease; it NEVER builds,
+# signs, or publishes a DMG and does not alter the existing Latest release.
+permissions:
+  contents: write
+
+jobs:
+  publish-source-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify source identity and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/release/aom-studio-cursor-20261013"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -s docs/AOM-20261013-oracle-codex-release-notes.md
+          test -s docs/cleanshot-501-oracle-codex-resize-overlay-evidence-followup.md
+          test -s AllOfMacOS/Services/AOMStudioRenderer.swift
+          test -s AllOfMacOS/Services/QuickAccessPolicy.swift
+
+      - name: Create immutable source-only prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="aom-studio-20261013-oracle-codex-rc1"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')
+            test "$existing" = "$GITHUB_SHA" || {
+              echo "::error::An existing tag points to a different commit; refusing rewrite."
+              exit 1
+            }
+            echo "Immutable prerelease already exists at expected commit."
+            exit 0
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AOM Studio / Oracle Codex source preview — 2026-10-13" \
+            --notes-file docs/AOM-20261013-oracle-codex-release-notes.md \
+            --prerelease --latest=false
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isPrerelease,tagName,targetCommitish,url \
+            --jq '{prerelease:.isPrerelease,tag:.tagName,target:.targetCommitish,url:.url}'
