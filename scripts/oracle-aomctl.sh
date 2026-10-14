@@ -124,13 +124,38 @@ case "$cmd" in
     check_repo
     clean
     current_main
-    before="$(git -C "$REPO_DIR" rev-parse HEAD)"
-    # No blind force push. Regular push rejects divergent remote histories.
+    local_sha="$(git -C "$REPO_DIR" rev-parse HEAD)"
+    remote_sha="$(timeout 20 env GIT_TERMINAL_PROMPT=0 git -C "$REPO_DIR" ls-remote origin refs/heads/main | awk '{print $1}')" ||
+      die "Could not query remote main; do not publish blindly."
+    [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]] || die "Remote main SHA is missing or invalid."
+    git -C "$REPO_DIR" merge-base --is-ancestor "$remote_sha" "$local_sha" ||
+      die "Local main is not a fast-forward of GitHub main. Run aomctl sync."
+    release_paths=false
+    skip_ci=false
+    if [[ "$remote_sha" != "$local_sha" ]]; then
+      while IFS= read -r path; do
+        case "$path" in
+          AllOfMacOS/*|XPC/*|Package.swift|Package.resolved|build-and-sign.sh|scripts/resolve-signing-identity.sh|scripts/package-aom-dev.sh|.github/workflows/release.yml)
+            release_paths=true ;;
+        esac
+      done < <(git -C "$REPO_DIR" diff --name-only "$remote_sha" "$local_sha")
+      if git -C "$REPO_DIR" log --format=%s "$remote_sha..$local_sha" | grep -Eiq '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'; then
+        skip_ci=true
+      fi
+    fi
+    # A normal source push starts release.yml only when the workflow path filter
+    # matches AND no commit requests CI skipping. A no-op push starts nothing.
     push_main
-    printf 'Source pushed/verified at %s\n' "$before"
-    printf 'An applicable main push starts release.yml automatically.\n'
-    printf 'For a manual rebuild/dispatch use: aom-release trigger\n'
-    printf 'Requires healthy GitHub billing and AOM_SIGNING_READY=true; check CI before claiming success.\n'
+    printf 'Source pushed/verified at %s\n' "$local_sha"
+    if [[ "$release_paths" == true && "$skip_ci" == false ]]; then
+      printf 'Matching main push should start release.yml automatically.\n'
+    else
+      [[ -x "$REL_API" ]] || die "No dispatch command; source pushed but release not triggered."
+      "$REL_API" trigger || die "Source pushed but workflow dispatch failed."
+      printf 'Explicit workflow_dispatch sent for no-op/non-code/[skip ci] update.\n'
+    fi
+    printf 'Check https://github.com/kyw1-2/All-of-MacOS/actions/workflows/release.yml for actual CI success.\n'
+    printf 'Requires healthy GitHub billing and AOM_SIGNING_READY=true.\n'
     ;;
   verify-cache)
     [[ -x "$PRESIGNED" ]] || die "Missing $PRESIGNED"
