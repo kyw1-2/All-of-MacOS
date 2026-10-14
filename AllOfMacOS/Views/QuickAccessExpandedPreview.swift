@@ -44,7 +44,7 @@ struct CapturePreviewContent: View {
     let entry: CaptureHistoryEntry
     var fullSizeChrome = false
     var onClose: () -> Void = {}
-    @State private var actualSize = false
+    @State private var zoom: CGFloat? = nil
     @State private var player: AVPlayer?
     private var isVideo: Bool { entry.kind == .videoRecording }
 
@@ -70,8 +70,8 @@ struct CapturePreviewContent: View {
                 }.keyboardShortcut("s", modifiers: .command)
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.bar)
+            .padding(.horizontal, 12).frame(height: 50)
+            .background(.regularMaterial)
             Divider()
             canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,10 +80,12 @@ struct CapturePreviewContent: View {
             HStack(spacing: 9) {
                 if !isVideo {
                     Menu {
-                        Button("Fit to Window") { actualSize = false }
-                        Button("100%") { actualSize = true }
+                        Button("Fit to Window") { zoom = nil }
+                        ForEach([25, 50, 75, 100, 125, 150, 200, 300, 400], id: \.self) { percent in
+                            Button("\(percent)%") { zoom = CGFloat(percent) / 100 }
+                        }
                     } label: {
-                        Text(actualSize ? "100%" : "Fit").font(.system(size: 12))
+                        Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit").font(.system(size: 12))
                             .padding(.horizontal, 12).frame(height: 30)
                     }
                     .menuStyle(.borderlessButton).fixedSize()
@@ -106,18 +108,15 @@ struct CapturePreviewContent: View {
                     .keyboardShortcut(.escape, modifiers: []).help("Close Preview")
             }
             .overlay {
-                Label("Drag Me", systemImage: "line.3.horizontal")
-                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 17).frame(height: 32)
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                CaptureDragHandle()
                     .onDrag {
                         if let url = entry.playableVideoURL ?? entry.fileURL { return NSItemProvider(object: url as NSURL) }
                         return NSItemProvider(object: NSImage(cgImage: entry.image, size: entry.pointSize))
                     }
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(.bar)
+            .padding(.horizontal, 12).frame(height: 50)
+            .background(.regularMaterial)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
@@ -140,20 +139,19 @@ struct CapturePreviewContent: View {
                 ContentUnavailableView("Recording Missing", systemImage: "video.slash",
                     description: Text("The recorded MP4 file can no longer be found."))
             }
-        } else if actualSize {
-            GeometryReader { geometry in
-                ScrollView([.horizontal, .vertical]) {
-                    captureImage
-                        .frame(width: entry.pointSize.width, height: entry.pointSize.height)
-                        .padding(24)
-                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
-                }
-            }
         } else {
             GeometryReader { geometry in
-                captureImage.scaledToFit()
-                    .frame(width: max(1, geometry.size.width - 48), height: max(1, geometry.size.height - 48))
-                    .padding(24)
+                let fit = min(max(1, geometry.size.width - 32) / max(1, entry.pointSize.width),
+                              max(1, geometry.size.height - 32) / max(1, entry.pointSize.height))
+                let factor = zoom ?? min(1, fit)
+                ScrollView([.horizontal, .vertical]) {
+                    captureImage
+                        .frame(width: entry.pointSize.width * factor, height: entry.pointSize.height * factor)
+                        .background(TransparencyGrid())
+                        .padding(16)
+                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                        .background(NativeScrollChrome(.overlay))
+                }
             }
         }
     }
@@ -265,5 +263,19 @@ enum CapturePreviewActions {
         } else {
             panel.begin(completionHandler: finished)
         }
+    }
+}
+
+struct CaptureDragHandle: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal").font(.system(size: 9)).opacity(0.35)
+            Text("Drag Me").font(.system(size: 12, weight: .medium))
+            Image(systemName: "line.3.horizontal").font(.system(size: 9)).opacity(0.35)
+        }
+        .foregroundStyle(.secondary).padding(.horizontal, 14).frame(height: 32)
+        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+        .accessibilityLabel("Drag image to another app")
     }
 }

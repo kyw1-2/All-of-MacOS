@@ -40,8 +40,8 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     init(capture: CaptureHistoryEntry, url: URL?) {
         self.capture = capture
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
-        let width = min(screen.width - 40, min(1280, max(900, capture.pixelSize.width / 2 + 180)))
-        let height = min(screen.height - 60, min(900, max(560, capture.pixelSize.height / 2 + 160)))
+        let width = min(screen.width - 40, min(1280, max(1000, capture.pointSize.width + 48)))
+        let height = min(screen.height - 60, min(900, max(640, capture.pointSize.height + 100)))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -258,7 +258,9 @@ private struct AnnotationEditorView: View {
             .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
         }
             .padding(.vertical, 2)
+            .background(NativeScrollChrome(.hidden))
             }
+            .scrollIndicators(.hidden)
             Spacer(minLength: 0)
             Button { saveAs() } label: {
                 Text("Save as…").font(.system(size: 13, weight: .semibold))
@@ -266,8 +268,8 @@ private struct AnnotationEditorView: View {
                     .background(Color.accentColor, in: Capsule())
             }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command).fixedSize()
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.bar)
+        .padding(.horizontal, 12).frame(height: 50)
+        .background(.regularMaterial)
     }
 
     private func capsuleButton(_ symbol: String, help: String, active: Bool = false,
@@ -389,16 +391,13 @@ private struct AnnotationEditorView: View {
                 }
             }
             if !cropMode {
-            Text("☰   Drag Me   ☰")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 17).frame(height: 34)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
+            CaptureDragHandle()
                 .onDrag { dragProvider() }
                 .help("Drag the edited image to another app")
             }
         }
-        .padding(.horizontal, 14).frame(height: 54)
+        .padding(.horizontal, 14).frame(height: 50)
+        .background(.regularMaterial)
     }
 
     private var cropToolbar: some View {
@@ -435,8 +434,11 @@ private struct AnnotationEditorView: View {
                     .padding(.horizontal, 16).frame(height: 32).background(Color.accentColor, in: Capsule())
             }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: [])
                 .disabled(cropRect == nil || (cropRect?.width ?? 0) < 1 || (cropRect?.height ?? 0) < 1)
-        }.font(.system(size: 13)).padding(.horizontal, 12).frame(height: 54)
+        }.font(.system(size: 13)).padding(.horizontal, 12).frame(height: 50)
+            .background(NativeScrollChrome(.hidden))
         }
+        .scrollIndicators(.hidden)
+        .background(.regularMaterial)
     }
 
     private func cropDimension(_ label: String, width: Bool) -> some View {
@@ -504,6 +506,7 @@ private struct AnnotationEditorView: View {
                 .shadow(color: .black.opacity(0.16), radius: 14, y: 3)
                 .padding(24)
                 .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                .background(NativeScrollChrome(.overlay))
             }
             .background(Color(nsColor: .underPageBackgroundColor))
             .overlay(alignment: .bottom) {
