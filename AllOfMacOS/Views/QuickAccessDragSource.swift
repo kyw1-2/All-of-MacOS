@@ -11,6 +11,7 @@ struct QuickAccessDragSource: NSViewRepresentable {
     var didSwipe: () -> Void
     var isLeftCorner: Bool
     var didClick: (() -> Void)? = nil
+    var didFinishWithModifiers: ((Bool, Bool) -> Void)? = nil
 
     func makeNSView(context: Context) -> DraggableView {
         let view = DraggableView()
@@ -26,6 +27,7 @@ struct QuickAccessDragSource: NSViewRepresentable {
         view.didSwipe = didSwipe
         view.isLeftCorner = isLeftCorner
         view.didClick = didClick
+        view.didFinishWithModifiers = didFinishWithModifiers
     }
 
     final class DraggableView: NSView, NSDraggingSource {
@@ -35,6 +37,7 @@ struct QuickAccessDragSource: NSViewRepresentable {
         var didDoubleClick: (() -> Void)?
         var didSwipe: (() -> Void)?
         var isLeftCorner = false
+        var didFinishWithModifiers: ((Bool, Bool) -> Void)?
         var didClick: (() -> Void)?
         private var pendingClick: DispatchWorkItem?
         private var mouseDownPoint = NSPoint.zero
@@ -91,7 +94,14 @@ struct QuickAccessDragSource: NSViewRepresentable {
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             // Keep mouseUp from opening a preview after the drag ends.
             started = true
-            didFinish?(operation != [])
+            // Snapshot at the native drop completion, before callbacks can
+            // change focus or open another window.
+            let optionPressed = NSEvent.modifierFlags.contains(.option)
+            if let didFinishWithModifiers {
+                didFinishWithModifiers(operation != [], optionPressed)
+            } else {
+                didFinish?(operation != [])
+            }
         }
 
         override func scrollWheel(with event: NSEvent) {

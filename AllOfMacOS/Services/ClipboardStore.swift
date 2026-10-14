@@ -350,7 +350,7 @@ final class ClipboardStore: ObservableObject {
     /// Writes all selected rich items in order. Plain text explicitly flattens
     /// them into one string; no key event or application activation occurs here.
     @discardableResult
-    func write(entryIDs: [UUID], plainText: Bool = false, separator: String = "\n") throws -> Bool {
+    func write(entryIDs: [UUID], plainText: Bool = false, separator: String = "\n", playSound: Bool = true) throws -> Bool {
         var seen = Set<UUID>()
         let selected = entryIDs.filter { seen.insert($0).inserted }.compactMap { id in entries.first { $0.id == id } }
         guard !selected.isEmpty, selected.count == seen.count else { throw StoreError.emptySelection }
@@ -384,6 +384,7 @@ final class ClipboardStore: ObservableObject {
         for index in entries.indices where seen.contains(entries[index].id) { entries[index].lastCopiedAt = copiedAt }
         entries.sort { $0.lastCopiedAt > $1.lastCopiedAt }
         scheduleSave()
+        if playSound { ClipboardAudioFeedback.copy() }
         return true
     }
 
@@ -501,5 +502,18 @@ final class ClipboardStore: ObservableObject {
         guard !(try isSymlink(directory)) else { throw StoreError.storageUnavailable }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+}
+
+/// Public system sounds provide local feedback without bundling proprietary audio.
+@MainActor
+enum ClipboardAudioFeedback {
+    static func copy() { play("Tink", volume: 0.22) }
+    static func paste() { play("Pop", volume: 0.30) }
+    private static func play(_ name: String, volume: Float) {
+        guard !PresetManager.isRunningTests, !PresetManager.isUIPreview,
+              let sound = NSSound(named: NSSound.Name(name)) else { return }
+        sound.volume = volume
+        sound.play()
     }
 }

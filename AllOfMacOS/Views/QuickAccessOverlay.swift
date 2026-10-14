@@ -24,7 +24,7 @@ final class QuickAccessOverlayController {
     private let entry: CaptureHistoryEntry
     private var stackIndex: Int
     private var secondsRemaining: TimeInterval?
-    private var resumedAt: Date?
+    private var resumedAt: TimeInterval?
     private var hovering = false
     private var dragging = false
     private var wasDeleted = false
@@ -91,7 +91,7 @@ final class QuickAccessOverlayController {
             onDelete: { [weak self] in self?.dismiss(deleteFile: true) },
             onClose: { [weak self] in self?.dismiss(deleteFile: false) },
             onSwipeDismiss: { [weak self] in self?.dismissWithSwipe() },
-            onDragOut: { [weak self] success in self?.handleDragOut(success: success) },
+            onDragOut: { [weak self] success, option in self?.handleDragOut(success: success, optionPressed: option) },
             prepareDragFile: { [weak self] in self?.beginDragFile() },
             onHoverChange: { [weak self] hovering in self?.setHovering(hovering) },
             onSaveAs: { [weak self] in self?.saveAs() },
@@ -415,8 +415,10 @@ final class QuickAccessOverlayController {
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 panel.animator().setFrameOrigin(NSPoint(x: frame.minX, y: offscreenY))
                 panel.animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                if self?.temporarilyHidden == true { panel.orderOut(nil) }
+            } completionHandler: { [weak self, weak panel] in
+                Task { @MainActor in
+                    if self?.temporarilyHidden == true { panel?.orderOut(nil) }
+                }
             }
         } else {
             position(panel)
@@ -532,12 +534,12 @@ final class QuickAccessOverlayController {
         return url
     }
 
-    private func handleDragOut(success: Bool) {
+    private func handleDragOut(success: Bool, optionPressed: Bool) {
         dragging = false
         setHovering(hovering)
         if QuickAccessPolicy.shouldCloseAfterDrag(mode: CaptureSettings.overlayAutoClose,
                 separateToggle: CaptureSettings.overlayCloseAfterDrag,
-                succeeded: success, optionPressed: NSEvent.modifierFlags.contains(.option)) {
+                succeeded: success, optionPressed: optionPressed) {
             dismiss(deleteFile: false)
         }
     }
@@ -561,26 +563,28 @@ final class QuickAccessOverlayController {
 
     private func pauseAutoClose() {
         guard let current = secondsRemaining else { return }
-        if let resumedAt { secondsRemaining = max(0.05, current - Date().timeIntervalSince(resumedAt)) }
+        if let resumedAt { secondsRemaining = max(0, current - (ProcessInfo.processInfo.systemUptime - resumedAt)) }
         resumedAt = nil
         closeTimer?.cancel()
         closeTimer = nil
     }
 
     private func resumeAutoClose() {
-        guard !hovering, !dragging, !temporarilyHidden,
-              let remaining = secondsRemaining, remaining > 0 else { return }
+        guard !hovering, !dragging, !temporarilyHidden, resumedAt == nil,
+              let remaining = secondsRemaining else { return }
         closeTimer?.cancel()
-        resumedAt = Date()
+        resumedAt = ProcessInfo.processInfo.systemUptime
         closeTimer = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self, !self.hovering,
+                  !self.dragging, !self.temporarilyHidden else { return }
+            self.resumedAt = nil
             if CaptureSettings.overlayAutoCloseSave {
-                if self?.saveWithoutPrompt() == false {
-                    self?.secondsRemaining = nil
+                if self.saveWithoutPrompt() == false {
+                    self.secondsRemaining = nil
                 }
             } else {
-                self?.dismiss(deleteFile: false)
+                self.dismiss(deleteFile: false)
             }
         }
     }
@@ -629,7 +633,7 @@ private struct QuickAccessOverlayView: View {
     let onDelete: () -> Void
     let onClose: () -> Void
     let onSwipeDismiss: () -> Void
-    let onDragOut: (Bool) -> Void
+    let onDragOut: (Bool, Bool) -> Void
     let prepareDragFile: () -> URL?
     let onHoverChange: (Bool) -> Void
     let onSaveAs: () -> Void
@@ -662,11 +666,12 @@ private struct QuickAccessOverlayView: View {
                     .overlay {
                         QuickAccessDragSource(preview: entry.thumbnail,
                                               prepareFile: prepareDragFile,
-                                              didFinish: onDragOut,
+                                              didFinish: { _ in },
                                               didDoubleClick: onAnnotate,
                                               didSwipe: onSwipeDismiss,
                                               isLeftCorner: isLeft,
-                                              didClick: onPreview)
+                                              didClick: onPreview,
+                                              didFinishWithModifiers: onDragOut)
                     }
 
                 if hovered {
@@ -733,13 +738,13 @@ private struct QuickAccessOverlayView: View {
         }
         .padding(4)
         .frame(width: width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(Color.white.opacity(0.30), lineWidth: 1))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5))
         .help("Click to preview · Double-click to edit · Drag to export")
         .onHover { state in
-            withAnimation(.easeOut(duration: 0.15)) { hovered = state }
             onHoverChange(state)
+            withAnimation(.easeOut(duration: 0.15)) { hovered = state }
         }
         // Trackpad horizontal swipes are handled by QuickAccessDragSource.
         // Do not compete with its mouse-drag session: a file drag must not
@@ -754,9 +759,9 @@ private struct QuickAccessOverlayView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.black.opacity(0.85))
                 .frame(width: side < 160 ? min(92, (width - 44) / 2) : 104, height: 29)
-                .background(Color.white.opacity(0.96), in: Capsule())
+
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuickAccessPillStyle())
         .accessibilityLabel(title)
         .help(title == "Copy" ? "Copy (⌘C, Option-click keeps overlay)" : "Save (⌘S, Option-click switches destination behavior)")
     }
@@ -775,6 +780,9 @@ private struct QuickAccessOverlayView: View {
     }
 
     @ViewBuilder private var quickActions: some View {
+        Button("Copy", action: isVideo ? onCopyFile : onCopy)
+        if !isVideo { Button("Copy 1x", action: onCopyOneX) }
+        Divider()
         Button("Quick Look", action: onPreview)
         Button("Save As…", action: onSaveAs)
         Button("Copy File", action: onCopyFile)
@@ -788,7 +796,6 @@ private struct QuickAccessOverlayView: View {
             Button("Pin to Screen", action: onPin)
             Button("Copy Text (OCR)", action: onOCR)
             Button("Copy QR Code", action: onQR)
-            Button("Copy Retina as 1×", action: onCopyOneX)
             Button("Copy Flipped Horizontally", action: onFlip)
             Button("Copy Rotated Left", action: onRotate)
             Button("Print…", action: onPrint)
@@ -799,5 +806,18 @@ private struct QuickAccessOverlayView: View {
         Button("Close All Overlays", action: onCloseAll)
         Button("Close", action: onClose)
         Button("Move to Trash", role: .destructive, action: onDelete)
+    }
+}
+
+private struct QuickAccessPillStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Color.white.opacity(configuration.isPressed ? 0.70 : hovering ? 1 : 0.90), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(hovering ? 0.8 : 0.25), lineWidth: 0.5))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }

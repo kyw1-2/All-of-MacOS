@@ -25,17 +25,27 @@ final class PinnedScreenshotController {
     }
 
     func unpinAll() {
-        for (_, window) in pins { window.orderOut(nil) }
+        for window in Array(pins.values) { window.closePin() }
         pins.removeAll()
     }
 
     var count: Int { pins.count }
 }
 
+@MainActor
+private final class PinnedInteractionState: ObservableObject {
+    @Published var clickThrough = false
+    @Published var opacity = 1.0
+}
+
 private final class PinnedWindow: NSPanel {
     var onClose: (() -> Void)?
     private let entry: CaptureHistoryEntry
     private let url: URL?
+    private let interaction = PinnedInteractionState()
+    private var eventMonitor: Any?
+    private var recoveryMonitor: Any?
+    private var locked = false
 
     init(entry: CaptureHistoryEntry, url: URL?) {
         self.entry = entry
@@ -70,7 +80,9 @@ private final class PinnedWindow: NSPanel {
             onAnnotate: { [weak self] in self?.annotate() },
             onClose: { [weak self] in self?.closePin() },
             onLockChange: { [weak self] locked in self?.setLocked(locked) },
-            onOpacityChange: { [weak self] opacity in self?.alphaValue = CGFloat(opacity) }
+            onOpacityChange: { [weak self] opacity in self?.setOpacity(opacity) },
+            onClickThrough: { [weak self] in self?.toggleClickThrough() },
+            interaction: interaction
         )
         contentView = NSHostingView(rootView: view)
     }
@@ -85,16 +97,80 @@ private final class PinnedWindow: NSPanel {
                              y: visible.midY - frame.height / 2 - offset)
         setFrameOrigin(origin)
         orderFrontRegardless()
+        installInteractionMonitors()
+    }
+
+    private func setOpacity(_ value: Double) {
+        interaction.opacity = min(1, max(0.1, value))
+        alphaValue = CGFloat(interaction.opacity)
+    }
+
+    private func toggleClickThrough() {
+        interaction.clickThrough.toggle()
+        ignoresMouseEvents = interaction.clickThrough
+    }
+
+    private func installInteractionMonitors() {
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel, .magnify]) { [weak self] event in
+            guard let self else { return event }
+            let recover = self.ignoresMouseEvents && self.frame.contains(NSEvent.mouseLocation)
+            guard event.window === self || recover else { return event }
+            if event.type == .keyDown {
+                let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                if modifiers.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "t" {
+                    self.toggleClickThrough()
+                    return nil
+                }
+                if event.window === self, modifiers.intersection([.command, .control, .option]).isEmpty,
+                   let text = event.charactersIgnoringModifiers, let digit = Int(text), (0...9).contains(digit) {
+                    self.setOpacity(digit == 0 ? 1 : Double(digit) / 10)
+                    return nil
+                }
+            }
+            guard !self.ignoresMouseEvents else { return event }
+            if event.type == .scrollWheel {
+                self.setOpacity(self.interaction.opacity + Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.003 : 0.03))
+                return nil
+            }
+            if event.type == .magnify, !self.locked {
+                let old = self.frame
+                let requested = max(0.1, 1 + event.magnification)
+                let minimum = max(self.minSize.width / old.width, self.minSize.height / old.height)
+                let maximum = min(8192 / old.width, 8192 / old.height)
+                let factor = min(maximum, max(minimum, requested))
+                let size = NSSize(width: old.width * factor, height: old.height * factor)
+                self.setFrame(NSRect(x: old.midX - size.width / 2, y: old.midY - size.height / 2,
+                                     width: size.width, height: size.height), display: true)
+                return nil
+            }
+            return event
+        }
+        // A click-through window cannot receive a mouse click to restore itself.
+        // Command-T over its bounds remains available while another app is active.
+        recoveryMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, self.isVisible, self.ignoresMouseEvents,
+                      self.frame.contains(NSEvent.mouseLocation),
+                      event.modifierFlags.contains(.command),
+                      event.charactersIgnoringModifiers?.lowercased() == "t" else { return }
+                self.toggleClickThrough()
+            }
+        }
     }
 
     private func setLocked(_ locked: Bool) {
+        self.locked = locked
         isMovableByWindowBackground = !locked
         styleMask = locked ? styleMask.subtracting(.resizable) : styleMask.union(.resizable)
     }
 
     /// Unpins this window. Deliberately not named `close()`: `NSWindow` already
     /// has one, and overriding it would also catch the system's own close paths.
-    private func closePin() {
+    func closePin() {
+        for token in [eventMonitor, recoveryMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(token) }
+        eventMonitor = nil
+        recoveryMonitor = nil
         orderOut(nil)
         onClose?()
     }
@@ -139,10 +215,11 @@ private struct PinnedScreenshotView: View {
     let onClose: () -> Void
     let onLockChange: (Bool) -> Void
     let onOpacityChange: (Double) -> Void
+    let onClickThrough: () -> Void
+    @ObservedObject var interaction: PinnedInteractionState
 
     @State private var isHovering = false
     @State private var isLocked = false
-    @State private var opacity = 1.0
     @State private var showingOpacity = false
 
     private func toggleLock() {
@@ -159,13 +236,13 @@ private struct PinnedScreenshotView: View {
                 .clipShape(clipShape)
                 .overlay {
                     if bordered {
-                        clipShape.stroke(Color.primary.opacity(0.25), lineWidth: 1)
+                        clipShape.stroke(Color.primary.opacity(interaction.clickThrough ? 0.10 : 0.25), lineWidth: 1)
                     }
                 }
                 .shadow(color: hasShadow ? .black.opacity(0.3) : .clear, radius: hasShadow ? 12 : 0, y: hasShadow ? 4 : 0)
 
             // Keep the control host alive when a popover takes pointer focus.
-            if isHovering || showingOpacity { controls }
+            if !interaction.clickThrough && (isHovering || showingOpacity) { controls }
         }
         .padding(hasShadow ? 6 : 0)
         .contentShape(Rectangle())
@@ -178,10 +255,9 @@ private struct PinnedScreenshotView: View {
             Divider()
             Button("Annotate", action: onAnnotate)
             Button(isLocked ? "Unlock Position" : "Lock Position", action: toggleLock)
-            Button("Reset Opacity") {
-                opacity = 1
-                onOpacityChange(1)
-            }
+            Button(interaction.clickThrough ? "Disable Click-Through" : "Click-Through", action: onClickThrough)
+                .keyboardShortcut("t", modifiers: .command)
+            Button("Reset Opacity") { onOpacityChange(1) }
             Button("Unpin", role: .destructive, action: onClose)
         }
         .accessibilityElement()
@@ -209,14 +285,14 @@ private struct PinnedScreenshotView: View {
             .popover(isPresented: $showingOpacity) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Opacity").font(.headline)
-                    Slider(value: $opacity, in: 0.25...1)
-                        .onChange(of: opacity) { _, value in onOpacityChange(value) }
-                    Text("\(Int(opacity * 100))%")
+                    Slider(value: Binding(get: { interaction.opacity }, set: onOpacityChange), in: 0.1...1)
+                    Text("\(Int(interaction.opacity * 100))%")
                         .monospacedDigit().foregroundStyle(.secondary)
                 }
                 .padding(14)
                 .frame(width: 210)
             }
+            iconButton("cursorarrow.rays", "Click-Through (⌘T; press again over image to restore)", onClickThrough)
             iconButton("xmark", "Unpin", onClose)
         }
         .padding(4)

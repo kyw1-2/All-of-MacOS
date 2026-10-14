@@ -137,8 +137,10 @@ struct AnnotationStyle: Equatable {
     var opacity: Double = 1
     /// Arrow head shape, for `.arrow`.
     var arrowStyle: ArrowStyle = .standard
-    /// Pixel block size for `.pixelate`, in points.
-    var pixelBlockSize: CGFloat = 12
+    /// Pixel block size for `.pixelate`, in output pixels.
+    var pixelBlockSize: CGFloat = 16
+    /// Gaussian radius in output pixels.
+    var blurRadius: CGFloat = 8
     /// Corner radius for the rounded-rectangle tools.
     var cornerRadius: CGFloat = 0
 
@@ -370,6 +372,7 @@ struct AnnotationDocument {
                 updated.style.thickness *= thicknessFactor
                 updated.style.fontSize *= thicknessFactor
                 updated.style.pixelBlockSize *= thicknessFactor
+                updated.style.blurRadius *= thicknessFactor
                 updated.style.cornerRadius *= thicknessFactor
                 return updated
             }
@@ -493,7 +496,8 @@ struct AnnotationDocument {
     /// Rendering is done in one pass into a bitmap context rather than by
     /// compositing `NSImage`s, so the output is exactly the pixel grid the editor
     /// previewed and no resampling creeps in at export time.
-    func render(scale: CGFloat) -> CGImage? {
+    func render(scale: CGFloat, draft: AnnotationObject? = nil) -> CGImage? {
+        guard scale.isFinite, scale > 0 else { return nil }
         let image = croppedImage
         let padding = background.isExpanded ? background.padding * scale : 0
         let width = Int(CGFloat(image.width) + padding * 2)
@@ -516,11 +520,17 @@ struct AnnotationDocument {
             case .gradient:
                 drawGradient(in: context, rect: rect)
             case .blurred:
-                // A blurred, oversized copy of the image fills the margin. Drawing
-                // it scaled up and clipped is cheaper than a real blur filter and
-                // reads the same at this size.
+                let source = CIImage(cgImage: image)
+                let blurred = source.clampedToExtent()
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 24 * scale])
+                    .cropped(to: source.extent)
+                guard let wallpaper = Self.blurCIContext.createCGImage(blurred, from: source.extent) else { return nil }
+                let fill = max(rect.width / CGFloat(image.width), rect.height / CGFloat(image.height))
+                let size = CGSize(width: CGFloat(image.width) * fill, height: CGFloat(image.height) * fill)
                 context.saveGState()
-                context.draw(image, in: rect.insetBy(dx: -40, dy: -40))
+                context.clip(to: rect)
+                context.draw(wallpaper, in: CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
+                                                  width: size.width, height: size.height))
                 context.restoreGState()
             }
         }
@@ -528,17 +538,34 @@ struct AnnotationDocument {
         // The capture itself. CoreGraphics is bottom-left origin, so the image
         // sits at the bottom of the canvas and object coordinates are flipped below.
         let imageRect = CGRect(x: padding, y: padding, width: CGFloat(image.width), height: CGFloat(image.height))
+        context.saveGState()
+        if background.isExpanded {
+            context.setShadow(offset: CGSize(width: 0, height: -10 * scale), blur: 20 * scale,
+                              color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        }
+        // Composite screenshot + annotations as one rounded floating layer so
+        // both the preview and exported image share the same mask and shadow.
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.saveGState()
+        let radius = background.isExpanded ? background.cornerRadius * scale : 0
+        context.addPath(CGPath(roundedRect: imageRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        context.clip()
         context.draw(image, in: imageRect)
-
-        for object in objects {
+        let renderedObjects = objects + (draft.map { [$0] } ?? [])
+        for object in renderedObjects {
             draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: image)
         }
+        context.restoreGState()
+        context.endTransparencyLayer()
+        context.restoreGState()
         return context.makeImage()
     }
 
     private func drawGradient(in context: CGContext, rect: CGRect) {
-        let colors = [background.gradientStart.nsColor.cgColor, background.gradientEnd.nsColor.cgColor] as CFArray
-        guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) else { return }
+        let stops = background.gradientColors
+        let colors = stops.map(\.cgColor) as CFArray
+        let locations = stops.indices.map { CGFloat($0) / CGFloat(max(1, stops.count - 1)) }
+        guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: locations) else { return }
         context.drawLinearGradient(gradient, start: CGPoint(x: rect.minX, y: rect.maxY),
                                    end: CGPoint(x: rect.maxX, y: rect.minY), options: [])
     }
@@ -602,7 +629,7 @@ struct AnnotationDocument {
             context.fill(rect.intersection(imageRect))
         case .blur:
             drawGaussianBlur(in: context, rect: rect, scale: scale,
-                             baseImage: baseImage, imageRect: imageRect)
+                             baseImage: baseImage, imageRect: imageRect, radius: object.style.blurRadius)
         case .pixelate:
             drawPixelate(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
                          blockSize: object.style.pixelBlockSize)
@@ -717,15 +744,15 @@ struct AnnotationDocument {
         context.setLineWidth(max(1.5, 2 * scale))
         context.strokeEllipse(in: circle)
 
-        let size = diameter * 0.6
+        let size = min(diameter * 0.6, diameter * 0.75 / max(1, CGFloat(object.text.count) * 0.6))
         let font = NSFont.systemFont(ofSize: size, weight: .bold)
         let attributed = NSAttributedString(string: object.text, attributes: [
             .font: font, .foregroundColor: NSColor.white
         ])
         let line = CTLineCreateWithAttributedString(attributed)
         let bounds = CTLineGetBoundsWithOptions(line, .useOpticalBounds)
-        context.textPosition = CGPoint(x: circle.midX - bounds.width / 2,
-                                       y: circle.midY - bounds.height / 2)
+        context.textPosition = CGPoint(x: circle.midX - bounds.width / 2 - bounds.minX,
+                                       y: circle.midY - bounds.height / 2 - bounds.minY)
         CTLineDraw(line, context)
     }
 
@@ -755,22 +782,21 @@ struct AnnotationDocument {
     /// .redact this is visual obfuscation, NOT irreversible privacy removal.
     private func drawGaussianBlur(in context: CGContext, rect: CGRect,
                                   scale: CGFloat, baseImage: CGImage,
-                                  imageRect: CGRect) {
+                                  imageRect: CGRect, radius: CGFloat) {
         guard scale.isFinite, scale > 0, rect.width > 1, rect.height > 1 else { return }
         let clipped = rect.intersection(imageRect)
         guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
 
         // Editor coordinates are top-left; CIImage uses a bottom-left extent.
-        let inputX = (clipped.minX - imageRect.minX) / scale
-        let inputY = (clipped.minY - imageRect.minY) / scale
+        let inputX = clipped.minX - imageRect.minX
+        let inputY = clipped.minY - imageRect.minY
         let inputRect = CGRect(x: inputX, y: inputY,
-                               width: clipped.width / scale,
-                               height: clipped.height / scale).integral
+                               width: clipped.width,
+                               height: clipped.height)
         let source = CIImage(cgImage: baseImage)
         guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
-        let radius = max(3, 8 * scale)
         filter.setValue(source.clampedToExtent(), forKey: kCIInputImageKey)
-        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        filter.setValue(max(1, radius), forKey: kCIInputRadiusKey)
         guard let output = filter.outputImage else { return }
         let within = inputRect.intersection(source.extent)
         guard !within.isNull, within.width > 0, within.height > 0,
@@ -789,17 +815,17 @@ struct AnnotationDocument {
     /// interpolation, which is both faster and blockier than a real mosaic filter.
     private func drawPixelate(in context: CGContext, rect: CGRect, scale: CGFloat,
                               baseImage: CGImage, imageRect: CGRect, blockSize: CGFloat) {
-        guard rect.width > 1, rect.height > 1 else { return }
-        let block = max(2, blockSize * scale)
-        // The source rect is the pixelated region expressed in the base image's
-        // own coordinates, which is the inverse of the canvas transform.
-        let sourceX = (rect.minX - imageRect.minX) / scale
-        let sourceY = (imageRect.maxY - rect.maxY) / scale
-        let sourceRect = CGRect(x: sourceX, y: sourceY,
-                                width: rect.width / scale, height: rect.height / scale)
-        guard let region = baseImage.cropping(to: sourceRect.integral) else { return }
-        let smallWidth = max(1, Int(rect.width / block))
-        let smallHeight = max(1, Int(rect.height / block))
+        let clipped = rect.intersection(imageRect).integral.intersection(imageRect)
+        guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
+        let block = max(2, blockSize)
+        // imageRect and clipped are already in output pixels. CGImage cropping
+        // uses a top-left origin; dividing by Retina scale would sample elsewhere.
+        let sourceRect = CGRect(x: clipped.minX - imageRect.minX,
+                                y: imageRect.maxY - clipped.maxY,
+                                width: clipped.width, height: clipped.height)
+        guard let region = baseImage.cropping(to: sourceRect) else { return }
+        let smallWidth = max(1, Int(ceil(clipped.width / block)))
+        let smallHeight = max(1, Int(ceil(clipped.height / block)))
         guard let small = CGContext(data: nil, width: smallWidth, height: smallHeight,
                                     bitsPerComponent: 8, bytesPerRow: 0,
                                     space: CGColorSpaceCreateDeviceRGB(),
@@ -808,9 +834,11 @@ struct AnnotationDocument {
         small.draw(region, in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight))
         guard let mosaic = small.makeImage() else { return }
         context.saveGState()
-        context.clip(to: rect)
+        context.setAlpha(1)
+        context.setBlendMode(.normal)
+        context.clip(to: clipped)
         context.interpolationQuality = .none
-        context.draw(mosaic, in: rect)
+        context.draw(mosaic, in: clipped)
         context.restoreGState()
     }
 
@@ -855,7 +883,22 @@ struct AnnotationBackground: Equatable {
         }
     }
 
+    enum GradientPreset: String, CaseIterable, Identifiable {
+        case custom, sunset, ocean, sequoia
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .custom: return "Custom"
+            case .sunset: return "Sunset"
+            case .ocean: return "Ocean"
+            case .sequoia: return "Sequoia"
+            }
+        }
+    }
+
     var kind: Kind = .gradient
+    var gradientPreset: GradientPreset = .custom
+    var cornerRadius: CGFloat = 16
     var color: AnnotationColor = .gray
     var gradientStart: AnnotationColor = .purple
     var gradientEnd: AnnotationColor = .blue
@@ -863,4 +906,15 @@ struct AnnotationBackground: Equatable {
     var padding: CGFloat = 0
 
     var isExpanded: Bool { padding > 0 }
+
+    var gradientColors: [NSColor] {
+        let rgb: [(CGFloat, CGFloat, CGFloat)]
+        switch gradientPreset {
+        case .custom: return [gradientStart.nsColor, gradientEnd.nsColor]
+        case .sunset: rgb = [(0.28, 0.12, 0.54), (0.76, 0.23, 0.54), (1, 0.48, 0.32), (1, 0.78, 0.48)]
+        case .ocean: rgb = [(0.05, 0.12, 0.38), (0.08, 0.39, 0.75), (0.08, 0.70, 0.80), (0.55, 0.90, 0.85)]
+        case .sequoia: rgb = [(0.12, 0.23, 0.20), (0.26, 0.42, 0.31), (0.64, 0.63, 0.38), (0.91, 0.71, 0.45)]
+        }
+        return rgb.map { NSColor(srgbRed: $0.0, green: $0.1, blue: $0.2, alpha: 1) }
+    }
 }

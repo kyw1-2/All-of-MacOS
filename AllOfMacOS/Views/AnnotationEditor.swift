@@ -175,7 +175,7 @@ private struct AnnotationEditorView: View {
 
     private let mainTools: [AnnotationKind] = [
         .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow,
-        .text, .pixelate, .highlighter, .counter, .draw, .drawHighlight
+        .text, .pixelate, .blur, .highlighter, .counter, .draw, .drawHighlight
     ]
 
     private var toolbar: some View {
@@ -188,7 +188,7 @@ private struct AnnotationEditorView: View {
                 if !backgroundPopover { document.beginChange() }
                 backgroundPopover.toggle()
             }
-            .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 270) }
+            .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 320) }
             ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 9) {
             HStack(spacing: 0) {
@@ -464,6 +464,11 @@ private struct AnnotationEditorView: View {
 
     // MARK: - Canvas
 
+    private var privacyDraft: AnnotationObject? {
+        guard let draft, draft.kind == .blur || draft.kind == .pixelate else { return nil }
+        return draft
+    }
+
     private var canvas: some View {
         GeometryReader { geometry in
             let imageSize = CGSize(width: CGFloat(document.croppedImage.width) / scale,
@@ -474,7 +479,7 @@ private struct AnnotationEditorView: View {
             let padding = document.background.isExpanded ? document.background.padding * fit : 0
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
-                    if let rendered = document.render(scale: scale) {
+                    if let rendered = document.render(scale: scale, draft: privacyDraft) {
                         Image(decorative: rendered, scale: scale).resizable()
                             .frame(width: drawn.width, height: drawn.height)
                     }
@@ -485,7 +490,7 @@ private struct AnnotationEditorView: View {
                                 selectionHandles(for: object, fit: fit)
                             }
                         }
-                        if let draft { DraftOverlay(object: draft, fit: fit, scale: scale) }
+                        if let draft, draft.kind != .blur && draft.kind != .pixelate { DraftOverlay(object: draft, fit: fit, scale: scale) }
                         if cropMode, let cropRect { cropOverlay(cropRect: cropRect, fit: fit, imageSize: imageSize) }
                     }
                     .frame(width: imageSize.width * fit, height: imageSize.height * fit)
@@ -687,11 +692,11 @@ private struct AnnotationEditorView: View {
             optionsPopover = true
         } else {
             var object = AnnotationObject(kind: .counter,
-                                          rect: CGRect(x: point.x, y: point.y, width: 30, height: 30),
+                                          rect: CGRect(x: point.x - 14, y: point.y - 14, width: 28, height: 28),
                                           style: style, text: "\(counterValue)")
             object.style.color = style.color
             document.add(object)
-            counterValue += 1
+            counterValue = min(9999, counterValue + 1)
             selectedID = object.id
         }
     }
@@ -722,6 +727,8 @@ private struct AnnotationEditorView: View {
     }
 
     // MARK: - Inspector
+
+    private var selectedKind: AnnotationKind? { document.objects.first { $0.id == selectedID }?.kind }
 
     private var toolOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -755,9 +762,29 @@ private struct AnnotationEditorView: View {
                     }
                 }
 
-                if tool == .pixelate {
+                if tool == .counter {
+                    section("Next Step") {
+                        Stepper(value: $counterValue, in: 1...9999) {
+                            TextField("Starting number", value: $counterValue, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: counterValue) { _, value in counterValue = min(9999, max(1, value)) }
+                        }
+                        Button("Reset to 1") { counterValue = 1 }
+                        ColorSwatchRow(selection: $style.color)
+                            .onChange(of: style.color) { _, _ in applyStyleToSelection() }
+                    }
+                }
+                if tool == .pixelate || selectedKind == .pixelate {
                     section("Pixel Size") {
-                        slider(value: $style.pixelBlockSize, range: 4...48, label: "\(Int(style.pixelBlockSize)) px")
+                        Picker("Pixel block size", selection: $style.pixelBlockSize) {
+                            ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
+                        }.pickerStyle(.segmented)
+                            .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
+                    }
+                }
+                if tool == .blur || selectedKind == .blur {
+                    section("Blur Radius") {
+                        slider(value: $style.blurRadius, range: 1...64, label: "\(Int(style.blurRadius)) px")
                     }
                 }
 
@@ -776,26 +803,40 @@ private struct AnnotationEditorView: View {
 
     private var backgroundOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
-                section("Background") {
-                    Picker("", selection: $document.background.kind) {
-                        ForEach(AnnotationBackground.Kind.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
-                    slider(value: Binding(get: { document.background.padding },
-                                          set: { document.background.padding = $0 }),
-                           range: 0...160, label: "Padding \(Int(document.background.padding)) pt")
-                    if document.background.kind == .gradient {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("From").font(.caption).foregroundStyle(.secondary)
-                            ColorSwatchRow(selection: $document.background.gradientStart)
-                            Text("To").font(.caption).foregroundStyle(.secondary)
-                            ColorSwatchRow(selection: $document.background.gradientEnd)
-                        }
-                    } else if document.background.kind == .solid {
-                        ColorSwatchRow(selection: $document.background.color)
+            section("Background") {
+                Picker("Background", selection: $document.background.kind) {
+                    ForEach(AnnotationBackground.Kind.allCases) { Text($0.displayName).tag($0) }
+                }.pickerStyle(.segmented).labelsHidden()
+            }
+            section("Padding") {
+                Picker("Padding", selection: $document.background.padding) {
+                    Text("None").tag(CGFloat(0))
+                    ForEach([16, 32, 48, 64], id: \.self) { Text("\($0) pt").tag(CGFloat($0)) }
+                }.pickerStyle(.segmented).labelsHidden()
+            }
+            section("Screenshot Corners") {
+                Picker("Corner radius", selection: $document.background.cornerRadius) {
+                    ForEach([0, 8, 16, 24], id: \.self) { Text("\($0) pt").tag(CGFloat($0)) }
+                }.pickerStyle(.segmented).labelsHidden()
+            }
+            if document.background.kind == .gradient {
+                section("Wallpaper Gradient") {
+                    Picker("Preset", selection: $document.background.gradientPreset) {
+                        ForEach(AnnotationBackground.GradientPreset.allCases) { Text($0.displayName).tag($0) }
+                    }.labelsHidden()
+                    LinearGradient(colors: document.background.gradientColors.map { Color(nsColor: $0) },
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .frame(height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
+                    if document.background.gradientPreset == .custom {
+                        Text("From").font(.caption).foregroundStyle(.secondary)
+                        ColorSwatchRow(selection: $document.background.gradientStart)
+                        Text("To").font(.caption).foregroundStyle(.secondary)
+                        ColorSwatchRow(selection: $document.background.gradientEnd)
                     }
                 }
-
+            } else if document.background.kind == .solid {
+                ColorSwatchRow(selection: $document.background.color)
+            }
         }
     }
 
@@ -1203,14 +1244,19 @@ private struct AnnotationResizeDialog: View {
             HStack(spacing: 12) {
                 TextField("Width", value: widthEntry, format: .number)
                     .accessibilityLabel("Resize width")
-                Image(systemName: keepAspect ? "link" : "link.slash")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
+                Button { keepAspect.toggle() } label: {
+                    Image(systemName: keepAspect ? "link" : "link.slash")
+                        .foregroundStyle(keepAspect ? Color.accentColor : Color.secondary)
+                        .frame(width: 24, height: 24)
+                }.buttonStyle(.plain)
+                    .help(keepAspect ? "Unlock aspect ratio" : "Lock aspect ratio")
+                    .accessibilityLabel("Preserve aspect ratio")
+                    .accessibilityValue(keepAspect ? "On" : "Off")
                 TextField("Height", value: heightEntry, format: .number)
                     .accessibilityLabel("Resize height")
                 Picker("Units", selection: $usePercent) {
-                    Text("pixels").tag(false)
-                    Text("percent").tag(true)
+                    Text("Pixels (px)").tag(false)
+                    Text("Percent (%)").tag(true)
                 }
                 .labelsHidden().frame(width: 100)
             }
@@ -1225,7 +1271,7 @@ private struct AnnotationResizeDialog: View {
                 }
 
             Toggle("Flatten Annotations", isOn: $flattenAnnotations)
-            Text("Flattening merges annotations into the image. Undo restores the original layers.")
+            Text("This action will flatten all annotations, making them uneditable.")
                 .font(.caption).foregroundStyle(.secondary)
 
             if !dimensionsValid {
