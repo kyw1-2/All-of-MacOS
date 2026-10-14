@@ -4,7 +4,7 @@
 # Signing credentials go directly to GitHub Actions Secrets, never to Oracle.
 set -euo pipefail
 set +x
-PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 REPO="kyw1-2/All-of-MacOS"
 log() { printf '\n%s\n' "$*"; }
 fail() { log "ERROR: $*"; osascript -e 'display dialog "AOM signing setup failed. Review Terminal for details." buttons {"OK"} default button 1' >/dev/null; exit 1; }
