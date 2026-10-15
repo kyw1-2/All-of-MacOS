@@ -424,6 +424,35 @@ final class ClipboardStore: ObservableObject {
             let item = NSPasteboardItem()
             item.setString(text, forType: .string)
             objects = [item]
+        } else if selected.count > 1 && selected.allSatisfy({ [.text, .link, .color].contains($0.kind) && $0.text != nil }) {
+            // Most text destinations consume only the first pasteboard item.
+            // Multiple selected text cards therefore need one combined item,
+            // while files/images retain their individual representations below.
+            let text = selected.compactMap(\.text).joined(separator: separator)
+            guard text.utf8.count <= Self.maximumEntryBytes,
+                  selected.reduce(0, { $0 + $1.byteCount }) <= Self.maximumEntryBytes else { throw StoreError.tooLarge }
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
+            let attributed = NSMutableAttributedString(string: "")
+            var hasRichText = false
+            for (index, entry) in selected.enumerated() {
+                if index > 0 { attributed.append(NSAttributedString(string: separator)) }
+                if let data = entry.items.first?[NSPasteboard.PasteboardType.rtf.rawValue],
+                   let rich = try? NSAttributedString(data: data,
+                        options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil),
+                   rich.string == entry.text {
+                    attributed.append(rich)
+                    hasRichText = true
+                } else {
+                    attributed.append(NSAttributedString(string: entry.text ?? ""))
+                }
+            }
+            if hasRichText, let rtf = try? attributed.data(from: NSRange(location: 0, length: attributed.length),
+                    documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]),
+               rtf.count <= Self.maximumEntryBytes {
+                item.setData(rtf, forType: .rtf)
+            }
+            objects = [item]
         } else {
             guard selected.reduce(0, { $0 + $1.byteCount }) <= 1_024 * 1_024 * 1_024 else { throw StoreError.tooLarge }
             objects = selected.flatMap(\.items).map { data in

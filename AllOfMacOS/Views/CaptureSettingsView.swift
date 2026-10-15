@@ -36,6 +36,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureOverlayAutoCloseSave") private var overlayAutoCloseSave = false
     @AppStorage("AOMCaptureOverlayAsksForName") private var asksNameOnSave = false
     @AppStorage("AOMCaptureHistoryCapacity") private var historyCapacity = 40
+    @AppStorage("AOMCaptureHistoryRetentionDays") private var historyRetentionDays = 30
     @AppStorage("AOMOCRKeepsLineBreaks") private var ocrKeepsLineBreaks = true
     @AppStorage("AOMPinnedShadow") private var pinnedShadow = true
     @AppStorage("AOMPinnedCorners") private var pinnedCorners = true
@@ -66,6 +67,8 @@ struct CaptureSettingsView: View {
             .padding(20)
         }
         .onAppear { permissionGranted = ScreenCaptureService.hasPermission }
+        .onChange(of: historyCapacity) { _, _ in CaptureHistory.shared.applyRetention() }
+        .onChange(of: historyRetentionDays) { _, _ in CaptureHistory.shared.applyRetention() }
     }
 
     // MARK: - Permission
@@ -219,7 +222,7 @@ struct CaptureSettingsView: View {
             }
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,
                              title: "Audio Source",
-                             subtitle: "Record computer sound, microphone, or both",
+                             subtitle: recordingOutputFormat == "gif" ? "GIF has no audio" : "Record computer sound, microphone, or both",
                              showDivider: false) {
                 Picker("", selection: $recordingAudioSourceRaw) {
                     ForEach(RecordingAudioSource.allCases) { source in
@@ -229,6 +232,7 @@ struct CaptureSettingsView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(width: 200)
+                .disabled(recordingOutputFormat == "gif")
             }
         }
     }
@@ -249,15 +253,27 @@ struct CaptureSettingsView: View {
                 Button("Choose…") { chooseDirectory() }.controlSize(.small)
             }
             AppleSettingsRow(icon: "clock.arrow.circlepath", iconColor: .gray, title: "History Size",
-                             subtitle: historyCapacity == 0 ? "History disabled" : "\(historyCapacity) recent captures",
-                             showDivider: false) {
+                             subtitle: historyCapacity == 0 ? "Unpinned history disabled; pinned captures are kept" : "Up to \(historyCapacity) unpinned captures; pins are kept separately",
+                             showDivider: true) {
                 Picker("", selection: $historyCapacity) {
                     Text("Off").tag(0)
                     Text("20").tag(20)
                     Text("40").tag(40)
                     Text("100").tag(100)
+                    Text("250").tag(250)
+                    Text("500").tag(500)
                 }
                 .pickerStyle(.menu).labelsHidden().frame(width: 90)
+            }
+            AppleSettingsRow(icon: "calendar", iconColor: .orange, title: "Keep Unpinned Captures",
+                             subtitle: "The age and count limits both apply. Pinned captures are kept.", showDivider: false) {
+                Picker("", selection: $historyRetentionDays) {
+                    Text("1 Day").tag(1)
+                    Text("7 Days").tag(7)
+                    Text("14 Days").tag(14)
+                    Text("30 Days").tag(30)
+                    Text("Until Capacity Limit").tag(0)
+                }.pickerStyle(.menu).labelsHidden().frame(width: 180)
             }
         }
     }

@@ -5,7 +5,7 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 ## Features
 
 - Trackpad, keyboard, window-management and automation controls
-- Clipboard history, pinboards, double-click copy
+- Clipboard history, pinboards, configurable double-click paste/copy
 - Screen capture, OCR, QR recognition, annotation, scrolling screenshots
 - MP4 screen recording with optional audio, trimming and animated GIF export
 
@@ -65,3 +65,7 @@ Standalone `.sha256` assets are not generated; a DMG digest remains in release m
 ### 1.1.0 local workflows
 
 See [the local workflow release notes](docs/1.1.0-local-workflows.md) for interactive scrolling, clipboard stack/OCR/encrypted storage, recording controls, editable annotation projects and Finder integration. WebP packaging requires an existing Homebrew `webp` installation (or `AOM_WEBP_ROOT`); the build bundles the codec and its license so installed apps do not need Homebrew. The signed build scripts also compile the annotation Quick Look extension.
+
+## 1.1.1 clipboard interaction fixes
+
+See [the interaction fixes and complete local feature inventory](docs/1.1.1-ui-and-feature-inventory.md) for implementation paths, remaining limits, and the UI inspection scope.

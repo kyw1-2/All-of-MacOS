@@ -13,9 +13,13 @@ struct ClipboardStackView: View {
     @ObservedObject var state: ClipboardPanelState
     let controller: ClipboardPanelController
 
-    private var entries: [ClipboardEntry] {
+    private var rows: [(position: Int, entry: ClipboardEntry)] {
         let byID = Dictionary(uniqueKeysWithValues: store.entries.map { ($0.id, $0) })
-        return state.stack.compactMap { byID[$0] }
+        // Preserve queue positions when a deleted history item has not yet
+        // been pruned. Compacting first makes Remove target the wrong item.
+        return state.stack.enumerated().compactMap { index, id in
+            byID[id].map { (index, $0) }
+        }
     }
 
     var body: some View {
@@ -25,12 +29,12 @@ struct ClipboardStackView: View {
                 Text("Paste Stack").font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button { state.stack.reverse() } label: { Image(systemName: "arrow.up.arrow.down") }
-                    .help("Reverse Order").disabled(entries.count < 2)
+                    .help("Reverse Order").disabled(rows.count < 2)
                 Button { controller.stopStack() } label: { Image(systemName: "xmark") }
                     .help("Close Paste Stack")
             }.buttonStyle(.plain).padding(15)
             Divider().opacity(0.4)
-            if entries.isEmpty {
+            if rows.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "square.on.square.dashed").font(.system(size: 32)).foregroundStyle(.tertiary)
                     Text("Copy items to build a stack").font(.system(size: 13, weight: .medium))
@@ -39,9 +43,11 @@ struct ClipboardStackView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        ForEach(Array(entries.enumerated()), id: \.offset) { index, entry in
+                        ForEach(Array(rows.enumerated()), id: \.element.position) { ordinal, row in
+                            let index = row.position
+                            let entry = row.entry
                             HStack(spacing: 9) {
-                                Text("\(index + 1)").font(.system(size: 11, weight: .semibold, design: .rounded))
+                                Text("\(ordinal + 1)").font(.system(size: 11, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.secondary).frame(width: 19)
                                 if let data = entry.imageData, let image = NSImage(data: data) {
                                     Image(nsImage: image).resizable().scaledToFit().frame(width: 36, height: 36)
@@ -59,7 +65,7 @@ struct ClipboardStackView: View {
                                 }.buttonStyle(.plain).help("Remove from Stack")
                             }
                             .padding(9).frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                            .background(Color.primary.opacity(index == 0 ? 0.08 : 0.035),
+                            .background(Color.primary.opacity(ordinal == 0 ? 0.08 : 0.035),
                                         in: RoundedRectangle(cornerRadius: 10))
                             .contextMenu {
                                 Button("Move to Top") {
@@ -85,11 +91,12 @@ struct ClipboardStackView: View {
                     .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Paste Next") { controller.pasteNext() }
-                    .buttonStyle(.borderedProminent).controlSize(.small).disabled(entries.isEmpty)
+                    .buttonStyle(.borderedProminent).controlSize(.small).disabled(rows.isEmpty)
             }.padding(12)
         }
         .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
         .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+            .allowsHitTesting(false))
     }
 }

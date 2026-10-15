@@ -288,6 +288,15 @@ final class ClipboardPanelController {
 
     func isHistoryWindow(_ window: NSWindow?) -> Bool { window != nil && window === panel }
 
+    func selectCard(_ id: UUID, modifiers: NSEvent.ModifierFlags) {
+        guard state.editor == nil, state.editingTitleID == nil, state.preview == nil else { return }
+        state.select(id, in: state.results(in: store),
+                     extend: modifiers.contains(.shift), toggle: modifiers.contains(.command))
+        // Clear the native field editor too, so arrows/Space act on this card
+        // immediately after the user leaves the search field.
+        panel?.makeFirstResponder(nil)
+    }
+
     func openPreview(_ entry: ClipboardEntry) {
         previewNavigationGeneration += 1
         state.searchFieldActive = false
@@ -441,7 +450,7 @@ final class ClipboardPanelController {
     func pasteSelected(plainText: Bool = false) {
         var ids = state.selectedIDs(in: store)
         if ids.isEmpty, let first = state.results(in: store).first { ids = [first.id] }
-        paste(ids: ids, plainText: plainText, directly: true)
+        paste(ids: ids, plainText: plainText, dismissAfterCopy: true)
     }
 
     func pasteNext() {
@@ -464,19 +473,19 @@ final class ClipboardPanelController {
         state.status = "\(state.stack.count) items queued. Press ⌘V in your destination to paste them in order."
     }
 
-    func paste(ids: [UUID], plainText: Bool = false, directly: Bool = false,
+    func paste(ids: [UUID], plainText: Bool = false, dismissAfterCopy: Bool = false,
                copied: (() -> Void)? = nil) {
         guard !ids.isEmpty, !slidingOut else { return }
         do {
             guard try store.write(entryIDs: ids, plainText: plainText || store.settings.plainText,
                                   playSound: false) else { return }
         } catch { state.status = error.localizedDescription; return }
-        guard (directly || store.settings.pasteDirectly), let target = destination,
+        guard store.settings.pasteDirectly, let target = destination,
               !target.isTerminated else {
             ClipboardAudioFeedback.copy()
             state.status = "Copied to clipboard."
             copied?()
-            if directly { slideDownAndHide() }
+            if dismissAfterCopy { slideDownAndHide() }
             return
         }
         pasteTask?.cancel()
@@ -657,7 +666,7 @@ final class ClipboardPanelController {
         let quickIDs = state.quickPasteIDs(in: store)
         if command, let text = event.charactersIgnoringModifiers, let number = Int(text),
            (1...9).contains(number), quickIDs.indices.contains(number - 1) {
-            paste(ids: [quickIDs[number - 1]], plainText: shift, directly: true); return true
+            paste(ids: [quickIDs[number - 1]], plainText: shift, dismissAfterCopy: true); return true
         }
         if event.keyCode == 36 || event.keyCode == 76 { pasteSelected(plainText: shift); return true }
         let editingText = (panel?.firstResponder as? NSTextView)?.isEditable == true
@@ -716,6 +725,19 @@ struct ClipboardPanelView: View {
                 searchSuggestions
             }
             carouselContent
+            if !state.status.isEmpty {
+                HStack(spacing: 8) {
+                    Text(state.status)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("ClipboardStatus")
+                    Spacer(minLength: 0)
+                    Button { state.status = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }.buttonStyle(.plain).help("Dismiss Message")
+                }
+                .padding(.horizontal, 24).padding(.bottom, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
@@ -723,7 +745,8 @@ struct ClipboardPanelView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+            .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+            .allowsHitTesting(false))
         .onChange(of: state.searchFocusToken) { _, _ in
             withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8)) {
                 state.searchExpanded = true
@@ -1070,7 +1093,8 @@ struct ClipboardPanelView: View {
         Menu("Filter by Time") {
             Button("Any Time") { state.recentDays = 0 }
             Divider()
-            Button("Last 24 Hours") { state.recentDays = 1 }
+            Button("Today") { state.recentDays = 1 }
+            Button("Yesterday") { state.recentDays = -1 }
             Button("Last 7 Days") { state.recentDays = 7 }
             Button("Last 30 Days") { state.recentDays = 30 }
         }
@@ -1355,12 +1379,23 @@ private struct ClipboardCardView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.06),
                               lineWidth: isSelected ? 3 : 0.5)
+                .allowsHitTesting(false)
         }
         .shadow(color: .black.opacity(isSelected ? 0.10 : 0.05),
                 radius: isSelected ? 5 : 3, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 14))
-        .background(ImmediateMouseSelection(select: selectCard))
-        .onTapGesture(count: 2) { pasteByDoubleClick() }
+        // Let the actual card hit-test route the click. Per-card local event
+        // monitors also observe clicks handled by other views, and their native
+        // background frames can lag behind the lazy carousel's layout.
+        .gesture(
+            TapGesture(count: 2).exclusively(before: TapGesture())
+                .onEnded { click in
+                    switch click {
+                    case .first: pasteByDoubleClick()
+                    case .second: selectCard()
+                    }
+                }
+        )
         .onHover { isHovered = $0 }
         .task(id: entry.id) {
             guard let data = entry.imageData else { imagePreview = nil; return }
@@ -1464,15 +1499,13 @@ private struct ClipboardCardView: View {
 
     private func selectCard() {
         guard !isEditingTitle else { return }
-        state.select(entry.id, in: state.results(in: store),
-                     extend: NSEvent.modifierFlags.contains(.shift),
-                     toggle: NSEvent.modifierFlags.contains(.command))
+        controller.selectCard(entry.id, modifiers: NSEvent.modifierFlags)
     }
 
     private func pasteByDoubleClick() {
         guard !isEditingTitle else { return }
         controller.paste(ids: [entry.id],
-                         plainText: NSEvent.modifierFlags.contains(.shift), directly: true)
+                         plainText: NSEvent.modifierFlags.contains(.shift), dismissAfterCopy: true)
     }
 
     private func beginTitleEdit() {
@@ -1679,7 +1712,7 @@ private struct ClipboardPreviewSheet: View {
             return true
         }
         if (flags.isEmpty || flags == .shift), [36, 76].contains(event.keyCode) {
-            controller.paste(ids: [current.id], plainText: flags == .shift, directly: true)
+            controller.paste(ids: [current.id], plainText: flags == .shift, dismissAfterCopy: true)
             return true
         }
         if (flags == .command || flags == [.command, .shift]), event.keyCode == 8 {

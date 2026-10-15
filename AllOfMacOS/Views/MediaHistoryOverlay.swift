@@ -596,17 +596,22 @@ private struct CaptureHistoryCard: View {
         .padding(5)
         .frame(maxWidth: .infinity)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(selectionOutline)
+        .overlay(selectionOutline.allowsHitTesting(false))
         .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08),
                 radius: isHovered ? 10 : 4, y: 3)
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
         }
-        .onTapGesture(count: 2) {
-            onAnnotate()
-        }
-        .background(ImmediateMouseSelection(select: onSelect))
+        .gesture(
+            TapGesture(count: 2).exclusively(before: TapGesture())
+                .onEnded { click in
+                    switch click {
+                    case .first: onSelect(); onAnnotate()
+                    case .second: onSelect()
+                    }
+                }
+        )
         .onDrag { dragItemProvider() }
         .contextMenu { cardMenu }
     }
