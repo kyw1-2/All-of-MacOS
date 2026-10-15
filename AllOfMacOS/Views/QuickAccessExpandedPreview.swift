@@ -80,7 +80,7 @@ struct CapturePreviewContent: View {
             HStack(spacing: 9) {
                 if !isVideo {
                     Menu {
-                        Button("Fit to Window") { zoom = nil }
+                        Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
                         ForEach([25, 50, 75, 100, 125, 150, 200, 300, 400], id: \.self) { percent in
                             Button("\(percent)%") { zoom = CGFloat(percent) / 100 }
                         }
@@ -105,7 +105,7 @@ struct CapturePreviewContent: View {
                     previewAction("doc.on.doc.fill")
                 }.keyboardShortcut("c", modifiers: .command).help("Copy")
                 Button(action: onClose) { previewAction("xmark") }
-                    .keyboardShortcut(.escape, modifiers: []).help("Close Preview")
+                    .keyboardShortcut(.escape, modifiers: []).help("Close Preview (Space or Esc)")
             }
             .overlay {
                 CaptureDragHandle()
@@ -119,6 +119,21 @@ struct CapturePreviewContent: View {
             .background(.regularMaterial)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .background(CaptureKeyEventHandler { event in
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if (event.keyCode == 49 && modifiers.isEmpty) ||
+                (event.keyCode == 13 && modifiers == .command) {
+                if !event.isARepeat { onClose() }
+                return true
+            }
+            guard !isVideo, modifiers == .command else { return false }
+            switch event.charactersIgnoringModifiers {
+            case "0": zoom = nil
+            case "1": zoom = 1
+            default: return false
+            }
+            return true
+        })
         .onAppear {
             if let url = entry.playableVideoURL { player = AVPlayer(url: url) }
         }
@@ -262,6 +277,51 @@ enum CapturePreviewActions {
             panel.beginSheetModal(for: window, completionHandler: finished)
         } else {
             panel.begin(completionHandler: finished)
+        }
+    }
+}
+
+/// Window-scoped keys remain available when a SwiftUI button owns focus.
+/// Text entry, modal dialogs, other windows and child sheets keep their own keys.
+struct CaptureKeyEventHandler: NSViewRepresentable {
+    var handle: (NSEvent) -> Bool
+
+    func makeNSView(context: Context) -> KeyView {
+        let view = KeyView()
+        view.handle = handle
+        return view
+    }
+
+    func updateNSView(_ view: KeyView, context: Context) {
+        view.handle = handle
+    }
+
+    static func dismantleNSView(_ view: KeyView, coordinator: ()) {
+        view.removeMonitor()
+    }
+
+    final class KeyView: NSView {
+        var handle: ((NSEvent) -> Bool)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeMonitor()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, let window = self.window,
+                      event.window === window, window.isKeyWindow,
+                      window.attachedSheet == nil, NSApp.modalWindow == nil,
+                      (window.firstResponder as? NSTextView)?.isEditable != true else { return event }
+                return self.handle?(event) == true ? nil : event
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
         }
     }
 }

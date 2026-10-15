@@ -67,6 +67,7 @@ final class ClipboardPanelState: ObservableObject {
     }
 
     func clearSelection() {
+        preview = nil
         selected.removeAll()
         focusedID = nil
         keyboardScrollTarget = nil
@@ -85,7 +86,8 @@ final class ClipboardPanelState: ObservableObject {
             selected = [id]
             selectionAnchor = id
         }
-        focusedID = id
+        focusedID = selected.contains(id) ? id : entries.first(where: { selected.contains($0.id) })?.id
+        searchFieldActive = false
     }
 
     func showIn(_ board: UUID?, entryID: UUID) {
@@ -151,6 +153,7 @@ final class ClipboardPanelController {
     private var localClickMonitor: Any?
     private var pasteTask: Task<Void, Never>?
     private var dismissalGeneration = 0
+    private var previewNavigationGeneration = 0
     private var slidingOut = false
     private var store: ClipboardStore { .shared }
 
@@ -196,9 +199,8 @@ final class ClipboardPanelController {
     @discardableResult
     func handleEscape() -> Bool {
         guard isVisible else { return false }
-        if state.editor != nil || state.preview != nil || state.editingTitleID != nil {
-            return false
-        }
+        // The preview owns Escape while its editor or discard prompt is active.
+        if state.editor != nil || state.preview != nil || state.editingTitleID != nil { return false }
         if state.filtersExpanded {
             state.filtersExpanded = false
         } else if state.searchExpanded {
@@ -213,6 +215,43 @@ final class ClipboardPanelController {
             hide()
         }
         return true
+    }
+
+    func isHistoryWindow(_ window: NSWindow?) -> Bool { window != nil && window === panel }
+
+    func openPreview(_ entry: ClipboardEntry) {
+        previewNavigationGeneration += 1
+        state.searchFieldActive = false
+        state.select(entry.id, in: state.results(in: store))
+        panel?.makeFirstResponder(nil)
+        state.preview = entry
+    }
+
+    func closePreview() {
+        previewNavigationGeneration += 1
+        state.preview = nil
+        state.searchFieldActive = false
+        panel?.makeKeyAndOrderFront(nil)
+        panel?.makeFirstResponder(nil)
+    }
+
+    func movePreview(from id: UUID, offset: Int) {
+        let entries = state.results(in: store)
+        guard let index = entries.firstIndex(where: { $0.id == id }),
+              entries.indices.contains(index + offset) else { return }
+        let next = entries[index + offset]
+        closePreview()
+        let generation = previewNavigationGeneration
+        state.select(next.id, in: entries)
+        state.keyboardScrollTarget = next.id
+        // Let the lazy shelf materialize the new card before attaching its popover.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self, self.previewNavigationGeneration == generation,
+                  self.isVisible, self.state.focusedID == next.id,
+                  self.state.preview == nil, self.state.editor == nil,
+                  self.state.results(in: self.store).contains(where: { $0.id == next.id }) else { return }
+            self.openPreview(next)
+        }
     }
 
     func show() {
@@ -263,6 +302,7 @@ final class ClipboardPanelController {
     }
 
     private func clearPanelInteractionState() {
+        previewNavigationGeneration += 1
         for token in [keyMonitor, outsideMonitor, localClickMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(token)
         }
@@ -413,11 +453,13 @@ final class ClipboardPanelController {
                 self.state.commandHeld = event.modifierFlags.contains(.command)
                 return event
             }
-            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "f" {
+            if self.state.editingTitleID != nil { return event }
+            if event.modifierFlags.contains(.command), event.keyCode == 3 {
                 self.state.searchFocusToken = UUID()
                 return nil
             }
-            if self.state.searchFieldActive && [48, 125].contains(event.keyCode) {
+            if self.state.searchFieldActive && [48, 125].contains(event.keyCode),
+               event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
                 self.state.searchFieldActive = false
                 self.panel?.makeFirstResponder(nil)
                 if let first = self.state.results(in: self.store).first {
@@ -438,9 +480,9 @@ final class ClipboardPanelController {
                 let command = event.modifierFlags.contains(.command)
                 let digit = Int(event.charactersIgnoringModifiers ?? "") ?? 0
                 let quickPaste = command && (1...9).contains(digit)
-                let selectedAction = hasSelection && (
+                let selectedAction = hasSelection && !self.state.searchFieldActive && (
                     [36, 76].contains(event.keyCode) ||
-                    (command && event.charactersIgnoringModifiers?.lowercased() == "c") ||
+                    (command && event.keyCode == 8) ||
                     ClipboardHistoryKeyboard.selectionAction(
                         keyCode: event.keyCode,
                         characters: event.charactersIgnoringModifiers,
@@ -466,8 +508,8 @@ final class ClipboardPanelController {
         let command = event.modifierFlags.contains(.command)
         let shift = event.modifierFlags.contains(.shift)
         if event.keyCode == 53 { hide(); return true }
-        if command && event.charactersIgnoringModifiers?.lowercased() == "f" { state.searchFocusToken = UUID(); return true }
-        if command && event.charactersIgnoringModifiers?.lowercased() == "n" {
+        if command && event.keyCode == 3 { state.searchFocusToken = UUID(); return true }
+        if command && event.keyCode == 45 {
             if shift {
                 state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "")
             } else {
@@ -476,7 +518,7 @@ final class ClipboardPanelController {
             return true
         }
         let activeEntries = state.results(in: store)
-        if command && event.charactersIgnoringModifiers?.lowercased() == "c" {
+        if command && event.keyCode == 8 {
             let ids = state.selectedIDs(in: store)
             guard !ids.isEmpty else { return false }
             do {
@@ -485,11 +527,11 @@ final class ClipboardPanelController {
             } catch { state.status = error.localizedDescription }
             return true
         }
-        if command && event.charactersIgnoringModifiers?.lowercased() == "t" {
+        if command && event.keyCode == 17 {
             store.paused.toggle()
             return true
         }
-        if command && event.charactersIgnoringModifiers?.lowercased() == "g",
+        if command && event.keyCode == 5,
            state.selected.count == 1, let id = state.selected.first {
             state.showIn(nil, entryID: id)
             return true
@@ -501,15 +543,16 @@ final class ClipboardPanelController {
         if let action = ClipboardHistoryKeyboard.selectionAction(
             keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
             modifiers: event.modifierFlags),
-           let item = activeEntries.first(where: { state.selected.contains($0.id) }) {
+           let item = activeEntries.first(where: { $0.id == state.focusedID && state.selected.contains($0.id) })
+                ?? activeEntries.first(where: { state.selected.contains($0.id) }) {
             switch action {
             case .preview:
-                state.preview = item
+                if !event.isARepeat { openPreview(item) }
             case .edit:
                 if let text = item.text, [.text, .link, .color].contains(item.kind) {
                     state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: text)
                 } else {
-                    state.preview = item // binary and file content opens safely, not as text
+                    openPreview(item) // binary and file content opens safely, not as text
                 }
             case .rename:
                 state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
@@ -531,7 +574,8 @@ final class ClipboardPanelController {
         }
         if event.keyCode == 36 || event.keyCode == 76 { pasteSelected(plainText: shift); return true }
         let editingText = (panel?.firstResponder as? NSTextView)?.isEditable == true
-        if !editingText && (event.keyCode == 123 || event.keyCode == 124), !entries.isEmpty {
+        if !editingText && (event.keyCode == 123 || event.keyCode == 124),
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !entries.isEmpty {
             let current = entries.firstIndex { $0.id == state.focusedID }
                 ?? entries.firstIndex { state.selected.contains($0.id) } ?? -1
             let next = min(max(current + (event.keyCode == 124 ? 1 : -1), 0), entries.count - 1)
@@ -539,13 +583,19 @@ final class ClipboardPanelController {
             state.keyboardScrollTarget = entries[next].id
             return true
         }
-        if !editingText && command && event.charactersIgnoringModifiers?.lowercased() == "a" { state.selected = Set(entries.map(\.id)); return true }
+        if !editingText && command && event.keyCode == 0 { state.selected = Set(entries.map(\.id)); return true }
         if !editingText && (event.keyCode == 51 || event.keyCode == 117),
            event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
             let selectedIDs = state.selectedIDs(in: store)
             guard !selectedIDs.isEmpty else { return false }
             for id in selectedIDs { store.delete(entryID: id) }
-            state.selected.removeAll()
+            state.clearSelection()
+            let remaining = state.results(in: store)
+            if let index = entries.firstIndex(where: { selectedIDs.contains($0.id) }), !remaining.isEmpty {
+                let next = remaining[min(index, remaining.count - 1)]
+                state.select(next.id, in: remaining)
+                state.keyboardScrollTarget = next.id
+            }
             return true
         }
         if event.modifierFlags.intersection([.command, .control]).isEmpty,
@@ -604,6 +654,12 @@ struct ClipboardPanelView: View {
         .onChange(of: state.kind) { _, _ in state.clearSelection() }
         .onChange(of: state.source) { _, _ in state.clearSelection() }
         .onChange(of: state.recentDays) { _, _ in state.clearSelection() }
+        .onChange(of: entries.map(\.id)) { _, ids in
+            let visible = Set(ids)
+            state.selected.formIntersection(visible)
+            if let id = state.focusedID, !visible.contains(id) { state.focusedID = nil }
+            if let preview = state.preview, !visible.contains(preview.id) { state.preview = nil }
+        }
         .sheet(item: $state.editor) { request in ClipboardEditorSheet(request: request, store: store) }
     }
 
@@ -1170,7 +1226,6 @@ private struct ClipboardCardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .background(ImmediateMouseSelection(select: selectCard))
             .onDrag { dragProvider(entry) }
         }
         .frame(width: side, height: side)
@@ -1191,6 +1246,7 @@ private struct ClipboardCardView: View {
         .shadow(color: .black.opacity(isSelected ? 0.10 : 0.05),
                 radius: isSelected ? 5 : 3, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 14))
+        .background(ImmediateMouseSelection(select: selectCard))
         .onTapGesture(count: 2) { pasteByDoubleClick() }
         .onHover { isHovered = $0 }
         .task(id: entry.id) {
@@ -1203,7 +1259,7 @@ private struct ClipboardCardView: View {
             get: { state.preview?.id == entry.id },
             set: { if !$0 && state.preview?.id == entry.id { state.preview = nil } }
         ), attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-            ClipboardPreviewSheet(entry: entry, store: store)
+            ClipboardPreviewSheet(entry: entry, store: store, state: state, controller: controller)
         }
         .contextMenu { entryMenu(entry) }
         .accessibilityElement(children: .contain)
@@ -1347,7 +1403,7 @@ private struct ClipboardCardView: View {
             }
             if store.boards.isEmpty { Text("Create a pinboard with + above") }
         }
-        Button("Preview…") { state.preview = entry }
+        Button("Preview…") { controller.openPreview(entry) }
         Button("Rename…") { state.editor = .init(operation: .renameEntry(entry.id), title: "Rename Item", text: entry.title) }
         if let text = entry.text { Button("Edit Text…") { state.editor = .init(operation: .editEntry(entry.id), title: "Edit Text", text: text) } }
         Button("Duplicate") { _ = store.duplicate(entryID: entry.id) }
@@ -1388,14 +1444,20 @@ private struct ClipboardEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var newBoardColor = "blue"
+    @FocusState private var inputFocused: Bool
+    private var canSave: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        (!request.isTextEditor || text.utf8.count <= ClipboardStore.maximumEntryBytes)
+    }
     private let colors = ["red", "orange", "yellow", "green", "blue", "purple"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(request.title).font(.title2.weight(.semibold))
             if request.isTextEditor {
-                TextEditor(text: $text).font(.body).frame(minHeight: 180).border(Color.secondary.opacity(0.2))
-            } else { TextField("Name", text: $text).textFieldStyle(.roundedBorder) }
+                TextEditor(text: $text).font(.body).frame(minHeight: 180).border(Color.secondary.opacity(0.2)).focused($inputFocused)
+                if text.utf8.count > ClipboardStore.maximumEntryBytes { Text("Text exceeds the item size limit").font(.caption).foregroundStyle(.red) }
+            } else { TextField("Name", text: $text).textFieldStyle(.roundedBorder).focused($inputFocused) }
             if case .newBoard = request.operation {
                 HStack(spacing: 10) {
                     Text("Color").font(.caption).foregroundStyle(.secondary)
@@ -1414,9 +1476,11 @@ private struct ClipboardEditorSheet: View {
                 }
             }
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save(); dismiss() }.keyboardShortcut(.defaultAction).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Save") { save(); dismiss() }
+                    .keyboardShortcut(request.isTextEditor ? "s" : .return, modifiers: request.isTextEditor ? .command : [])
+                    .disabled(!canSave)
             }
-        }.padding(24).frame(width: 460).onAppear { text = request.text }
+        }.padding(24).frame(width: 460).onAppear { text = request.text; inputFocused = true }
     }
     private func save() {
         switch request.operation {
@@ -1433,9 +1497,84 @@ private struct ClipboardEditorSheet: View {
 private struct ClipboardPreviewSheet: View {
     let entry: ClipboardEntry
     @ObservedObject var store: ClipboardStore
-    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var state: ClipboardPanelState
+    let controller: ClipboardPanelController
     @State private var editing = false
     @State private var draftText = ""
+    @State private var discardRequested = false
+    @FocusState private var editorFocused: Bool
+
+    private var canSave: Bool { draftText.utf8.count <= ClipboardStore.maximumEntryBytes }
+    private var position: Int? { state.results(in: store).firstIndex { $0.id == entry.id } }
+    private func beginEditing() {
+        draftText = current.text ?? ""
+        editing = true
+        editorFocused = true
+    }
+    private func saveEditing() {
+        guard canSave else { return }
+        store.editText(entryID: current.id, text: draftText)
+        editing = false
+        editorFocused = false
+    }
+    private func requestClose() {
+        if editing && draftText != (current.text ?? "") { discardRequested = true }
+        else { controller.closePreview() }
+    }
+
+    private func handlePreviewKey(_ event: NSEvent) -> Bool {
+        guard !discardRequested else { return false }
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.keyCode == 53 { requestClose(); return true }
+        if flags == .command, event.keyCode == 14, canEditText {
+            if !event.isARepeat { editing ? saveEditing() : beginEditing() }
+            return true
+        }
+        if flags == .command, event.keyCode == 1, editing { saveEditing(); return true }
+        // Spaces, arrows, Return and normal copy/select-all belong to the text editor.
+        guard !editing else { return false }
+        if flags.isEmpty, event.keyCode == 49 {
+            if !event.isARepeat { controller.closePreview() }
+            return true
+        }
+        if flags.isEmpty, [123, 124].contains(event.keyCode) {
+            controller.movePreview(from: current.id, offset: event.keyCode == 124 ? 1 : -1)
+            return true
+        }
+        if flags == .command, event.keyCode == 3 {
+            controller.closePreview()
+            state.searchFocusToken = UUID()
+            return true
+        }
+        if flags == .command, event.keyCode == 15 {
+            let item = current
+            controller.closePreview()
+            DispatchQueue.main.async {
+                state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+            }
+            return true
+        }
+        if (flags.isEmpty || flags == .shift), [36, 76].contains(event.keyCode) {
+            controller.paste(ids: [current.id], plainText: flags == .shift, directly: true)
+            return true
+        }
+        if (flags == .command || flags == [.command, .shift]), event.keyCode == 8 {
+            if flags == .command,
+               let text = event.window?.firstResponder as? NSTextView,
+               text.selectedRange().length > 0 { return false }
+            copyCurrent(plainText: flags.contains(.shift))
+            return true
+        }
+        return false
+    }
+
+    private func copyCurrent(plainText: Bool = false) {
+        do {
+            if try store.write(entryIDs: [current.id], plainText: plainText) {
+                state.status = "Copied to clipboard."
+            }
+        } catch { state.status = error.localizedDescription }
+    }
 
     private var current: ClipboardEntry { store.entries.first { $0.id == entry.id } ?? entry }
     private var canEditText: Bool { current.text != nil && [.text, .link, .color].contains(current.kind) }
@@ -1457,8 +1596,8 @@ private struct ClipboardPreviewSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                    .keyboardShortcut(.cancelAction).help("Close Preview")
+                Button { requestClose() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .help("Close Preview (Space / Esc)")
                 Text(current.kind.displayName).font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Menu {
@@ -1471,23 +1610,25 @@ private struct ClipboardPreviewSheet: View {
                     if store.boards.isEmpty { Text("Create a pinboard in the timeline") }
                 } label: { Image(systemName: current.pinboardIDs.isEmpty ? "circle" : "pin.circle.fill") }
                 .menuStyle(.borderlessButton).fixedSize().help("Pinboard")
+                Button { copyCurrent() } label: { Image(systemName: "doc.on.doc") }
+                    .help("Copy Item (⌘C)").disabled(editing)
                 ClipboardPreviewShareButton(entry: current).frame(width: 26, height: 26)
+                    .disabled(editing)
                 if canEditText {
                     Button(editing ? "Save" : "Edit") {
-                        if editing { store.editText(entryID: current.id, text: draftText); editing = false }
-                        else { draftText = current.text ?? ""; editing = true }
+                        editing ? saveEditing() : beginEditing()
                     }
-                    .keyboardShortcut("e", modifiers: .command)
+                    .help(editing ? "Save Changes (⌘S / ⌘E)" : "Edit Content (⌘E)")
                     .padding(.horizontal, 10).padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
-                    .disabled(editing && draftText.utf8.count > ClipboardStore.maximumEntryBytes)
+                    .disabled(editing && !canSave)
                 }
             }
             .buttonStyle(.plain).padding(.horizontal, 12).frame(height: 36)
             Divider().opacity(0.4)
             Group {
                 if editing {
-                    TextEditor(text: $draftText).font(.system(size: 13))
+                    TextEditor(text: $draftText).font(.system(size: 13)).focused($editorFocused)
                         .scrollContentBackground(.hidden).padding(8)
                         .background(NativeScrollChrome(.overlay))
                 } else if let data = current.imageData, let image = NSImage(data: data) {
@@ -1526,11 +1667,64 @@ private struct ClipboardPreviewSheet: View {
             HStack {
                 Text(summary).font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
-                if editing { Button("Discard") { editing = false }.buttonStyle(.plain).font(.system(size: 11)) }
+                if editing {
+                    if !canSave { Text("Text exceeds the item size limit").foregroundStyle(.red).font(.caption) }
+                    Button("Discard") { editing = false; editorFocused = false }.buttonStyle(.plain).font(.system(size: 11))
+                } else if let position {
+                    Button { controller.movePreview(from: current.id, offset: -1) } label: { Image(systemName: "chevron.left") }
+                        .disabled(position == 0).help("Previous Item (←)")
+                    Text("\(position + 1) / \(state.results(in: store).count)").font(.system(size: 11)).monospacedDigit()
+                    Button { controller.movePreview(from: current.id, offset: 1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(position + 1 >= state.results(in: store).count).help("Next Item (→)")
+                }
             }.padding(.horizontal, 12).frame(height: 28)
         }
         .frame(width: previewSize.width, height: previewSize.height)
         .background(.regularMaterial)
+        .background(ClipboardPreviewKeyHandler(controller: controller, handle: handlePreviewKey))
+        .interactiveDismissDisabled(editing)
+        .alert("Discard changes?", isPresented: $discardRequested) {
+            Button("Keep Editing", role: .cancel) { editorFocused = true }
+            Button("Discard", role: .destructive) { controller.closePreview() }
+        } message: { Text("Your changes to this clipboard item have not been saved.") }
+    }
+}
+
+/// Only intercept keys from this popover's window; other AOM windows keep their responders.
+@MainActor
+private struct ClipboardPreviewKeyHandler: NSViewRepresentable {
+    let controller: ClipboardPanelController
+    var handle: (NSEvent) -> Bool
+    func makeNSView(context: Context) -> KeyView {
+        let view = KeyView()
+        view.handle = handle
+        view.controller = controller
+        return view
+    }
+    func updateNSView(_ view: KeyView, context: Context) { view.handle = handle; view.controller = controller }
+    static func dismantleNSView(_ view: KeyView, coordinator: ()) { view.stop() }
+
+    final class KeyView: NSView {
+        var handle: ((NSEvent) -> Bool)?
+        weak var controller: ClipboardPanelController?
+        private var monitor: Any?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stop()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, let window = self.window,
+                      event.window === window || self.controller?.isHistoryWindow(event.window) == true,
+                      window.attachedSheet == nil else { return event }
+                return self.handle?(event) == true ? nil : event
+            }
+        }
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+        deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     }
 }
 

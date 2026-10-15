@@ -95,6 +95,7 @@ private struct AnnotationEditorView: View {
     @State private var canvasLocked = false
     @State private var zoom: CGFloat? = nil
     @State private var moveOriginal: AnnotationObject?
+    @State private var moveHasChanged = false
     @State private var resizeOriginal: AnnotationObject?
     @State private var cropHandleOriginal: CGRect?
     @State private var cropAspect: CGFloat = 0
@@ -129,6 +130,7 @@ private struct AnnotationEditorView: View {
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .background(CaptureKeyEventHandler(handle: handleEditorKey))
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $showingResize) {
             AnnotationResizeDialog(pixelWidth: document.croppedImage.width,
@@ -232,8 +234,8 @@ private struct AnnotationEditorView: View {
             capsuleButton(canvasLocked ? "lock.fill" : "lock.open.fill", help: "Lock Canvas", active: canvasLocked) { canvasLocked.toggle() }
 
             Menu {
-                Button("Undo") { document.undo() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
-                Button("Redo") { document.redo() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                Button("Undo") { document.undo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
+                Button("Redo") { document.redo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
                 Divider()
                 Button("Resize Image…") { showingResize = true }
                 Menu("Rotate / Flip") {
@@ -350,7 +352,9 @@ private struct AnnotationEditorView: View {
                 .foregroundStyle(tool == kind ? Color.white : Color.primary)
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain).help(kind.displayName).accessibilityLabel(kind.displayName)
+        .buttonStyle(.plain)
+        .help(kind == .move ? "Move · Arrow keys: 1 px · Shift-arrow: 10 px · Esc: Deselect" : kind.displayName)
+        .accessibilityLabel(kind.displayName)
     }
 
     private func toolSymbol(_ kind: AnnotationKind) -> String {
@@ -606,10 +610,16 @@ private struct AnnotationEditorView: View {
                         dragStart = point
                         moveOriginal = document.objects.last { $0.rect.insetBy(dx: -4, dy: -4).contains(point) }
                         selectedID = moveOriginal?.id
-                        if let original = moveOriginal { style = original.style; document.beginChange() }
+                        if let original = moveOriginal { style = original.style }
+                        moveHasChanged = false
                     }
                     if let original = moveOriginal {
                         let dx = current.x - point.x, dy = current.y - point.y
+                        guard dx != 0 || dy != 0 || moveHasChanged else { return }
+                        if !moveHasChanged {
+                            document.beginChange()
+                            moveHasChanged = true
+                        }
                         var updated = original
                         updated.rect = original.rect.offsetBy(dx: dx, dy: dy)
                         updated.points = original.points.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
@@ -645,7 +655,7 @@ private struct AnnotationEditorView: View {
                                          style: style)
             }
             .onEnded { value in
-                defer { dragStart = nil; activeHandle = nil; moveOriginal = nil }
+                defer { dragStart = nil; activeHandle = nil; moveOriginal = nil; moveHasChanged = false }
                 if cropMode {
                     return
                 }
@@ -732,6 +742,7 @@ private struct AnnotationEditorView: View {
     // MARK: - Inspector
 
     private var selectedKind: AnnotationKind? { document.objects.first { $0.id == selectedID }?.kind }
+    private var inspectedKind: AnnotationKind { selectedKind ?? tool }
 
     private var toolOptions: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -739,7 +750,7 @@ private struct AnnotationEditorView: View {
             section("Thickness") {
                 slider(value: $style.thickness, range: 1...20, label: "\(Int(style.thickness)) pt")
             }
-                if tool == .arrow {
+                if inspectedKind == .arrow {
                     section("Arrow Style") {
                         Picker("", selection: $style.arrowStyle) {
                             ForEach(ArrowStyle.allCases) { Text($0.displayName).tag($0) }
@@ -750,7 +761,7 @@ private struct AnnotationEditorView: View {
                     }
                 }
 
-                if tool == .text || tool == .counter || document.objects.first(where: { $0.id == selectedID })?.kind == .text {
+                if inspectedKind == .text || inspectedKind == .counter {
                     section("Text") {
                         slider(value: $style.fontSize, range: 10...96, label: "\(Int(style.fontSize)) pt")
                         if let id = selectedID, let object = document.objects.first(where: { $0.id == id }) {
@@ -777,7 +788,7 @@ private struct AnnotationEditorView: View {
                             .onChange(of: style.color) { _, _ in applyStyleToSelection() }
                     }
                 }
-                if tool == .pixelate || selectedKind == .pixelate {
+                if inspectedKind == .pixelate {
                     section("Pixel Size") {
                         Picker("Pixel block size", selection: $style.pixelBlockSize) {
                             ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
@@ -785,13 +796,13 @@ private struct AnnotationEditorView: View {
                             .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
                     }
                 }
-                if tool == .blur || selectedKind == .blur {
+                if inspectedKind == .blur {
                     section("Blur Radius") {
                         slider(value: $style.blurRadius, range: 1...64, label: "\(Int(style.blurRadius)) px")
                     }
                 }
 
-                if tool == .rectangle || tool == .filledRectangle {
+                if inspectedKind == .rectangle || inspectedKind == .filledRectangle {
                     section("Corner Radius") {
                         slider(value: $style.cornerRadius, range: 0...40, label: "\(Int(style.cornerRadius)) pt")
                     }
@@ -864,7 +875,7 @@ private struct AnnotationEditorView: View {
                             }
                             .padding(.vertical, 2)
                             .contentShape(Rectangle())
-                            .onTapGesture { tool = .move; selectedID = object.id; style = object.style }
+                            .onTapGesture { selectTool(.move); selectedID = object.id; style = object.style }
                             .background(selectedID == object.id ? Color.accentColor.opacity(0.12) : Color.clear)
                         }
                     }
@@ -956,6 +967,49 @@ private struct AnnotationEditorView: View {
             return nil
         }
         return provider
+    }
+
+    private func restoreSelectionAfterHistoryChange() {
+        draft = nil
+        if let object = document.objects.first(where: { $0.id == selectedID }) {
+            style = object.style
+        } else {
+            selectedID = nil
+        }
+    }
+
+    private func handleEditorKey(_ event: NSEvent) -> Bool {
+        guard !cropMode, !showingResize, !showingSmartHighlight,
+              !colorPopover, !optionsPopover, !backgroundPopover, !layersPopover else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers.isEmpty || modifiers == .shift else { return false }
+        if event.keyCode == 53 {
+            guard selectedID != nil || tool != .move else { return false }
+            selectedID = nil
+            selectTool(.move)
+            return true
+        }
+        guard !canvasLocked, let id = selectedID,
+              var object = document.objects.first(where: { $0.id == id }) else { return false }
+        if event.keyCode == 51 || event.keyCode == 117 {
+            if !event.isARepeat { deleteSelection() }
+            return true
+        }
+        guard tool == .move else { return false }
+        let step: CGFloat = (modifiers == .shift ? 10 : 1) / scale
+        let delta: CGPoint
+        switch event.keyCode {
+        case 123: delta = CGPoint(x: -step, y: 0)
+        case 124: delta = CGPoint(x: step, y: 0)
+        case 125: delta = CGPoint(x: 0, y: step)
+        case 126: delta = CGPoint(x: 0, y: -step)
+        default: return false
+        }
+        if !event.isARepeat { document.beginChange() }
+        object.rect = object.rect.offsetBy(dx: delta.x, dy: delta.y)
+        object.points = object.points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+        document.update(object)
+        return true
     }
 
     private func deleteSelection() {

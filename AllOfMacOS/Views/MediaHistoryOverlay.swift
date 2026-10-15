@@ -32,6 +32,7 @@ final class MediaHistoryOverlayController: NSObject {
     var onEscape: (() -> Bool)?
     var onDeleteSelection: (() -> Bool)?
     var onNavigate: ((UInt16) -> Bool)?
+    var onCommand: ((NSEvent) -> Bool)?
 
     private override init() {
         super.init()
@@ -145,13 +146,17 @@ final class MediaHistoryOverlayController: NSObject {
             guard let self, self.isPresented, let panel = self.panel else { return event }
             if event.type == .keyDown {
                 guard event.window === panel, !self.isShowingSheet else { return event }
+                if self.onCommand?(event) == true { return nil }
                 if event.keyCode == 53 {
                     self.handleEscape()
                     return nil
                 }
                 if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-                   (panel.firstResponder as? NSTextView)?.isEditable != true,
-                   self.onNavigate?(event.keyCode) == true { return nil }
+                   (panel.firstResponder as? NSTextView)?.isEditable != true {
+                    // Holding Space must not immediately toggle the newly opened preview.
+                    if event.keyCode == 49 && event.isARepeat { return nil }
+                    if self.onNavigate?(event.keyCode) == true { return nil }
+                }
                 if Self.isDeleteKey(event.keyCode),
                    event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                    (panel.firstResponder as? NSTextView)?.isEditable != true,
@@ -274,6 +279,20 @@ struct MediaHistoryOverlayView: View {
             CapturePreviewSheet(entry: entry)
         }
         .onAppear {
+            controller?.onCommand = { event in
+                guard event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command else { return false }
+                if event.keyCode == 3 { searchFocused = true; return true } // Cmd-F
+                if event.keyCode == 13 { controller?.dismiss(); return true } // Cmd-W
+                guard !searchFocused,
+                      let entry = filteredEntries.first(where: { $0.id == selectedID }) else { return false }
+                switch event.keyCode {
+                case 8: copyEntry(entry)
+                case 14: annotateEntry(entry)
+                case 1: saveEntry(entry)
+                default: return false
+                }
+                return true
+            }
             controller?.onNavigate = { key in
                 guard !searchFocused, !filteredEntries.isEmpty else { return false }
                 let index = filteredEntries.firstIndex { $0.id == selectedID }
@@ -294,6 +313,11 @@ struct MediaHistoryOverlayView: View {
                 return true
             }
             controller?.onEscape = {
+                if searchFocused || !searchQuery.isEmpty {
+                    searchQuery = ""
+                    searchFocused = false
+                    return true
+                }
                 guard selectedID != nil else { return false }
                 selectedID = nil
                 return true
@@ -302,13 +326,15 @@ struct MediaHistoryOverlayView: View {
                 guard let id = selectedID,
                       let entry = filteredEntries.first(where: { $0.id == id }) else { return false }
                 deleteEntry(entry) // Same non-file-destructive behavior as context-menu Delete.
-                selectedID = nil
                 return true
             }
             updateSheetState()
         }
         .onChange(of: selectedFilter) { _, _ in selectedID = nil }
         .onChange(of: searchQuery) { _, _ in selectedID = nil }
+        .onChange(of: history.entries.map(\.id)) { _, ids in
+            if let selectedID, !ids.contains(selectedID) { self.selectedID = nil }
+        }
         .onChange(of: previewEntry?.id) { _, _ in updateSheetState() }
         .onChange(of: showingClearConfirmation) { _, _ in updateSheetState() }
         .alert("Clear Capture History?", isPresented: $showingClearConfirmation) {
@@ -334,6 +360,11 @@ struct MediaHistoryOverlayView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search captures", text: $searchQuery)
                     .focused($searchFocused).textFieldStyle(.plain)
+                    .onSubmit {
+                        searchFocused = false
+                        selectedID = filteredEntries.first?.id
+                        keyboardScrollTarget = selectedID
+                    }
                 if !searchQuery.isEmpty {
                     Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -380,7 +411,7 @@ struct MediaHistoryOverlayView: View {
                                         entry: entry,
                                         isSelected: selectedID == entry.id,
                                         thumbnailHeight: max(60, side - 58),
-                                        onSelect: { selectedID = entry.id },
+                                        onSelect: { searchFocused = false; selectedID = entry.id },
                                         onCopy: { copyEntry(entry) },
                                         onAnnotate: { annotateEntry(entry) },
                                         onPin: { pinEntry(entry) },
@@ -431,13 +462,11 @@ struct MediaHistoryOverlayView: View {
             Text("\(filteredEntries.count) captures").foregroundStyle(.secondary)
             Spacer()
             if let entry = filteredEntries.first(where: { $0.id == selectedID }) {
-                Button("Preview") { previewEntry = entry }
+                Button("Preview") { previewEntry = entry }.help("Preview (Space)")
                 Button(entry.kind == .videoRecording ? "Edit Recording" : "Annotate") { annotateEntry(entry) }
-                Button("Copy") { copyEntry(entry) }
-                Button("Save") {
-                    controller?.isShowingSheet = true
-                    CapturePreviewActions.save(entry) { updateSheetState() }
-                }
+                    .help("Edit (⌘E)")
+                Button("Copy") { copyEntry(entry) }.help("Copy (⌘C or Return)")
+                Button("Save") { saveEntry(entry) }.help("Save (⌘S)")
             } else {
                 Text("Select a capture · Space to preview · Drag to export").foregroundStyle(.secondary)
             }
@@ -447,6 +476,11 @@ struct MediaHistoryOverlayView: View {
     }
 
     // MARK: - Action Helpers
+
+    private func saveEntry(_ entry: CaptureHistoryEntry) {
+        controller?.isShowingSheet = true
+        CapturePreviewActions.save(entry) { updateSheetState() }
+    }
 
     private func copyEntry(_ entry: CaptureHistoryEntry) {
         let res = CaptureResult(
@@ -508,9 +542,16 @@ struct MediaHistoryOverlayView: View {
     }
 
     private func deleteEntry(_ entry: CaptureHistoryEntry) {
+        let entries = filteredEntries
+        let index = entries.firstIndex { $0.id == entry.id }
+        let wasSelected = selectedID == entry.id
         withAnimation {
-            if selectedID == entry.id { selectedID = nil }
             CaptureHistory.shared.remove(entry)
+            if wasSelected, let index {
+                let remaining = filteredEntries
+                selectedID = remaining.isEmpty ? nil : remaining[min(index, remaining.count - 1)].id
+                keyboardScrollTarget = selectedID
+            }
         }
     }
 }

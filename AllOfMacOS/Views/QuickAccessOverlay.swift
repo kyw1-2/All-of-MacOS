@@ -154,10 +154,20 @@ final class QuickAccessOverlayController {
         // Only intercept keys actually directed to this overlay, never global
         // Cmd-C/Esc, which would steal shortcuts from the destination app.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self.panel else { return event }
+            guard let self, let panel = self.panel, event.window === panel,
+                  panel.attachedSheet == nil, NSApp.modalWindow == nil,
+                  (panel.firstResponder as? NSTextView)?.isEditable != true else { return event }
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            if event.keyCode == 1, modifiers == [.command, .shift] {
+                if !event.isARepeat { self.saveAs() }
+                return nil
+            }
+            guard modifiers.isEmpty || modifiers == .command ||
+                    (modifiers == [.command, .option] && [UInt16(8), 1].contains(event.keyCode)) else { return event }
             guard let action = QuickAccessPolicy.shortcut(
                 keyCode: event.keyCode,
                 command: event.modifierFlags.contains(.command)) else { return event }
+            if event.isARepeat { return nil }
             switch action {
             case .close: self.dismiss(deleteFile: false)
             case .copy: self.copyImage()
@@ -269,7 +279,7 @@ final class QuickAccessOverlayController {
             return
         }
         GestureHUD.shared.show(title: "Copied", detail: url.lastPathComponent)
-        dismiss(deleteFile: false)
+        if !NSEvent.modifierFlags.contains(.option) { dismiss(deleteFile: false) }
     }
 
     private func save() {
