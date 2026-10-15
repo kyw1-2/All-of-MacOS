@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import Foundation
+import Vision
+import ImageIO
 
 /// Local clipboard history. The pasteboard is sampled only after its change
 /// counter advances; persistence and hashing never run on the gesture loop.
@@ -21,7 +23,7 @@ final class ClipboardStore: ObservableObject {
             // Zero means "Indefinitely" in the settings picker.
             result.retentionDays = min(365, max(0, retentionDays))
             result.maxEntries = min(10_000, max(1, maxEntries))
-            result.maxBytes = min(200 * 1_024 * 1_024, max(1_024, maxBytes))
+            result.maxBytes = min(1_024 * 1_024 * 1_024, max(1_024, maxBytes))
             result.ignoredApps = Array(Set(ignoredApps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty })).sorted()
             return result
@@ -61,6 +63,12 @@ final class ClipboardStore: ObservableObject {
     var onCapture: ((UUID) -> Void)?
     @Published private(set) var boards: [ClipboardPinboard] = []
     @Published private(set) var isLoading = true
+    @Published private(set) var canUndoDeletion = false
+    @Published private(set) var indexingImages = false
+    private var deletionHistory: [[ClipboardEntry]] = []
+    private var indexingTask: Task<Void, Never>?
+    private var attemptedImages: Set<UUID> = []
+    private let indexingQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-ocr", qos: .utility)
     @Published var lastError: String?
     @Published var paused = false {
         didSet {
@@ -197,6 +205,7 @@ final class ClipboardStore: ObservableObject {
             trim()
             scheduleSave()
             if entries.contains(where: { $0.id == capturedID }) { onCapture?(capturedID) }
+            scheduleImageIndexing()
         }
         captureTasks.append(task)
         if captureTasks.count > 64 { captureTasks.removeFirst(captureTasks.count - 64) }
@@ -204,16 +213,13 @@ final class ClipboardStore: ObservableObject {
 
     func filtered(query: String = "", kind: ClipboardEntry.Kind? = nil, source: String? = nil,
                   board: UUID? = nil, since: Date? = nil) -> [ClipboardEntry] {
-        let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        let search = ClipboardSearchQuery(query)
         return entries.filter { entry in
             (kind == nil || entry.kind == kind) &&
             (source == nil || entry.sourceBundleID == source || entry.sourceName == source) &&
             (board == nil || entry.pinboardIDs.contains(board!)) &&
             (since == nil || entry.lastCopiedAt >= since!) &&
-            terms.allSatisfy { term in
-                [entry.title, entry.text ?? "", entry.sourceName ?? "", entry.sourceBundleID ?? ""]
-                    .contains { $0.localizedStandardContains(term) }
-            }
+            search.matches(entry, boards: boards)
         }
     }
 
@@ -333,18 +339,69 @@ final class ClipboardStore: ObservableObject {
         return entries.first { $0.id == entry.id }
     }
 
-    func delete(entryID: UUID) {
-        entries.removeAll { $0.id == entryID }
-        digests[entryID] = nil
+    func delete(entryID: UUID) { delete(entryIDs: [entryID]) }
+
+    func delete(entryIDs: [UUID]) {
+        let ids = Set(entryIDs)
+        rememberDeletion(entries.filter { ids.contains($0.id) })
+        entries.removeAll { ids.contains($0.id) }
+        pruneDigests()
         scheduleSave()
+    }
+
+    private func rememberDeletion(_ deleted: [ClipboardEntry]) {
+        guard !deleted.isEmpty else { return }
+        deletionHistory.append(deleted)
+        // Undo is session-only and bounded independently of permanent pinboards.
+        while deletionHistory.count > 20 ||
+              (deletionHistory.count > 1 && deletionHistory.flatMap { $0 }.reduce(0, { $0 + $1.byteCount }) > 100 * 1_024 * 1_024) {
+            deletionHistory.removeFirst()
+        }
+        canUndoDeletion = true
+    }
+
+    @discardableResult
+    func undoDeletion() -> [UUID] {
+        guard let deleted = deletionHistory.popLast() else { return [] }
+        let boardIDs = Set(boards.map(\.id))
+        let existing = Set(entries.map(\.id))
+        let restored = deleted.filter { !existing.contains($0.id) }.map { entry -> ClipboardEntry in
+            var entry = entry
+            entry.pinboardIDs.formIntersection(boardIDs)
+            // A restored item gets a fresh retention period, so Undo is not
+            // immediately undone by the next periodic expiration pass.
+            entry.lastCopiedAt = now()
+            return entry
+        }
+        entries.insert(contentsOf: restored, at: 0)
+        canUndoDeletion = !deletionHistory.isEmpty
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let values = await onQueue { restored.map { ($0.id, $0.payloadDigest) } }
+            for (id, digest) in values where entries.contains(where: { $0.id == id }) { digests[id] = digest }
+        }
+        captureTasks.append(task)
+        scheduleSave()
+        scheduleImageIndexing()
+        return restored.map(\.id)
     }
 
     func clearUnpinned() {
         // In-flight capture belongs to the history being cleared as well.
         captureGeneration += 1
+        rememberDeletion(entries.filter { $0.pinboardIDs.isEmpty })
         entries.removeAll { $0.pinboardIDs.isEmpty }
         pruneDigests()
         scheduleSave()
+    }
+
+    func copyRecognizedText(entryID: UUID) throws {
+        guard let text = entries.first(where: { $0.id == entryID })?.recognizedText, !text.isEmpty else { throw StoreError.emptySelection }
+        pasteboard.clearContents()
+        let written = pasteboard.setString(text, forType: .string)
+        lastChangeCount = pasteboard.changeCount
+        guard written else { throw StoreError.cannotWrite }
+        ClipboardAudioFeedback.copy()
     }
 
     /// Writes all selected rich items in order. Plain text explicitly flattens
@@ -355,7 +412,7 @@ final class ClipboardStore: ObservableObject {
         let selected = entryIDs.filter { seen.insert($0).inserted }.compactMap { id in entries.first { $0.id == id } }
         guard !selected.isEmpty, selected.count == seen.count else { throw StoreError.emptySelection }
         let objects: [NSPasteboardItem]
-        if plainText {
+        if plainText && selected.allSatisfy({ $0.text != nil || !$0.fileURLs.isEmpty }) {
             let parts = selected.compactMap { entry -> String? in
                 if let text = entry.text { return text }
                 if !entry.fileURLs.isEmpty { return entry.fileURLs.map(\.path).joined(separator: separator) }
@@ -368,7 +425,7 @@ final class ClipboardStore: ObservableObject {
             item.setString(text, forType: .string)
             objects = [item]
         } else {
-            guard selected.reduce(0, { $0 + $1.byteCount }) <= settings.bounded.maxBytes else { throw StoreError.tooLarge }
+            guard selected.reduce(0, { $0 + $1.byteCount }) <= 1_024 * 1_024 * 1_024 else { throw StoreError.tooLarge }
             objects = selected.flatMap(\.items).map { data in
                 let item = NSPasteboardItem()
                 for (type, value) in data { item.setData(value, forType: .init(type)) }
@@ -407,16 +464,82 @@ final class ClipboardStore: ObservableObject {
             let cutoff = now().addingTimeInterval(-Double(limits.retentionDays) * 86_400)
             entries.removeAll { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }
         }
-        var bytes = entries.reduce(0) { $0 + $1.byteCount }
-        while entries.count > limits.maxEntries || bytes > limits.maxBytes {
-            // Pinned content is retained preferentially, but a hard memory cap
-            // still applies if all remaining items are pinned.
-            guard let index = entries.lastIndex(where: { $0.pinboardIDs.isEmpty }) ?? entries.indices.last else { break }
-            bytes -= entries[index].byteCount
-            if !entries[index].pinboardIDs.isEmpty { lastError = "Clipboard storage is full. The oldest pinned item was removed to keep the memory limit." }
-            entries.remove(at: index)
+        // Retention limits cover history only. Pinboards are explicit durable
+        // collections and are never silently evicted to make room for history.
+        var unpinned = entries.filter { $0.pinboardIDs.isEmpty }
+        var bytes = unpinned.reduce(0) { $0 + $1.byteCount }
+        var removed = Set<UUID>()
+        while unpinned.count > limits.maxEntries || bytes > limits.maxBytes {
+            guard let oldest = unpinned.popLast() else { break }
+            bytes -= oldest.byteCount
+            removed.insert(oldest.id)
         }
+        entries.removeAll { removed.contains($0.id) }
         if entries.count != before { pruneDigests(); scheduleSave() }
+    }
+
+    var pinnedBytes: Int { entries.filter { !$0.pinboardIDs.isEmpty }.reduce(0) { $0 + $1.byteCount } }
+    var historyBytes: Int { entries.filter { $0.pinboardIDs.isEmpty }.reduce(0) { $0 + $1.byteCount } }
+
+    /// Finish pending copy transactions before a native stack paste chooses its
+    /// next item. This does not force a disk write or change the clipboard.
+    func finishPendingCaptures() async {
+        let tasks = captureTasks
+        for task in tasks { await task.value }
+    }
+
+    func editImage(entryID: UUID, image: CGImage) {
+        guard let index = entries.firstIndex(where: { $0.id == entryID }), entries[index].kind == .image,
+              let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
+        guard data.count <= Self.maximumEntryBytes else { lastError = StoreError.tooLarge.localizedDescription; return }
+        entries[index].items = [[NSPasteboard.PasteboardType.png.rawValue: data]]
+        entries[index].text = nil
+        entries[index].recognizedText = nil
+        entries[index].recognizedImageDigest = nil
+        attemptedImages.remove(entryID)
+        digests[entryID] = nil
+        let edited = entries[index]
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let digest = await onQueue { edited.payloadDigest }
+            if entries.first(where: { $0.id == edited.id })?.items == edited.items { digests[edited.id] = digest }
+        }
+        captureTasks.append(task)
+        scheduleSave()
+        scheduleImageIndexing()
+    }
+
+    private func scheduleImageIndexing() {
+        guard indexingTask == nil else { return }
+        indexingTask = Task { [weak self] in
+            guard let self else { return }
+            indexingImages = true
+            defer { indexingImages = false; indexingTask = nil }
+            while !Task.isCancelled,
+                  let entry = entries.first(where: { $0.kind == .image && $0.recognizedImageDigest == nil && !attemptedImages.contains($0.id) }),
+                  let data = entry.imageData {
+                attemptedImages.insert(entry.id)
+                let result: (String, String)? = await withCheckedContinuation { continuation in
+                    indexingQueue.async {
+                        do {
+                            let request = VNRecognizeTextRequest()
+                            request.recognitionLevel = .accurate
+                            request.usesLanguageCorrection = true
+                            request.automaticallyDetectsLanguage = true
+                            let handler = VNImageRequestHandler(data: data, options: [:])
+                            try handler.perform([request])
+                            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                            continuation.resume(returning: (String(text.prefix(100_000)), entry.payloadDigest))
+                        } catch { continuation.resume(returning: nil) }
+                    }
+                }
+                guard let result, let index = entries.firstIndex(where: { $0.id == entry.id }),
+                      entries[index].items == entry.items else { continue }
+                entries[index].recognizedText = result.0
+                entries[index].recognizedImageDigest = result.1
+                scheduleSave()
+            }
+        }
     }
 
     private func pruneDigests() {
@@ -439,14 +562,24 @@ final class ClipboardStore: ObservableObject {
         pendingSave = false
         let document = Document(entries: entries, boards: boards)
         let directory = directory
+        let encrypt = !isolated
         let success = await onQueue { () -> Bool in
             do {
                 try Self.prepare(directory: directory)
-                let file = directory.appendingPathComponent("history-v1.json")
+                let file = directory.appendingPathComponent(encrypt ? "history-v2.encrypted" : "history-v1.json")
                 if try Self.isSymlink(file) { throw StoreError.storageUnavailable }
-                let data = try JSONEncoder().encode(document)
+                let plain = try JSONEncoder().encode(document)
+                let data = try encrypt ? ClipboardArchiveEncryption.encrypt(plain) : plain
                 try data.write(to: file, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+                if encrypt {
+                    let legacy = directory.appendingPathComponent("history-v1.json")
+                    // Retire plaintext only after an atomic encrypted write succeeds.
+                    // A failure before this point leaves the legacy file untouched.
+                    if FileManager.default.fileExists(atPath: legacy.path), !(try Self.isSymlink(legacy)) {
+                        try FileManager.default.removeItem(at: legacy)
+                    }
+                }
                 return true
             } catch { return false }
         }
@@ -455,19 +588,20 @@ final class ClipboardStore: ObservableObject {
 
     private func loadFromDisk() async {
         let directory = directory
+        let encryptedURL = directory.appendingPathComponent("history-v2.encrypted")
+        let encryptedExists = !isolated && FileManager.default.fileExists(atPath: encryptedURL.path)
         let loaded: Result<(Document, [UUID: String]), Error> = await onQueue {
             do {
-                let file = directory.appendingPathComponent("history-v1.json")
+                let file = encryptedExists ? encryptedURL : directory.appendingPathComponent("history-v1.json")
                 guard FileManager.default.fileExists(atPath: file.path) else { return .success((Document(entries: [], boards: []), [:])) }
                 guard !(try Self.isSymlink(directory)), !(try Self.isSymlink(file)) else { throw StoreError.invalidArchive }
-                let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-                guard (attributes[.size] as? NSNumber)?.intValue ?? Int.max <= 300 * 1_024 * 1_024 else { throw StoreError.invalidArchive }
-                let document = try JSONDecoder().decode(Document.self, from: Data(contentsOf: file))
-                guard document.version == 1, document.entries.count <= 10_000, document.boards.count <= 100,
+                let bytes = try Data(contentsOf: file, options: .mappedIfSafe)
+                let plain = try encryptedExists ? ClipboardArchiveEncryption.decrypt(bytes) : bytes
+                let document = try JSONDecoder().decode(Document.self, from: plain)
+                guard document.version == 1, document.boards.count <= 100,
                       Set(document.entries.map(\.id)).count == document.entries.count,
                       Set(document.boards.map(\.id)).count == document.boards.count,
-                      document.entries.allSatisfy({ $0.byteCount <= Self.maximumEntryBytes && $0.items.count <= 32 && $0.items.allSatisfy { $0.count <= 64 } }),
-                      document.entries.reduce(0, { $0 + $1.byteCount }) <= 200 * 1_024 * 1_024 else { throw StoreError.invalidArchive }
+                      document.entries.allSatisfy({ $0.byteCount <= Self.maximumEntryBytes && $0.items.count <= 32 && $0.items.allSatisfy { $0.count <= 64 } }) else { throw StoreError.invalidArchive }
                 return .success((document, Dictionary(uniqueKeysWithValues: document.entries.map { ($0.id, $0.payloadDigest) })))
             } catch { return .failure(error) }
         }
@@ -478,13 +612,15 @@ final class ClipboardStore: ObservableObject {
             self.digests = digests
             let boardIDs = Set(boards.map(\.id))
             for index in entries.indices { entries[index].pinboardIDs.formIntersection(boardIDs) }
-        case .failure:
+            if !isolated && !encryptedExists { pendingSave = true }
+        case .failure(let error):
             storageWritable = false
-            lastError = StoreError.invalidArchive.localizedDescription
+            lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription ?? StoreError.invalidArchive.localizedDescription
         }
         isLoading = false
         trim()
         if pendingSave { scheduleSave() }
+        scheduleImageIndexing()
     }
 
     private func onQueue<T>(_ work: @escaping () -> T) async -> T {

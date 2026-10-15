@@ -41,6 +41,9 @@ iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$CONTENTS/Resources/AppIcon.ic
 
 "$PWD/XPC/build-runner.sh" "$CONTENTS" "$SIGN_ID"
 
+bash "$PWD/scripts/bundle-webp.sh" "$CONTENTS" "$SIGN_ID"
+bash "$PWD/scripts/bundle-annotation-preview.sh" "$CONTENTS" "$SIGN_ID"
+
 echo "==> Codesigning with '$SIGN_ID'"
 codesign --force --sign "$SIGN_ID" \
     --entitlements AllOfMacOS/AllOfMacOS.entitlements \

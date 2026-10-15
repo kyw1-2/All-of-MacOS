@@ -32,7 +32,16 @@ struct ClipboardSettingsView: View {
                             Text("1 Day").tag(1); Text("7 Days").tag(7); Text("30 Days").tag(30); Text("90 Days").tag(90); Text("Indefinitely").tag(0)
                         }
                         Stepper("Maximum history: \(store.settings.maxEntries) items", value: $store.settings.maxEntries, in: 100...10000, step: 100)
-                        Text("Pinned items stay until you delete them. Storage limits still apply.").font(.caption).foregroundStyle(.secondary)
+                        Picker("Unpinned history storage", selection: $store.settings.maxBytes) {
+                            Text("50 MB").tag(50 * 1_024 * 1_024)
+                            Text("200 MB").tag(200 * 1_024 * 1_024)
+                            Text("500 MB").tag(500 * 1_024 * 1_024)
+                            Text("1 GB").tag(1_024 * 1_024 * 1_024)
+                        }
+                        Text("Pinboards are exempt from age, item count and storage limits. Pinned items stay until you delete them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("History: \(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · Pinboards: \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file))")
+                            .font(.caption).foregroundStyle(.secondary)
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox("Pasting") {
@@ -41,7 +50,7 @@ struct ClipboardSettingsView: View {
                         Toggle("Paste text without formatting by default", isOn: $store.settings.plainText)
                         Text("Turn off direct paste to copy only. Hold Shift while pasting to remove text formatting. Images and files keep their original clipboard representation.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Text("Select several cards with ⌘-click to combine text, or add them to the paste stack and use Paste Next to insert them one at a time.")
+                        Text("Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -71,7 +80,8 @@ struct ClipboardSettingsView: View {
                 }
                 GroupBox("Privacy & Storage") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("History is stored on this Mac. AOM does not upload clipboard contents or sync them to an account.").font(.callout)
+                        Text("History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.").font(.callout)
+                        Text("Text inside copied images is indexed locally for search. Search supports phrases in quotes, type:image, from:Safari, board:Work, before:2026-01-01, after:2026-01-01 and -excluded terms.").font(.caption).foregroundStyle(.secondary)
                         Text("Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps.").font(.caption).foregroundStyle(.secondary)
                         Text("Excluded application bundle IDs, one per line").font(.caption.weight(.semibold))
                         TextEditor(text: Binding(
@@ -83,6 +93,7 @@ struct ClipboardSettingsView: View {
                         HStack {
                             Text("\(store.entries.count) saved items · \(store.boards.count) pinboards").foregroundStyle(.secondary)
                             Spacer()
+                            Button("Undo Delete") { _ = store.undoDeletion() }.disabled(!store.canUndoDeletion)
                             Button("Clear Unpinned History…", role: .destructive) { clearConfirmation = true }
                         }
                         if let error = store.lastError { Text(error).foregroundStyle(.red).font(.caption) }

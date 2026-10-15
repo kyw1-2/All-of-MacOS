@@ -40,6 +40,12 @@ enum CaptureMenu {
             #selector(AppDelegate.recordScreenAction),
             shortcut: shortcuts.shortcut(for: .recordScreen)
         ))
+        menu.addItem(itemWithCaptureState(
+            ScreenRecordingService.shared.isPaused ? "Resume Recording" : "Pause Recording", "pause.circle",
+            #selector(AppDelegate.pauseRecordingAction),
+            enabled: ScreenRecordingService.shared.isRecording,
+            shortcut: shortcuts.shortcut(for: .pauseRecording)
+        ))
         menu.addItem(item(
             "Record Fullscreen", "display",
             #selector(AppDelegate.recordFullscreenAction)
@@ -122,6 +128,7 @@ enum CaptureMenu {
 
         // The most-recent-capture actions are disabled when there is nothing to
         // act on, rather than being hidden, so the menu keeps a stable shape.
+        menu.addItem(item("Open Annotation Project…", "doc.badge.gearshape", #selector(AppDelegate.openAnnotationProjectAction)))
         let hasCapture = CaptureHistory.shared.mostRecent != nil
         menu.addItem(itemWithCaptureState(
             "Annotate Last Capture", "pencil.tip.crop.circle",

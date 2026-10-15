@@ -6,6 +6,9 @@ on:
     paths:
       - "AllOfMacOS/**"
       - "XPC/**"
+      - "Extensions/**"
+      - "scripts/bundle-webp.sh"
+      - "scripts/bundle-annotation-preview.sh"
       - "Package.swift"
       - "Package.resolved"
       - "build-and-sign.sh"
@@ -75,6 +78,9 @@ jobs:
           perl -e 'alarm 20; exec @ARGV' security add-trusted-cert -r trustRoot -p codeSign "$cert"
           rm -f "$cert"
           bash scripts/resolve-signing-identity.sh AOM\ Dev >/dev/null
+
+      - name: Install image codec for packaging
+        run: brew list webp >/dev/null 2>&1 || brew install webp
 
       - name: Build and sign app
         env:

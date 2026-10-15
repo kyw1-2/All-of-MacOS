@@ -11,6 +11,10 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureQuality") private var quality = 0.9
     @AppStorage("AOMCaptureShowsCursor") private var showsCursor = false
     @AppStorage("AOMCaptureRecordingAudioSource") private var recordingAudioSourceRaw = RecordingAudioSource.off.rawValue
+    @AppStorage("AOMCaptureRecordingCameraOverlay") private var recordingCameraOverlay = false
+    @AppStorage("AOMCaptureRecordingKeystrokeOverlay") private var recordingKeystrokeOverlay = false
+    @AppStorage("AOMCaptureRecordingOutputFormat") private var recordingOutputFormat = "mp4"
+    @AppStorage("AOMCaptureRecordingGIFFPS") private var recordingGIFFPS = 10
     @AppStorage("AOMCaptureRecordingFPS") private var recordingFPS = 30
     @AppStorage("AOMCaptureRecordingQuality") private var recordingQuality = 2
     @AppStorage("AOMCaptureRecordingClickIndicators") private var recordingClickIndicators = false
@@ -160,6 +164,19 @@ struct CaptureSettingsView: View {
 
     private var recordingGroup: some View {
         AppleSettingsGroup("Screen Recording") {
+            AppleSettingsRow(icon: "film", iconColor: .blue, title: "Recording Format",
+                             subtitle: "GIF records up to 120 seconds without audio and retains its MP4 source", showDivider: true) {
+                Picker("", selection: $recordingOutputFormat) {
+                    Text("MP4").tag("mp4"); Text("GIF").tag("gif")
+                }.labelsHidden().frame(width: 120)
+            }
+            if recordingOutputFormat == "gif" {
+                AppleSettingsRow(icon: "photo.stack", iconColor: .purple, title: "GIF Frame Rate", showDivider: true) {
+                    Picker("", selection: $recordingGIFFPS) {
+                        ForEach([5, 8, 10, 15, 20, 30], id: \.self) { Text("\($0) fps").tag($0) }
+                    }.labelsHidden().frame(width: 120)
+                }
+            }
             AppleSettingsRow(icon: "speedometer", iconColor: .indigo,
                              title: "Frame Rate",
                              subtitle: "Lower rates keep files smaller", showDivider: true) {
@@ -192,9 +209,17 @@ struct CaptureSettingsView: View {
                 Toggle("", isOn: $recordingCursorMotion)
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
+            AppleSettingsRow(icon: "video.fill", iconColor: .green,
+                             title: "Camera Overlay", subtitle: "Include a camera bubble in the recording", showDivider: true) {
+                Toggle("", isOn: $recordingCameraOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "keyboard", iconColor: .purple,
+                             title: "Show Keyboard Shortcuts", subtitle: "Show modifier shortcuts; typed text is never displayed", showDivider: true) {
+                Toggle("", isOn: $recordingKeystrokeOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,
                              title: "Audio Source",
-                             subtitle: "Optional AAC audio: computer sound or microphone",
+                             subtitle: "Record computer sound, microphone, or both",
                              showDivider: false) {
                 Picker("", selection: $recordingAudioSourceRaw) {
                     ForEach(RecordingAudioSource.allCases) { source in
@@ -203,7 +228,7 @@ struct CaptureSettingsView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 150)
+                .frame(width: 200)
             }
         }
     }
@@ -258,7 +283,7 @@ struct CaptureSettingsView: View {
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Tokens: {prefix} {date} {time} {datetime} {kind} {window} {width} {height}")
+                Text("Tokens: {prefix} {date} {time} {datetime} {kind} {window} {width} {height} {year} {month} {day} {hour} {minute} {second} {millisecond} {weekday} {timezone} {unix}")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -328,7 +353,7 @@ struct CaptureSettingsView: View {
                 Picker("", selection: $autoCloseRaw) {
                     ForEach(OverlayAutoClose.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 150)
+                .pickerStyle(.menu).labelsHidden().frame(width: 200)
             }
             if autoCloseRaw == OverlayAutoClose.afterInterval.rawValue {
                 AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Delay",

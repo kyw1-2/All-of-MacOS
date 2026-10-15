@@ -554,6 +554,10 @@ struct AllOfMacOSApp: App {
         .defaultSize(width: 1300, height: 700)
         .commands {
             TriggerEditorCommands()
+            CommandGroup(after: .newItem) {
+                Button("Open Annotation Project…") { AnnotationEditorController.shared.chooseProject() }
+                    .keyboardShortcut("o", modifiers: .command)
+            }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit All of MacOS") {
                     NSApp.terminate(nil)

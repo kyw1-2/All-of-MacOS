@@ -246,6 +246,9 @@ struct ShortcutsSettingsView: View {
         case .captureFullscreen: return .indigo
         case .captureWindow: return .cyan
         case .recordScreen: return .red
+        case .pauseRecording: return .orange
+        case .allInOne: return .blue
+        case .openProject: return .purple
         case .capturePreviousArea: return .teal
         case .scrollingCapture: return .purple
         case .ocr: return .orange
@@ -261,6 +264,9 @@ struct ShortcutsSettingsView: View {
         case .captureFullscreen: return "Grab current display or screen under pointer"
         case .captureWindow: return "Capture active (frontmost) window"
         case .recordScreen: return "Record video of screen or selected area"
+        case .pauseRecording: return "Pause or resume the current recording"
+        case .allInOne: return "Choose capture mode in one selection overlay"
+        case .openProject: return "Reopen editable screenshot annotations"
         case .capturePreviousArea: return "Repeat the last selected capture area"
         case .scrollingCapture: return "Capture tall web pages and documents"
         case .ocr: return "Extract and copy text directly to clipboard"

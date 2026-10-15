@@ -16,6 +16,7 @@ final class CaptureHistoryEntry: Identifiable {
     let windowTitle: String?
     /// The file on disk, once one has been written. Nil until then.
     var fileURL: URL?
+    var isPinned: Bool = false
     /// The small preview the overlay draws; built once and reused.
     lazy var thumbnail: NSImage = Self.makeThumbnail(image)
 
@@ -102,6 +103,7 @@ final class CaptureHistory: ObservableObject {
         let scale: Double
         let width: Double
         let height: Double
+        var isPinned: Bool? = nil
     }
 
     init(directory: URL) {
@@ -116,10 +118,9 @@ final class CaptureHistory: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: manifestURL),
               let records = try? JSONDecoder().decode([Record].self, from: data) else { return }
-        let maxCount = max(0, CaptureSettings.historyCapacity)
         // The file name is always derived from the validated UUID and stays in
         // our managed folder, even if manifest text was corrupted.
-        for record in records.prefix(maxCount) {
+        for record in records {
             let imageFile = imageURL(for: record.id)
             guard let source = CGImageSourceCreateWithURL(imageFile as CFURL, nil),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
@@ -130,6 +131,7 @@ final class CaptureHistory: ObservableObject {
                 fileURL: external,
                 pointSize: CGSize(width: record.width, height: record.height),
                 scale: record.scale))
+            entries.last?.isPinned = record.isPinned ?? false
         }
         trim()
     }
@@ -142,7 +144,8 @@ final class CaptureHistory: ObservableObject {
             return Record(id: entry.id, kind: entry.kind, capturedAt: entry.capturedAt,
                           windowTitle: entry.windowTitle, externalFilePath: entry.fileURL?.path,
                           scale: Double(entry.scale),
-                          width: Double(entry.pointSize.width), height: Double(entry.pointSize.height))
+                          width: Double(entry.pointSize.width), height: Double(entry.pointSize.height),
+                          isPinned: entry.isPinned)
         }
         guard let data = try? JSONEncoder().encode(records) else { return }
         try? data.write(to: manifestURL, options: .atomic)
@@ -192,15 +195,49 @@ final class CaptureHistory: ObservableObject {
         persistIndex()
     }
 
+    /// Pins are explicit user retention choices, never victims of automatic
+    /// count or age cleanup. Removing them remains available in the history UI.
+    var retentionDays: Int {
+        get {
+            guard UserDefaults.standard.object(forKey: "AOMCaptureHistoryRetentionDays") != nil else { return 30 }
+            return max(0, UserDefaults.standard.integer(forKey: "AOMCaptureHistoryRetentionDays"))
+        }
+        set {
+            UserDefaults.standard.set(max(0, newValue), forKey: "AOMCaptureHistoryRetentionDays")
+            trim()
+            objectWillChange.send()
+        }
+    }
+
+    func togglePin(_ entry: CaptureHistoryEntry) {
+        guard let stored = entries.first(where: { $0.id == entry.id }) else { return }
+        objectWillChange.send()
+        stored.isPinned.toggle()
+        trim()
+    }
+
+    func removeUnpinned() {
+        let removed = entries.filter { !$0.isPinned }
+        entries.removeAll { !$0.isPinned }
+        for entry in removed { try? FileManager.default.removeItem(at: imageURL(for: entry.id)) }
+        persistIndex()
+    }
+
+    func applyRetention() { trim() }
+
     private func trim() {
         let capacity = max(0, CaptureSettings.historyCapacity)
-        if entries.count > capacity {
-            let discarded = entries.suffix(from: capacity)
-            for entry in discarded {
-                try? FileManager.default.removeItem(at: imageURL(for: entry.id))
-            }
-            entries.removeLast(entries.count - capacity)
+        let cutoff = retentionDays > 0 ? Date().addingTimeInterval(-Double(retentionDays) * 86_400) : .distantPast
+        var unpinnedCount = 0
+        let discarded = entries.filter { entry in
+            guard !entry.isPinned else { return false }
+            if entry.capturedAt < cutoff { return true }
+            unpinnedCount += 1
+            return unpinnedCount > capacity
         }
+        let removedIDs = Set(discarded.map(\.id))
+        entries.removeAll { removedIDs.contains($0.id) }
+        for entry in discarded { try? FileManager.default.removeItem(at: imageURL(for: entry.id)) }
         persistIndex()
     }
 

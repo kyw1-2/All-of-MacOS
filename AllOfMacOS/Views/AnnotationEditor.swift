@@ -15,12 +15,40 @@ final class AnnotationEditorController {
 
     private var editors: [UUID: AnnotationEditorWindow] = [:]
 
-    func open(capture: CaptureHistoryEntry, url: URL?) {
+    func open(capture: CaptureHistoryEntry, url: URL?, onApply: ((CGImage) -> Void)? = nil) {
         let id = UUID()
-        let window = AnnotationEditorWindow(capture: capture, url: url)
+        let window = AnnotationEditorWindow(capture: capture, url: url, onApply: onApply)
         window.onClose = { [weak self] in self?.editors.removeValue(forKey: id) }
         editors[id] = window
         window.present()
+    }
+
+    func openProject(at url: URL) {
+        do {
+            let (document, scale) = try AnnotationProject.read(from: url)
+            let entry = CaptureHistoryEntry(image: document.baseImage, kind: .area, capturedAt: Date(),
+                                            windowTitle: url.deletingPathExtension().lastPathComponent,
+                                            fileURL: nil, scale: scale)
+            let id = UUID()
+            let window = AnnotationEditorWindow(capture: entry, url: nil, document: document, projectURL: url)
+            window.onClose = { [weak self] in self?.editors.removeValue(forKey: id) }
+            editors[id] = window
+            window.present()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could Not Open Annotation Project"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    func chooseProject() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [AnnotationProject.contentType]
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            if response == .OK, let url = panel.url { self.openProject(at: url) }
+        }
     }
 
     /// Opens the most recent capture, for "Annotate Last Screenshot".
@@ -37,7 +65,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     var onClose: (() -> Void)?
     private let capture: CaptureHistoryEntry
 
-    init(capture: CaptureHistoryEntry, url: URL?) {
+    init(capture: CaptureHistoryEntry, url: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
         self.capture = capture
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
         let width = min(screen.width - 40, min(1280, max(1000, capture.pointSize.width + 48)))
@@ -53,7 +81,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 740, height: 480)
         super.init(window: window)
-        window.contentView = NSHostingView(rootView: AnnotationEditorView(capture: capture, fileURL: url))
+        window.contentView = NSHostingView(rootView: AnnotationEditorView(capture: capture, fileURL: url, document: document, projectURL: projectURL, onApply: onApply))
         window.delegate = self
     }
 
@@ -74,6 +102,9 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
 private struct AnnotationEditorView: View {
     let capture: CaptureHistoryEntry
     let fileURL: URL?
+    let onApply: ((CGImage) -> Void)?
+    @State private var projectURL: URL?
+    @State private var presets = AnnotationStylePreset.load()
 
     @State private var document: AnnotationDocument
     @State private var tool: AnnotationKind = .arrow
@@ -107,10 +138,12 @@ private struct AnnotationEditorView: View {
     /// Which handle of a selected object is being dragged, if any.
     @State private var activeHandle: ResizeHandle?
 
-    init(capture: CaptureHistoryEntry, fileURL: URL?) {
+    init(capture: CaptureHistoryEntry, fileURL: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
         self.capture = capture
         self.fileURL = fileURL
-        _document = State(initialValue: AnnotationDocument(baseImage: capture.image))
+        self.onApply = onApply
+        _projectURL = State(initialValue: projectURL)
+        _document = State(initialValue: document ?? AnnotationDocument(baseImage: capture.image))
     }
 
     private var scale: CGFloat {
@@ -206,7 +239,7 @@ private struct AnnotationEditorView: View {
 
             Button { colorPopover.toggle() } label: {
                 HStack(spacing: 5) {
-                    Circle().fill(Color(nsColor: style.color.nsColor))
+                    Circle().fill(Color(nsColor: style.resolvedColor))
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
                         .frame(width: 18, height: 18)
                     Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
@@ -218,7 +251,14 @@ private struct AnnotationEditorView: View {
             .popover(isPresented: $colorPopover) {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Color").font(.headline)
-                    ColorSwatchRow(selection: $style.color).onChange(of: style.color) { _, _ in applyStyleToSelection() }
+                    ColorSwatchRow(selection: $style.color).onChange(of: style.color) { _, _ in
+                        style.customColorHex = nil; applyStyleToSelection()
+                    }
+                    ColorPicker("Custom Color", selection: Binding(get: { Color(nsColor: style.resolvedColor) }, set: { value in
+                        guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
+                        style.customColorHex = String(format: "%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
+                        applyStyleToSelection()
+                    }), supportsOpacity: false)
                     section("Opacity") { slider(value: $style.opacity, range: 0.1...1, label: "\(Int(style.opacity * 100))%") }
                 }.padding(18).frame(width: 230)
             }
@@ -236,6 +276,28 @@ private struct AnnotationEditorView: View {
             Menu {
                 Button("Undo") { document.undo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
                 Button("Redo") { document.redo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                Divider()
+                Button("Save Project") { saveProject(saveAs: false) }.keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Save Project As…") { saveProject(saveAs: true) }
+                Button("Open Project…") { AnnotationEditorController.shared.chooseProject() }.keyboardShortcut("o", modifiers: .command)
+                Menu("Export Image") {
+                    ForEach(CaptureFormat.allCases) { format in
+                        Button(format.displayName) { saveAs(format: format) }
+                    }
+                }
+                Menu("Style Presets") {
+                    Button("Save Current Style…") { saveStylePreset() }
+                    ForEach(presets) { preset in
+                        Button(preset.name) { style = preset.style; applyStyleToSelection() }
+                    }
+                    if !presets.isEmpty {
+                        Menu("Remove Preset") {
+                            ForEach(presets) { preset in
+                                Button(preset.name) { presets.removeAll { $0.id == preset.id }; AnnotationStylePreset.save(presets) }
+                            }
+                        }
+                    }
+                }
                 Divider()
                 Button("Resize Image…") { showingResize = true }
                 Menu("Rotate / Flip") {
@@ -264,6 +326,11 @@ private struct AnnotationEditorView: View {
             }
             .scrollIndicators(.hidden)
             Spacer(minLength: 0)
+            if let onApply {
+                Button("Apply to Clipboard") {
+                    if let image = renderedImage() { onApply(image); status = "Updated clipboard image." }
+                }.buttonStyle(.borderedProminent).fixedSize()
+            }
             Button { saveAs() } label: {
                 Text("Save as…").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
@@ -764,6 +831,13 @@ private struct AnnotationEditorView: View {
                 if inspectedKind == .text || inspectedKind == .counter {
                     section("Text") {
                         slider(value: $style.fontSize, range: 10...96, label: "\(Int(style.fontSize)) pt")
+                        Picker("Font", selection: Binding(get: { style.fontName ?? "" }, set: { style.fontName = $0.isEmpty ? nil : $0; applyStyleToSelection() })) {
+                            Text("System").tag("")
+                            ForEach(NSFontManager.shared.availableFontFamilies.sorted(), id: \.self) { Text($0).tag($0) }
+                        }
+                        Toggle("Bold", isOn: Binding(get: { style.bold ?? true }, set: { style.bold = $0; applyStyleToSelection() }))
+                        Toggle("Italic", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
+                        Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
                         if let id = selectedID, let object = document.objects.first(where: { $0.id == id }) {
                             TextField("Text", text: Binding(
                                 get: { object.text },
@@ -1018,14 +1092,47 @@ private struct AnnotationEditorView: View {
         selectedID = nil
     }
 
-    private func saveAs() {
+    private func saveStylePreset() {
+        let alert = NSAlert()
+        alert.messageText = "Save Style Preset"
+        let input = NSTextField(string: "Style \(presets.count + 1)")
+        input.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        presets.insert(AnnotationStylePreset(name: String(name.prefix(80)), style: style), at: 0)
+        presets = Array(presets.prefix(30))
+        AnnotationStylePreset.save(presets)
+    }
+
+    private func saveProject(saveAs: Bool) {
+        func write(_ url: URL) {
+            do {
+                try AnnotationProject(document: document, scale: scale).write(to: url)
+                projectURL = url
+                status = "Saved editable project. Original image is retained."
+            } catch { status = "Project save failed: \(error.localizedDescription)" }
+        }
+        if !saveAs, let projectURL { write(projectURL); return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [AnnotationProject.contentType]
+        panel.nameFieldStringValue = capture.displayName + ".aomannotation"
+        panel.message = "Editable projects include the original image under all annotations. Export a flattened image to share redactions."
+        panel.begin { response in
+            if response == .OK, let url = panel.url { write(url) }
+        }
+    }
+
+    private func saveAs(format: CaptureFormat = CaptureSettings.format) {
         guard let image = renderedImage() else { return }
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [CaptureSettings.format.contentType]
+        panel.allowedContentTypes = [format.contentType]
         panel.nameFieldStringValue = CaptureNaming.defaultName(
             for: CaptureResult(image: image, globalRect: .zero, scale: scale, kind: capture.kind,
                                windowTitle: capture.windowTitle, capturedAt: capture.capturedAt))
-            + " Edited." + CaptureSettings.format.fileExtension
+            + " Edited." + format.fileExtension
         panel.directoryURL = CaptureSettings.saveDirectory
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
@@ -1033,7 +1140,7 @@ private struct AnnotationEditorView: View {
                 let result = CaptureResult(image: image, globalRect: .zero, scale: scale, kind: capture.kind,
                                            windowTitle: capture.windowTitle, capturedAt: capture.capturedAt)
                 do {
-                    let data = try ScreenCaptureService.shared.encode(result)
+                    let data = try ScreenCaptureService.shared.encode(result, format: format)
                     try data.write(to: url, options: .atomic)
                     status = "Saved \(url.lastPathComponent)."
                 } catch {
@@ -1120,7 +1227,7 @@ private struct DraftOverlay: View {
 
     var body: some View {
         let rect = object.rect.scaled(by: fit)
-        let color = Color(nsColor: object.style.color.nsColor)
+        let color = Color(nsColor: object.style.resolvedColor)
         Group {
             switch object.kind {
             case .rectangle:

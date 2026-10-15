@@ -10,6 +10,9 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
     case captureFullscreen = "captureFullscreen"
     case captureWindow = "captureWindow"
     case recordScreen = "recordScreen"
+    case pauseRecording = "pauseRecording"
+    case allInOne = "allInOne"
+    case openProject = "openProject"
     case capturePreviousArea = "capturePreviousArea"
     case scrollingCapture = "scrollingCapture"
     case ocr = "ocr"
@@ -25,6 +28,9 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .captureFullscreen: return "Capture Fullscreen"
         case .captureWindow: return "Capture Window"
         case .recordScreen: return "Record Screen"
+        case .pauseRecording: return "Pause / Resume Recording"
+        case .allInOne: return "All-In-One Capture"
+        case .openProject: return "Open Annotation Project"
         case .capturePreviousArea: return "Capture Previous Area"
         case .scrollingCapture: return "Scrolling Capture"
         case .ocr: return "OCR / Recognize Text"
@@ -36,9 +42,9 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
 
     var categoryName: String {
         switch self {
-        case .captureArea, .captureFullscreen, .captureWindow, .recordScreen, .capturePreviousArea, .scrollingCapture:
+        case .captureArea, .captureFullscreen, .captureWindow, .recordScreen, .pauseRecording, .allInOne, .capturePreviousArea, .scrollingCapture:
             return "Screen Capture"
-        case .ocr, .history, .toggleDesktopIcons, .pinLast:
+        case .ocr, .history, .toggleDesktopIcons, .pinLast, .openProject:
             return "Tools & Utilities"
         }
     }
@@ -49,6 +55,9 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .captureFullscreen: return "display"
         case .captureWindow: return "macwindow"
         case .recordScreen: return "record.circle"
+        case .pauseRecording: return "pause.circle"
+        case .allInOne: return "viewfinder"
+        case .openProject: return "doc.badge.gearshape"
         case .capturePreviousArea: return "clock.arrow.circlepath"
         case .scrollingCapture: return "arrow.up.and.down.text.horizontal"
         case .ocr: return "text.viewfinder"
@@ -62,6 +71,10 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         // Standard macOS / CleanShot X keycodes:
         // 19 = '2', 20 = '3', 21 = '4', 23 = '5', 25 = '9', 15 = 'R', 1 = 'S', 4 = 'H', 2 = 'D', 35 = 'P'
         switch self {
+        case .pauseRecording:
+            return KeyboardShortcut(keyCode: 49, modifiers: [.command, .shift, .option])
+        case .allInOne, .openProject:
+            return nil
         case .captureArea:
             return KeyboardShortcut(keyCode: 21, modifiers: [.command, .shift]) // ⇧⌘4
         case .captureFullscreen:
@@ -177,6 +190,12 @@ final class CaptureShortcuts: ObservableObject {
 
     private func executeAction(_ action: CaptureShortcutAction) {
         switch action {
+        case .pauseRecording:
+            ScreenRecordingService.shared.togglePause()
+        case .allInOne:
+            CaptureCoordinator.shared.captureAllInOne()
+        case .openProject:
+            AnnotationEditorController.shared.chooseProject()
         case .captureArea:
             CaptureCoordinator.shared.captureArea()
         case .captureFullscreen:

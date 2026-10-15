@@ -37,6 +37,9 @@ if [ "$SIGN_FLAG" != "AOM Dev" ] && [ "$SIGN_FLAG" != "-" ]; then
     exit 1
 fi
 
+bash scripts/bundle-webp.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
+bash scripts/bundle-annotation-preview.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
+
 codesign --force --deep --sign "$SIGN_FLAG" \
     --identifier "$BUNDLE_ID" \
     --entitlements "$BUNDLE_DIR/Contents/Resources/AllOfMacOS.entitlements" \

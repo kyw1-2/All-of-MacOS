@@ -231,7 +231,8 @@ final class ScreenCaptureService {
         }
         let filter = SCContentFilter(display: fresh, excludingWindows: [])
         let backingScale = backingScale(for: fresh)
-        let config = configuration(sourceRect: sourceRect, scale: backingScale,
+        let localRect = sourceRect.offsetBy(dx: -fresh.frame.minX, dy: -fresh.frame.minY)
+        let config = configuration(sourceRect: localRect, scale: backingScale,
                                    showsCursor: showsCursor, pixelSnap: pixelSnap, hidesShadow: hidesShadow)
         let image = try await capture(filter: filter, config: config)
         return CaptureResult(image: image, globalRect: sourceRect, scale: backingScale, kind: kind)
@@ -239,33 +240,43 @@ final class ScreenCaptureService {
 
     // MARK: - Area
 
-    /// Captures a global rect (top-left origin, points).
-    ///
-    /// A selection can straddle two displays. ScreenCaptureKit captures one
-    /// display per filter, so the display with the largest overlap wins and the
-    /// part of the rect outside it is clipped — which is what the user sees
-    /// happen, since the overlay draws that boundary too.
+    /// Composes every display intersecting the selection at the highest backing
+    /// scale. Gaps between physical displays remain transparent.
     func captureArea(_ globalRect: CGRect, showsCursor: Bool = CaptureSettings.showsCursor,
-                     pixelSnap: Bool = CaptureSettings.pixelSnap) async throws -> CaptureResult {
+                     pixelSnap: Bool = CaptureSettings.pixelSnap,
+                     excludingWindowIDs: Set<CGWindowID> = []) async throws -> CaptureResult {
         guard globalRect.width >= 1, globalRect.height >= 1 else { throw CaptureError.areaTooSmall }
         return try await Self.withDeadline(seconds: 20) { [self] in
-        let content = try await shareableContent()
-        guard let display = Self.bestDisplay(for: globalRect, in: content.displays) else {
-            throw CaptureError.noDisplays
-        }
-        let local = globalRect.offsetBy(dx: -display.frame.origin.x, dy: -display.frame.origin.y)
-        let clipped = local.intersection(CGRect(origin: .zero, size: display.frame.size))
-        guard clipped.width >= 1, clipped.height >= 1 else { throw CaptureError.areaTooSmall }
-
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let backingScale = backingScale(for: display)
-        let config = configuration(sourceRect: clipped, scale: backingScale,
-                                   showsCursor: showsCursor, pixelSnap: pixelSnap, hidesShadow: true)
-        let image = try await capture(filter: filter, config: config)
-        // Report the clipped global rect so downstream code (history, annotate,
-        // pin placement) agrees with the pixels that actually came back.
-        let globalClipped = clipped.offsetBy(dx: display.frame.origin.x, dy: display.frame.origin.y)
-        return CaptureResult(image: image, globalRect: globalClipped, scale: backingScale, kind: .area)
+            let content = try await shareableContent()
+            let displays = content.displays.filter { !$0.frame.intersection(globalRect).isEmpty }
+            guard !displays.isEmpty else { throw CaptureError.noDisplays }
+            let scale = displays.map { backingScale(for: $0) }.max() ?? 1
+            let width = Int((globalRect.width * scale).rounded())
+            let height = Int((globalRect.height * scale).rounded())
+            guard width > 0, height > 0, Int64(width) * Int64(height) <= 150_000_000,
+                  let canvas = CGContext(data: nil, width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                throw CaptureError.captureFailed("The selected canvas is too large.")
+            }
+            canvas.interpolationQuality = .high
+            let excluded = content.windows.filter { excludingWindowIDs.contains($0.windowID) }
+            for display in displays {
+                let intersection = globalRect.intersection(display.frame)
+                let local = intersection.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+                let filter = SCContentFilter(display: display, excludingWindows: excluded)
+                let config = configuration(sourceRect: local, scale: backingScale(for: display),
+                    showsCursor: showsCursor, pixelSnap: pixelSnap, hidesShadow: true)
+                let image = try await capture(filter: filter, config: config)
+                let left = ((intersection.minX - globalRect.minX) * scale).rounded()
+                let right = ((intersection.maxX - globalRect.minX) * scale).rounded()
+                let top = ((intersection.minY - globalRect.minY) * scale).rounded()
+                let bottom = ((intersection.maxY - globalRect.minY) * scale).rounded()
+                canvas.draw(image, in: CGRect(x: left, y: CGFloat(height) - bottom,
+                    width: right - left, height: bottom - top))
+            }
+            guard let image = canvas.makeImage() else { throw CaptureError.encodeFailed }
+            return CaptureResult(image: image, globalRect: globalRect, scale: scale, kind: .area)
         }
     }
 
@@ -413,6 +424,8 @@ final class ScreenCaptureService {
                 quality: Double = CaptureSettings.quality) throws -> Data {
         let data: Data?
         switch format {
+        case .webp:
+            data = WebPEncoder.encode(image: result.image, quality: quality)
         case .png:
             data = Self.representation(result.image, as: .png, quality: 1)
         case .jpeg:
@@ -516,11 +529,19 @@ enum CaptureNaming {
         let dateString = f.string(from: date)
         f.dateFormat = "HH.mm.ss"
         let timeString = f.string(from: date)
+        func datePart(_ format: String) -> String {
+            f.dateFormat = format
+            return f.string(from: date)
+        }
         let substitutions: [String: String] = [
             "{prefix}": prefix, "{date}": dateString, "{time}": timeString,
             "{datetime}": dateString + " at " + timeString,
             "{kind}": kind, "{window}": windowTitle ?? "",
-            "{width}": String(width), "{height}": String(height)
+            "{width}": String(width), "{height}": String(height),
+            "{year}": datePart("yyyy"), "{month}": datePart("MM"), "{day}": datePart("dd"),
+            "{hour}": datePart("HH"), "{minute}": datePart("mm"), "{second}": datePart("ss"),
+            "{millisecond}": datePart("SSS"), "{weekday}": datePart("EEE"),
+            "{timezone}": datePart("Z"), "{unix}": String(Int64(date.timeIntervalSince1970))
         ]
         var name = pattern
         // Replace tokens longest first so similarly-prefixed names remain stable.

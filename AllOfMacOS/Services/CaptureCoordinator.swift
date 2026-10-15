@@ -108,7 +108,7 @@ final class CaptureCoordinator {
                 generator.appliesPreferredTrackTransform = true
                 image = try? generator.copyCGImage(at: .zero, actualTime: nil)
                 kind = .videoRecording
-            } else if ["png", "jpg", "jpeg", "heic", "tiff", "tif"].contains(ext) {
+            } else if ["png", "jpg", "jpeg", "heic", "tiff", "tif", "webp"].contains(ext) {
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { continue }
                 image = CGImageSourceCreateImageAtIndex(source, 0, nil)
                 kind = .area
@@ -130,7 +130,7 @@ final class CaptureCoordinator {
 
     func chooseQuickAccessFiles() {
         let picker = NSOpenPanel()
-        picker.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .mpeg4Movie]
+        picker.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP, .mpeg4Movie]
         picker.allowsMultipleSelection = true
         picker.canChooseDirectories = false
         picker.prompt = "Add to Quick Access"
@@ -144,37 +144,74 @@ final class CaptureCoordinator {
 
     // MARK: - Entry points
 
-    /// Combined entry point for a one-off capture outcome. Deliberately does
-    /// not overwrite the user's persistent After Capture preference.
+    /// One selection surface switches between capture tools before committing.
     func captureAllInOne() {
-        guard !isCapturing else {
-            GestureHUD.shared.show(title: "Capture In Progress", detail: "Finish the active capture first.")
-            return
+        run(kind: .area) { [weak self] in
+            guard let self else { return nil }
+            let choice: (CGRect, IntegratedCaptureMode, CGWindowID?)? = await withCheckedContinuation { continuation in
+                let overlay = SelectionOverlayController(integrated: true) { [weak self] rect in
+                    guard let rect, let overlay = self?.selectionOverlay else {
+                        continuation.resume(returning: nil); return
+                    }
+                    continuation.resume(returning: (rect, overlay.selectedMode, overlay.selectedWindowID))
+                }
+                self.selectionOverlay = overlay
+                overlay.present()
+            }
+            guard let (rect, mode, windowID) = choice else { return nil }
+            switch mode {
+            case .recording:
+                try await ScreenRecordingService.shared.startRecording(globalRect: rect)
+                return nil
+            case .scrolling:
+                return (try await ScrollingCaptureService.shared.capture(area: rect), .scrolling)
+            case .window:
+                let windows = try await ScreenCaptureService.shared.capturableWindows()
+                guard let target = windows.first(where: { $0.windowID == windowID }) else {
+                    throw CaptureError.noWindowFound
+                }
+                return (try await ScreenCaptureService.shared.captureWindow(target), .window)
+            case .text:
+                let result = try await ScreenCaptureService.shared.captureArea(rect)
+                let text = try await TextRecognitionService.recognize(result.image,
+                    keepsLineBreaks: CaptureSettings.ocrKeepsLineBreaks)
+                guard !text.isEmpty else {
+                    GestureHUD.shared.show(title: "No Text Found", detail: "Try a different selection.")
+                    return nil
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                CaptureHistory.shared.add(result, url: nil)
+                GestureHUD.shared.show(title: "Text Copied", detail: "\(text.count) characters")
+                return nil
+            case .area, .fullscreen:
+                let result = try await ScreenCaptureService.shared.captureArea(rect)
+                if mode == .area {
+                    let saved = Self.areaRelativeToDisplay(rect)
+                    CaptureSettings.lastArea = saved.localRect
+                    CaptureSettings.lastAreaDisplayID = saved.displayID
+                }
+                if mode == .fullscreen {
+                    return (CaptureResult(image: result.image, globalRect: result.globalRect,
+                        scale: result.scale, kind: .fullscreen), .fullscreen)
+                }
+                return (result, .area)
+            }
         }
-        let alert = NSAlert()
-        alert.messageText = "All-In-One Capture"
-        alert.informativeText = "Choose what happens after selecting the screenshot area."
-        for title in ["Quick Access", "Copy", "Save", "Annotate", "Cancel"] {
-            alert.addButton(withTitle: title)
-        }
-        let response = alert.runModal()
-        let action: AfterCaptureAction?
-        switch response {
-        case .alertFirstButtonReturn: action = .showOverlay
-        case .alertSecondButtonReturn: action = .copyToClipboard
-        case .alertThirdButtonReturn: action = .saveToDisk
-        case NSApplication.ModalResponse(rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3):
-            action = .openAnnotate
-        default: action = nil
-        }
-        guard let action else { return }
-        captureArea(afterCaptureOverride: action)
     }
 
     func captureArea(afterCaptureOverride: AfterCaptureAction? = nil) {
         run(kind: .area, afterCaptureOverride: afterCaptureOverride) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
+            if self.selectionOverlay?.selectedMode == .window,
+               let id = self.selectionOverlay?.selectedWindowID {
+                let windows = try await ScreenCaptureService.shared.capturableWindows()
+                guard let window = windows.first(where: { $0.windowID == id }) else {
+                    throw CaptureError.noWindowFound
+                }
+                return (try await ScreenCaptureService.shared.captureWindow(window), .window)
+            }
             let result = try await ScreenCaptureService.shared.captureArea(rect)
             let saved = Self.areaRelativeToDisplay(rect)
             CaptureSettings.lastArea = saved.localRect

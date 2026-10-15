@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 import QuickLookUI
@@ -13,6 +14,14 @@ private final class ClipboardHistoryPanel: NSPanel {
 @MainActor
 final class ClipboardPanelState: ObservableObject {
     @Published var query = ""
+    @Published var recentSearches: [String] = []
+    func rememberSearch() {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        recentSearches.removeAll { $0 == value }
+        recentSearches.insert(value, at: 0)
+        recentSearches = Array(recentSearches.prefix(8))
+    }
     @Published var kind: ClipboardEntry.Kind?
     @Published var source: String?
     @Published var board: UUID?
@@ -152,6 +161,9 @@ final class ClipboardPanelController {
     private var outsideMonitor: Any?
     private var localClickMonitor: Any?
     private var pasteTask: Task<Void, Never>?
+    private let stackPasteMonitor = ClipboardStackPasteMonitor()
+    private var stackPasteTask: Task<Void, Never>?
+    private var pendingStackPastes: [(NSRunningApplication, Bool)] = []
     private var dismissalGeneration = 0
     private var previewNavigationGeneration = 0
     private var slidingOut = false
@@ -164,7 +176,7 @@ final class ClipboardPanelController {
         state.stackMode = true
         store.onCapture = { [weak self] id in
             guard let self, self.state.stackMode else { return }
-            if !self.state.stack.contains(id) { self.state.stack.append(id) }
+            self.state.stack.append(id)
         }
         if stackPanel == nil {
             let window = ClipboardStackPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 420),
@@ -186,10 +198,67 @@ final class ClipboardPanelController {
                                          y: bounds.maxY - panel.frame.height - 20))
         }
         stackPanel?.orderFrontRegardless()
+        stackPasteMonitor.onPaste = { [weak self] plainText in
+            guard let self, self.stackPanel?.isVisible == true, !self.isVisible,
+                  let target = NSWorkspace.shared.frontmostApplication,
+                  target.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+            self.store.poll()
+            // If a fresh copy is still being captured, the worker waits for it.
+            self.pendingStackPastes.append((target, plainText))
+            self.drainStackPastes()
+            return true
+        }
+        if !stackPasteMonitor.start() {
+            state.status = "Enable Accessibility access for repeated ⌘V in Paste Stack. Paste Next remains available."
+        }
+    }
+
+    private func drainStackPastes() {
+        guard stackPasteTask == nil else { return }
+        stackPasteTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { stackPasteTask = nil }
+            while !Task.isCancelled, !pendingStackPastes.isEmpty {
+                let (target, plainText) = pendingStackPastes.removeFirst()
+                await store.finishPendingCaptures()
+                guard !Task.isCancelled, stackPanel?.isVisible == true,
+                      !target.isTerminated,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
+                    pendingStackPastes.removeAll()
+                    return
+                }
+                state.stack.removeAll { id in !self.store.entries.contains { $0.id == id } }
+                let next = state.stack.first
+                do {
+                    if let next {
+                        // Write before replaying the intercepted event. Do not
+                        // pre-load the following item until this paste settles.
+                        _ = try store.write(entryIDs: [next], plainText: plainText || store.settings.plainText, playSound: false)
+                    }
+                    guard ClipboardStackPasteMonitor.sendPaste(to: target) else { continue }
+                    if let next {
+                        if state.stack.first == next { state.stack.removeFirst() }
+                        ClipboardAudioFeedback.paste()
+                        state.status = state.stack.isEmpty ? "Stack finished." : "\(state.stack.count) items remaining — press ⌘V."
+                    }
+                    // Consumers retrieve pasteboard data after processing their
+                    // event. Serialize rapid repeats instead of replacing it
+                    // immediately after posting the first key pair.
+                    try await Task.sleep(for: .milliseconds(180))
+                } catch {
+                    state.status = error.localizedDescription
+                    pendingStackPastes.removeAll()
+                    return
+                }
+            }
+        }
     }
 
     func stopStack() {
         state.stackMode = false
+        stackPasteMonitor.stop()
+        stackPasteTask?.cancel()
+        pendingStackPastes.removeAll()
         store.onCapture = nil
         stackPanel?.orderOut(nil)
     }
@@ -376,7 +445,7 @@ final class ClipboardPanelController {
     }
 
     func pasteNext() {
-        state.stack.removeAll { id in !store.entries.contains { $0.id == id } }
+        state.stack.removeAll { id in !self.store.entries.contains { $0.id == id } }
         guard let id = state.stack.first else { state.status = "The paste stack is empty."; return }
         // A stack shortcut may run with the panel closed, so its target is the
         // current foreground application, not an older panel session.
@@ -385,14 +454,14 @@ final class ClipboardPanelController {
             destination = front?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : front
         }
         paste(ids: [id], plainText: store.settings.plainText) { [weak self] in
-            self?.state.stack.removeAll { $0 == id }
+            if self?.state.stack.first == id { self?.state.stack.removeFirst() }
         }
     }
 
     func enqueueSelection() {
         for id in state.selectedIDs(in: store) where !state.stack.contains(id) { state.stack.append(id) }
         showStack()
-        state.status = "\(state.stack.count) items queued. Paste Next inserts one item at a time."
+        state.status = "\(state.stack.count) items queued. Press ⌘V in your destination to paste them in order."
     }
 
     func paste(ids: [UUID], plainText: Bool = false, directly: Bool = false,
@@ -443,6 +512,21 @@ final class ClipboardPanelController {
                 self?.state.status = "Destination unavailable or a modifier is held. Item copied without pasting."
             }
         }
+    }
+
+    func editEntry(_ item: ClipboardEntry) {
+        if item.kind == .image, let data = item.imageData,
+           let source = CGImageSourceCreateWithData(data as CFData, nil),
+           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            let capture = CaptureHistoryEntry(image: image, kind: .area, capturedAt: item.createdAt,
+                                             windowTitle: item.title, fileURL: nil)
+            hide()
+            AnnotationEditorController.shared.open(capture: capture, url: nil, onApply: { [weak self] image in
+                self?.store.editImage(entryID: item.id, image: image)
+            })
+        } else if let text = item.text, [.text, .link, .color].contains(item.kind) {
+            state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: text)
+        } else { openPreview(item) }
     }
 
     private func installMonitors() {
@@ -509,6 +593,13 @@ final class ClipboardPanelController {
         let shift = event.modifierFlags.contains(.shift)
         if event.keyCode == 53 { hide(); return true }
         if command && event.keyCode == 3 { state.searchFocusToken = UUID(); return true }
+        if command && !shift && event.keyCode == 6 {
+            let restored = store.undoDeletion()
+            state.selected = Set(restored)
+            state.focusedID = restored.first
+            state.status = restored.isEmpty ? "Nothing to restore." : "Restored \(restored.count) item(s)."
+            return true
+        }
         if command && event.keyCode == 45 {
             if shift {
                 state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "")
@@ -549,11 +640,7 @@ final class ClipboardPanelController {
             case .preview:
                 if !event.isARepeat { openPreview(item) }
             case .edit:
-                if let text = item.text, [.text, .link, .color].contains(item.kind) {
-                    state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: text)
-                } else {
-                    openPreview(item) // binary and file content opens safely, not as text
-                }
+                editEntry(item)
             case .rename:
                 state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
             }
@@ -588,7 +675,7 @@ final class ClipboardPanelController {
            event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
             let selectedIDs = state.selectedIDs(in: store)
             guard !selectedIDs.isEmpty else { return false }
-            for id in selectedIDs { store.delete(entryID: id) }
+            store.delete(entryIDs: selectedIDs)
             state.clearSelection()
             let remaining = state.results(in: store)
             if let index = entries.firstIndex(where: { selectedIDs.contains($0.id) }), !remaining.isEmpty {
@@ -625,6 +712,9 @@ struct ClipboardPanelView: View {
                 .frame(height: 4)
                 .help("Drag to resize clipboard panel")
             headerBar
+            if state.searchExpanded {
+                searchSuggestions
+            }
             carouselContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -674,6 +764,31 @@ struct ClipboardPanelView: View {
         return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
     }
 
+    private var searchSuggestions: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if store.indexingImages {
+                    ProgressView().controlSize(.mini)
+                    Text("Indexing image text…").font(.caption).foregroundStyle(.secondary)
+                }
+                if state.query.isEmpty {
+                    ForEach(state.recentSearches, id: \.self) { query in
+                        Button(query) { state.query = query }.buttonStyle(.bordered).controlSize(.mini)
+                    }
+                    ForEach(ClipboardEntry.Kind.allCases) { kind in
+                        Button { state.query = "type:\(kind.rawValue) " } label: {
+                            Label(kind.displayName, systemImage: kind.symbol)
+                        }.buttonStyle(.bordered).controlSize(.mini)
+                    }
+                } else {
+                    Text("\(entries.count) results").font(.caption).foregroundStyle(.secondary)
+                }
+                Text("Use quotes for phrases · from:Safari · board:Work · after:2026-01-01 · -exclude")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }.padding(.horizontal, 24).padding(.bottom, 7)
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+
     private var headerBar: some View {
         GeometryReader { geometry in
         HStack(spacing: 12) {
@@ -696,6 +811,7 @@ struct ClipboardPanelView: View {
                         .frame(width: min(300, max(140, geometry.size.width * 0.22)))
                         .accessibilityIdentifier("PasteStyleClipboardSearch")
                         .onSubmit {
+                            state.rememberSearch()
                             searchFocused = false
                             if let first = entries.first { state.select(first.id, in: entries) }
                         }
@@ -771,6 +887,11 @@ struct ClipboardPanelView: View {
                 Button("Add Selection to Stack") { controller.enqueueSelection() }
                     .disabled(state.selected.isEmpty)
                 Button(store.paused ? "Resume Clipboard History" : "Pause Clipboard History") { store.paused.toggle() }
+                Button("Undo Delete (⌘Z)") {
+                    let restored = store.undoDeletion()
+                    state.selected = Set(restored)
+                    state.focusedID = restored.first
+                }.disabled(!store.canUndoDeletion)
                 Button("New Text…") { state.editor = .init(operation: .newText, title: "New Text", text: "") }
                 Button("Close (Esc)") { controller.hide() }
                 Text("\(entries.count) items")
@@ -874,14 +995,6 @@ struct ClipboardPanelView: View {
                                selected: state.recentDays == days) { state.recentDays = days }
                 }
             }
-            Text("Device").font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Label("Mac", systemImage: "desktopcomputer").foregroundStyle(Color.accentColor)
-                Label("iPad", systemImage: "ipad").foregroundStyle(.tertiary)
-                Label("iPhone", systemImage: "iphone").foregroundStyle(.tertiary)
-            }.font(.caption)
-            Text("History is stored on this Mac. Synced device metadata is unavailable.")
-                .font(.caption2).foregroundStyle(.secondary)
             Text("Pinboards").font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 112))], spacing: 6) {
@@ -1405,6 +1518,13 @@ private struct ClipboardCardView: View {
         }
         Button("Preview…") { controller.openPreview(entry) }
         Button("Rename…") { state.editor = .init(operation: .renameEntry(entry.id), title: "Rename Item", text: entry.title) }
+        if entry.kind == .image {
+            Button("Edit Image…") { controller.editEntry(entry) }
+            Button("Copy Text from Image") {
+                do { try store.copyRecognizedText(entryID: entry.id); state.status = "Image text copied." }
+                catch { state.status = error.localizedDescription }
+            }.disabled(entry.recognizedText?.isEmpty != false)
+        }
         if let text = entry.text { Button("Edit Text…") { state.editor = .init(operation: .editEntry(entry.id), title: "Edit Text", text: text) } }
         Button("Duplicate") { _ = store.duplicate(entryID: entry.id) }
         if !entry.fileURLs.isEmpty { Button("Reveal in Finder") { if !PresetManager.isUIPreview { NSWorkspace.shared.activateFileViewerSelecting(entry.fileURLs) } } }
@@ -1526,6 +1646,10 @@ private struct ClipboardPreviewSheet: View {
         guard !discardRequested else { return false }
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         if event.keyCode == 53 { requestClose(); return true }
+        if flags == .command, event.keyCode == 14, current.kind == .image {
+            if !event.isARepeat { controller.editEntry(current) }
+            return true
+        }
         if flags == .command, event.keyCode == 14, canEditText {
             if !event.isARepeat { editing ? saveEditing() : beginEditing() }
             return true
@@ -1614,6 +1738,13 @@ private struct ClipboardPreviewSheet: View {
                     .help("Copy Item (⌘C)").disabled(editing)
                 ClipboardPreviewShareButton(entry: current).frame(width: 26, height: 26)
                     .disabled(editing)
+                if current.kind == .image {
+                    Button("Copy Text") {
+                        do { try store.copyRecognizedText(entryID: current.id); state.status = "Image text copied." }
+                        catch { state.status = error.localizedDescription }
+                    }.disabled(current.recognizedText?.isEmpty != false).help("Copy recognized image text")
+                    Button("Edit Image") { controller.editEntry(current) }.help("Edit Image (⌘E)")
+                }
                 if canEditText {
                     Button(editing ? "Save" : "Edit") {
                         editing ? saveEditing() : beginEditing()
@@ -1636,23 +1767,7 @@ private struct ClipboardPreviewSheet: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(TransparencyGrid())
                 } else if !current.fileURLs.isEmpty {
-                    if current.fileURLs.count == 1, let url = current.fileURLs.first,
-                       FileManager.default.fileExists(atPath: url.path) {
-                        ClipboardFileQuickLookView(url: url)
-                    } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 14) {
-                                ForEach(current.fileURLs, id: \.self) { url in
-                                    HStack {
-                                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 32, height: 32)
-                                        Text(url.lastPathComponent).textSelection(.enabled)
-                                        Spacer()
-                                        Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                                    }
-                                }
-                            }.padding(14).background(NativeScrollChrome(.overlay))
-                        }
-                    }
+                    ClipboardFilesPreview(urls: current.fileURLs)
                 } else {
                     ScrollView(.vertical) {
                         Text(current.text ?? current.previewText).font(.system(size: 13)).lineSpacing(2)
@@ -1918,5 +2033,53 @@ private struct ClipboardVisibleCardsKey: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, newest in newest })
+    }
+}
+
+/// Every referenced file gets the same Quick Look surface; multi-file clips
+/// retain their order and let the user navigate without leaving the preview.
+@MainActor
+private struct ClipboardFilesPreview: View {
+    let urls: [URL]
+    @State private var selected = 0
+    private var current: URL? { urls.indices.contains(selected) ? urls[selected] : urls.first }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let url = current {
+                if urls.count > 1 {
+                    HStack(spacing: 10) {
+                        Button { selected = max(0, selected - 1) } label: { Image(systemName: "chevron.left") }
+                            .disabled(selected == 0).help("Previous File")
+                        Picker("File", selection: $selected) {
+                            ForEach(Array(urls.enumerated()), id: \.offset) { index, item in
+                                Text("\(index + 1). \(item.lastPathComponent)").tag(index)
+                            }
+                        }.labelsHidden()
+                        Text("\(selected + 1) / \(urls.count)").font(.caption).foregroundStyle(.secondary)
+                        Button { selected = min(urls.count - 1, selected + 1) } label: { Image(systemName: "chevron.right") }
+                            .disabled(selected >= urls.count - 1).help("Next File")
+                    }.padding(10)
+                    Divider()
+                }
+                if FileManager.default.fileExists(atPath: url.path) {
+                    ClipboardFileQuickLookView(url: url).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc.badge.ellipsis").font(.largeTitle)
+                        Text("File is no longer at its original location").font(.headline)
+                        Text(url.path).font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
+                    }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                HStack {
+                    Text(url.lastPathComponent).font(.caption).lineLimit(1)
+                    Spacer()
+                    Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    Button("Open") { NSWorkspace.shared.open(url) }
+                        .disabled(!FileManager.default.fileExists(atPath: url.path))
+                }.padding(10)
+            }
+        }
+        .onChange(of: urls) { _, _ in selected = 0 }
     }
 }

@@ -48,6 +48,7 @@ final class MediaHistoryOverlayController: NSObject {
 
     func present() {
         guard !isPresented else { return }
+        CaptureHistory.shared.applyRetention()
 
         let targetScreen = NSScreen.screens.first(where: {
             $0.frame.contains(NSEvent.mouseLocation)
@@ -250,7 +251,7 @@ struct MediaHistoryOverlayView: View {
         case .scrolling:
             result = history.entries.filter { $0.kind == .scrolling }
         case .pinned:
-            result = history.entries
+            result = history.entries.filter { $0.isPinned }
         }
 
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -374,7 +375,7 @@ struct MediaHistoryOverlayView: View {
             .background(Color.primary.opacity(0.065), in: Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
-                    ForEach([MediaHistoryFilter.all, .screenshots, .recordings, .scrolling]) { filter in
+                    ForEach(MediaHistoryFilter.allCases) { filter in
                         Button { selectedFilter = filter } label: {
                             Label(filter.rawValue, systemImage: filter.icon)
                                 .font(.system(size: 12, weight: selectedFilter == filter ? .semibold : .regular))
@@ -386,6 +387,21 @@ struct MediaHistoryOverlayView: View {
             }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: 470)
             Spacer(minLength: 0)
             Menu {
+                Menu("Keep Unpinned Captures") {
+                    ForEach([1, 7, 14, 30, 0], id: \.self) { days in
+                        Button {
+                            history.retentionDays = days
+                        } label: {
+                            if history.retentionDays == days {
+                                Label(days == 0 ? "Until Capacity Limit" : "\(days) days", systemImage: "checkmark")
+                            } else {
+                                Text(days == 0 ? "Until Capacity Limit" : "\(days) days")
+                            }
+                        }
+                    }
+                }
+                Button("Clear Unpinned Captures", role: .destructive) { history.removeUnpinned() }
+                Divider()
                 Button("Clear All History…", role: .destructive) { showingClearConfirmation = true }
                     .disabled(history.entries.isEmpty)
             } label: { Image(systemName: "ellipsis").frame(width: 25, height: 28) }
@@ -462,6 +478,7 @@ struct MediaHistoryOverlayView: View {
             Text("\(filteredEntries.count) captures").foregroundStyle(.secondary)
             Spacer()
             if let entry = filteredEntries.first(where: { $0.id == selectedID }) {
+                Button(entry.isPinned ? "Unpin History" : "Keep in History") { history.togglePin(entry) }
                 Button("Preview") { previewEntry = entry }.help("Preview (Space)")
                 Button(entry.kind == .videoRecording ? "Edit Recording" : "Annotate") { annotateEntry(entry) }
                     .help("Edit (⌘E)")
@@ -655,10 +672,13 @@ private struct CaptureHistoryCard: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(entry.displayName)
+            HStack(spacing: 4) {
+                if entry.isPinned { Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(Color.accentColor) }
+                Text(entry.displayName)
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
+            }
             HStack(spacing: 4) {
                 Text(relativeTimeString(entry.capturedAt))
                     .font(.system(size: 10.5))
@@ -713,6 +733,7 @@ private struct CaptureHistoryCard: View {
             }
         }
         Divider()
+        Button(entry.isPinned ? "Unpin from History" : "Keep in History") { CaptureHistory.shared.togglePin(entry) }
         Button("Remove from History", role: .destructive, action: onDelete)
     }
 

@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// changing a setting takes effect on the next capture without a restart — the
 /// capture path is short-lived and there is nothing to invalidate.
 enum RecordingAudioSource: String, CaseIterable, Identifiable {
-    case off, computer, microphone
+    case off, computer, microphone, computerAndMicrophone
 
     var id: String { rawValue }
     var displayName: String {
@@ -16,12 +16,13 @@ enum RecordingAudioSource: String, CaseIterable, Identifiable {
         case .off: return "Off"
         case .computer: return "Computer Audio"
         case .microphone: return "Microphone"
+        case .computerAndMicrophone: return "Computer + Microphone"
         }
     }
 }
 
 enum CaptureFormat: String, CaseIterable, Identifiable, Codable {
-    case png, jpeg, heic, tiff
+    case png, jpeg, heic, tiff, webp
 
     var id: String { rawValue }
 
@@ -31,6 +32,7 @@ enum CaptureFormat: String, CaseIterable, Identifiable, Codable {
         case .jpeg: return "JPEG"
         case .heic: return "HEIC"
         case .tiff: return "TIFF"
+        case .webp: return "WebP"
         }
     }
 
@@ -40,6 +42,7 @@ enum CaptureFormat: String, CaseIterable, Identifiable, Codable {
         case .jpeg: return .jpeg
         case .heic: return .heic
         case .tiff: return .tiff
+        case .webp: return UTType("org.webmproject.webp") ?? .image
         }
     }
 
@@ -49,11 +52,12 @@ enum CaptureFormat: String, CaseIterable, Identifiable, Codable {
         case .jpeg: return "jpg"
         case .heic: return "heic"
         case .tiff: return "tiff"
+        case .webp: return "webp"
         }
     }
 
     /// JPEG and HEIC are lossy, so they need an explicit quality.
-    var isLossy: Bool { self == .jpeg || self == .heic }
+    var isLossy: Bool { self == .jpeg || self == .heic || self == .webp }
 }
 
 /// Where the Quick Access Overlay parks itself on screen.
@@ -342,7 +346,7 @@ enum CaptureSettings {
 
     /// ScreenCaptureKit system audio is opt-in; older installations remain silent.
     static var recordSystemAudio: Bool {
-        get { recordingAudioSource == .computer }
+        get { recordingAudioSource == .computer || recordingAudioSource == .computerAndMicrophone }
         set { recordingAudioSource = newValue ? .computer : .off }
     }
 
@@ -355,8 +359,17 @@ enum CaptureSettings {
         }
         set {
             d.set(newValue.rawValue, forKey: Key.recordingAudioSource)
-            d.set(newValue == .computer, forKey: Key.recordSystemAudio)
+            d.set(newValue == .computer || newValue == .computerAndMicrophone, forKey: Key.recordSystemAudio)
         }
+    }
+
+    static var recordingCameraOverlay: Bool {
+        get { d.bool(forKey: "AOMCaptureRecordingCameraOverlay") }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingCameraOverlay") }
+    }
+    static var recordingKeystrokeOverlay: Bool {
+        get { d.bool(forKey: "AOMCaptureRecordingKeystrokeOverlay") }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingKeystrokeOverlay") }
     }
 
     static var recordingFPS: Int {

@@ -188,15 +188,90 @@ enum RecordingExportService {
         }
     }
 
-    /// Export the requested span as a GIF, capped at 30 seconds / 10 fps to keep
+    /// Mix separately captured microphone/system tracks into one universally
+    /// playable AAC track. Replace only after the full export has completed.
+    static func mixRecordedAudio(in source: URL) async throws {
+        let asset = AVURLAsset(url: source)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard tracks.count > 1 else { return }
+        let composition = AVMutableComposition()
+        let duration = try await asset.load(.duration)
+        let range = CMTimeRange(start: .zero, duration: duration)
+        for original in try await asset.loadTracks(withMediaType: .video) {
+            guard let track = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw ExportError.failed("Could not create the video track.")
+            }
+            try track.insertTimeRange(range, of: original, at: .zero)
+            track.preferredTransform = try await original.load(.preferredTransform)
+        }
+        var parameters: [AVMutableAudioMixInputParameters] = []
+        for original in tracks {
+            guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw ExportError.failed("Could not create the mixed audio track.")
+            }
+            // A sound source may begin a little after the first screen frame.
+            let available = try await original.load(.timeRange)
+            let segment = CMTimeRangeGetIntersection(range, otherRange: available)
+            if segment.duration > .zero { try track.insertTimeRange(segment, of: original, at: segment.start) }
+            let parameter = AVMutableAudioMixInputParameters(track: track)
+            parameter.setVolume(0.75, at: .zero)
+            parameters.append(parameter)
+        }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = parameters
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            throw ExportError.failed("Audio mixing is unavailable.")
+        }
+        let temporary = source.deletingLastPathComponent().appendingPathComponent(".mixed-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        exporter.outputURL = temporary; exporter.outputFileType = .mp4
+        exporter.audioMix = mix
+        try await complete(exporter)
+        _ = try FileManager.default.replaceItemAt(source, withItemAt: temporary)
+    }
+
+    /// Fragmented MP4 files keep completed fragments usable after a stream or
+    /// process interruption. Export a new movie; retain the original fragments.
+    static func recoverInterrupted(source: URL) async throws -> URL {
+        let asset = AVURLAsset(url: source)
+        let length = try await asset.load(.duration)
+        guard CMTimeGetSeconds(length).isFinite, length > .zero,
+              !(try await asset.loadTracks(withMediaType: .video)).isEmpty else {
+            throw ExportError.failed("No complete movie fragment was saved.")
+        }
+        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            throw ExportError.failed("These fragments cannot be recovered.")
+        }
+        let target = outputURL(for: source, suffix: "Recovered", extension: "mp4")
+        exporter.outputURL = target; exporter.outputFileType = .mp4
+        do {
+            try await complete(exporter)
+            try await mixRecordedAudio(in: target)
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
+    }
+
+    private static func complete(_ exporter: AVAssetExportSession) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            exporter.exportAsynchronously {
+                if exporter.status == .completed { continuation.resume() }
+                else { continuation.resume(throwing: exporter.error ?? ExportError.failed("The export did not complete.")) }
+            }
+        }
+    }
+
+    /// Export the requested span as a GIF, capped at 120 seconds / 30 fps to keep
     /// memory and output file sizes bounded. Work runs off the main event loop.
     static func gif(source: URL, start: Double, end: Double, fps: Int = 8,
                     studio: AOMStudioSettings = AOMStudioSettings()) async throws -> URL {
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let safeEnd = CMTimeGetSeconds(range.end)
-        guard safeEnd - start <= 30.05, (1...10).contains(fps) else {
-            throw ExportError.failed("GIFs support up to 30 seconds at 1–10 fps.")
+        guard safeEnd - start <= 120.5, (1...30).contains(fps) else {
+            throw ExportError.failed("GIFs support up to 120 seconds at 1–30 fps.")
         }
         return try await Task.detached(priority: .userInitiated) {
             try generateGIF(source: source, start: start, end: safeEnd, fps: fps, studio: studio)
@@ -220,9 +295,9 @@ enum RecordingExportService {
                 request.finish(with: result, context: nil)
             })
         }
-        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
-        let frames = min(300, max(1, Int(((end - start) * Double(fps)).rounded(.down))))
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5 / Double(fps), preferredTimescale: 600)
+        let frames = max(1, Int(((end - start) * Double(fps)).rounded(.up)))
         guard let destination = CGImageDestinationCreateWithURL(temporary as CFURL,
                                                                 UTType.gif.identifier as CFString,
                                                                 frames, nil) else {
@@ -239,8 +314,11 @@ enum RecordingExportService {
             let sample = min(end - 0.001, start + Double(index) / Double(fps))
             guard sample >= 0 else { continue }
             let time = CMTime(seconds: sample, preferredTimescale: 600)
-            let frame = try generator.copyCGImage(at: time, actualTime: nil)
-            CGImageDestinationAddImage(destination, frame, properties as CFDictionary)
+            try Task.checkCancellation()
+            try autoreleasepool {
+                let frame = try generator.copyCGImage(at: time, actualTime: nil)
+                CGImageDestinationAddImage(destination, frame, properties as CFDictionary)
+            }
         }
         guard CGImageDestinationFinalize(destination) else {
             throw ExportError.failed("Failed to finalize GIF frames.")

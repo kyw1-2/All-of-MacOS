@@ -128,19 +128,22 @@ struct RecordingExportEditor: View {
                     } label: {
                         Label("Export GIF", systemImage: "photo.stack")
                     }
-                    .disabled(isExporting || !validRange || end - start > 30)
+                    .disabled(isExporting || !validRange || end - start > 120)
 
                     Picker("GIF FPS", selection: $fps) {
                         Text("5").tag(5)
                         Text("8").tag(8)
                         Text("10").tag(10)
+                        Text("15").tag(15)
+                        Text("20").tag(20)
+                        Text("30").tag(30)
                     }
                     .frame(width: 110)
                     .disabled(isExporting)
                 }
 
-                if end - start > 30 {
-                    Text("GIF exports support clips of up to 30 seconds. Trim the range first.")
+                if end - start > 120 {
+                    Text("GIF exports support clips of up to 120 seconds. Trim the range first.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }

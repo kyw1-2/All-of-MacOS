@@ -30,6 +30,9 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     var lastCopiedAt: Date
     var pinboardIDs: Set<UUID>
     var items: [[String: Data]]
+    /// Optional fields keep older clipboard archives readable. OCR stays on device.
+    var recognizedText: String?
+    var recognizedImageDigest: String?
 
     init(id: UUID = UUID(), title: String, text: String? = nil, kind: Kind = .text,
          sourceName: String? = nil, sourceBundleID: String? = nil, createdAt: Date = Date(),
@@ -44,6 +47,8 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
         self.lastCopiedAt = lastCopiedAt ?? createdAt
         self.pinboardIDs = pinboardIDs
         self.items = items
+        self.recognizedText = nil
+        self.recognizedImageDigest = nil
     }
 
     var previewText: String {

@@ -5,10 +5,10 @@ import AppKit
 @MainActor
 final class ClipboardShortcuts: ObservableObject {
     enum Command: String, CaseIterable, Identifiable {
-        case history, stack, next
+        case history, stack, next, pause
         var id: String { rawValue }
         var title: String {
-            switch self { case .history: return "Clipboard History"; case .stack: return "Paste Stack"; case .next: return "Paste Next in Stack" }
+            switch self { case .history: return "Clipboard History"; case .stack: return "Paste Stack"; case .next: return "Paste Next in Stack"; case .pause: return "Pause / Resume Clipboard History" }
         }
         var initial: KeyboardShortcut? {
             self == .history ? KeyboardShortcut(keyCode: 9, modifiers: [.command, .shift]) : nil
@@ -52,6 +52,7 @@ final class ClipboardShortcuts: ObservableObject {
             case .history: ClipboardPanelController.shared.toggle()
             case .stack: ClipboardPanelController.shared.showStack()
             case .next: ClipboardPanelController.shared.pasteNext()
+            case .pause: ClipboardStore.shared.paused.toggle()
             }
         }
         return true

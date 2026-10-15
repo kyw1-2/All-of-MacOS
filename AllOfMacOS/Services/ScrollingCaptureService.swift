@@ -3,86 +3,23 @@ import AppKit
 import CoreGraphics
 import ScreenCaptureKit
 
-/// Scrolling capture: repeatedly scrolls the window under a fixed region and
-/// stitches the frames into one tall image.
-///
-/// The approach is the one CleanShot describes in its own guidance — scroll a
-/// little at a time, grab each frame, and detect where the new frame overlaps
-/// the accumulated image. It is deliberately conservative: if the overlap cannot
-/// be found with confidence, the scroll is retried and the capture ends rather
-/// than appending a misaligned band.
-///
-/// The known failure modes are the ones CleanShot's own tips name: scrolling on
-/// a diagonal, scrolling too fast, and scrolling back up. Each of those makes
-/// the overlap ambiguous, so each is detected and the capture stops with what it
-/// has instead of producing a corrupt image.
+/// Interactive scrolling capture and conservative image overlap matching.
+/// The session can observe manual scrolling or generate small automatic steps.
+/// Unmatched movement is never appended; the session leaves finishing to the user.
 @MainActor
 final class ScrollingCaptureService {
     static let shared = ScrollingCaptureService()
     private init() {}
 
-    enum Direction { case vertical, horizontal }
+    enum Direction: Hashable { case vertical, horizontal }
 
-    /// Scrolls the window under `area` and returns the stitched result.
-    ///
-    /// - Parameter area: the fixed screen region to capture, in global top-left
-    ///   origin points. The caller picks it with the normal selection overlay.
-    func capture(area: CGRect, maxFrames: Int = 60, direction: Direction = .vertical) async throws -> CaptureResult {
+    /// The manual session keeps the target app interactive; automatic scrolling
+    /// is an explicit choice in the same preview and controls surface.
+    func capture(area: CGRect, maxFrames: Int = 300, direction: Direction = .vertical) async throws -> CaptureResult {
         guard area.height >= 40, area.width >= 40 else { throw CaptureError.areaTooSmall }
-
-        var frames: [CGImage] = []
-        var accumulator: CGImage?
-
-        // Seed with the first frame so the overlap search always has a reference.
-        let first = try await ScreenCaptureService.shared.captureArea(area)
-        frames.append(first.image)
-        accumulator = first.image
-
-        var consecutiveFailures = 0
-        var previousOffset: CGFloat?
-
-        while frames.count < maxFrames {
-            let scrolled = try await scrollOnce(at: area, direction: direction)
-            guard scrolled else { break }
-
-            // Give the window time to finish its scroll animation before reading
-            // pixels, otherwise a frame catches the content mid-flight.
-            try await Task.sleep(nanoseconds: 220_000_000)
-
-            let next = try await ScreenCaptureService.shared.captureArea(area)
-            guard let current = accumulator else { break }
-
-            // A frame identical to the last one means the scroll did nothing —
-            // the region is not scrollable, or it is already at the end.
-            if let result = Self.appendFrame(next.image,
-                                              after: frames.last ?? first.image,
-                                              to: current, direction: direction) {
-                let offset = CGFloat(result.shift)
-                // Scrolling backwards is the "started scrolling up" case. Stop
-                // rather than appending a band that duplicates earlier content.
-                if let previousOffset, offset.sign != previousOffset.sign {
-                    break
-                }
-                previousOffset = offset
-                accumulator = result.image
-                frames.append(next.image)
-                consecutiveFailures = 0
-            } else {
-                consecutiveFailures += 1
-                // Two frames in a row with no detectable shift means the content
-                // stopped moving, which is the end of the scrollable range.
-                if consecutiveFailures >= 2 { break }
-            }
-        }
-
-        guard let stitched = accumulator, frames.count > 1 else {
-            // Only one frame: the region did not scroll. Return it rather than
-            // failing, since a single frame is still what the user selected.
-            let single = frames.first ?? first.image
-            return CaptureResult(image: single, globalRect: area,
-                                 scale: first.scale, kind: .scrolling)
-        }
-        return CaptureResult(image: stitched, globalRect: area, scale: first.scale, kind: .scrolling)
+        let session = ScrollingCaptureSession(area: area, direction: direction,
+                                             maxFrames: maxFrames)
+        return try await session.run()
     }
 
     /// Sends one scroll-wheel gesture to the pointer's current location.
@@ -90,7 +27,7 @@ final class ScrollingCaptureService {
     /// A synthetic wheel event is used rather than an AppleScript keystroke
     /// because it works on any app without accessibility scripting permission and
     /// respects the app's own scroll physics.
-    private func scrollOnce(at area: CGRect, direction: Direction) async throws -> Bool {
+    func scrollOnce(at area: CGRect, direction: Direction) async throws -> Bool {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return false }
         // Aim at the centre of the captured region so the scroll lands on the
         // intended window even if the pointer has drifted.
@@ -102,10 +39,12 @@ final class ScrollingCaptureService {
 
         // A short, smooth scroll: a large jump would move past the overlap the
         // stitcher needs to find.
+        let edge = direction == .vertical ? area.height : area.width
+        let step = Int32(max(8, min(120, edge / 5)))
         guard let scroll = CGEvent(scrollWheelEvent2Source: source, units: .pixel,
                                    wheelCount: 2,
-                                   wheel1: direction == .vertical ? -120 : 0,
-                                   wheel2: direction == .horizontal ? -120 : 0,
+                                   wheel1: direction == .vertical ? -step : 0,
+                                   wheel2: direction == .horizontal ? -step : 0,
                                    wheel3: 0) else { return false }
         scroll.location = centre
         scroll.post(tap: .cghidEventTap)
@@ -127,71 +66,61 @@ final class ScrollingCaptureService {
     ///
     /// Not actor-isolated: this is pure work over immutable images.
     nonisolated static func verticalShift(from current: CGImage, to next: CGImage) -> CGFloat? {
-        guard current.width == next.width, current.height == next.height else { return nil }
-        guard let a = grayscaleRows(current), let b = grayscaleRows(next) else { return nil }
-
-        let height = a.count
-        let width = a.first?.count ?? 0
-        guard height > 8, width > 8 else { return nil }
-
-        // Probe with the top of the new frame and look for it further down the
-        // accumulated one, which is where the overlap sits after a downward scroll.
-        let probeHeight = min(height / 2, 200)
-        let probe = Array(b[0..<probeHeight])
-
-        var bestOffset = 0
-        var bestScore = Int.max
-        // Search offsets from a few rows up to nearly a full frame.
-        for offset in stride(from: 4, to: height - probeHeight, by: 2) {
-            let candidate = Array(a[offset..<(offset + probeHeight)])
-            let score = meanAbsoluteDifference(probe, candidate)
-            if score < bestScore { bestScore = score; bestOffset = offset }
-        }
-        guard bestScore < 6 else { return nil } // 0…255 scale; 6 is a tight match
-
-        // Refine around the coarse winner at single-row resolution.
-        var refined = bestOffset
-        var refinedScore = bestScore
-        for offset in max(4, bestOffset - 3)...min(height - probeHeight, bestOffset + 3) where offset != bestOffset {
-            let candidate = Array(a[offset..<(offset + probeHeight)])
-            let score = meanAbsoluteDifference(probe, candidate)
-            if score < refinedScore { refinedScore = score; refined = offset }
-        }
-        // The search runs on a downsampled bitmap. Convert the detected
-        // shift back to original pixels before extracting the appended band.
+        guard current.width == next.width, current.height == next.height,
+              let a = grayscaleRows(current), let b = grayscaleRows(next),
+              let shift = matchedShift(a, b) else { return nil }
         let samplingScale = min(1, CGFloat(160) / CGFloat(current.width))
-        return (CGFloat(refined) / samplingScale).rounded()
+        return (CGFloat(shift) / samplingScale).rounded()
     }
 
-    /// Rightward scrolling matches grayscale columns instead of rows. The
-    /// subsampled search result is converted back to native Retina pixels.
     nonisolated static func horizontalShift(from current: CGImage, to next: CGImage) -> CGFloat? {
         guard current.width == next.width, current.height == next.height,
-              let rowsA = grayscaleRows(current), let rowsB = grayscaleRows(next),
-              rowsA.count == rowsB.count, let width = rowsA.first?.count,
-              width > 12, rowsA.count > 8 else { return nil }
-        let columnsA = (0..<width).map { column in rowsA.map { $0[column] } }
-        let columnsB = (0..<width).map { column in rowsB.map { $0[column] } }
-        let probeWidth = min(width / 2, 200)
-        guard probeWidth > 4, width - probeWidth > 5 else { return nil }
-        let probe = Array(columnsB[0..<probeWidth])
-        var best = 0
-        var bestScore = Int.max
-        for offset in stride(from: 4, to: width - probeWidth, by: 2) {
-            let score = meanAbsoluteDifference(probe,
-                Array(columnsA[offset..<(offset + probeWidth)]))
-            if score < bestScore { bestScore = score; best = offset }
-        }
-        guard bestScore < 6 else { return nil }
-        var refined = best
-        for offset in max(4, best - 3)...min(width - probeWidth, best + 3)
-            where offset != best {
-            let score = meanAbsoluteDifference(probe,
-                Array(columnsA[offset..<(offset + probeWidth)]))
-            if score < bestScore { bestScore = score; refined = offset }
-        }
+              let a = grayscaleRows(current), let b = grayscaleRows(next),
+              let width = a.first?.count else { return nil }
+        let columnsA = (0..<width).map { column in a.map { $0[column] } }
+        let columnsB = (0..<width).map { column in b.map { $0[column] } }
+        guard let shift = matchedShift(columnsA, columnsB) else { return nil }
         let samplingScale = min(1, CGFloat(160) / CGFloat(current.width))
-        return (CGFloat(refined) / samplingScale).rounded()
+        return (CGFloat(shift) / samplingScale).rounded()
+    }
+
+    /// Match an interior strip so a small fixed toolbar or scrollbar does not
+    /// dominate the match. A real shift must improve on the zero-shift baseline;
+    /// flat or unchanged frames cannot fabricate extra rows of content.
+    nonisolated private static func matchedShift(_ previous: [[UInt8]], _ next: [[UInt8]]) -> Int? {
+        guard previous.count == next.count, previous.count > 16,
+              let width = previous.first?.count, width > 8 else { return nil }
+        let height = previous.count
+        let margin = max(2, height / 6)
+        let probeHeight = min(120, max(6, height / 3))
+        let maximum = height - margin - probeHeight - 1
+        guard maximum >= 2 else { return nil }
+        let sideMargin = max(1, width / 12)
+        func score(_ shift: Int) -> Double {
+            var total = 0
+            var count = 0
+            for row in margin..<(margin + probeHeight) {
+                for column in stride(from: sideMargin, to: width - sideMargin, by: 2) {
+                    total += abs(Int(next[row][column]) - Int(previous[row + shift][column]))
+                    count += 1
+                }
+            }
+            return Double(total) / Double(max(1, count))
+        }
+        let unchangedScore = score(0)
+        guard unchangedScore > 1.25 else { return nil }
+        var best = 1
+        var bestScore = Double.greatestFiniteMagnitude
+        for shift in stride(from: 1, through: maximum, by: 2) {
+            let candidate = score(shift)
+            if candidate < bestScore { bestScore = candidate; best = shift }
+        }
+        for shift in max(1, best - 2)...min(maximum, best + 2) {
+            let candidate = score(shift)
+            if candidate < bestScore { bestScore = candidate; best = shift }
+        }
+        guard bestScore < 7, bestScore < unchangedScore * 0.65 else { return nil }
+        return best
     }
 
     /// Extend the accumulated image while matching against the *most recent

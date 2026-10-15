@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Unsupported parameters fail closed rather than silently changing capture behavior.
 enum AOMCaptureDeepLink: Equatable {
     case allInOne, captureArea, captureFullscreen, captureWindow, previousArea
-    case scrollingCapture, selfTimer, recordScreen
+    case scrollingCapture, selfTimer, recordScreen, pauseRecording, resumeRecording, stopRecording, openProject(URL)
     case captureText(keepsLineBreaks: Bool)
     case openHistory, restoreRecentlyClosed, openSettings
     case pin, openAnnotate, openFromClipboard, addQuickAccessOverlay(URL)
@@ -34,6 +34,13 @@ enum AOMCaptureDeepLink: Equatable {
         case "scrolling-capture" where exact(): return .scrollingCapture
         case "self-timer" where exact(): return .selfTimer
         case "record-screen" where exact(): return .recordScreen
+        case "pause-recording" where exact(): return .pauseRecording
+        case "resume-recording" where exact(): return .resumeRecording
+        case "stop-recording" where exact(): return .stopRecording
+        case "open-project" where exact(["filepath"]):
+            guard let path = params["filepath"], path.hasPrefix("/"), !path.contains("\0"),
+                  URL(fileURLWithPath: path).pathExtension.lowercased() == "aomannotation" else { return nil }
+            return .openProject(URL(fileURLWithPath: path))
         case "capture-text" where exact(): return .captureText(keepsLineBreaks: true)
         case "capture-text" where exact(["linebreaks"]):
             guard let value = params["linebreaks"], ["true", "false"].contains(value) else { return nil }
@@ -46,7 +53,7 @@ enum AOMCaptureDeepLink: Equatable {
         case "open-from-clipboard" where exact(): return .openFromClipboard
         case "add-quick-access-overlay" where exact(["filepath"]):
             guard let path = params["filepath"], path.hasPrefix("/"), !path.contains("\0"),
-                  ["png", "jpg", "jpeg", "heic", "tif", "tiff", "mp4"].contains(
+                  ["png", "jpg", "jpeg", "heic", "tif", "tiff", "webp", "mp4"].contains(
                     URL(fileURLWithPath: path).pathExtension.lowercased()) else { return nil }
             return .addQuickAccessOverlay(URL(fileURLWithPath: path))
         default: return nil
@@ -86,6 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !PresetManager.isUIPreview {
             requestAccessibilityPermissions()
             GestureHUD.shared.start()
+            NSApp.servicesProvider = self
+            NSUpdateDynamicServices()
+            Task { @MainActor in ScreenRecordingService.shared.offerInterruptedRecordingRecovery() }
         }
         // Monitor start-up is owned by AppState (see AppState.init) — it runs
         // whether or not a window is ever shown, which is what an LSUIElement
@@ -104,6 +114,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !PresetManager.isUIPreview else { return }
         for link in urls.prefix(8) {
+            if link.isFileURL {
+                Task { @MainActor in self.openLocalDocument(link) }
+                continue
+            }
             guard let command = AOMCaptureDeepLink.parse(link) else { continue }
             Task { @MainActor [weak self] in
                 self?.handleCaptureDeepLink(command)
@@ -122,6 +136,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .scrollingCapture: CaptureCoordinator.shared.captureScrolling()
         case .selfTimer: CaptureCoordinator.shared.captureWithSelfTimer()
         case .recordScreen: ScreenRecordingService.shared.promptAndStartRecording()
+        case .pauseRecording: ScreenRecordingService.shared.pauseRecording()
+        case .resumeRecording: ScreenRecordingService.shared.resumeRecording()
+        case .stopRecording:
+            Task { @MainActor in
+                do { _ = try await ScreenRecordingService.shared.stopRecording() }
+                catch { GestureHUD.shared.show(title: "Recording", detail: error.localizedDescription) }
+            }
+        case .openProject(let url): AnnotationEditorController.shared.openProject(at: url)
         case .captureText(let keepsLineBreaks):
             CaptureCoordinator.shared.captureText(keepsLineBreaks: keepsLineBreaks)
         case .openHistory: CaptureHistoryWindowController.shared.present()
@@ -145,6 +167,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             CaptureCoordinator.shared.importQuickAccessFiles([url])
+        }
+    }
+
+    @MainActor
+    private func openLocalDocument(_ url: URL) {
+        if url.pathExtension.lowercased() == "aomannotation" {
+            AnnotationEditorController.shared.openProject(at: url)
+            return
+        }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? Int.max) <= 200_000_000,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 32768, height <= 32768,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        let entry = CaptureHistoryEntry(image: image, kind: .area, capturedAt: Date(),
+                                        windowTitle: url.lastPathComponent, fileURL: url)
+        AnnotationEditorController.shared.open(capture: entry, url: url)
+    }
+
+    @objc func annotateFiles(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        var urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if urls.isEmpty, let paths = pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String] {
+            urls = paths.map { URL(fileURLWithPath: $0) }
+        }
+        for url in urls.prefix(8) where url.isFileURL {
+            Task { @MainActor in self.openLocalDocument(url) }
         }
     }
 
@@ -205,6 +257,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func captureFullscreenAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureFullscreen() } }
     @objc func captureWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowFromPicker() } }
     @objc func captureActiveWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureActiveWindow() } }
+    @objc func pauseRecordingAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.togglePause() } }
+    @objc func openAnnotationProjectAction() { MainActor.assumeIsolated { AnnotationEditorController.shared.chooseProject() } }
     @objc func recordScreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.toggleRecording() } }
     @objc func recordFullscreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.recordFullscreenUnderPointer() } }
     @objc func captureWindowUnderCursorAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowUnderCursor() } }

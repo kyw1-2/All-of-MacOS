@@ -8,7 +8,7 @@ import CoreImage
 /// Objects are value types held in an ordered array rather than a node tree: the
 /// editor only ever adds, moves, restyles and deletes, and z-order is exactly the
 /// array order, so a tree would buy nothing.
-struct AnnotationObject: Identifiable, Equatable {
+struct AnnotationObject: Identifiable, Equatable, Codable {
     let id: UUID
     var kind: AnnotationKind
     /// The object's geometry, in canvas coordinates (top-left origin, points).
@@ -130,7 +130,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
 }
 
 /// How an object is painted.
-struct AnnotationStyle: Equatable {
+struct AnnotationStyle: Equatable, Codable {
     var color: AnnotationColor = .red
     var thickness: CGFloat = 3
     var fontSize: CGFloat = 24
@@ -143,6 +143,28 @@ struct AnnotationStyle: Equatable {
     var blurRadius: CGFloat = 8
     /// Corner radius for the rounded-rectangle tools.
     var cornerRadius: CGFloat = 0
+
+    var customColorHex: String?
+    var fontName: String?
+    var bold: Bool?
+    var italic: Bool?
+    var textOutline: Bool?
+
+    var resolvedColor: NSColor {
+        guard let hex = customColorHex, hex.count == 6, let rgb = UInt32(hex, radix: 16) else { return color.nsColor }
+        return NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255,
+                       green: CGFloat((rgb >> 8) & 255) / 255,
+                       blue: CGFloat(rgb & 255) / 255, alpha: 1)
+    }
+
+    func resolvedFont(size: CGFloat) -> NSFont {
+        let base = fontName.flatMap { NSFont(name: $0, size: size) }
+            ?? NSFont.systemFont(ofSize: size, weight: (bold ?? true) ? .semibold : .regular)
+        var traits: NSFontTraitMask = []
+        if bold == true { traits.insert(.boldFontMask) }
+        if italic == true { traits.insert(.italicFontMask) }
+        return traits.isEmpty ? base : NSFontManager.shared.convert(base, toHaveTrait: traits)
+    }
 
     init() {}
 }
@@ -578,7 +600,7 @@ struct AnnotationDocument {
     /// gestures produce.
     private func draw(_ object: AnnotationObject, in context: CGContext,
                       imageRect: CGRect, scale: CGFloat, baseImage: CGImage) {
-        let color = object.style.color.nsColor.withAlphaComponent(object.style.opacity)
+        let color = object.style.resolvedColor
         context.saveGState()
         context.setAlpha(CGFloat(object.style.opacity))
 
@@ -720,25 +742,27 @@ struct AnnotationDocument {
                           rect: CGRect, color: NSColor, scale: CGFloat) {
         guard !object.text.isEmpty else { return }
         let size = object.style.fontSize * scale
-        let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+        let font = object.style.resolvedFont(size: size)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: color,
             // A matching outline keeps the text readable over a light or a dark
             // screenshot without needing a background box.
             .strokeColor: NSColor.black.withAlphaComponent(0.55),
-            .strokeWidth: -3.0
+            .strokeWidth: (object.style.textOutline ?? true) ? -3.0 : 0.0
         ]
         let attributed = NSAttributedString(string: object.text, attributes: attributes)
-        let line = CTLineCreateWithAttributedString(attributed)
-        context.textPosition = CGPoint(x: rect.minX, y: rect.minY)
-        CTLineDraw(line, context)
+        let setter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(rect: rect, transform: nil)
+        let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
+        context.textMatrix = .identity
+        CTFrameDraw(frame, context)
     }
 
     private func drawCounter(_ object: AnnotationObject, in context: CGContext, rect: CGRect, scale: CGFloat) {
         let diameter = max(rect.width, 24 * scale)
         let circle = CGRect(x: rect.minX, y: rect.minY, width: diameter, height: diameter)
-        context.setFillColor(object.style.color.nsColor.cgColor)
+        context.setFillColor(object.style.resolvedColor.cgColor)
         context.fillEllipse(in: circle)
         context.setStrokeColor(NSColor.white.cgColor)
         context.setLineWidth(max(1.5, 2 * scale))
@@ -870,7 +894,7 @@ struct AnnotationDocument {
 }
 
 /// The background behind an expanded canvas.
-struct AnnotationBackground: Equatable {
+struct AnnotationBackground: Equatable, Codable {
     enum Kind: String, CaseIterable, Identifiable, Codable {
         case solid, gradient, blurred
         var id: String { rawValue }
@@ -883,7 +907,7 @@ struct AnnotationBackground: Equatable {
         }
     }
 
-    enum GradientPreset: String, CaseIterable, Identifiable {
+    enum GradientPreset: String, CaseIterable, Identifiable, Codable {
         case custom, sunset, ocean, sequoia
         var id: String { rawValue }
         var displayName: String {

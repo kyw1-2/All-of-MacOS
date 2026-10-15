@@ -24,15 +24,17 @@
 			<key>CFBundleURLName</key>
 			<string>com.kyw.allofmacos.capture</string>
 			<key>CFBundleURLSchemes</key>
-			<array><string>aom</string></array>
+			<array>
+				<string>aom</string>
+			</array>
 		</dict>
 	</array>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.14</string>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>2026101501</string>
+	<string>2026101502</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>AOM records microphone audio only when you select Microphone in Capture Settings and start screen recording.</string>
+	<string>AOM records microphone audio only when microphone recording is selected and you start a screen recording.</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -41,5 +43,78 @@
 	<string></string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.kyw.allofmacos.annotation-project</string>
+			<key>UTTypeDescription</key>
+			<string>AOM Annotation Project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>aomannotation</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>AOM Annotation Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.kyw.allofmacos.annotation-project</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.image</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Annotate with All of MacOS</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>annotateFiles</string>
+			<key>NSPortName</key>
+			<string>All of MacOS</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.file-url</string>
+				<string>NSFilenamesPboardType</string>
+			</array>
+			<key>NSRequiredContext</key>
+			<dict>
+				<key>NSTextContent</key>
+				<string>FilePath</string>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>
