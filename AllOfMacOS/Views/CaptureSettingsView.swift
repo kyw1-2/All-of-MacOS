@@ -463,14 +463,9 @@ struct CaptureSettingsView: View {
 
     // MARK: - Text recognition
 
+    /// TextSniper-style Capture Text settings (TextCaptureSettingsView.swift).
     private var textRecognitionGroup: some View {
-        AppleSettingsGroup("Text Recognition") {
-            AppleSettingsRow(icon: "text.viewfinder", iconColor: .green, title: "Keep Line Breaks",
-                             subtitle: "Off joins every line into one paragraph",
-                             showDivider: false) {
-                Toggle("", isOn: $ocrKeepsLineBreaks).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-        }
+        TextCaptureSettingsSection()
     }
 
     // MARK: - Pinned captures

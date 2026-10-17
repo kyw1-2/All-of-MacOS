@@ -7,6 +7,9 @@ enum AOMLauncher {
     private static var instanceLease: SingleInstanceLease?
     static func main() {
         let args = ProcessInfo.processInfo.arguments
+        // AI tools launch `AllOfMacOS --mcp` as a stdio MCP server; it only
+        // bridges to the running app and never starts a second UI instance.
+        if args.contains("--mcp") { ClipboardMCPBridge.run(arguments: args) }
         // A malformed preview launch must never fall back to the real preset.
         if (args.contains("--aom-ui-preview") || Bundle.main.bundleIdentifier == "com.kyw.allofmacos.preview") && !PresetManager.isUIPreview {
             fputs("UI preview requires an isolated temporary directory.\n", stderr); exit(2)

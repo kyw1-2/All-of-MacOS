@@ -63,6 +63,7 @@ final class SelectionOverlayController {
         state.activate = { [weak self] mode in self?.activate(mode) }
         state.commitPending = { [weak self] in self?.commitPending() }
         state.activeDisplayID = (screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? screens[0]).displayID
+        state.desktopBounds = screens.map(\.sckFrame).reduce(CGRect.null) { $0.union($1) }
 
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             if event.keyCode == 53 {
@@ -98,13 +99,29 @@ final class SelectionOverlayController {
         if event.type == .flagsChanged {
             state.commandDown = event.modifierFlags.contains(.command)
             state.shiftDown = event.modifierFlags.contains(.shift)
+            state.optionDown = event.modifierFlags.contains(.option)
             return event
+        }
+        // The inline ratio list owns arrows / Return / Esc while it is open.
+        if state.ratioMenuOpen, !(NSApp.keyWindow?.firstResponder is NSText) {
+            switch event.keyCode {
+            case 53: state.ratioMenuOpen = false; return nil
+            case 125: state.moveRatioHighlight(by: 1); return nil
+            case 126: state.moveRatioHighlight(by: -1); return nil
+            case 36, 76: state.chooseHighlightedRatio(); return nil
+            default: break
+            }
         }
         if event.keyCode == 53 { finish(nil); return nil }
         // Typing into the W × H fields must not switch modes.
         if NSApp.keyWindow?.firstResponder is NSText { return event }
         guard !state.isDragging else { return event }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control])
+        // ⌘R opens the aspect-ratio list (Space/Return are taken by the overlay).
+        if state.integrated, modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "r" {
+            state.toggleRatioMenu()
+            return nil
+        }
         guard modifiers.isEmpty else { return event }
 
         if event.keyCode == 49 { // Space: window ↔ area
@@ -177,6 +194,7 @@ final class SelectionOverlayController {
         }
         state.activate = nil
         state.commitPending = nil
+        NSCursor.arrow.set()
         // Tear the overlays down before handing the rect back: the capture that
         // follows must not photograph the selection UI itself.
         let toClose = windows
@@ -399,17 +417,69 @@ private final class SelectionState: ObservableObject {
     @Published var pendingRect: CGRect?
     @Published var commandDown = false
     @Published var shiftDown = false
+    @Published var optionDown = false
+    /// All-In-One aspect-ratio lock, remembered across sessions.
+    @Published var aspectRatio: SelectionAspectRatio = SelectionAspectRatioStore.load()
+    /// The inline ratio list under the toolbar (an NSMenu would open below the
+    /// screen-saver-level overlay, so the list is drawn in the overlay itself).
+    @Published var ratioMenuOpen = false
+    @Published var ratioHighlight = 0
+    /// Set while a pending-selection handle is being dragged.
+    @Published var activeHandle: SelectionHandle?
     /// The display whose window shows the All-In-One toolbar.
     @Published var activeDisplayID: CGDirectDisplayID = 0
     var activate: ((IntegratedCaptureMode) -> Void)?
     var commitPending: (() -> Void)?
+    /// Union of every display, in global top-left points.
+    var desktopBounds: CGRect = .infinite
+
+    /// Freeform, presets, then the custom entry (current custom ratio or 16:9 seed).
+    var ratioChoices: [SelectionAspectRatio] { [.freeform] + SelectionAspectRatio.presets }
 
     /// The rectangle the user has drawn so far, normalized so a drag in any
-    /// direction produces a positive-size rect.
+    /// direction produces a positive-size rect. The ratio lock and ⌥ (from
+    /// centre) apply while dragging.
     var rect: CGRect? {
         guard let anchor, let current else { return nil }
-        return CGRect(x: min(anchor.x, current.x), y: min(anchor.y, current.y),
-                      width: abs(current.x - anchor.x), height: abs(current.y - anchor.y))
+        return SelectionGeometry.dragRect(anchor: anchor, current: current, ratio: aspectRatio.value,
+                                          fromCenter: optionDown, bounds: desktopBounds)
+    }
+
+    func toggleRatioMenu() {
+        ratioMenuOpen.toggle()
+        if ratioMenuOpen {
+            ratioHighlight = ratioChoices.firstIndex(of: aspectRatio) ?? ratioChoices.count
+        }
+    }
+
+    func moveRatioHighlight(by delta: Int) {
+        // The last row (index == choices.count) is "Custom…".
+        ratioHighlight = min(max(0, ratioHighlight + delta), ratioChoices.count)
+    }
+
+    func chooseHighlightedRatio() {
+        if ratioHighlight < ratioChoices.count {
+            choose(ratio: ratioChoices[ratioHighlight])
+        } else {
+            showsCustomRatio = true
+        }
+    }
+
+    @Published var showsCustomRatio = false
+
+    /// Locks the ratio, remembers it, and reshapes a pending selection.
+    func choose(ratio: SelectionAspectRatio) {
+        aspectRatio = ratio
+        SelectionAspectRatioStore.save(ratio)
+        ratioMenuOpen = false
+        showsCustomRatio = false
+        if let pending = pendingRect {
+            let bounds = NSScreen.screens.map(\.sckFrame)
+                .filter { $0.intersects(pending) }
+                .reduce(CGRect.null) { $0.union($1) }
+            pendingRect = SelectionGeometry.applying(ratio: ratio.value, to: pending,
+                                                     within: bounds.isNull ? desktopBounds : bounds)
+        }
     }
 }
 
@@ -428,6 +498,8 @@ private struct SelectionView: View {
     @State private var pointerInside = false
     /// Set when a drag started inside the pending selection (move, not redraw).
     @State private var moveOrigin: CGRect?
+    /// The pending selection when a handle drag started.
+    @State private var resizeOrigin: CGRect?
 
     private var selectionRect: CGRect? { state.rect.map { localRect(for: $0) } }
     private var pendingLocal: CGRect? {
@@ -456,9 +528,11 @@ private struct SelectionView: View {
                 // Controls sit above the gesture layer so clicks and typing in
                 // the toolbar never start a new selection.
                 if showsToolbar {
-                    AllInOneToolbar(state: state, screen: screen, onCancel: onCancel)
+                    let position = toolbarPosition(in: geometry.size)
+                    AllInOneToolbar(state: state, screen: screen, opensUpward: position.y > geometry.size.height / 2,
+                                    onCancel: onCancel)
                         .fixedSize()
-                        .position(toolbarPosition(in: geometry.size))
+                        .position(position)
                 } else if !state.integrated {
                     instructionBadge
                 }
@@ -478,9 +552,13 @@ private struct SelectionView: View {
 
                 // Area drag selection / All-In-One pending selection
                 if state.mode == .area, let rect = activeRect {
-                    border(rect: rect)
+                    border(rect: rect, showsHandles: state.integrated && !(state.isDragging && moveOrigin == nil)
+                                                     && pendingLocal != nil)
                 }
                 if state.mode == .area, state.isDragging, moveOrigin == nil, let rect = selectionRect {
+                    dimensionLabel(rect: rect)
+                }
+                if state.mode == .area, state.activeHandle != nil, let rect = pendingLocal {
                     dimensionLabel(rect: rect)
                 }
 
@@ -515,6 +593,8 @@ private struct SelectionView: View {
                     }
                     if state.mode == .window {
                         detectWindowUnderPointer(localPoint: point)
+                    } else {
+                        updateCursor(at: point)
                     }
                 case .ended:
                     pointerInside = false
@@ -644,7 +724,7 @@ private struct SelectionView: View {
         .allowsHitTesting(false)
     }
 
-    private func border(rect: CGRect) -> some View {
+    private func border(rect: CGRect, showsHandles: Bool) -> some View {
         ZStack {
             Rectangle()
                 .stroke(Color.white, lineWidth: 1.5)
@@ -652,17 +732,36 @@ private struct SelectionView: View {
                 .position(x: rect.midX, y: rect.midY)
                 .shadow(color: Color.black.opacity(0.5), radius: 2, x: 0, y: 1)
 
-            // Corner handles for CleanShot X feel
-            ForEach([-1.0, 1.0], id: \.self) { hX in
-                ForEach([-1.0, 1.0], id: \.self) { hY in
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+            if showsHandles {
+                // Eight resize handles (corners + edge midpoints) on the pending
+                // All-In-One selection. Hit testing lives in the canvas gesture
+                // (`SelectionHandle.hit`) so a handle drag never starts a new area.
+                ForEach(SelectionHandle.allCases, id: \.self) { handle in
+                    let point = handle.position(in: rect)
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
                         .fill(Color.white)
-                        .frame(width: 6, height: 6)
+                        .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
+                        .frame(width: handle.isCorner ? 9 : 8, height: handle.isCorner ? 9 : 8)
+                        .scaleEffect(state.activeHandle == handle ? 1.3 : 1)
                         .shadow(color: Color.black.opacity(0.6), radius: 1)
-                        .position(
-                            x: rect.midX + hX * (rect.width / 2),
-                            y: rect.midY + hY * (rect.height / 2)
-                        )
+                        .position(point)
+                        .accessibilityLabel(handle.accessibilityName)
+                        .accessibilityHint("Drag to resize. Shift keeps the ratio, Option resizes from the center.")
+                }
+            } else {
+                // Corner marks while a new area is being dragged.
+                ForEach([-1.0, 1.0], id: \.self) { hX in
+                    ForEach([-1.0, 1.0], id: \.self) { hY in
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(Color.white)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: Color.black.opacity(0.6), radius: 1)
+                            .position(
+                                x: rect.midX + hX * (rect.width / 2),
+                                y: rect.midY + hY * (rect.height / 2)
+                            )
+                    }
                 }
             }
         }
@@ -745,14 +844,34 @@ private struct SelectionView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if state.anchor == nil && moveOrigin == nil {
-                    // In All-In-One, dragging inside the pending selection moves it.
+                if state.ratioMenuOpen { state.ratioMenuOpen = false }
+                if state.anchor == nil && moveOrigin == nil && resizeOrigin == nil {
                     if state.integrated, let pending = state.pendingRect,
+                       let handle = SelectionHandle.hit(value.startLocation, in: localRect(for: pending)) {
+                        // A handle on the pending selection resizes it.
+                        resizeOrigin = pending
+                        state.activeHandle = handle
+                    } else if state.integrated, let pending = state.pendingRect,
                        localRect(for: pending).contains(value.startLocation) {
+                        // In All-In-One, dragging inside the pending selection moves it.
                         moveOrigin = pending
+                        NSCursor.closedHand.set()
                     } else {
                         state.anchor = globalRect(for: CGRect(origin: value.startLocation, size: .zero)).origin
                     }
+                }
+                if let origin = resizeOrigin, let handle = state.activeHandle {
+                    let flags = NSEvent.modifierFlags
+                    // A ratio lock always applies; ⇧ keeps the current ratio otherwise.
+                    let ratio = state.aspectRatio.value
+                        ?? (flags.contains(.shift) && origin.height > 0 ? origin.width / origin.height : nil)
+                    let point = globalRect(for: CGRect(origin: value.location, size: .zero)).origin
+                    state.pendingRect = SelectionGeometry.resize(origin, handle: handle, to: point, ratio: ratio,
+                                                                 fromCenter: flags.contains(.option),
+                                                                 bounds: clampBounds(for: origin))
+                    pointer = value.location
+                    handle.cursor.set()
+                    return
                 }
                 if let origin = moveOrigin {
                     let moved = origin.offsetBy(dx: value.translation.width, dy: value.translation.height)
@@ -760,13 +879,20 @@ private struct SelectionView: View {
                     return
                 }
                 let mouse = NSEvent.mouseLocation
+                state.optionDown = NSEvent.modifierFlags.contains(.option)
                 state.current = CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.height ?? 0) - mouse.y)
                 state.isDragging = true
                 pointer = value.location
             }
             .onEnded { _ in
+                if resizeOrigin != nil {
+                    resizeOrigin = nil
+                    state.activeHandle = nil
+                    return
+                }
                 if moveOrigin != nil {
                     moveOrigin = nil
+                    NSCursor.openHand.set()
                     return
                 }
                 let committed = state.rect
@@ -782,6 +908,27 @@ private struct SelectionView: View {
                     onCommit(rect)
                 }
             }
+    }
+
+    /// Resizing stays on the display(s) the selection already occupies.
+    private func clampBounds(for rect: CGRect) -> CGRect {
+        let frames = NSScreen.screens.map(\.sckFrame).filter { $0.intersects(rect) }
+        let union = frames.reduce(CGRect.null) { $0.union($1) }
+        return union.isNull ? screen.sckFrame : union
+    }
+
+    /// Resize / move / crosshair cursor for the pointer over the pending selection.
+    private func updateCursor(at point: CGPoint) {
+        guard state.integrated, state.mode == .area, !state.isDragging, state.activeHandle == nil,
+              moveOrigin == nil else { return }
+        guard let pending = pendingLocal else { return }
+        if let handle = SelectionHandle.hit(point, in: pending) {
+            handle.cursor.set()
+        } else if pending.contains(point) {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.crosshair.set()
+        }
     }
 
     // MARK: - Window Detection (CleanShot X style)
@@ -877,6 +1024,7 @@ private struct SelectionView: View {
 private struct AllInOneToolbar: View {
     @ObservedObject var state: SelectionState
     let screen: NSScreen
+    var opensUpward = false
     let onCancel: () -> Void
     @State private var widthText = ""
     @State private var heightText = ""
@@ -892,6 +1040,7 @@ private struct AllInOneToolbar: View {
                 }
                 separator
                 sizeFields
+                ratioButton
                 separator
                 ToolbarIconButton(symbol: "xmark", label: "Cancel", help: "Cancel (Esc)", selected: false,
                                   action: onCancel)
@@ -901,6 +1050,13 @@ private struct AllInOneToolbar: View {
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
             .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+            // Overlaid so opening the list never moves the toolbar itself.
+            .overlay(alignment: opensUpward ? .bottomTrailing : .topTrailing) {
+                if state.ratioMenuOpen {
+                    SelectionRatioList(state: state)
+                        .offset(x: -44, y: opensUpward ? -50 : 50)
+                }
+            }
 
             Text(hint)
                 .font(.system(size: 12, weight: .medium))
@@ -918,7 +1074,7 @@ private struct AllInOneToolbar: View {
     private var hint: String {
         if state.captureMode == .window { return "Click a window to capture it. Press Space for area." }
         if state.pendingRect != nil {
-            return "Press Return or choose a mode to capture. Drag inside to move, arrows to nudge."
+            return "Press Return or choose a mode to capture. Drag inside to move, handles to resize (⇧ ratio, ⌥ center)."
         }
         switch state.captureMode {
         case .recording: return "Drag to select the area to record."
@@ -969,13 +1125,127 @@ private struct AllInOneToolbar: View {
         heightText = "\(Int((rect.height * scale).rounded()))"
     }
 
+    /// Ratio lock button beside W × H (CleanShot `OneSizeControl` ratio button).
+    private var ratioButton: some View {
+        let locked = !state.aspectRatio.isFreeform
+        return Button { state.toggleRatioMenu() } label: {
+            HStack(spacing: 3) {
+                Image(systemName: locked ? "lock.fill" : "aspectratio")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(locked ? state.aspectRatio.title : "Ratio")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(locked ? Color.white : Color.primary)
+            .padding(.horizontal, 7).frame(height: 26)
+            .background(locked ? Color.accentColor : Color.white.opacity(state.ratioMenuOpen ? 0.16 : 0.08),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 4)
+        .help("Aspect ratio (⌘R): \(state.aspectRatio.menuTitle)")
+        .accessibilityLabel("Aspect ratio")
+        .accessibilityValue(state.aspectRatio.menuTitle)
+        .accessibilityHint("Opens the ratio list. Shortcut Command-R.")
+    }
+
     private func applyFields() {
         guard let rect = state.pendingRect else { return }
+        let currentPixels = CGSize(width: (rect.width * scale).rounded(), height: (rect.height * scale).rounded())
+        let typedW = Int(widthText.trimmingCharacters(in: .whitespaces)).map { CGFloat($0) }
+        let typedH = Int(heightText.trimmingCharacters(in: .whitespaces)).map { CGFloat($0) }
+        let size = SelectionGeometry.lockedSize(width: typedW, height: typedH, current: currentPixels,
+                                                ratio: state.aspectRatio.value)
         state.pendingRect = AllInOneSelection.resized(
-            rect, pixelWidth: Int(widthText.trimmingCharacters(in: .whitespaces)),
-            pixelHeight: Int(heightText.trimmingCharacters(in: .whitespaces)),
+            rect, pixelWidth: size.width > 0 ? Int(size.width) : nil,
+            pixelHeight: size.height > 0 ? Int(size.height) : nil,
             scale: scale, within: screen.sckFrame)
         syncFields()
+    }
+}
+
+/// The inline aspect-ratio list (Freeform, presets, Custom…). Rows are buttons;
+/// ↑/↓ + Return and Esc work through the overlay's key monitor.
+private struct SelectionRatioList: View {
+    @ObservedObject var state: SelectionState
+    @State private var customWidth = ""
+    @State private var customHeight = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(state.ratioChoices.enumerated()), id: \.element) { index, ratio in
+                row(title: ratio.title, selected: state.aspectRatio == ratio, highlighted: state.ratioHighlight == index) {
+                    state.choose(ratio: ratio)
+                }
+                if index == 0 { Divider().padding(.vertical, 2) }
+            }
+            Divider().padding(.vertical, 2)
+            row(title: state.aspectRatio.isCustom ? "Custom (\(state.aspectRatio.title))…" : "Custom…",
+                selected: state.aspectRatio.isCustom,
+                highlighted: state.ratioHighlight == state.ratioChoices.count) {
+                state.showsCustomRatio.toggle()
+            }
+            if state.showsCustomRatio {
+                HStack(spacing: 4) {
+                    TextField("W", text: $customWidth)
+                        .accessibilityLabel("Custom ratio width")
+                    Text(":").foregroundStyle(.secondary)
+                    TextField("H", text: $customHeight)
+                        .accessibilityLabel("Custom ratio height")
+                    Button("Set") { applyCustom() }
+                        .disabled(customRatio == nil)
+                        .help("Lock the selection to this custom ratio")
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12).monospacedDigit())
+                .frame(width: 168)
+                .padding(.horizontal, 6).padding(.vertical, 4)
+                .onSubmit(applyCustom)
+                .onAppear {
+                    let seed = state.aspectRatio.isFreeform ? SelectionAspectRatio(width: 16, height: 9) : state.aspectRatio
+                    customWidth = "\(Int(seed.width))"
+                    customHeight = "\(Int(seed.height))"
+                }
+            }
+        }
+        .padding(6)
+        .frame(width: 184)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.35), radius: 10, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Aspect ratio list")
+    }
+
+    private var customRatio: SelectionAspectRatio? {
+        guard let w = Double(customWidth.trimmingCharacters(in: .whitespaces)),
+              let h = Double(customHeight.trimmingCharacters(in: .whitespaces)) else { return nil }
+        return SelectionAspectRatio.custom(width: w, height: h)
+    }
+
+    private func applyCustom() {
+        guard let ratio = customRatio else { return }
+        state.choose(ratio: ratio)
+    }
+
+    private func row(title: String, selected: Bool, highlighted: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).opacity(selected ? 1 : 0)
+                Text(title).font(.system(size: 12, weight: .medium).monospacedDigit())
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(highlighted ? Color.white : Color.primary)
+            .padding(.horizontal, 6).frame(height: 22)
+            .background(highlighted ? Color.accentColor : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

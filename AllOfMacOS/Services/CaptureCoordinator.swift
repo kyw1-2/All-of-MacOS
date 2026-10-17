@@ -203,16 +203,7 @@ final class CaptureCoordinator {
                 return (try await ScreenCaptureService.shared.captureArea(rect), .area)
             case .text:
                 let result = try await ScreenCaptureService.shared.captureArea(rect)
-                let text = try await TextRecognitionService.recognize(result.image,
-                    keepsLineBreaks: CaptureSettings.ocrKeepsLineBreaks)
-                guard !text.isEmpty else {
-                    GestureHUD.shared.show(title: "No Text Found", detail: "Try a different selection.")
-                    return nil
-                }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-                CaptureHistory.shared.add(result, url: nil)
-                GestureHUD.shared.show(title: "Text Copied", detail: "\(text.count) characters")
+                try await self.deliverRecognizedText(result, keepsLineBreaks: TextCaptureSettings.shared.keepsLineBreaks)
                 return nil
             case .area, .fullscreen:
                 let result = try await ScreenCaptureService.shared.captureArea(rect)
@@ -392,23 +383,39 @@ final class CaptureCoordinator {
     }
 
     /// Area capture followed immediately by OCR, ending in text on the pasteboard
-    /// rather than an image. This is CleanShot's "Capture Text".
+    /// rather than an image. CleanShot's "Capture Text"; the recognition and
+    /// delivery (clipboard, HUD, sound, speech) are TextSniper-style and live
+    /// in `TextCaptureController`.
     func captureText(keepsLineBreaks: Bool? = nil) {
-        let keepBreaks = keepsLineBreaks ?? CaptureSettings.ocrKeepsLineBreaks
+        let keepBreaks = keepsLineBreaks ?? TextCaptureSettings.shared.keepsLineBreaks
         run(kind: .area) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
             let result = try await ScreenCaptureService.shared.captureArea(rect)
-            let text = try await TextRecognitionService.recognize(result.image, keepsLineBreaks: keepBreaks)
-            guard !text.isEmpty else {
-                GestureHUD.shared.show(title: "No Text Found", detail: "The selection contained no recognizable text.")
-                return nil
-            }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-            CaptureHistory.shared.add(result, url: nil)
-            GestureHUD.shared.show(title: "Text Copied", detail: "\(text.count) characters")
+            try await self.deliverRecognizedText(result, keepsLineBreaks: keepBreaks)
+            return nil
+        }
+    }
+
+    /// Shared tail of every screen text capture (menu, shortcut, All-In-One).
+    private func deliverRecognizedText(_ result: CaptureResult, keepsLineBreaks: Bool) async throws {
+        guard try await TextCaptureController.shared.deliver(image: result.image, keepsLineBreaks: keepsLineBreaks,
+                                                             anchor: result.globalRect) != nil else { return }
+        CaptureHistory.shared.add(result, url: nil)
+    }
+
+    /// "Capture Text from Clipboard Image" (no selection needed).
+    func captureTextFromClipboardImage() {
+        TextCaptureController.shared.captureFromClipboardImage()
+    }
+
+    /// "Read QR / Barcode": select an area, copy every code payload in it.
+    func captureQRCode() {
+        run(kind: .area) { [weak self] in
+            guard let self else { return nil }
+            guard let rect = await self.presentSelection() else { return nil }
+            let result = try await ScreenCaptureService.shared.captureArea(rect)
+            await TextCaptureController.shared.deliverBarcodes(image: result.image, anchor: result.globalRect)
             return nil
         }
     }
@@ -505,12 +512,13 @@ final class CaptureCoordinator {
         try await Task.sleep(nanoseconds: 150_000_000)
     }
 
-    private func finish(_ result: CaptureResult, kind: CaptureKind,
+    private func finish(_ captured: CaptureResult, kind: CaptureKind,
                         actionOverride: AfterCaptureAction? = nil) async {
         if CaptureSettings.playsSound { playCaptureSound() }
 
-        let stored = CaptureHistory.shared.add(result, url: nil)
         let action = actionOverride ?? CaptureSettings.afterCapture
+        let result = Self.applyingAutomaticBackground(captured, action: action)
+        let stored = CaptureHistory.shared.add(result, url: nil)
 
         // Annotate and Pin both need the file on disk, because the editor and the
         // pin window reload from a URL and can outlive this process's memory of
@@ -547,6 +555,21 @@ final class CaptureCoordinator {
         case .showOverlay:
             showOverlay(for: stored)
         }
+    }
+
+    /// CleanShot's "Automatically apply preset to all screenshots": the
+    /// chosen Background Tool preset is rendered into every new screenshot.
+    /// Holding ⇧ while capturing skips it; the editor applies it itself, so
+    /// screenshots opened straight into Annotate are left untouched here.
+    static func applyingAutomaticBackground(_ result: CaptureResult, action: AfterCaptureAction,
+                                            shiftHeld: Bool = NSEvent.modifierFlags.contains(.shift)) -> CaptureResult {
+        guard action != .openAnnotate, result.kind != .videoRecording, !shiftHeld,
+              let background = AnnotationBackgroundPresetStore.automaticBackground() else { return result }
+        var document = AnnotationDocument(baseImage: result.image)
+        document.background = background
+        guard let rendered = document.render(scale: result.scale) else { return result }
+        return CaptureResult(image: rendered, globalRect: result.globalRect, scale: result.scale, kind: result.kind,
+                             windowTitle: result.windowTitle, capturedAt: result.capturedAt)
     }
 
     func showRecordingOverlay(for entry: CaptureHistoryEntry) {

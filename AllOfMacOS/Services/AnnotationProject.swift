@@ -58,8 +58,7 @@ struct AnnotationProject: Codable {
                   [object.style.thickness, object.style.fontSize, object.style.pixelBlockSize,
                    object.style.blurRadius, object.style.cornerRadius].allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 10_000 } &&
                   object.style.opacity.isFinite && (0...1).contains(object.style.opacity)
-              }), project.background.padding.isFinite, (0...2000).contains(project.background.padding),
-              project.background.cornerRadius.isFinite, (0...2000).contains(project.background.cornerRadius) else {
+              }), project.background.isValid else {
             throw CocoaError(.fileReadCorruptFile)
         }
         var document = AnnotationDocument(baseImage: image)

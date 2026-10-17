@@ -216,7 +216,7 @@ final class CleanShotUIParityTests: XCTestCase {
         for kind in AnnotationKind.allCases where kind != .cursor {
             XCTAssertNotNil(AnnotationToolbarItem.item(for: kind), "\(kind) unreachable")
         }
-        XCTAssertEqual(AnnotationToolbarItem.redact.kinds, [.pixelate, .blur, .redact])
+        XCTAssertEqual(AnnotationToolbarItem.redact.kinds, [.pixelate, .blur, .secureBlur, .redact])
         XCTAssertEqual(AnnotationRedactionStyle(kind: .redact), .blackOut)
     }
 

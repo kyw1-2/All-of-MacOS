@@ -160,7 +160,23 @@ enum CaptureMenu {
         menu.addItem(action("Scrolling Capture (Horizontal)", "arrow.left.and.right") {
             coordinator.captureScrollingHorizontal()
         })
-        menu.addItem(action("Capture Text (Join Lines)", "text.justify") { coordinator.captureText(keepsLineBreaks: false) })
+        // Capture Text variants (TextSniper parity): the opposite of the
+        // Keep Line Breaks setting, clipboard images, and QR / barcodes.
+        let textShortcuts = TextCaptureShortcuts.shared
+        let keepsBreaks = TextCaptureSettings.shared.keepsLineBreaks
+        menu.addItem(action(keepsBreaks ? "Capture Text (Join Lines)" : "Capture Text (Keep Line Breaks)",
+                            keepsBreaks ? "text.justify" : "text.alignleft",
+                            shortcut: textShortcuts.shortcut(for: .captureTextToggledLineBreaks)) {
+            coordinator.captureText(keepsLineBreaks: !keepsBreaks)
+        })
+        menu.addItem(action("Capture Text from Clipboard Image", "doc.on.clipboard",
+                            shortcut: textShortcuts.shortcut(for: .captureTextFromClipboard)) {
+            coordinator.captureTextFromClipboardImage()
+        })
+        menu.addItem(action("Read QR / Barcode", "qrcode.viewfinder",
+                            shortcut: textShortcuts.shortcut(for: .readQRCode)) {
+            coordinator.captureQRCode()
+        })
         menu.addItem(.separator())
         menu.addItem(action("Record Fullscreen", "rectangle.dashed.badge.record") {
             ScreenRecordingService.shared.recordFullscreenUnderPointer()

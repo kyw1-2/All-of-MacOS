@@ -244,11 +244,21 @@ private struct AnnotationEditorView: View {
 
     @State private var colorPopover = false
     @State private var optionsPopover = false
-    @State private var backgroundPopover = false
+    /// Background Tool sidebar; "Remember Background tool open state".
+    @AppStorage(AnnotationBackgroundPresetStore.panelOpenKey) private var backgroundPanelOpen = false
+    /// Objects selected in addition to `selectedID` (⇧-click, ⌘A).
+    @State private var extraSelection: Set<UUID> = []
+    /// Drop zone under an image being dragged onto the canvas.
+    @State private var dropPlacement: AnnotationCombinePlacement?
+    /// An image chosen with "Add Screenshot From File…" awaiting a side.
+    @State private var placementRequest: AnnotationPlacementRequest?
+    /// Successive pastes of the same clipboard step further away.
+    @State private var pasteChangeCount = -1
+    @State private var pasteRepeat = 0
     @State private var layersPopover = false
     @State private var canvasLocked = false
     @State private var zoom: CGFloat? = nil
-    @State private var moveOriginal: AnnotationObject?
+    @State private var moveOriginals: [AnnotationObject] = []
     @State private var moveHasChanged = false
     @State private var resizeOriginal: AnnotationObject?
     @State private var cropHandleOriginal: CGRect?
@@ -269,8 +279,14 @@ private struct AnnotationEditorView: View {
         self.session = session
         _projectURL = State(initialValue: projectURL)
         let initial = document ?? AnnotationDocument(baseImage: capture.image)
-        _document = State(initialValue: initial)
+        // The saved-state baseline is taken *before* an automatic preset, so a
+        // preset-only edit still counts as a change worth saving.
         _savedState = State(initialValue: AnnotationSavedState(initial))
+        var opened = initial
+        if document == nil, onApply == nil, let automatic = AnnotationBackgroundPresetStore.automaticBackground() {
+            opened.background = automatic
+        }
+        _document = State(initialValue: opened)
     }
 
     private var isDirty: Bool { AnnotationSavedState(document) != savedState }
@@ -293,16 +309,37 @@ private struct AnnotationEditorView: View {
                 propertiesBar
                 Divider()
             }
-            canvas
+            HStack(spacing: 0) {
+                if backgroundPanelOpen && !cropMode {
+                    AnnotationBackgroundPanel(background: $document.background,
+                                              beginChange: { document.beginChange() },
+                                              screenshotThumbnail: backgroundThumbnail,
+                                              onClose: { backgroundPanelOpen = false })
+                        .transition(.move(edge: .leading))
+                    Divider()
+                }
+                canvas
+            }
             Divider()
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: selectedID) { _, new in
+            if let new { extraSelection.remove(new) } else { extraSelection.removeAll() }
+        }
+        .sheet(item: $placementRequest) { request in
+            AnnotationPlacementChooser(thumbnail: request.image) { placement in
+                placementRequest = nil
+                if let placement { combine(request.image, imageScale: request.scale, placement: placement) }
+            }
+        }
         .background(CaptureKeyEventHandler(handle: handleEditorKey))
         .onAppear {
             session?.isDirty = { isDirty }
             session?.commit = { commitChanges() }
         }
+        // "Apply Previous Settings" offers the last background used in an editor.
+        .onDisappear { AnnotationBackgroundPresetStore.rememberPrevious(document.background) }
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $showingResize) {
             AnnotationResizeDialog(pixelWidth: document.croppedImage.width,
@@ -356,9 +393,9 @@ private struct AnnotationEditorView: View {
             capsuleButton(AnnotationToolbarItem.crop.symbol, help: AnnotationToolbarItem.crop.help,
                           active: cropMode) { selectToolbarItem(.crop) }
             capsuleButton(AnnotationToolbarItem.background.symbol, help: AnnotationToolbarItem.background.help,
-                          active: backgroundPopover) { selectToolbarItem(.background) }
-            .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 320) }
-            capsuleButton("photo.badge.plus", help: "Add Screenshot From File…") { addScreenshot() }
+                          active: backgroundPanelOpen) { selectToolbarItem(.background) }
+            capsuleButton("photo.badge.plus", help: "Add Screenshot From File… (⌘I)") { addScreenshot() }
+                .keyboardShortcut("i", modifiers: .command)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(AnnotationToolbarItem.segments) { item in
@@ -412,6 +449,8 @@ private struct AnnotationEditorView: View {
                             Button(format.displayName) { saveAs(format: format) }
                         }
                     }
+                    Divider()
+                    Button("Print…") { printImage() }.keyboardShortcut("p", modifiers: .command)
                     Divider()
                     Button("Save Project") { saveProject(saveAs: false) }.keyboardShortcut("s", modifiers: [.command, .option])
                     Button("Save Project As…") { saveProject(saveAs: true) }
@@ -471,7 +510,16 @@ private struct AnnotationEditorView: View {
             Button("Smart Highlight Text…") { showingSmartHighlight = true }
             Divider()
             Button("Layers…") { layersPopover = true }
+            // ⌘C / ⌘V / ⌘D / ⌘A are handled by the editor key monitor rather than
+            // menu key equivalents, so they never steal copy/paste from a text field.
+            Button("Copy Object (⌘C)") { copyObjects() }.disabled(selectedID == nil)
+            Button("Paste Object (⌘V)") { pasteObjects() }
+            Button("Duplicate Object (⌘D)") { duplicateObjects() }.disabled(selectedID == nil)
+            Button("Select All Objects (⌘A)") { selectAllObjects() }.disabled(document.objects.isEmpty)
             Button("Delete Selected") { deleteSelection() }.disabled(selectedID == nil).keyboardShortcut(.delete, modifiers: [])
+            Button("Flatten Redactions into Image") { flattenRedactions() }
+                .disabled(!document.objects.contains { $0.kind.isRedaction })
+                .help("Burns redactions into the pixels so even a saved project no longer contains the original")
             Divider()
             Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
             Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
@@ -539,13 +587,33 @@ private struct AnnotationEditorView: View {
                 .accessibilityLabel(color.displayName)
                 .accessibilityAddTraits(style.customColorHex == nil && style.color == color ? .isSelected : [])
             }
-            ColorPicker("Custom Color", selection: Binding(get: { Color(nsColor: style.resolvedColor) }, set: { value in
-                guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
-                style.customColorHex = String(format: "%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
-                applyStyleToSelection()
-            }), supportsOpacity: false)
-            .labelsHidden()
-            .help("Custom Color")
+            Button { colorPopover.toggle() } label: {
+                ZStack {
+                    Circle().fill(AngularGradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                                                  center: .center))
+                        .frame(width: 18, height: 18)
+                    Circle().fill(Color(nsColor: style.resolvedColor)).frame(width: 9, height: 9)
+                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
+                }
+                .padding(1)
+                .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: style.customColorHex != nil ? 2 : 0))
+            }
+            .buttonStyle(.plain)
+            .help("More colors, My Colors, hex/RGB and eyedropper")
+            .accessibilityLabel("Color picker")
+            .popover(isPresented: $colorPopover, arrowEdge: .bottom) {
+                AnnotationColorPickerView(color: style.resolvedColor, opacity: style.opacity,
+                                          apply: { color, alpha in
+                                              style.customColorHex = String(AnnotationColorLibrary.hex(of: color).prefix(6))
+                                              style.opacity = max(0.05, alpha)
+                                              applyStyleToSelection()
+                                          },
+                                          applyPalette: { named in
+                                              style.color = named
+                                              style.customColorHex = nil
+                                              applyStyleToSelection()
+                                          })
+            }
         }
     }
 
@@ -608,10 +676,26 @@ private struct AnnotationEditorView: View {
             Picker("Redaction style", selection: Binding(
                 get: { AnnotationRedactionStyle(kind: kind) ?? .pixelate },
                 set: { selectRedaction($0) })) {
-                ForEach(AnnotationRedactionStyle.allCases) { Text($0.title).tag($0) }
+                ForEach(AnnotationRedactionStyle.allCases) { redaction in
+                    Label(redaction.title, systemImage: redaction.symbol).labelStyle(.titleAndIcon)
+                        .help(redaction.help).tag(redaction)
+                }
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 220)
-            .help("Redaction style")
+            .pickerStyle(.segmented).labelsHidden().frame(width: 390)
+            .help((AnnotationRedactionStyle(kind: kind) ?? .pixelate).help)
+            .accessibilityLabel("Redaction style")
+            if kind.isSecureRedaction {
+                Image(systemName: "checkmark.shield").foregroundStyle(.green)
+                    .help("Exported pixels in this area are fully replaced")
+                    .accessibilityLabel("Irreversible redaction")
+            }
+            if kind == .secureBlur {
+                Picker("Block size", selection: $style.pixelBlockSize) {
+                    ForEach([16, 24, 32, 48], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
+                }
+                .labelsHidden().frame(width: 80).help("Secure blur block size (larger hides more)")
+                .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
+            }
             if kind == .pixelate {
                 Picker("Pixel size", selection: $style.pixelBlockSize) {
                     ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
@@ -660,8 +744,7 @@ private struct AnnotationEditorView: View {
     private func selectToolbarItem(_ item: AnnotationToolbarItem) {
         switch item {
         case .background:
-            if !backgroundPopover { document.beginChange() }
-            backgroundPopover.toggle()
+            withAnimation(.easeOut(duration: 0.18)) { backgroundPanelOpen.toggle() }
         case .crop:
             selectTool(cropMode ? .move : .crop)
         case .redact:
@@ -690,9 +773,12 @@ private struct AnnotationEditorView: View {
         smartHighlightBusy = true
         Task {
             do {
-                let boxes = try await Task.detached(priority: .userInitiated) {
-                    try AnnotationSmartTextMatcher.matches(in: source, query: requested, scale: backing)
-                }.value
+                // Same multilingual engine as Capture Text (per-script Vision
+                // passes fused with Live Text), so Korean/CJK labels match too.
+                let pixelSize = CGSize(width: source.width, height: source.height)
+                let boxes = try await TextRecognitionService.boxes(matching: requested, in: source)
+                    .map { AnnotationSmartTextMatcher.annotationRect(from: $0, pixelSize: pixelSize, scale: backing) }
+                    .filter { $0.width > 0 && $0.height > 0 }
                 if boxes.isEmpty {
                     status = "No matching text found."
                 } else {
@@ -864,7 +950,7 @@ private struct AnnotationEditorView: View {
             let canvasSize = document.canvasSize(scale: scale)
             let fit = zoom ?? fitScale(for: canvasSize, in: geometry.size)
             let drawn = canvasSize.scaled(by: fit)
-            let padding = document.background.isExpanded ? document.background.padding * fit : 0
+            let origin = document.imageOrigin(scale: scale).scaled(by: fit)
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     if let rendered = document.render(scale: scale, draft: privacyDraft) {
@@ -876,6 +962,10 @@ private struct AnnotationEditorView: View {
                         ForEach(document.objects) { object in
                             if object.id == selectedID, tool == .move {
                                 selectionHandles(for: object, fit: fit)
+                            } else if extraSelection.contains(object.id), tool == .move {
+                                Rectangle().path(in: object.rect.scaled(by: fit))
+                                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                    .allowsHitTesting(false)
                             }
                         }
                         if let draft, draft.kind != .blur && draft.kind != .pixelate { DraftOverlay(object: draft, fit: fit, scale: scale) }
@@ -886,9 +976,16 @@ private struct AnnotationEditorView: View {
                     .coordinateSpace(name: "annotationCanvas")
                     .gesture(canvasGesture(fit: fit, imageSize: imageSize))
                     .allowsHitTesting(!canvasLocked)
-                    .offset(x: padding, y: padding)
+                    .offset(x: origin.x, y: origin.y)
+                    if let dropPlacement { AnnotationDropZoneOverlay(active: dropPlacement) }
                 }
                 .frame(width: drawn.width, height: drawn.height)
+                .onDrop(of: AnnotationCanvasDropDelegate.acceptedTypes,
+                        delegate: AnnotationCanvasDropDelegate(canvasSize: drawn, placement: $dropPlacement,
+                                                               onDrop: { image, imageScale, placement in
+                                                                   combine(image, imageScale: imageScale,
+                                                                           placement: placement)
+                                                               }))
                 .shadow(color: .black.opacity(0.16), radius: 14, y: 3)
                 .padding(24)
                 .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
@@ -987,25 +1084,36 @@ private struct AnnotationEditorView: View {
                 }
 
                 if tool == .move {
-                    // Clicking picks the topmost object under the pointer.
+                    // Clicking picks the topmost object under the pointer;
+                    // ⇧-click adds/removes it from a multi-selection.
                     if dragStart == nil {
                         dragStart = point
-                        moveOriginal = document.objects.last { $0.rect.insetBy(dx: -4, dy: -4).contains(point) }
-                        selectedID = moveOriginal?.id
-                        if let original = moveOriginal { style = original.style }
                         moveHasChanged = false
+                        let hit = document.objects.last { $0.rect.insetBy(dx: -4, dy: -4).contains(point) }
+                        if NSEvent.modifierFlags.contains(.shift), let hit {
+                            toggleSelection(hit.id)
+                            moveOriginals = []
+                        } else {
+                            if let hit, selectedIDs.contains(hit.id) {
+                                makePrimary(hit.id)
+                            } else {
+                                extraSelection.removeAll()
+                                selectedID = hit?.id
+                            }
+                            moveOriginals = hit == nil ? [] : document.objects.filter { selectedIDs.contains($0.id) }
+                        }
+                        if let hit { style = hit.style }
                     }
-                    if let original = moveOriginal {
+                    if !moveOriginals.isEmpty {
                         let dx = current.x - point.x, dy = current.y - point.y
                         guard dx != 0 || dy != 0 || moveHasChanged else { return }
                         if !moveHasChanged {
                             document.beginChange()
                             moveHasChanged = true
                         }
-                        var updated = original
-                        updated.rect = original.rect.offsetBy(dx: dx, dy: dy)
-                        updated.points = original.points.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
-                        document.update(updated)
+                        for original in moveOriginals {
+                            document.update(original.offsetBy(dx: dx, dy: dy))
+                        }
                     }
                     return
                 }
@@ -1037,7 +1145,7 @@ private struct AnnotationEditorView: View {
                                          style: style)
             }
             .onEnded { value in
-                defer { dragStart = nil; activeHandle = nil; moveOriginal = nil; moveHasChanged = false }
+                defer { dragStart = nil; activeHandle = nil; moveOriginals = []; moveHasChanged = false }
                 if cropMode {
                     return
                 }
@@ -1205,45 +1313,6 @@ private struct AnnotationEditorView: View {
         }
     }
 
-    private var backgroundOptions: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            section("Background") {
-                Picker("Background", selection: $document.background.kind) {
-                    ForEach(AnnotationBackground.Kind.allCases) { Text($0.displayName).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden()
-            }
-            section("Padding") {
-                Picker("Padding", selection: $document.background.padding) {
-                    Text("None").tag(CGFloat(0))
-                    ForEach([16, 32, 48, 64], id: \.self) { Text("\($0) pt").tag(CGFloat($0)) }
-                }.pickerStyle(.segmented).labelsHidden()
-            }
-            section("Screenshot Corners") {
-                Picker("Corner radius", selection: $document.background.cornerRadius) {
-                    ForEach([0, 8, 16, 24], id: \.self) { Text("\($0) pt").tag(CGFloat($0)) }
-                }.pickerStyle(.segmented).labelsHidden()
-            }
-            if document.background.kind == .gradient {
-                section("Wallpaper Gradient") {
-                    Picker("Preset", selection: $document.background.gradientPreset) {
-                        ForEach(AnnotationBackground.GradientPreset.allCases) { Text($0.displayName).tag($0) }
-                    }.labelsHidden()
-                    LinearGradient(colors: document.background.gradientColors.map { Color(nsColor: $0) },
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .frame(height: 48).clipShape(RoundedRectangle(cornerRadius: 8))
-                    if document.background.gradientPreset == .custom {
-                        Text("From").font(.caption).foregroundStyle(.secondary)
-                        ColorSwatchRow(selection: $document.background.gradientStart)
-                        Text("To").font(.caption).foregroundStyle(.secondary)
-                        ColorSwatchRow(selection: $document.background.gradientEnd)
-                    }
-                }
-            } else if document.background.kind == .solid {
-                ColorSwatchRow(selection: $document.background.color)
-            }
-        }
-    }
-
     private var layers: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -1329,20 +1398,21 @@ private struct AnnotationEditorView: View {
         }
     }
 
+    /// "Add Screenshot From File…" (⌘I): pick an image, then a side.
     private func addScreenshot() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Add Screenshot"
+        panel.message = "Choose an image, then where to place it."
         panel.begin { response in
             guard response == .OK, let url = panel.url,
-                  let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-            if document.appendScreenshot(image, scale: scale) {
-                selectedID = nil
-                zoom = nil
-                status = "Screenshot added below the current image."
-            } else { status = "Could not add that image." }
+                  let entry = AnnotationEditorController.entry(fromImageAt: url) else {
+                if response == .OK { status = "Could not add that image." }
+                return
+            }
+            placementRequest = AnnotationPlacementRequest(image: entry.image, scale: entry.scale)
         }
     }
 
@@ -1369,9 +1439,20 @@ private struct AnnotationEditorView: View {
     }
 
     private func handleEditorKey(_ event: NSEvent) -> Bool {
-        guard !cropMode, !showingResize, !showingSmartHighlight,
-              !colorPopover, !optionsPopover, !backgroundPopover, !layersPopover else { return false }
+        guard !cropMode, !showingResize, !showingSmartHighlight, placementRequest == nil,
+              !colorPopover, !optionsPopover, !layersPopover else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        // Object clipboard. The key monitor never sees keys while a text field
+        // is being edited, so text copy/paste keeps working there.
+        if modifiers == .command, let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "c": copyObjects(); return true
+            case "v": return pasteObjects()
+            case "d": duplicateObjects(); return true
+            case "a": selectAllObjects(); return true
+            default: return false
+            }
+        }
         guard modifiers.isEmpty || modifiers == .shift else { return false }
         // CleanShot single-letter tool keys (never while typing: the key
         // handler skips editable text views).
@@ -1387,8 +1468,7 @@ private struct AnnotationEditorView: View {
             selectTool(.move)
             return true
         }
-        guard !canvasLocked, let id = selectedID,
-              var object = document.objects.first(where: { $0.id == id }) else { return false }
+        guard !canvasLocked, selectedID != nil else { return false }
         if event.keyCode == 51 || event.keyCode == 117 {
             if !event.isARepeat { deleteSelection() }
             return true
@@ -1404,16 +1484,143 @@ private struct AnnotationEditorView: View {
         default: return false
         }
         if !event.isARepeat { document.beginChange() }
-        object.rect = object.rect.offsetBy(dx: delta.x, dy: delta.y)
-        object.points = object.points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
-        document.update(object)
+        for object in document.objects where selectedIDs.contains(object.id) {
+            document.update(object.offsetBy(dx: delta.x, dy: delta.y))
+        }
         return true
     }
 
     private func deleteSelection() {
-        guard let id = selectedID else { return }
-        document.remove(id)
+        guard selectedID != nil else { return }
+        document.removeObjects(selectedIDs)
         selectedID = nil
+    }
+
+    // MARK: - Selection & object clipboard
+
+    /// Primary selection plus any ⇧-click additions.
+    private var selectedIDs: Set<UUID> {
+        selectedID.map { extraSelection.union([$0]) } ?? []
+    }
+
+    /// Selected objects in z-order.
+    private var selectedObjects: [AnnotationObject] {
+        let ids = selectedIDs
+        return document.objects.filter { ids.contains($0.id) }
+    }
+
+    private func toggleSelection(_ id: UUID) {
+        if id == selectedID {
+            selectedID = extraSelection.first
+        } else if extraSelection.contains(id) {
+            extraSelection.remove(id)
+        } else {
+            if let primary = selectedID { extraSelection.insert(primary) }
+            selectedID = id
+        }
+    }
+
+    private func makePrimary(_ id: UUID) {
+        guard id != selectedID else { return }
+        if let primary = selectedID { extraSelection.insert(primary) }
+        extraSelection.remove(id)
+        selectedID = id
+    }
+
+    private func select(_ ids: [UUID]) {
+        if tool != .move { selectTool(.move) }
+        selectedID = ids.last
+        extraSelection = Set(ids.dropLast())
+        if let last = ids.last, let object = document.objects.first(where: { $0.id == last }) { style = object.style }
+    }
+
+    /// ⌘C: the selected objects (editable, AOM-private) plus a PNG of them.
+    /// With nothing selected, the whole image is copied instead.
+    private func copyObjects() {
+        let objects = selectedObjects
+        guard !objects.isEmpty else {
+            copyToClipboard()
+            status = "No object selected — copied the whole image (⇧⌘C)."
+            return
+        }
+        let image = document.renderObjectsImage(ids: Set(objects.map(\.id)), scale: scale)
+        if AnnotationObjectClipboard.write(objects, image: image, scale: scale) {
+            pasteChangeCount = NSPasteboard.general.changeCount
+            pasteRepeat = 0
+            status = objects.count == 1 ? "Copied object." : "Copied \(objects.count) objects."
+        } else {
+            status = "Could not copy the object."
+        }
+    }
+
+    /// ⌘V: pastes AOM objects, offset a little further on every repeat.
+    @discardableResult
+    private func pasteObjects() -> Bool {
+        guard let objects = AnnotationObjectClipboard.read() else {
+            status = "Nothing to paste. Copy an annotation object first (⌘C)."
+            return false
+        }
+        let changeCount = NSPasteboard.general.changeCount
+        pasteRepeat = changeCount == pasteChangeCount ? pasteRepeat + 1 : 1
+        pasteChangeCount = changeCount
+        let ids = document.insertCopies(of: objects, offset: AnnotationObjectClipboard.pasteStep * CGFloat(pasteRepeat))
+        select(ids)
+        status = ids.count == 1 ? "Pasted object." : "Pasted \(ids.count) objects."
+        return true
+    }
+
+    /// ⌘D: duplicates in place (offset), without touching the clipboard.
+    private func duplicateObjects() {
+        let objects = selectedObjects
+        guard !objects.isEmpty else { status = "Select an object to duplicate."; return }
+        let ids = document.insertCopies(of: objects, offset: AnnotationObjectClipboard.pasteStep)
+        select(ids)
+        status = ids.count == 1 ? "Duplicated object." : "Duplicated \(ids.count) objects."
+    }
+
+    private func selectAllObjects() {
+        guard !document.objects.isEmpty else { return }
+        select(document.objects.map(\.id))
+    }
+
+    // MARK: - Combine, print, redaction flattening
+
+    /// Places an image next to the canvas on `placement` (drop zones / ⌘I).
+    private func combine(_ image: CGImage, imageScale: CGFloat?, placement: AnnotationCombinePlacement) {
+        if document.combine(image, placement: placement, scale: scale, imageScale: imageScale) {
+            selectedID = nil
+            zoom = nil
+            status = "Image added — \(placement.title.lowercased())."
+        } else {
+            status = "Could not add that image (too large?)."
+        }
+    }
+
+    private func printImage() {
+        guard let image = renderedImage() else { status = "Nothing to print."; return }
+        CapturePrintController.print(image: image, scale: scale, title: capture.displayName,
+                                     window: NSApp.keyWindow)
+    }
+
+    private func flattenRedactions() {
+        if document.flattenRedactions(scale: scale) {
+            selectedID = nil
+            status = "Redactions flattened into the image. Undo restores them."
+        }
+    }
+
+    /// Small screenshot copy for the Background Tool's Blurred swatch.
+    private var backgroundThumbnail: CGImage? {
+        let image = document.croppedImage
+        let side = 96
+        let factor = CGFloat(side) / CGFloat(max(image.width, image.height, 1))
+        let w = max(1, Int(CGFloat(image.width) * factor)), h = max(1, Int(CGFloat(image.height) * factor))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
     }
 
     private func saveStylePreset() {
@@ -1499,6 +1706,7 @@ private struct AnnotationEditorView: View {
 
     /// Save (or apply to the clipboard for clipboard edits).
     private func commitChanges() -> Bool {
+        AnnotationBackgroundPresetStore.rememberPrevious(document.background)
         if let onApply {
             guard let image = renderedImage() else { return false }
             onApply(image)
@@ -1616,6 +1824,11 @@ private struct DraftOverlay: View {
             case .redact:
                 // Preview matches the opaque export: no semi-transparent "privacy" mask.
                 Rectangle().path(in: rect).fill(Color.black)
+            case .secureBlur:
+                // Opaque placeholder while dragging; the secure pixels render on release.
+                Rectangle().path(in: rect).fill(Color(white: 0.45))
+                    .overlay(Image(systemName: "lock.fill").foregroundStyle(.white.opacity(0.8))
+                        .position(x: rect.midX, y: rect.midY))
             case .pixelate:
                 Rectangle().path(in: rect).fill(Color.black.opacity(0.35))
                     .overlay(Rectangle().path(in: rect).stroke(Color.white.opacity(0.6), lineWidth: 1))

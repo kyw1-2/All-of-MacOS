@@ -176,7 +176,12 @@ final class CaptureShortcuts: ObservableObject {
 
     /// Consume the event now, then present AppKit UI after the event tap returns.
     func handleKeyEvent(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
-        guard let action = matchingAction(keyCode: keyCode, modifiers: modifiers) else { return false }
+        guard let action = matchingAction(keyCode: keyCode, modifiers: modifiers) else {
+            // Capture Text extras (TextCaptureShortcuts.swift); only for the
+            // live instance, so injected test instances stay self-contained.
+            return actionHandler == nil && self === CaptureShortcuts.shared
+                && TextCaptureShortcuts.shared.handleKeyEvent(keyCode: keyCode, modifiers: modifiers)
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let actionHandler = self.actionHandler {

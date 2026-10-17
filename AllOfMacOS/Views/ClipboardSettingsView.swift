@@ -54,6 +54,7 @@ struct ClipboardSettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
+                ClipboardIntelligenceSettingsView(store: store)
                 GroupBox("Keyboard Shortcuts") {
                     VStack(spacing: 12) {
                         ForEach(ClipboardShortcuts.Command.allCases) { command in

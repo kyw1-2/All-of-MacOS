@@ -58,10 +58,13 @@ final class ClipboardStore: ObservableObject {
         "public.jpeg", "public.heic", "public.utf16-external-plain-text", "com.apple.cocoa.pasteboard.color"
     ]
 
-    @Published private(set) var entries: [ClipboardEntry] = []
+    @Published private(set) var entries: [ClipboardEntry] = [] { didSet { revision &+= 1 } }
+    /// Bumped on every change to `entries` or `boards`; lets views memoise
+    /// filtered results instead of re-filtering per card per frame.
+    private(set) var revision = 0
     /// A completed capture transaction, including a repeated copy of an existing item.
     var onCapture: ((UUID) -> Void)?
-    @Published private(set) var boards: [ClipboardPinboard] = []
+    @Published private(set) var boards: [ClipboardPinboard] = [] { didSet { revision &+= 1 } }
     @Published private(set) var isLoading = true
     @Published private(set) var canUndoDeletion = false
     @Published private(set) var indexingImages = false
@@ -590,20 +593,11 @@ final class ClipboardStore: ObservableObject {
                   let entry = entries.first(where: { $0.kind == .image && $0.recognizedImageDigest == nil && !attemptedImages.contains($0.id) }),
                   let data = entry.imageData {
                 attemptedImages.insert(entry.id)
-                let result: (String, String)? = await withCheckedContinuation { continuation in
-                    indexingQueue.async {
-                        do {
-                            let request = VNRecognizeTextRequest()
-                            request.recognitionLevel = .accurate
-                            request.usesLanguageCorrection = true
-                            request.automaticallyDetectsLanguage = true
-                            let handler = VNImageRequestHandler(data: data, options: [:])
-                            try handler.perform([request])
-                            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                            continuation.resume(returning: (String(text.prefix(100_000)), entry.payloadDigest))
-                        } catch { continuation.resume(returning: nil) }
-                    }
-                }
+                // The Capture Text engine (multi-script, CJK-aware) indexes
+                // image text, so searching Korean/Japanese/Chinese finds it.
+                let digest: String = await onQueue { entry.payloadDigest }
+                let text = await TextRecognitionService.recognizeForIndexing(imageData: data)
+                let result: (String, String)? = text.map { ($0, digest) }
                 guard let result, let index = entries.firstIndex(where: { $0.id == entry.id }),
                       entries[index].items == entry.items else { continue }
                 entries[index].recognizedText = result.0

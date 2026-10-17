@@ -117,6 +117,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     state.commandHeld = true
                     state.status = "Copied to clipboard."
                 }
+                if args.contains("--aom-mcp-preview") {
+                    // Isolated MCP round-trip check: prints a one-off token.
+                    let token = ClipboardMCPSettings.shared.connect(name: "Preview", client: "Custom Tool")
+                    print("AOM_MCP_PREVIEW_TOKEN=\(token)"); fflush(stdout)
+                }
                 if args.contains("--aom-clipboard-preview-filters") {
                     let state = ClipboardPanelController.shared.state
                     state.searchExpanded = true
@@ -129,6 +134,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if !PresetManager.isUIPreview {
+            ClipboardMCPServer.shared.refresh()
             requestAccessibilityPermissions()
             GestureHUD.shared.start()
             NSApp.servicesProvider = self
@@ -246,6 +252,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// process. Without this, quitting while dimmed would leave the screen dark
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { ClipboardMCPServer.shared.stopForTermination() }
         DisplayControlService.clearAllSoftwareDims()
     }
 

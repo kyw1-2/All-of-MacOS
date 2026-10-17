@@ -504,3 +504,12 @@ enum CrosshairMode: String, CaseIterable, Identifiable {
         }
     }
 }
+
+// MARK: - Capture Text (appended)
+
+extension CaptureSettings {
+    /// Capture Text (OCR) preferences — languages, engine, clipboard, HUD,
+    /// speech. `ocrKeepsLineBreaks` above and `textCapture.keepsLineBreaks`
+    /// share the "AOMOCRKeepsLineBreaks" key.
+    static var textCapture: TextCaptureSettings { .shared }
+}

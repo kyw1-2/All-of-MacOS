@@ -5,8 +5,8 @@
 <key>CFBundleIdentifier</key><string>com.kyw.allofmacos.annotation-preview</string>
 <key>CFBundleName</key><string>AOM Annotation Preview</string>
 <key>CFBundlePackageType</key><string>XPC!</string>
-<key>CFBundleShortVersionString</key><string>1.1.2</string>
-<key>CFBundleVersion</key><string>2026101701</string>
+<key>CFBundleShortVersionString</key><string>1.1.3</string>
+<key>CFBundleVersion</key><string>2026101702</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSExtension</key><dict>
 <key>NSExtensionPointIdentifier</key><string>com.apple.quicklook.preview</string>

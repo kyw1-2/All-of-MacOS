@@ -131,6 +131,14 @@ final class ClipboardRichTextModel: NSObject, ObservableObject, NSTextViewDelega
         try value.data(from: NSRange(location: 0, length: value.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
     }
     func textDidChange(_ notification: Notification) { synchronize() }
+
+    @available(macOS 15.2, *)
+    func showWritingTools() {
+        guard let textView else { return }
+        textView.window?.makeFirstResponder(textView)
+        if textView.selectedRange().length == 0 { textView.selectAll(nil) }
+        textView.showWritingTools(nil)
+    }
     func textViewDidChangeSelection(_ notification: Notification) { synchronizeFormatting() }
     private func synchronize() {
         guard let textView else { return }
@@ -223,6 +231,13 @@ private struct ClipboardRichTextEditor: View {
                 formatButton("italic", title: "Italic (⌘I)", active: model.italic, formatting: .italic)
                 formatButton("underline", title: "Underline (⌘U)", active: model.underline, formatting: .underline)
                 formatButton("strikethrough", title: "Strikethrough (⇧⌘X)", active: model.strike, formatting: .strike)
+                if #available(macOS 15.2, *) {
+                    Button { model.showWritingTools() } label: {
+                        Image(systemName: "wand.and.sparkles").font(.system(size: 12)).frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain).help("Writing Tools (⇧⌘E)").accessibilityLabel("Writing Tools")
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                }
                 Spacer(minLength: 8)
                 Button(saveTitle) { save() }
                     .buttonStyle(ClipboardEditorPillStyle(prominent: true))
@@ -304,6 +319,9 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
         text.isRichText = true
         text.importsGraphics = false
         text.allowsUndo = true
+        // Apple Intelligence Writing Tools (rewrite, proofread, summarize) work
+        // inline in the editor, as in Paste 7's text editor.
+        if #available(macOS 15.0, *) { text.writingToolsBehavior = .complete }
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.autoresizingMask = [.width]

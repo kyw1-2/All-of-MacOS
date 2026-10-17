@@ -57,6 +57,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     case drawHighlight
     case pixelate
     case blur
+    /// Pixelate, then blur and add noise: an irreversible, opaque redaction.
+    case secureBlur
     case redact
     case spotlight
     case counter
@@ -79,6 +81,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .drawHighlight: return "Highlight Draw"
         case .pixelate: return "Pixelate"
         case .blur: return "Blur"
+        case .secureBlur: return "Secure Blur"
         case .redact: return "Redact (Solid)"
         case .spotlight: return "Spotlight"
         case .counter: return "Counter"
@@ -101,6 +104,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .drawHighlight: return "scribble.variable"
         case .pixelate: return "squareshape.dotted.split.2x2"
         case .blur: return "drop.halffull"
+        case .secureBlur: return "lock.rectangle"
         case .redact: return "rectangle.fill"
         case .spotlight: return "flashlight.on.fill"
         case .counter: return "1.circle"
@@ -112,7 +116,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     var isShape: Bool {
         switch self {
         case .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-             .pixelate, .blur, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
+             .pixelate, .blur, .secureBlur, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
             return true
         case .move, .crop, .text, .counter, .cursor:
             return false
@@ -125,8 +129,16 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     /// The tools shown in the toolbar, in order.
     static var toolbarOrder: [AnnotationKind] {
         [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-         .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .redact, .spotlight, .counter, .cursor]
+         .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .secureBlur, .redact, .spotlight,
+         .counter, .cursor]
     }
+
+    /// Privacy kinds (the Redact tool's styles).
+    var isRedaction: Bool { self == .pixelate || self == .blur || self == .secureBlur || self == .redact }
+
+    /// Kinds whose exported pixels are opaque replacements that cannot be
+    /// reversed (Black Out, Secure Blur). Plain Blur / Pixelate are visual only.
+    var isSecureRedaction: Bool { self == .secureBlur || self == .redact }
 }
 
 /// The annotate toolbar, in CleanShot X order with its single-letter keys
@@ -225,7 +237,7 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
         case .line: return [.line]
         case .arrow: return [.arrow]
         case .text: return [.text]
-        case .redact: return [.pixelate, .blur, .redact]
+        case .redact: return [.pixelate, .blur, .secureBlur, .redact]
         case .spotlight: return [.spotlight]
         case .counter: return [.counter]
         case .draw: return [.draw]
@@ -248,14 +260,34 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
 
 /// CleanShot "Redaction style" names for AOM's privacy kinds.
 enum AnnotationRedactionStyle: CaseIterable, Identifiable {
-    case pixelate, blur, blackOut
+    case pixelate, blur, secureBlur, blackOut
     var id: Self { self }
 
     var title: String {
         switch self {
         case .pixelate: return "Pixelate"
         case .blur: return "Blur"
+        case .secureBlur: return "Secure Blur"
         case .blackOut: return "Black Out"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .pixelate: return "squareshape.split.3x3"
+        case .blur: return "drop.halffull"
+        case .secureBlur: return "lock.rectangle"
+        case .blackOut: return "rectangle.fill"
+        }
+    }
+
+    /// Tooltip text that is honest about what can be recovered.
+    var help: String {
+        switch self {
+        case .pixelate: return "Pixelate — visual only; large blocks can still hint at the content"
+        case .blur: return "Blur — visual only; not safe for passwords or IDs"
+        case .secureBlur: return "Secure Blur — pixelated, blurred and noised so the original cannot be recovered"
+        case .blackOut: return "Black Out — opaque fill that replaces the pixels"
         }
     }
 
@@ -263,6 +295,7 @@ enum AnnotationRedactionStyle: CaseIterable, Identifiable {
         switch self {
         case .pixelate: return .pixelate
         case .blur: return .blur
+        case .secureBlur: return .secureBlur
         case .blackOut: return .redact
         }
     }
@@ -271,6 +304,7 @@ enum AnnotationRedactionStyle: CaseIterable, Identifiable {
         switch kind {
         case .pixelate: self = .pixelate
         case .blur: self = .blur
+        case .secureBlur: self = .secureBlur
         case .redact: self = .blackOut
         default: return nil
         }
@@ -408,11 +442,25 @@ struct AnnotationDocument {
     /// The canvas size in points, which is the cropped image's size unless the
     /// background has been expanded.
     func canvasSize(scale: CGFloat) -> CGSize {
-        let base = CGSize(width: CGFloat(croppedImage.width) / scale,
-                          height: CGFloat(croppedImage.height) / scale)
-        guard background.isExpanded else { return base }
-        return CGSize(width: base.width + background.padding * 2,
-                      height: base.height + background.padding * 2)
+        let layout = backgroundLayout(scale: scale)
+        return CGSize(width: layout.canvasSize.width / scale, height: layout.canvasSize.height / scale)
+    }
+
+    /// Where the (cropped) image's top-left lands on the canvas, in points.
+    func imageOrigin(scale: CGFloat) -> CGPoint {
+        let layout = backgroundLayout(scale: scale)
+        return CGPoint(x: layout.imageRect.minX / scale, y: layout.imageRect.minY / scale)
+    }
+
+    /// Pixel layout of the background canvas (padding, inset, ratio, alignment,
+    /// auto-balance). Identity layout when the background is off.
+    func backgroundLayout(scale: CGFloat) -> AnnotationBackgroundLayout {
+        let image = croppedImage
+        let size = CGSize(width: image.width, height: image.height)
+        let needsAnalysis = background.isExpanded && (background.autoBalance || background.inset > 0)
+        let analysis = needsAnalysis ? AnnotationContentBounds.cached(for: image) : nil
+        return AnnotationBackgroundLayout.compute(imageSize: size, background: background,
+                                                  scale: scale, content: analysis)
     }
 
     // MARK: - Mutation
@@ -471,29 +519,7 @@ struct AnnotationDocument {
     /// Undo restores both the previous base image and crop.
     @discardableResult
     mutating func appendScreenshot(_ image: CGImage, scale: CGFloat) -> Bool {
-        guard scale.isFinite && scale > 0 else { return false }
-        let old = croppedImage
-        let width = max(old.width, image.width)
-        let height = old.height + image.height
-        guard width > 0, height > 0, width <= 16000, height <= 16000,
-              Int64(width) * Int64(height) <= 100_000_000,
-              let context = CGContext(data: nil, width: width, height: height,
-                                      bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
-            return false
-        }
-        context.setFillColor(NSColor.white.cgColor)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        context.draw(old, in: CGRect(x: 0, y: image.height,
-                                    width: old.width, height: old.height))
-        context.draw(image, in: CGRect(x: 0, y: 0,
-                                      width: image.width, height: image.height))
-        guard let combined = context.makeImage() else { return false }
-        beginChange()
-        baseImage = combined
-        cropRect = nil
-        return true
+        combine(image, placement: .bottom, scale: scale)
     }
 
     /// Changes the image's physical pixel dimensions. Unlike a crop, resize
@@ -676,57 +702,50 @@ struct AnnotationDocument {
     func render(scale: CGFloat, draft: AnnotationObject? = nil) -> CGImage? {
         guard scale.isFinite, scale > 0 else { return nil }
         let image = croppedImage
-        let padding = background.isExpanded ? background.padding * scale : 0
-        let width = Int(CGFloat(image.width) + padding * 2)
-        let height = Int(CGFloat(image.height) + padding * 2)
-        guard width > 0, height > 0,
+        let layout = backgroundLayout(scale: scale)
+        let width = Int(layout.canvasSize.width)
+        let height = Int(layout.canvasSize.height)
+        guard width > 0, height > 0, width <= 32768, height <= 32768,
+              Int64(width) * Int64(height) <= 200_000_000,
               let context = CGContext(data: nil, width: width, height: height,
                                       bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
 
         context.interpolationQuality = .high
+        let expanded = background.isExpanded
+        let canvasRect = CGRect(x: 0, y: 0, width: width, height: height)
 
         // Background fill behind an expanded canvas.
-        if background.isExpanded {
-            let rect = CGRect(x: 0, y: 0, width: width, height: height)
-            switch background.kind {
-            case .solid:
-                context.setFillColor(background.color.nsColor.cgColor)
-                context.fill(rect)
-            case .gradient:
-                drawGradient(in: context, rect: rect)
-            case .blurred:
-                let source = CIImage(cgImage: image)
-                let blurred = source.clampedToExtent()
-                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 24 * scale])
-                    .cropped(to: source.extent)
-                guard let wallpaper = Self.blurCIContext.createCGImage(blurred, from: source.extent) else { return nil }
-                let fill = max(rect.width / CGFloat(image.width), rect.height / CGFloat(image.height))
-                let size = CGSize(width: CGFloat(image.width) * fill, height: CGFloat(image.height) * fill)
-                context.saveGState()
-                context.clip(to: rect)
-                context.draw(wallpaper, in: CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
-                                                  width: size.width, height: size.height))
-                context.restoreGState()
-            }
+        if expanded {
+            drawBackgroundFill(in: context, rect: canvasRect, image: image, scale: scale)
         }
 
-        // The capture itself. CoreGraphics is bottom-left origin, so the image
-        // sits at the bottom of the canvas and object coordinates are flipped below.
-        let imageRect = CGRect(x: padding, y: padding, width: CGFloat(image.width), height: CGFloat(image.height))
+        // Layout rects are top-left origin; CoreGraphics is bottom-left.
+        func flipped(_ rect: CGRect) -> CGRect {
+            CGRect(x: rect.minX, y: CGFloat(height) - rect.maxY, width: rect.width, height: rect.height)
+        }
+        let imageRect = flipped(layout.imageRect)
+        let blockRect = flipped(layout.blockRect)
         context.saveGState()
-        if background.isExpanded {
-            context.setShadow(offset: CGSize(width: 0, height: -10 * scale), blur: 20 * scale,
-                              color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        if expanded, background.shadow > 0 {
+            let amount = min(1, max(0, background.shadow))
+            context.setShadow(offset: CGSize(width: 0, height: -20 * amount * scale), blur: 40 * amount * scale,
+                              color: NSColor.black.withAlphaComponent(0.7 * amount).cgColor)
         }
         // Composite screenshot + annotations as one rounded floating layer so
         // both the preview and exported image share the same mask and shadow.
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         context.saveGState()
-        let radius = background.isExpanded ? background.cornerRadius * scale : 0
-        context.addPath(CGPath(roundedRect: imageRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        let radius = expanded ? min(background.cornerRadius * scale, min(blockRect.width, blockRect.height) / 2) : 0
+        context.addPath(CGPath(roundedRect: blockRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
         context.clip()
+        if expanded, layout.imageRect != layout.blockRect {
+            // Inset: the screenshot's own edge colour extends around it.
+            let fill = AnnotationContentBounds.cached(for: image).edgeColor
+            context.setFillColor(fill)
+            context.fill(blockRect)
+        }
         context.draw(image, in: imageRect)
         let renderedObjects = objects + (draft.map { [$0] } ?? [])
         for object in renderedObjects {
@@ -736,6 +755,79 @@ struct AnnotationDocument {
         context.endTransparencyLayer()
         context.restoreGState()
         return context.makeImage()
+    }
+
+    /// The base image with `subset` drawn on it and no background (flattening).
+    /// With `drawsBase == false` only the objects are drawn on transparency
+    /// (privacy kinds still sample the base image, so they render correctly).
+    func renderFlat(objects subset: [AnnotationObject], scale: CGFloat, drawsBase: Bool = true) -> CGImage? {
+        guard scale.isFinite, scale > 0 else { return nil }
+        let image = croppedImage
+        guard image.width > 0, image.height > 0,
+              let context = CGContext(data: nil, width: image.width, height: image.height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        if drawsBase { context.draw(image, in: imageRect) }
+        for object in subset {
+            draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: image)
+        }
+        return context.makeImage()
+    }
+
+    /// A PNG-ready rendering of just these objects, cropped to their bounds
+    /// (for "Copy Object" to other apps). Nil when nothing visible remains.
+    func renderObjectsImage(ids: Set<UUID>, scale: CGFloat) -> CGImage? {
+        let subset = objects.filter { ids.contains($0.id) }
+        guard !subset.isEmpty, let full = renderFlat(objects: subset, scale: scale, drawsBase: false) else { return nil }
+        let bounds = subset.map { $0.visualBounds }.reduce(CGRect.null) { $0.union($1) }
+        let pixels = CGRect(x: bounds.minX * scale, y: bounds.minY * scale,
+                            width: bounds.width * scale, height: bounds.height * scale).integral
+            .intersection(CGRect(x: 0, y: 0, width: full.width, height: full.height))
+        guard !pixels.isNull, pixels.width >= 1, pixels.height >= 1 else { return nil }
+        // CGImage cropping uses a top-left origin, matching object space.
+        return full.cropping(to: pixels)
+    }
+
+    private func drawBackgroundFill(in context: CGContext, rect: CGRect, image: CGImage, scale: CGFloat) {
+        switch background.kind {
+        case .solid:
+            context.setFillColor(background.resolvedSolidColor.cgColor)
+            context.fill(rect)
+        case .gradient:
+            drawGradient(in: context, rect: rect)
+        case .wallpaper:
+            if let path = background.wallpaperPath,
+               let wallpaper = AnnotationWallpaperLibrary.image(atPath: path,
+                                                                maxPixelSize: Int(max(rect.width, rect.height))) {
+                drawAspectFill(wallpaper, in: context, rect: rect)
+            } else {
+                drawGradient(in: context, rect: rect)
+            }
+        case .blurred:
+            let source = CIImage(cgImage: image)
+            let blurred = source.clampedToExtent()
+                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 24 * scale])
+                .cropped(to: source.extent)
+            guard let wallpaper = Self.blurCIContext.createCGImage(blurred, from: source.extent) else {
+                context.setFillColor(NSColor.gray.cgColor)
+                context.fill(rect)
+                return
+            }
+            drawAspectFill(wallpaper, in: context, rect: rect)
+        }
+    }
+
+    private func drawAspectFill(_ picture: CGImage, in context: CGContext, rect: CGRect) {
+        let fill = max(rect.width / CGFloat(max(1, picture.width)), rect.height / CGFloat(max(1, picture.height)))
+        let size = CGSize(width: CGFloat(picture.width) * fill, height: CGFloat(picture.height) * fill)
+        context.saveGState()
+        context.clip(to: rect)
+        context.draw(picture, in: CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
+                                         width: size.width, height: size.height))
+        context.restoreGState()
     }
 
     private func drawGradient(in context: CGContext, rect: CGRect) {
@@ -800,10 +892,17 @@ struct AnnotationDocument {
         case .redact:
             // Flattened opaque replacement. Never depend on the annotation's
             // alpha or editable layer color for privacy-sensitive redaction.
-            context.setBlendMode(.normal)
+            // Integral bounds: an anti-aliased edge would blend original pixels.
+            let target = rect.intersection(imageRect).integral.intersection(imageRect)
+            guard !target.isNull else { break }
+            context.setBlendMode(.copy)
             context.setAlpha(1)
+            context.setShouldAntialias(false)
             context.setFillColor(NSColor.black.cgColor)
-            context.fill(rect.intersection(imageRect))
+            context.fill(target)
+        case .secureBlur:
+            drawSecureBlur(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
+                           blockSize: object.style.pixelBlockSize, seed: object.id)
         case .blur:
             drawGaussianBlur(in: context, rect: rect, scale: scale,
                              baseImage: baseImage, imageRect: imageRect, radius: object.style.blurRadius)
@@ -1021,6 +1120,39 @@ struct AnnotationDocument {
         context.restoreGState()
     }
 
+    /// Irreversible redaction: the region is reduced to a coarse mosaic (the
+    /// only data that survives), blurred, mixed with deterministic noise and
+    /// written back as fully opaque pixels. Any output pixel that still equals
+    /// its original value is nudged, so no source pixel survives verbatim.
+    private func drawSecureBlur(in context: CGContext, rect: CGRect, scale: CGFloat, baseImage: CGImage,
+                                imageRect: CGRect, blockSize: CGFloat, seed: UUID) {
+        let clipped = rect.intersection(imageRect).integral.intersection(imageRect)
+        guard !clipped.isNull, clipped.width >= 1, clipped.height >= 1 else { return }
+        let sourceRect = CGRect(x: clipped.minX - imageRect.minX, y: imageRect.maxY - clipped.maxY,
+                                width: clipped.width, height: clipped.height)
+        guard let region = baseImage.cropping(to: sourceRect),
+              let output = AnnotationSecureRedaction.secureBlur(region: region,
+                                                                blockSize: max(12 * scale, blockSize),
+                                                                seed: seed) else {
+            // Fail closed: if the secure pipeline cannot run, black the region out.
+            context.saveGState()
+            context.setAlpha(1)
+            context.setBlendMode(.copy)
+            context.setFillColor(NSColor.black.cgColor)
+            context.fill(clipped)
+            context.restoreGState()
+            return
+        }
+        context.saveGState()
+        context.setAlpha(1)
+        context.setBlendMode(.copy)
+        context.setShouldAntialias(false)
+        context.interpolationQuality = .none
+        context.clip(to: clipped)
+        context.draw(output, in: clipped)
+        context.restoreGState()
+    }
+
     /// Draws the system arrow cursor, so a screenshot can show where the click was.
     private func drawCursor(in context: CGContext, rect: CGRect, color: NSColor, scale: CGFloat) {
         let size = max(rect.width, 20 * scale)
@@ -1048,29 +1180,68 @@ struct AnnotationDocument {
     }
 }
 
-/// The background behind an expanded canvas.
+/// The background behind an expanded canvas (CleanShot Background Tool).
+///
+/// Decoding tolerates every key being absent so projects written before a
+/// field existed keep opening.
 struct AnnotationBackground: Equatable, Codable {
     enum Kind: String, CaseIterable, Identifiable, Codable {
-        case solid, gradient, blurred
+        case solid, gradient, blurred, wallpaper
         var id: String { rawValue }
         var displayName: String {
             switch self {
-            case .solid: return "Solid"
+            case .solid: return "Plain Color"
             case .gradient: return "Gradient"
             case .blurred: return "Blurred"
+            case .wallpaper: return "Wallpaper"
             }
         }
     }
 
     enum GradientPreset: String, CaseIterable, Identifiable, Codable {
-        case custom, sunset, ocean, sequoia
+        case custom, sunset, ocean, sequoia, aurora, peach, mint, lavender, midnight, ember, citrus, slate
         var id: String { rawValue }
-        var displayName: String {
+        var displayName: String { rawValue == "custom" ? "Custom" : rawValue.capitalized }
+
+        /// The swatches shown in the Gradients section (Custom is edited separately).
+        static let gallery: [GradientPreset] = allCases.filter { $0 != .custom }
+
+        /// Original AOM colour stops (sRGB), top-left → bottom-right.
+        var stops: [(CGFloat, CGFloat, CGFloat)] {
             switch self {
-            case .custom: return "Custom"
-            case .sunset: return "Sunset"
-            case .ocean: return "Ocean"
-            case .sequoia: return "Sequoia"
+            case .custom: return []
+            case .sunset: return [(0.28, 0.12, 0.54), (0.76, 0.23, 0.54), (1, 0.48, 0.32), (1, 0.78, 0.48)]
+            case .ocean: return [(0.05, 0.12, 0.38), (0.08, 0.39, 0.75), (0.08, 0.70, 0.80), (0.55, 0.90, 0.85)]
+            case .sequoia: return [(0.12, 0.23, 0.20), (0.26, 0.42, 0.31), (0.64, 0.63, 0.38), (0.91, 0.71, 0.45)]
+            case .aurora: return [(0.10, 0.85, 0.65), (0.20, 0.45, 0.95), (0.55, 0.25, 0.85)]
+            case .peach: return [(1.00, 0.85, 0.72), (0.98, 0.62, 0.60), (0.90, 0.45, 0.62)]
+            case .mint: return [(0.80, 0.98, 0.88), (0.45, 0.88, 0.78), (0.20, 0.66, 0.70)]
+            case .lavender: return [(0.93, 0.88, 1.00), (0.74, 0.66, 0.96), (0.52, 0.47, 0.88)]
+            case .midnight: return [(0.04, 0.05, 0.14), (0.14, 0.12, 0.32), (0.30, 0.20, 0.48)]
+            case .ember: return [(0.98, 0.78, 0.22), (0.96, 0.43, 0.20), (0.75, 0.13, 0.25)]
+            case .citrus: return [(0.98, 0.98, 0.55), (0.70, 0.92, 0.35), (0.25, 0.75, 0.40)]
+            case .slate: return [(0.82, 0.85, 0.89), (0.55, 0.60, 0.68), (0.28, 0.32, 0.40)]
+            }
+        }
+    }
+
+    /// CleanShot "Ratio": Auto + fixed canvas ratios.
+    enum Ratio: String, CaseIterable, Identifiable, Codable {
+        case auto
+        case square = "1:1", r3x4 = "3:4", r4x3 = "4:3", r3x2 = "3:2", r16x9 = "16:9", r4x5 = "4:5", r9x16 = "9:16"
+        var id: String { rawValue }
+        var title: String { self == .auto ? "Auto" : rawValue }
+        /// Width ÷ height, nil for Auto.
+        var value: CGFloat? {
+            switch self {
+            case .auto: return nil
+            case .square: return 1
+            case .r3x4: return 3.0 / 4
+            case .r4x3: return 4.0 / 3
+            case .r3x2: return 3.0 / 2
+            case .r16x9: return 16.0 / 9
+            case .r4x5: return 4.0 / 5
+            case .r9x16: return 9.0 / 16
             }
         }
     }
@@ -1083,17 +1254,220 @@ struct AnnotationBackground: Equatable, Codable {
     var gradientEnd: AnnotationColor = .blue
     /// Padding around the image, in points. Zero means no expansion.
     var padding: CGFloat = 0
+    /// Extra margin inside the rounded frame, filled with the screenshot's edge colour (points).
+    var inset: CGFloat = 0
+    /// Drop shadow strength, 0…1 (0.5 matches the original fixed shadow).
+    var shadow: CGFloat = 0.5
+    /// 3 × 3 alignment cell, row-major: 0 = top-left, 4 = centre, 8 = bottom-right.
+    var alignment: Int = 4
+    var ratio: Ratio = .auto
+    /// Shift the screenshot so its visual content (not its uniform border) is centred.
+    var autoBalance: Bool = false
+    /// Plain colour as RRGGBB (overrides `color` when set).
+    var solidHex: String?
+    /// A system desktop picture, for `.wallpaper`.
+    var wallpaperPath: String?
 
-    var isExpanded: Bool { padding > 0 }
+    var isExpanded: Bool { padding > 0 || inset > 0 || ratio != .auto }
+
+    var resolvedSolidColor: NSColor {
+        solidHex.flatMap(AnnotationColorLibrary.color(fromHex:)) ?? color.nsColor
+    }
 
     var gradientColors: [NSColor] {
-        let rgb: [(CGFloat, CGFloat, CGFloat)]
-        switch gradientPreset {
-        case .custom: return [gradientStart.nsColor, gradientEnd.nsColor]
-        case .sunset: rgb = [(0.28, 0.12, 0.54), (0.76, 0.23, 0.54), (1, 0.48, 0.32), (1, 0.78, 0.48)]
-        case .ocean: rgb = [(0.05, 0.12, 0.38), (0.08, 0.39, 0.75), (0.08, 0.70, 0.80), (0.55, 0.90, 0.85)]
-        case .sequoia: rgb = [(0.12, 0.23, 0.20), (0.26, 0.42, 0.31), (0.64, 0.63, 0.38), (0.91, 0.71, 0.45)]
+        guard gradientPreset != .custom else { return [gradientStart.nsColor, gradientEnd.nsColor] }
+        return gradientPreset.stops.map { NSColor(srgbRed: $0.0, green: $0.1, blue: $0.2, alpha: 1) }
+    }
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, gradientPreset, cornerRadius, color, gradientStart, gradientEnd, padding
+        case inset, shadow, alignment, ratio, autoBalance, solidHex, wallpaperPath
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = AnnotationBackground()
+        kind = (try? c.decodeIfPresent(Kind.self, forKey: .kind)) ?? defaults.kind
+        gradientPreset = (try? c.decodeIfPresent(GradientPreset.self, forKey: .gradientPreset)) ?? defaults.gradientPreset
+        cornerRadius = try c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius) ?? defaults.cornerRadius
+        color = (try? c.decodeIfPresent(AnnotationColor.self, forKey: .color)) ?? defaults.color
+        gradientStart = (try? c.decodeIfPresent(AnnotationColor.self, forKey: .gradientStart)) ?? defaults.gradientStart
+        gradientEnd = (try? c.decodeIfPresent(AnnotationColor.self, forKey: .gradientEnd)) ?? defaults.gradientEnd
+        padding = try c.decodeIfPresent(CGFloat.self, forKey: .padding) ?? defaults.padding
+        inset = try c.decodeIfPresent(CGFloat.self, forKey: .inset) ?? defaults.inset
+        shadow = try c.decodeIfPresent(CGFloat.self, forKey: .shadow) ?? defaults.shadow
+        alignment = try c.decodeIfPresent(Int.self, forKey: .alignment) ?? defaults.alignment
+        ratio = (try? c.decodeIfPresent(Ratio.self, forKey: .ratio)) ?? defaults.ratio
+        autoBalance = try c.decodeIfPresent(Bool.self, forKey: .autoBalance) ?? defaults.autoBalance
+        solidHex = try c.decodeIfPresent(String.self, forKey: .solidHex)
+        wallpaperPath = try c.decodeIfPresent(String.self, forKey: .wallpaperPath)
+    }
+
+    /// Range checks shared by project and preset loading.
+    var isValid: Bool {
+        [padding, cornerRadius, inset].allSatisfy { $0.isFinite && (0...2000).contains($0) }
+            && shadow.isFinite && (0...1).contains(shadow) && (0...8).contains(alignment)
+            && (solidHex.map { $0.count <= 8 } ?? true) && (wallpaperPath.map { $0.utf8.count <= 4096 } ?? true)
+    }
+}
+
+extension AnnotationObject {
+    /// The painted extent (stroke, arrow heads, counter disc), in canvas points.
+    var visualBounds: CGRect {
+        var bounds = rect
+        if kind == .counter { bounds.size = CGSize(width: max(rect.width, 24), height: max(rect.width, 24)) }
+        let outset: CGFloat
+        switch kind {
+        case .arrow: outset = max(style.thickness * 3.5, 12)
+        case .rectangle, .ellipse, .line, .draw, .drawHighlight: outset = style.thickness + 2
+        case .text: outset = 4
+        default: outset = 1
         }
-        return rgb.map { NSColor(srgbRed: $0.0, green: $0.1, blue: $0.2, alpha: 1) }
+        return bounds.insetBy(dx: -outset, dy: -outset)
+    }
+
+    /// The same object moved by (dx, dy), freehand points included.
+    func offsetBy(dx: CGFloat, dy: CGFloat) -> AnnotationObject {
+        var moved = self
+        moved.rect = rect.offsetBy(dx: dx, dy: dy)
+        moved.points = points.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
+        return moved
+    }
+
+    /// A copy with a fresh identity (paste / duplicate).
+    func duplicated(offsetBy delta: CGFloat) -> AnnotationObject {
+        let moved = offsetBy(dx: delta, dy: delta)
+        return AnnotationObject(kind: moved.kind, rect: moved.rect, style: moved.style,
+                                text: moved.text, points: moved.points)
+    }
+}
+
+/// Where an added image goes relative to the current canvas
+/// (CleanShot "Place on the right / left / top / bottom").
+enum AnnotationCombinePlacement: String, CaseIterable, Identifiable {
+    case top, bottom, left, right
+    var id: String { rawValue }
+
+    var title: String { "Place on the \(rawValue)" }
+
+    var symbol: String {
+        switch self {
+        case .top: return "arrow.up"
+        case .bottom: return "arrow.down"
+        case .left: return "arrow.left"
+        case .right: return "arrow.right"
+        }
+    }
+
+    /// The drop zone for a pointer at `point` over a canvas of `size`: the
+    /// nearest edge, measured relative to the canvas dimensions.
+    static func zone(for point: CGPoint, in size: CGSize) -> AnnotationCombinePlacement {
+        guard size.width > 0, size.height > 0 else { return .bottom }
+        let nx = min(max(point.x / size.width, 0), 1)
+        let ny = min(max(point.y / size.height, 0), 1)
+        let distances: [(AnnotationCombinePlacement, CGFloat)] = [
+            (.top, ny), (.bottom, 1 - ny), (.left, nx), (.right, 1 - nx),
+        ]
+        // The centre of the canvas means "append below" (the classic behaviour).
+        if abs(nx - 0.5) < 0.2 && abs(ny - 0.5) < 0.2 { return .bottom }
+        return distances.min { $0.1 < $1.1 }!.0
+    }
+}
+
+extension AnnotationDocument {
+    static let maximumCombinedSide = 16000
+
+    /// Places `image` next to the current (cropped) image on `placement`,
+    /// growing the canvas. Annotations keep their on-screen position over the
+    /// original pixels. `imageScale` (the added image's own backing scale)
+    /// resamples it to this document's point size when the two differ.
+    @discardableResult
+    mutating func combine(_ image: CGImage, placement: AnnotationCombinePlacement, scale: CGFloat,
+                          imageScale: CGFloat? = nil) -> Bool {
+        guard scale.isFinite, scale > 0, image.width > 0, image.height > 0 else { return false }
+        var added = image
+        if let imageScale, imageScale.isFinite, imageScale > 0, abs(imageScale - scale) > 0.01 {
+            let factor = scale / imageScale
+            let w = max(1, Int((CGFloat(image.width) * factor).rounded()))
+            let h = max(1, Int((CGFloat(image.height) * factor).rounded()))
+            guard w <= Self.maximumCombinedSide, h <= Self.maximumCombinedSide,
+                  let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { return false }
+            ctx.interpolationQuality = .high
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            guard let resampled = ctx.makeImage() else { return false }
+            added = resampled
+        }
+        let old = croppedImage
+        let vertical = placement == .top || placement == .bottom
+        let width = vertical ? max(old.width, added.width) : old.width + added.width
+        let height = vertical ? old.height + added.height : max(old.height, added.height)
+        guard width > 0, height > 0, width <= Self.maximumCombinedSide, height <= Self.maximumCombinedSide,
+              Int64(width) * Int64(height) <= 100_000_000,
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+            return false
+        }
+        // Top-left placement of each image, converted to CG's bottom-left below.
+        let oldOrigin: CGPoint, newOrigin: CGPoint
+        switch placement {
+        case .bottom: oldOrigin = .zero; newOrigin = CGPoint(x: 0, y: old.height)
+        case .top: newOrigin = .zero; oldOrigin = CGPoint(x: 0, y: added.height)
+        case .right: oldOrigin = .zero; newOrigin = CGPoint(x: old.width, y: 0)
+        case .left: newOrigin = .zero; oldOrigin = CGPoint(x: added.width, y: 0)
+        }
+        func cgRect(_ origin: CGPoint, _ picture: CGImage) -> CGRect {
+            CGRect(x: origin.x, y: CGFloat(height) - origin.y - CGFloat(picture.height),
+                   width: CGFloat(picture.width), height: CGFloat(picture.height))
+        }
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(old, in: cgRect(oldOrigin, old))
+        context.draw(added, in: cgRect(newOrigin, added))
+        guard let combined = context.makeImage() else { return false }
+        beginChange()
+        baseImage = combined
+        cropRect = nil
+        let dx = oldOrigin.x / scale, dy = oldOrigin.y / scale
+        if dx != 0 || dy != 0 {
+            objects = objects.map { $0.offsetBy(dx: dx, dy: dy) }
+        }
+        return true
+    }
+
+    /// Burns every redaction (and everything beneath the top-most one, so the
+    /// stacking order is unchanged) into the base image. Afterwards neither the
+    /// editor nor a saved project contains the original pixels under them.
+    @discardableResult
+    mutating func flattenRedactions(scale: CGFloat) -> Bool {
+        guard let last = objects.lastIndex(where: { $0.kind.isRedaction }) else { return false }
+        let flattened = Array(objects[...last])
+        guard let image = renderFlat(objects: flattened, scale: scale) else { return false }
+        beginChange()
+        baseImage = image
+        cropRect = nil
+        objects = Array(objects[(last + 1)...])
+        return true
+    }
+
+    /// Inserts copies of `pasted` (fresh ids) and returns their ids, as one undo step.
+    @discardableResult
+    mutating func insertCopies(of pasted: [AnnotationObject], offset: CGFloat) -> [UUID] {
+        guard !pasted.isEmpty else { return [] }
+        let copies = pasted.map { $0.duplicated(offsetBy: offset) }
+        addObjects(copies)
+        return copies.map(\.id)
+    }
+
+    /// Removes several objects as one undo step.
+    mutating func removeObjects(_ ids: Set<UUID>) {
+        guard objects.contains(where: { ids.contains($0.id) }) else { return }
+        beginChange()
+        objects.removeAll { ids.contains($0.id) }
     }
 }

@@ -54,6 +54,9 @@ final class ClipboardPanelState: ObservableObject {
     @Published var editor: ClipboardEditorRequest?
     @Published var preview: ClipboardEntry?
     @Published var editingTitleID: UUID?
+    /// Intelligent Clipboard picks for the current destination, best first.
+    /// Shown at the front of Clipboard History when no search or filter is on.
+    @Published var suggestedIDs: [UUID] = []
 
     /// Date filter codes: 0 any, 1 today, -1 yesterday, -7 this week,
     /// -14 last week, N > 1 the last N days (Paste's Date filter section).
@@ -78,11 +81,36 @@ final class ClipboardPanelState: ObservableObject {
         }
     }
 
+    private struct ResultsKey: Equatable {
+        let store: ObjectIdentifier, revision: Int, query: String, kind: ClipboardEntry.Kind?
+        let source: String?, board: UUID?, recentDays: Int, day: Date, suggested: [UUID]
+    }
+    private var resultsCache: (key: ResultsKey, value: [ClipboardEntry])?
+
+    /// Memoised per store revision and filter state: the panel, every card and
+    /// the key handler ask for this many times per update.
     func results(in store: ClipboardStore) -> [ClipboardEntry] {
+        let key = ResultsKey(store: ObjectIdentifier(store), revision: store.revision, query: query, kind: kind,
+                             source: source, board: board, recentDays: recentDays,
+                             day: Calendar.current.startOfDay(for: Date()), suggested: suggestedIDs)
+        if let resultsCache, resultsCache.key == key { return resultsCache.value }
         let range = Self.dateRange(for: recentDays)
-        return store.filtered(query: query, kind: kind, source: source,
-                              board: board, since: range.since)
+        var value = store.filtered(query: query, kind: kind, source: source,
+                                   board: board, since: range.since)
             .filter { range.before == nil || $0.lastCopiedAt < range.before! }
+        if !suggestedIDs.isEmpty, board == nil, query.isEmpty, kind == nil, source == nil, recentDays == 0 {
+            value = Self.promoting(suggestedIDs, in: value)
+        }
+        resultsCache = (key, value)
+        return value
+    }
+
+    /// Moves the suggested entries to the front, in suggestion order.
+    static func promoting(_ ids: [UUID], in entries: [ClipboardEntry]) -> [ClipboardEntry] {
+        let picked = ids.compactMap { id in entries.first { $0.id == id } }
+        guard !picked.isEmpty else { return entries }
+        let set = Set(picked.map(\.id))
+        return picked + entries.filter { !set.contains($0.id) }
     }
 
     func quickPasteIDs(in store: ClipboardStore) -> [UUID] {
@@ -398,6 +426,13 @@ final class ClipboardPanelController {
         }
         // Stale messages from an earlier session must not greet the user.
         state.status = ""
+        if !wasVisible {
+            state.suggestedIDs = ClipboardIntelligence.shared.suggestions(for: destination, store: store) { [weak self] ids in
+                guard let self, self.isVisible, !self.slidingOut else { return }
+                self.state.suggestedIDs = ids
+            }
+            ClipboardIntelligence.shared.refineClassesWithModel(store.entries)
+        }
         state.searchExpanded = !state.query.isEmpty
         state.commandHeld = NSEvent.modifierFlags.contains(.command)
         if wasVisible || !Self.animatesPanel {
@@ -453,6 +488,7 @@ final class ClipboardPanelController {
         state.clearSelection()
         state.commandHeld = false
         state.visibleCardIDs = []
+        state.suggestedIDs = []
     }
 
     /// Copy the chosen rich clipboard item without sending Cmd-V to any app.
@@ -542,6 +578,7 @@ final class ClipboardPanelController {
             guard try store.write(entryIDs: ids, plainText: plainText || store.settings.plainText,
                                   playSound: false) else { return }
         } catch { state.status = error.localizedDescription; return }
+        ClipboardIntelligence.shared.recordPaste(entryIDs: ids, destination: destination, store: store)
         guard store.settings.pasteDirectly, let target = destination,
               !target.isTerminated else {
             ClipboardAudioFeedback.copy()
@@ -1345,33 +1382,39 @@ struct ClipboardPanelView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
+                    let entries = self.entries
+                    let spacing: CGFloat = compact ? 14 : 24
+                    let quickIDs = state.quickPasteIDs(in: store)
+                    let suggested = Set(state.suggestedIDs)
+                    let boards = store.boards
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: compact ? 14 : 24) {
+                            LazyHStack(spacing: spacing) {
                                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                                     ClipboardCardView(entry: entry, number: index + 1,
-                                                      compact: compact, side: cardSide, store: store,
-                                                      state: state, controller: controller)
+                                                      compact: compact, side: cardSide,
+                                                      isSelected: state.selected.contains(entry.id),
+                                                      quickNumber: quickIDs.firstIndex(of: entry.id).map { $0 + 1 },
+                                                      showsQuickNumber: state.commandHeld,
+                                                      searchActive: state.searchFieldActive,
+                                                      isPreviewing: state.preview?.id == entry.id,
+                                                      isSuggested: suggested.contains(entry.id),
+                                                      boards: boards,
+                                                      store: store, state: state, controller: controller)
                                         .id(entry.id)
-                                        .background(GeometryReader { cardGeometry in
-                                            Color.clear.preference(key: ClipboardVisibleCardsKey.self,
-                                                value: [entry.id: cardGeometry.frame(in: .named("clipboardViewport"))])
-                                        })
+                                        .modifier(ClipboardLegacyVisibilityProbe(id: entry.id))
                                 }
                             }
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, Self.shelfInset)
                             .padding(.top, compact ? 8 : 12)
                             .padding(.bottom, compact ? 12 : 24)
                             .frame(minHeight: geometry.size.height, alignment: .center)
                             .background(NativeScrollChrome(.hidden))
                         }
                         .coordinateSpace(name: "clipboardViewport")
-                        .onPreferenceChange(ClipboardVisibleCardsKey.self) { frames in
-                            let viewport = CGRect(origin: .zero, size: geometry.size)
-                            let ids = frames.filter { $0.value.intersects(viewport) }
-                                .sorted { $0.value.minX < $1.value.minX }.map(\.key)
-                            if state.visibleCardIDs != ids { state.visibleCardIDs = ids }
-                        }
+                        .modifier(ClipboardVisibleRangeTracker(
+                            ids: entries.map(\.id), pitch: cardSide + spacing, side: cardSide,
+                            inset: Self.shelfInset, viewportWidth: geometry.size.width, state: state))
                         .scrollIndicators(.hidden)
                         .background(NativeScrollChrome(.hidden))
                         .id(state.board?.uuidString ?? "clipboard-history")
@@ -1386,6 +1429,8 @@ struct ClipboardPanelView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }
+
+    static let shelfInset: CGFloat = 24
 
     private var isFiltering: Bool { !state.query.isEmpty || hasFilters }
     private var emptyTitle: String {
@@ -1553,8 +1598,19 @@ private struct ClipboardCardView: View {
     let number: Int
     let compact: Bool
     let side: CGFloat
-    @ObservedObject var store: ClipboardStore
-    @ObservedObject var state: ClipboardPanelState
+    // Plain values: a card re-renders only when its own inputs change, not on
+    // every scroll-driven or unrelated panel update (that made scrolling and
+    // clicks lag behind Paste's).
+    let isSelected: Bool
+    let quickNumber: Int?
+    let showsQuickNumber: Bool
+    let searchActive: Bool
+    let isPreviewing: Bool
+    let isSuggested: Bool
+    let boards: [ClipboardPinboard]
+    // Action targets only; deliberately not observed.
+    let store: ClipboardStore
+    let state: ClipboardPanelState
     let controller: ClipboardPanelController
 
     @State private var isHovered = false
@@ -1563,7 +1619,6 @@ private struct ClipboardCardView: View {
     @State private var imagePreview: ClipboardThumbnailCache.Preview?
     @FocusState private var titleFocused: Bool
 
-    private var isSelected: Bool { state.selected.contains(entry.id) }
     static let radius: CGFloat = 16
 
     private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
@@ -1578,7 +1633,6 @@ private struct ClipboardCardView: View {
         }
         return entry.title
     }
-    private var quickNumber: Int? { state.quickPasteIDs(in: store).firstIndex(of: entry.id).map { $0 + 1 } }
     private var appIcon: NSImage? {
         AppMetadataCache.shared.icon(for: entry.sourceBundleID)
     }
@@ -1595,7 +1649,14 @@ private struct ClipboardCardView: View {
                                 if !focused && isEditingTitle { commitTitle() }
                             }
                     } else {
-                        Text(headerTitle).font(.system(size: compact ? 12 : 15, weight: .semibold)).lineLimit(1)
+                        HStack(spacing: 4) {
+                            if isSuggested {
+                                Image(systemName: "sparkles").font(.system(size: compact ? 9 : 11, weight: .semibold))
+                                    .help("Suggested for the app you are pasting into")
+                                    .accessibilityLabel("Suggested")
+                            }
+                            Text(headerTitle).font(.system(size: compact ? 12 : 15, weight: .semibold)).lineLimit(1)
+                        }
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
                     TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -1624,13 +1685,14 @@ private struct ClipboardCardView: View {
                 previewContent
                     .padding(entry.kind == .image || entry.kind == .color ? 0 : compact ? 9 : 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .mask {
+                    .clipped()
+                    .overlay(alignment: .bottom) {
+                        // A solid-colour fade is far cheaper than a per-card mask.
                         if entry.kind == .text || entry.kind == .link {
-                            VStack(spacing: 0) {
-                                Color.black
-                                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 32)
-                            }
-                        } else { Color.black }
+                            LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)],
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: 32).allowsHitTesting(false)
+                        }
                     }
                 if entry.kind == .image, !compact || side >= 150 {
                     HStack {
@@ -1667,7 +1729,7 @@ private struct ClipboardCardView: View {
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(alignment: .bottomLeading) {
-            if state.commandHeld, let quickNumber {
+            if showsQuickNumber, let quickNumber {
                 Text("⌘\(quickNumber)").font(.system(size: 12, weight: .semibold, design: .rounded))
                     .padding(.horizontal, 7).padding(.vertical, 4)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
@@ -1684,25 +1746,19 @@ private struct ClipboardCardView: View {
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
-                    .strokeBorder(state.searchFieldActive ? Color.secondary.opacity(0.7) : Color.accentColor, lineWidth: 4)
+                    .strokeBorder(searchActive ? Color.secondary.opacity(0.7) : Color.accentColor, lineWidth: 4)
                     .padding(-4)
                     .allowsHitTesting(false)
             }
         }
-        .shadow(color: .black.opacity(0.06), radius: 3, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: Self.radius))
-        // Let the actual card hit-test route the click. Per-card local event
-        // monitors also observe clicks handled by other views, and their native
-        // background frames can lag behind the lazy carousel's layout.
-        .gesture(
-            TapGesture(count: 2).exclusively(before: TapGesture())
-                .onEnded { click in
-                    switch click {
-                    case .first: pasteByDoubleClick()
-                    case .second: selectCard()
-                    }
-                }
-        )
+        // Paste selects on the first click immediately. An exclusive
+        // double-tap gesture made every single click wait for the system
+        // double-click interval (~0.5 s) before selecting; both recognisers
+        // now run side by side, so the first click selects at once and the
+        // second click of a double-click pastes.
+        .simultaneousGesture(TapGesture(count: 1).onEnded { selectCard() })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { pasteByDoubleClick() })
         .onHover { isHovered = $0 }
         .task(id: entry.id) {
             guard let data = entry.imageData else { imagePreview = nil; return }
@@ -1711,7 +1767,7 @@ private struct ClipboardCardView: View {
             imagePreview = preview
         }
         .popover(isPresented: Binding(
-            get: { state.preview?.id == entry.id },
+            get: { isPreviewing },
             set: { if !$0 && state.preview?.id == entry.id { state.preview = nil } }
         ), attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
             ClipboardPreviewSheet(entry: entry, store: store, state: state, controller: controller)
@@ -1797,10 +1853,12 @@ private struct ClipboardCardView: View {
                         .foregroundStyle(.white).shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                 }
         } else {
-            Text(entry.previewText)
+            // Lay out only what fits: a 4,000-character preview per card made
+            // every scroll frame re-measure large text blocks.
+            Text(String(entry.previewText.prefix(cardTextBudget)))
                 .font(.system(size: compact ? 11 : 14))
                 .lineSpacing(2)
-                .lineLimit(nil)
+                .lineLimit(cardLineLimit)
                 .multilineTextAlignment(.leading)
                 .foregroundStyle(.primary.opacity(0.88))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1817,6 +1875,9 @@ private struct ClipboardCardView: View {
     static func abbreviatedPath(_ url: URL) -> String {
         (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
     }
+
+    private var cardLineLimit: Int { max(2, Int((side - (compact ? 60 : 96)) / (compact ? 15 : 19))) }
+    private var cardTextBudget: Int { cardLineLimit * (compact ? 40 : 48) }
 
     @ViewBuilder private var thumbnailContent: some View {
         if let image = imagePreview?.image {
@@ -1896,7 +1957,7 @@ private struct ClipboardCardView: View {
         }.keyboardShortcut(.delete, modifiers: [])
         Divider()
         Menu(many ? "Pin \(targets.count) Items" : (entry.pinboardIDs.isEmpty ? "Pin" : "Pinboards")) {
-            ForEach(store.boards) { board in
+            ForEach(boards) { board in
                 let pinned = targets.allSatisfy { id in store.entries.first { $0.id == id }?.pinboardIDs.contains(board.id) == true }
                 Button {
                     for id in targets {
@@ -1908,7 +1969,7 @@ private struct ClipboardCardView: View {
                     }
                 }
             }
-            if !store.boards.isEmpty { Divider() }
+            if !boards.isEmpty { Divider() }
             Button("New Pinboard…") { state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "") }
         }
         Divider()
@@ -2434,6 +2495,68 @@ private struct PastePanelResizeGrip: NSViewRepresentable {
 
 private enum PasteClipboardDrag {
     static let entryType = "com.kyw.allofmacos.clipboard-pinboard-entry"
+}
+
+/// Visible-card tracking for ⌘1–9. On macOS 15+ the indices come from the
+/// scroll offset arithmetically and are published only when the visible range
+/// changes; the old per-card geometry preference (re-evaluated every scroll
+/// frame) remains only for macOS 14.
+private struct ClipboardVisibleRangeTracker: ViewModifier {
+    let ids: [UUID]
+    let pitch: CGFloat
+    let side: CGFloat
+    let inset: CGFloat
+    let viewportWidth: CGFloat
+    let state: ClipboardPanelState
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, offset in
+                publish(offset: offset)
+            }
+            .onAppear { publish(offset: 0) }
+            .onChange(of: ids) { _, _ in publish(offset: 0) }
+        } else {
+            content.onPreferenceChange(ClipboardVisibleCardsKey.self) { frames in
+                let viewport = CGRect(x: 0, y: 0, width: viewportWidth, height: .greatestFiniteMagnitude)
+                let visible = frames.filter { $0.value.intersects(viewport) }
+                    .sorted { $0.value.minX < $1.value.minX }.map(\.key)
+                if state.visibleCardIDs != visible { state.visibleCardIDs = visible }
+            }
+        }
+    }
+
+    private func publish(offset: CGFloat) {
+        let range = ClipboardShelfGeometry.visibleRange(offset: offset, viewportWidth: viewportWidth,
+                                                        pitch: pitch, side: side, inset: inset, count: ids.count)
+        let visible = Array(ids[range])
+        if state.visibleCardIDs != visible { state.visibleCardIDs = visible }
+    }
+}
+
+private struct ClipboardLegacyVisibilityProbe: ViewModifier {
+    let id: UUID
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) { content } else {
+            content.background(GeometryReader { geometry in
+                Color.clear.preference(key: ClipboardVisibleCardsKey.self,
+                                       value: [id: geometry.frame(in: .named("clipboardViewport"))])
+            })
+        }
+    }
+}
+
+enum ClipboardShelfGeometry {
+    /// Indices of cards intersecting the viewport for a horizontal shelf
+    /// whose card `i` spans `inset + i·pitch … + side`.
+    static func visibleRange(offset: CGFloat, viewportWidth: CGFloat, pitch: CGFloat,
+                             side: CGFloat, inset: CGFloat, count: Int) -> Range<Int> {
+        guard count > 0, pitch > 0 else { return 0..<0 }
+        let first = Int(floor((offset - inset - side) / pitch)) + 1
+        let last = Int(floor((offset + viewportWidth - inset) / pitch))
+        let lower = min(max(first, 0), count), upper = min(max(last + 1, lower), count)
+        return lower..<upper
+    }
 }
 
 private struct ClipboardVisibleCardsKey: PreferenceKey {

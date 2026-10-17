@@ -528,12 +528,9 @@ final class QuickAccessOverlayController {
 
     private func printCapture() {
         guard !isVideo else { return }
-        let image = NSImage(cgImage: entry.image, size: entry.pointSize)
-        let view = NSImageView(frame: CGRect(origin: .zero, size: entry.pointSize))
-        view.image = image
-        view.imageScaling = .scaleProportionallyUpOrDown
-        NSApp.activate(ignoringOtherApps: true)
-        NSPrintOperation(view: view).run()
+        // Tall (scrolling) captures are split across pages; see CapturePrintView.
+        CapturePrintController.print(image: entry.image, scale: entry.scale,
+                                     title: entry.displayName, window: nil)
     }
 
     private func currentResult() -> CaptureResult {
