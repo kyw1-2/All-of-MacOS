@@ -290,8 +290,9 @@ private struct AOMTriggerPaneHeightKey: PreferenceKey {
 struct MainWindow: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gestureLog = GestureLog.shared
-    @AppStorage("AOMShowLog") private var showLog = true
-    @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = true
+    @AppStorage("AOMShowLog") private var showLog = false
+    @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
+    @State private var showingCommandPalette = false
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "dark"
@@ -301,22 +302,22 @@ struct MainWindow: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopDeviceBar()
-                .frame(height: 44)
-            Divider()
+            if appState.selectedMainTab == .gestures {
+                TopDeviceBar()
+                    .frame(height: 44)
+                Divider()
+            }
 
             GeometryReader { available in
                 HStack(spacing: 0) {
-                    AppSidebar()
-                        .frame(width: 210, height: available.size.height, alignment: .topLeading)
-                        .tutorialAnchor(.sidebar)
+                    switch appState.selectedMainTab {
+                    case .gestures:
+                        AppSidebar()
+                            .frame(width: 210, height: available.size.height, alignment: .topLeading)
+                            .tutorialAnchor(.sidebar)
 
-                    Divider()
+                        Divider()
 
-                    if appState.showStatistics {
-                        StatisticsView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
                         HSplitView {
                             TriggerListPanel()
                                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 440, maxHeight: .infinity)
@@ -332,37 +333,23 @@ struct MainWindow: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: available.size.height)
+
+                    case .capture:
+                        CaptureStudioView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    case .clipboard:
+                        ClipboardStudioView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    case .insights:
+                        StatisticsView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
                     if showLog || showTouchVisualizer {
-                        VStack(spacing: 0) {
-                            if showLog {
-                                LogSidePanel(entries: gestureLog.entries)
-                            }
-
-                            if showTouchVisualizer {
-                                if showLog { Divider() }
-                                VStack(spacing: 4) {
-                                    HStack {
-                                        Text("Live Touch")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.top, 4)
-
-                                    LiveTouchView()
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.horizontal, 8)
-                                        .padding(.bottom, 8)
-                                }
-                                .frame(height: showLog ? 180 : 220)
-                                .background(.background.opacity(0.30))
-                            }
-                        }
-                        .frame(width: 260, height: available.size.height)
-                        .transition(.move(edge: .trailing))
+                        DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                            .transition(.move(edge: .trailing))
                     }
                 }
                 .frame(width: available.size.width, height: available.size.height, alignment: .topLeading)
@@ -382,6 +369,13 @@ struct MainWindow: View {
             if showTutorial {
                 TutorialOverlayView(isPresented: $showTutorial, frames: tutorialFrames)
                     .environmentObject(appState)
+            }
+        }
+        .overlay {
+            if showingCommandPalette {
+                QuickCommandPalette(isPresented: $showingCommandPalette)
+                    .environmentObject(appState)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
         .onChange(of: appState.showTutorialRequested) { _, requested in
@@ -421,7 +415,20 @@ struct MainWindow: View {
                     .help(appState.globalEnabled ? "Disable all gestures" : "Enable all gestures")
                 }
             }
+            ToolbarItem(placement: .principal) {
+                ModernMainTabBar(selectedTab: $appState.selectedMainTab)
+            }
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                        showingCommandPalette.toggle()
+                    }
+                } label: {
+                    Label("Command Palette", systemImage: "command")
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                .help("Universal Command Palette (⌘K)")
+
                 TouchVizToolbarButton(isActive: showTouchVisualizer) {
                     withAnimation { showTouchVisualizer.toggle() }
                 }

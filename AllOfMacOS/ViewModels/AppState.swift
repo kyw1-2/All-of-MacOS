@@ -33,7 +33,24 @@ class AppState: ObservableObject {
     @Published var showingAddTrigger: Bool = false
     @Published var showingAddAction: Bool = false
     @Published var showingAddApp: Bool = false
-    @Published var showStatistics: Bool = false
+    @Published var selectedMainTab: AOMMainTab = .gestures {
+        didSet {
+            if selectedMainTab == .insights && !showStatistics {
+                showStatistics = true
+            } else if selectedMainTab != .insights && showStatistics {
+                showStatistics = false
+            }
+        }
+    }
+    @Published var showStatistics: Bool = false {
+        didSet {
+            if showStatistics && selectedMainTab != .insights {
+                selectedMainTab = .insights
+            } else if !showStatistics && selectedMainTab == .insights {
+                selectedMainTab = .gestures
+            }
+        }
+    }
     @Published var showTutorialRequested: Bool = false
     @Published var globalEnabled: Bool = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
     @Published var accentColorChoice: AccentColorChoice = {

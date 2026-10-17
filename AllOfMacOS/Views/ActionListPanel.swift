@@ -182,6 +182,16 @@ struct ActionInspectorPanel: View {
                                         let isSingle = rows.count == 1
                                         let isExpanded = isSingle || expandedActionIDs.contains(row.id) || (appState.selectedAction?.id == row.action.id)
 
+                                        if index > 0 {
+                                            HStack {
+                                                Rectangle()
+                                                    .fill(Color.primary.opacity(0.15))
+                                                    .frame(width: 2, height: 8)
+                                                    .padding(.leading, CGFloat(row.depth * 14) + 18)
+                                                Spacer()
+                                            }
+                                        }
+
                                         ActionCardView(
                                             action: row.action,
                                             index: index + 1,
@@ -380,16 +390,30 @@ struct ActionCardView: View {
                         .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
                 }
 
-                Image(systemName: action.actionType.iconName)
-                    .font(.system(size: 14))
-                    .foregroundStyle(action.isEnabled ? Color.accentColor : Color.secondary)
-                    .frame(width: 20)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(categoryColor.opacity(action.isEnabled ? 0.16 : 0.08))
+                        .frame(width: 26, height: 26)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(action.displayName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(action.isEnabled ? Color.primary : Color.secondary)
-                        .lineLimit(1)
+                    Image(systemName: action.actionType.iconName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(action.isEnabled ? categoryColor : Color.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(action.displayName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(action.isEnabled ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+
+                        Text(action.actionType.category.rawValue)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(categoryColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(categoryColor.opacity(0.12)))
+                    }
                     if let detail = actionDetail {
                         Text(detail)
                             .font(.caption2)
@@ -503,9 +527,33 @@ struct ActionCardView: View {
             }
         }
         .padding(.leading, CGFloat(depth * 14))
-        .background(.background.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(isExpanded ? 0.15 : 0.06), lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: Color.black.opacity(0.04), radius: 2, y: 1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isExpanded ? categoryColor.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .opacity(action.isEnabled ? 1 : 0.6)
+    }
+
+    private var categoryColor: Color {
+        switch action.actionType.category {
+        case .windowManagement: return .blue
+        case .keyboardActions: return .orange
+        case .mouseActions: return .indigo
+        case .scriptExecution: return .purple
+        case .applicationControl: return .pink
+        case .systemActions: return .gray
+        case .mediaControls: return .red
+        case .screenCapture: return .orange
+        case .clipboard: return .indigo
+        case .workflow, .controlFlow: return .green
+        case .spacesMissionControl: return .cyan
+        case .utilityActions: return .teal
+        }
     }
 
     private var actionDetail: String? {
