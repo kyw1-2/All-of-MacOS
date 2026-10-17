@@ -159,7 +159,7 @@ struct CapturePreviewContent: View {
                 let fit = min(max(1, geometry.size.width - 32) / max(1, entry.pointSize.width),
                               max(1, geometry.size.height - 32) / max(1, entry.pointSize.height))
                 let factor = zoom ?? min(1, fit)
-                ScrollView([.horizontal, .vertical]) {
+                ScrollView([.horizontal, .vertical], showsIndicators: false) {
                     captureImage
                         .frame(width: entry.pointSize.width * factor, height: entry.pointSize.height * factor)
                         .background(TransparencyGrid())

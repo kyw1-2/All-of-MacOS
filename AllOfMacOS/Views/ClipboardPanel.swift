@@ -1220,7 +1220,7 @@ struct ClipboardPanelView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
         let appLimit = 8
         let visibleSources = showAllFilterApps ? sources : Array(sources.prefix(appLimit))
-        return ScrollView {
+        return ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Filters").font(.headline)

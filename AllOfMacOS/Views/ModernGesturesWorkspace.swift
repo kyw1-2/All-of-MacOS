@@ -56,7 +56,7 @@ struct ModernGesturesWorkspace: View {
         HSplitView {
             // Left Master: Gesture Cards Stream
             gestureCardStream
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
 
             // Right Detail: Visual Shortcuts Action Canvas
             visualWorkflowCanvas
@@ -70,10 +70,19 @@ struct ModernGesturesWorkspace: View {
         .sheet(isPresented: $appState.showingAddAction) {
             AddActionSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
         }
-        .onAppear {
-            if appState.selectedTrigger == nil {
-                appState.selectedTrigger = filteredTriggers.first
-            }
+        .onAppear { reconcileSelection() }
+        .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
+        .onChange(of: appState.selectedTrigger?.id) { _, _ in
+            expandedActionIDs.removeAll()
+            testResult = nil
+            showTriggerOptions = false
+        }
+    }
+
+    private func reconcileSelection() {
+        if !filteredTriggers.contains(where: { $0.id == appState.selectedTrigger?.id }) {
+            appState.selectedTrigger = filteredTriggers.first
+            appState.selectedAction = nil
         }
     }
 
@@ -87,40 +96,30 @@ struct ModernGesturesWorkspace: View {
             if filteredTriggers.isEmpty {
                 emptyTriggersView
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(filteredTriggers) { trigger in
-                            let isSelected = appState.selectedTrigger?.id == trigger.id
-
-                            GestureSummaryCard(
-                                trigger: trigger,
-                                isSelected: isSelected,
-                                onSelect: {
-                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                        appState.selectedTrigger = trigger
-                                        appState.selectedAction = nil
-                                    }
-                                },
-                                onToggleEnabled: {
-                                    appState.toggleTrigger(trigger)
-                                },
-                                onDuplicate: {
-                                    appState.addTrigger(TriggerClipboard.duplicate(trigger))
-                                },
-                                onDelete: {
-                                    withAnimation {
-                                        if appState.selectedTrigger?.id == trigger.id {
-                                            appState.selectedTrigger = nil
-                                        }
-                                        appState.removeTrigger(trigger)
-                                    }
-                                }
-                            )
-                        }
+                List(selection: Binding<UUID?>(
+                    get: { appState.selectedTrigger?.id },
+                    set: { id in
+                        appState.selectedTrigger = filteredTriggers.first { $0.id == id }
+                        appState.selectedAction = nil
                     }
-                    .padding(6)
+                )) {
+                    ForEach(filteredTriggers) { trigger in
+                        GestureSummaryRow(trigger: trigger)
+                            .tag(trigger.id)
+                            .contextMenu {
+                                Button("Duplicate") { appState.addTrigger(TriggerClipboard.duplicate(trigger)) }
+                                Button(trigger.isEnabled ? "Disable" : "Enable") { appState.toggleTrigger(trigger) }
+                                Divider()
+                                Button("Delete", role: .destructive) {
+                                    if appState.selectedTrigger?.id == trigger.id { appState.selectedTrigger = nil }
+                                    appState.removeTrigger(trigger)
+                                }
+                            }
+                    }
                 }
-                .suppressScrollerReservation()
+                .listStyle(.inset)
+                .scrollIndicators(.hidden)
+                .accessibilityLabel("Gestures")
             }
         }
         .background(.background.opacity(0.2))
@@ -132,6 +131,7 @@ struct ModernGesturesWorkspace: View {
             HStack(spacing: 8) {
                 Menu {
                     Button {
+                        appState.selectedActivationGroupID = nil
                         appState.selectedAppTarget = .allApps
                     } label: {
                         Label("Global Gestures", systemImage: "globe")
@@ -140,6 +140,7 @@ struct ModernGesturesWorkspace: View {
                         Divider()
                         ForEach(appState.currentPreset.appTargets) { target in
                             Button {
+                                appState.selectedActivationGroupID = nil
                                 appState.selectedAppTarget = target
                             } label: {
                                 Text(target.name)
@@ -159,7 +160,7 @@ struct ModernGesturesWorkspace: View {
                         }
 
                         Text(appState.selectedAppTarget.isGlobal ? "Global Gestures" : appState.selectedAppTarget.name)
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
 
                         Image(systemName: "chevron.up.chevron.down")
@@ -168,6 +169,7 @@ struct ModernGesturesWorkspace: View {
                     }
                 }
                 .menuStyle(.borderlessButton)
+                .tint(.primary)
                 .fixedSize()
 
                 Spacer()
@@ -219,72 +221,20 @@ struct ModernGesturesWorkspace: View {
                     .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
             )
 
-            // Innovative Apple Glass Tag Strip
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    glassFilterTag(title: "All", category: .all, icon: "sparkles")
-                    glassFilterTag(title: "Trackpad", category: .trackpad, icon: "hand.tap.fill")
-                    glassFilterTag(title: "Keys", category: .keyboard, icon: "keyboard.fill")
-                    glassFilterTag(title: "Mouse", category: .normalMouse, icon: "computermouse.fill")
-                }
-                .padding(.horizontal, 1)
-                .padding(.vertical, 2)
+            Picker("Device", selection: $selectedDeviceCategory) {
+                Text("All").tag(TriggerCategory.all)
+                Text("Trackpad").tag(TriggerCategory.trackpad)
+                Text("Keys").tag(TriggerCategory.keyboard)
+                Text("Mouse").tag(TriggerCategory.normalMouse)
             }
-            .suppressScrollerReservation()
-            .frame(height: 26)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.regular)
         }
         .padding(.horizontal, 10)
         .padding(.top, 10)
         .padding(.bottom, 8)
         .background(.background.opacity(0.25))
-    }
-
-    private func glassFilterTag(title: String, category: TriggerCategory, icon: String) -> some View {
-        let isSelected = selectedDeviceCategory == category
-        let count = countForCategory(category)
-
-        return Button {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                selectedDeviceCategory = category
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: isSelected ? .bold : .medium))
-
-                Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                    .lineLimit(1)
-
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        .foregroundStyle(isSelected ? Color.white : .secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08)))
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3.5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.06), lineWidth: 0.8)
-            )
-            .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(0.8))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func countForCategory(_ category: TriggerCategory) -> Int {
-        if category == .all {
-            return appState.currentPreset.triggers.count
-        }
-        return appState.currentPreset.triggers.filter { $0.input.category == category }.count
     }
 
     private var emptyTriggersView: some View {
@@ -319,7 +269,7 @@ struct ModernGesturesWorkspace: View {
     private var visualWorkflowCanvas: some View {
         VStack(spacing: 0) {
             if let trigger = appState.selectedTrigger {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
                         // 1. Trigger Info Card
                         triggerHeaderCard(trigger)
@@ -327,7 +277,7 @@ struct ModernGesturesWorkspace: View {
                         // 2. Connected Action Sequence (Shortcuts Style)
                         actionSequenceSection(trigger)
                     }
-                    .padding(16)
+                    .padding(24)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .suppressScrollerReservation()
@@ -341,15 +291,10 @@ struct ModernGesturesWorkspace: View {
     private func triggerHeaderCard(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(categoryColor(trigger.input.category).opacity(0.15))
-                        .frame(width: 44, height: 44)
-
-                    Image(systemName: trigger.input.category.iconName)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(categoryColor(trigger.input.category))
-                }
+                Image(systemName: trigger.input.category.iconName)
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 36)
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -392,11 +337,11 @@ struct ModernGesturesWorkspace: View {
 
             // Custom Workflow Name Field
             HStack(spacing: 8) {
-                Text("Workflow Name:")
+                Text("Name")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
 
-                TextField("Optional name (e.g. Snap Window Left)", text: Binding(
+                TextField("Workflow name", text: Binding(
                     get: { trigger.name },
                     set: { newName in
                         var updated = trigger
@@ -422,18 +367,18 @@ struct ModernGesturesWorkspace: View {
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: Color.black.opacity(0.04), radius: 3, y: 1)
+
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
         )
     }
 
     private func actionSequenceSection(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("ACTIONS WORKFLOW (\(trigger.actions.count) STEPS)", systemImage: "bolt.fill")
+                Label("Actions · \(trigger.actions.count)", systemImage: "bolt")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
 
@@ -471,7 +416,7 @@ struct ModernGesturesWorkspace: View {
                         if index > 0 {
                             HStack {
                                 Rectangle()
-                                    .fill(Color.accentColor.opacity(0.35))
+                                    .fill(Color(nsColor: .separatorColor))
                                     .frame(width: 2, height: 14)
                                     .padding(.leading, 24)
                                 Spacer()
@@ -513,17 +458,21 @@ struct ModernGesturesWorkspace: View {
                                 var updated = row.action
                                 updated.isEnabled.toggle()
                                 appState.updateAction(in: trigger, action: updated)
+                            },
+                            onCopy: { ActionClipboard.copied = row.action },
+                            onAddInside: {
+                                parentID = row.id
+                                toElse = false
+                                replaceActionID = nil
+                                appState.showingAddAction = true
+                            },
+                            onAddElse: {
+                                parentID = row.id
+                                toElse = true
+                                replaceActionID = nil
+                                appState.showingAddAction = true
                             }
                         )
-                    }
-
-                    // Bottom Attach Button
-                    HStack {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.12))
-                            .frame(width: 2, height: 14)
-                            .padding(.leading, 24)
-                        Spacer()
                     }
 
                     Button {
@@ -535,19 +484,13 @@ struct ModernGesturesWorkspace: View {
                         HStack(spacing: 6) {
                             Image(systemName: "plus.circle.fill")
                                 .font(.system(size: 13))
-                            Text("Attach Next Action")
+                            Text("Add Action")
                                 .font(.system(size: 12, weight: .semibold))
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4]))
-                                .foregroundStyle(Color.accentColor.opacity(0.5))
-                        )
                     }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .padding(.top, 12)
                 }
             }
 
@@ -638,107 +581,34 @@ struct ModernGesturesWorkspace: View {
     }
 }
 
-// MARK: - Gesture Summary Card (Left Master)
+// MARK: - Native list content
 
-private struct GestureSummaryCard: View {
+private struct GestureSummaryRow: View {
     let trigger: Trigger
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onToggleEnabled: () -> Void
-    let onDuplicate: () -> Void
-    let onDelete: () -> Void
-
-    @State private var isHovered = false
-
-    private var actionSummaryText: String {
-        if trigger.actions.isEmpty { return "No actions assigned" }
-        if trigger.actions.count == 1 { return trigger.actions[0].displayName }
-        return "\(trigger.actions[0].displayName) • \(trigger.actions.count) actions"
-    }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 8) {
-                // Category SF Symbol Icon Tile
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(iconColor.opacity(trigger.isEnabled ? 0.15 : 0.06))
-                        .frame(width: 26, height: 26)
-
-                    Image(systemName: trigger.input.category.iconName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(trigger.isEnabled ? iconColor : Color.secondary.opacity(0.6))
+        HStack(spacing: 10) {
+            Image(systemName: trigger.input.category.iconName)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(trigger.displayName).font(.body.weight(.medium)).lineLimit(1)
+                    if trigger.isFavorite { Image(systemName: "pin.fill").font(.caption2) }
                 }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(trigger.displayName)
-                            .font(.system(size: 12, weight: isSelected ? .bold : .semibold))
-                            .foregroundStyle(trigger.isEnabled ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-
-                        if trigger.requiredModifiers != nil {
-                            Text(trigger.modifierLabel)
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 0.5)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                        }
-
-                        if trigger.isFavorite {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 8))
-                                .foregroundStyle(.orange)
-                        }
-                    }
-
-                    Text(actionSummaryText)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(isSelected ? Color.primary.opacity(0.8) : Color.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 4)
-
-                Toggle("Enabled", isOn: Binding(
-                    get: { trigger.isEnabled },
-                    set: { _ in onToggleEnabled() }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
+                Text(trigger.actions.first.map {
+                    $0.displayName + (trigger.actions.count > 1 ? " · \(trigger.actions.count) actions" : "")
+                } ?? "No actions")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected
-                          ? Color.accentColor.opacity(0.14)
-                          : (isHovered ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .controlBackgroundColor).opacity(0.5)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.04), lineWidth: 0.8)
-            )
-            .contentShape(Rectangle())
+            Spacer(minLength: 0)
+            if !trigger.isEnabled {
+                Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                    .accessibilityLabel("Disabled")
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .contextMenu {
-            Button("Duplicate") { onDuplicate() }
-            Button(trigger.isEnabled ? "Disable" : "Enable") { onToggleEnabled() }
-            Divider()
-            Button("Delete", role: .destructive) { onDelete() }
-        }
-    }
-
-    private var iconColor: Color {
-        switch trigger.input.category {
-        case .trackpad: return .cyan
-        case .keyboard: return .orange
-        case .normalMouse: return .indigo
-        default: return .blue
-        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
     }
 }

@@ -38,7 +38,7 @@ struct RecordingExportEditor: View {
     }
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: "film.stack.fill")

@@ -33,7 +33,7 @@ struct LogSidePanel: View {
 
             // Log entries
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(entries) { entry in
                             LogEntryRow(entry: entry)

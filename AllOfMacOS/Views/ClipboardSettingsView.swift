@@ -13,7 +13,7 @@ struct ClipboardSettingsView: View {
     init(store: ClipboardStore = .shared) { self.store = store }
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 12) {
                     Image(systemName: "clipboard.fill").font(.system(size: 28)).foregroundStyle(Color.accentColor)

@@ -58,7 +58,7 @@ struct ActionInspectorPanel: View {
             Divider()
 
             if let trigger = appState.selectedTrigger {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
                         // 1. TRIGGER HEADER & QUICK CONFIG (BTT Style)
                         VStack(alignment: .leading, spacing: 10) {
@@ -390,15 +390,10 @@ struct ActionCardView: View {
                         .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
                 }
 
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(categoryColor.opacity(action.isEnabled ? 0.16 : 0.08))
-                        .frame(width: 26, height: 26)
-
-                    Image(systemName: action.actionType.iconName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(action.isEnabled ? categoryColor : Color.secondary)
-                }
+                Image(systemName: action.actionType.iconName)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -407,12 +402,7 @@ struct ActionCardView: View {
                             .foregroundStyle(action.isEnabled ? Color.primary : Color.secondary)
                             .lineLimit(1)
 
-                        Text(action.actionType.category.rawValue)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(categoryColor)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(categoryColor.opacity(0.12)))
+
                     }
                     if let detail = actionDetail {
                         Text(detail)
@@ -424,95 +414,37 @@ struct ActionCardView: View {
 
                 Spacer()
 
-                // Header buttons
-                HStack(spacing: 5) {
+                Menu {
+                    Button("Change Action…", action: onChangeAction)
                     if action.actionType.canContainChildren {
-                        Button(action: onAddInside) {
-                            Image(systemName: "plus.circle").font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .help(action.actionType == .toggleOnOff ? "Add an action to the ON list"
-                              : action.actionType == .ifElse ? "Add an action to THEN" : "Add an action inside")
-                        .accessibilityLabel(action.actionType == .toggleOnOff ? "Add action to ON list"
-                                            : action.actionType == .ifElse ? "Add action to THEN" : "Add action inside \(action.displayName)")
+                        Button(action.actionType == .toggleOnOff ? "Add to On…" : "Add Inside…", action: onAddInside)
                     }
                     if action.actionType.canContainElseChildren {
-                        Button(action: onAddElse) {
-                            Image(systemName: "plus.circle.fill").font(.caption).foregroundStyle(.orange)
-                        }
-                        .buttonStyle(.plain)
-                        .help(action.actionType == .toggleOnOff ? "Add an action to the OFF list" : "Add an action to ELSE")
-                        .accessibilityLabel(action.actionType == .toggleOnOff ? "Add action to OFF list" : "Add action to ELSE")
+                        Button(action.actionType == .toggleOnOff ? "Add to Off…" : "Add to Else…", action: onAddElse)
                     }
-
-                    Button(action: onChangeAction) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Change this action type")
-                    .accessibilityLabel("Change action type")
-
-                    Button(action: onMoveUp) {
-                        Image(systemName: "arrow.up")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Move up")
-                    .accessibilityLabel("Move action up")
-
-                    Button(action: onMoveDown) {
-                        Image(systemName: "arrow.down")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Move down")
-                    .accessibilityLabel("Move action down")
-
-                    Button(action: onCopy) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy action (then use Paste Action)")
-                    .accessibilityLabel("Copy action")
-
-                    Button(action: onDuplicate) {
-                        Image(systemName: "plus.square.on.square")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Duplicate action")
-                    .accessibilityLabel("Duplicate action")
-
-                    Button(action: onToggleEnable) {
-                        Image(systemName: action.isEnabled ? "eye" : "eye.slash")
-                            .font(.caption2)
-                            .foregroundStyle(action.isEnabled ? Color.secondary : Color.orange)
-                    }
-                    .buttonStyle(.plain)
-                    .help(action.isEnabled ? "Disable this step without deleting it" : "Enable this step")
-                    .accessibilityLabel(action.isEnabled ? "Disable action" : "Enable action")
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.caption2)
-                            .foregroundStyle(.red.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Delete action")
-                    .accessibilityLabel("Delete action")
-
-                    Button(action: onToggleExpand) {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.leading, 2)
-                    .help(isExpanded ? "Hide options" : "Show options")
-                    .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
+                    Divider()
+                    Button("Move Up", action: onMoveUp)
+                    Button("Move Down", action: onMoveDown)
+                    Button("Copy", action: onCopy)
+                    Button("Duplicate", action: onDuplicate)
+                    Button(action.isEnabled ? "Disable" : "Enable", action: onToggleEnable)
+                    Divider()
+                    Button("Delete", role: .destructive, action: onDelete)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Action options")
+                .accessibilityLabel("Options for \(action.displayName)")
+                Button(action: onToggleExpand) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderless)
+                .help(isExpanded ? "Hide options" : "Show options")
+                .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -530,11 +462,11 @@ struct ActionCardView: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: Color.black.opacity(0.04), radius: 2, y: 1)
+
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isExpanded ? categoryColor.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: 1)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
         )
         .opacity(action.isEnabled ? 1 : 0.6)
     }
@@ -724,7 +656,7 @@ struct AddActionSheet: View {
                 .listStyle(.sidebar)
                 .frame(width: 200)
 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 3) {
                         if !searchText.isEmpty {
                             let found = ActionSearch.results(for: searchText, in: ActionType.allCases.filter { !hidden.contains($0) })

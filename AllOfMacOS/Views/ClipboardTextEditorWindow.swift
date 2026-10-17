@@ -309,7 +309,7 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
     let model: ClipboardRichTextModel
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
+        scroll.hasVerticalScroller = false
         scroll.scrollerStyle = .overlay
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
@@ -371,7 +371,7 @@ struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
     let entry: ClipboardEntry
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
+        scroll.hasVerticalScroller = false
         scroll.scrollerStyle = .overlay
         scroll.borderType = .noBorder
         scroll.drawsBackground = true

@@ -18,7 +18,7 @@ struct ConfigurationPanel: View {
 
             Divider()
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 16) {
                     if let action = appState.selectedAction, let trigger = appState.selectedTrigger {
                         ActionConfigView(keyboardMonitor: appState.keyboardMonitor, trigger: trigger, action: action)

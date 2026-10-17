@@ -100,7 +100,7 @@ private struct WindowPickerView: View {
             .padding(10)
             Divider()
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], spacing: 12) {
                     ForEach(Array(filtered.enumerated()), id: \.offset) { _, window in
                         WindowCell(window: window) { onSelect(window) }

@@ -130,7 +130,7 @@ private struct CaptureHistoryView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
                         ForEach(history.entries) { entry in
                             HistoryCell(entry: entry)

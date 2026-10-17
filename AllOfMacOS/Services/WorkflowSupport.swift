@@ -632,7 +632,7 @@ private struct CheatSheetView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 8) {
                         ForEach(triggers) { trigger in
                             HStack(spacing: 12) {

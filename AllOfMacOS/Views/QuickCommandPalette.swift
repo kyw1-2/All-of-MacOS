@@ -273,7 +273,7 @@ struct QuickCommandPalette: View {
                     .padding(30)
                 } else {
                     ScrollViewReader { proxy in
-                        ScrollView {
+                        ScrollView(showsIndicators: false) {
                             LazyVStack(spacing: 2) {
                                 ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
                                     let isSelected = selectedIndex == index

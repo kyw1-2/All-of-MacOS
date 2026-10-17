@@ -557,7 +557,8 @@ struct AllOfMacOSApp: App {
                     appDelegate.appState = appState
                 }
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .defaultSize(width: 1300, height: 700)
         .commands {
             TriggerEditorCommands()
@@ -576,10 +577,12 @@ struct AllOfMacOSApp: App {
 
         Window("Workflow Variables", id: "workflow-variables") {
             WorkflowVariablesView()
+                .scrollIndicators(.hidden)
         }.defaultSize(width: 620, height: 440)
 
         Settings {
             SettingsView()
+                .scrollIndicators(.hidden)
                 .environmentObject(appState)
                 .accentColor(appState.accentColorChoice.color)
                 .tint(appState.accentColorChoice.color)
@@ -604,30 +607,16 @@ struct AppleSettingsGroup<Content: View>: View {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
                     .padding(.leading, 8)
             }
             VStack(spacing: 0) {
                 content
             }
-            // Genuine Apple Glassmorphism Card:
-            // Translucent material background that lets the desktop shimmer through,
-            // elevated with a crisp 0.75pt rim highlight and subtle soft ambient shadow.
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.35), Color.white.opacity(0.10)],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 0.75
-                    )
-            )
-            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
+            }
         }
     }
 }
@@ -655,9 +644,8 @@ struct AppleSettingsRow<Trailing: View>: View {
                 // Apple Control Center / Settings icon badge with soft depth
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(iconColor.gradient)
+                        .fill(iconColor)
                         .frame(width: 26, height: 26)
-                        .shadow(color: iconColor.opacity(0.35), radius: 2.5, y: 1.5)
                     Image(systemName: icon)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
@@ -691,30 +679,55 @@ struct AppleSettingsRow<Trailing: View>: View {
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
+    @AppStorage("AOMAppearance") private var appearance = "system"
+    @State private var selection: SettingsSection? = .general
+
+    private enum SettingsSection: String, CaseIterable, Identifiable {
+        case general = "General", gestures = "Gestures", permissions = "Permissions"
+        case capture = "Capture", clipboard = "Clipboard", shortcuts = "Shortcuts"
+        case backups = "Backups", about = "About"
+        var id: Self { self }
+        var icon: String {
+            switch self {
+            case .general: "gearshape"
+            case .gestures: "hand.draw"
+            case .permissions: "checkmark.shield"
+            case .capture: "camera.viewfinder"
+            case .clipboard: "doc.on.clipboard"
+            case .shortcuts: "command"
+            case .backups: "externaldrive"
+            case .about: "info.circle"
+            }
+        }
+    }
 
     var body: some View {
-        TabView {
-            GeneralSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("General", systemImage: "gearshape") }
-            GestureSettingsView()
-                .tabItem { Label("Gestures", systemImage: "hand.draw") }
-            PermissionsSettingsView()
-                .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
-            CaptureSettingsView()
-                .tabItem { Label("Capture", systemImage: "camera.viewfinder") }
-            ClipboardSettingsView()
-                .tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
-            ShortcutsSettingsView()
-                .tabItem { Label("Shortcuts", systemImage: "command") }
-            BackupSettingsView()
-                .tabItem { Label("Backups", systemImage: "externaldrive.fill") }
-            AboutSettingsView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+        NavigationSplitView {
+            List(SettingsSection.allCases, selection: $selection) { section in
+                Label(section.rawValue, systemImage: section.icon).tag(section)
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(180)
+        } detail: {
+            Group {
+                switch selection ?? .general {
+                case .general: GeneralSettingsView()
+                case .gestures: GestureSettingsView()
+                case .permissions: PermissionsSettingsView()
+                case .capture: CaptureSettingsView()
+                case .clipboard: ClipboardSettingsView()
+                case .shortcuts: ShortcutsSettingsView()
+                case .backups: BackupSettingsView()
+                case .about: AboutSettingsView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .navigationTitle((selection ?? .general).rawValue)
         }
-        .frame(width: 700, height: 610)
-        // Clear, luminous Apple under-window visual effect instead of muddy dark sidebar
-        .translucentPane(.underWindowBackground)
+        .frame(width: 820, height: 640)
+        .scrollIndicators(.hidden)
+        .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
     }
 }
 
@@ -722,12 +735,12 @@ struct GeneralSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
-    @AppStorage("AOMAppearance") private var appearance: String = "dark"
+    @AppStorage("AOMAppearance") private var appearance: String = "system"
     @AppStorage("AOMHUDEnabled") private var hudEnabled = true
     @AppStorage("AOMHUDBackgroundOpacity") private var hudOpacity = 0.06
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 // Startup & Menu Bar
                 AppleSettingsGroup("Startup & System") {
@@ -776,15 +789,16 @@ struct GeneralSettingsView: View {
                         icon: "circle.lefthalf.filled",
                         iconColor: .indigo,
                         title: "Interface Style",
-                        subtitle: "Choose between Dark and Light mode appearance",
+                        subtitle: "Follow macOS or choose an appearance",
                         showDivider: true
                     ) {
-                        Picker("", selection: $appearance) {
-                            Text("Dark").tag("dark")
+                        Picker("Appearance", selection: $appearance) {
+                            Text("System").tag("system")
                             Text("Light").tag("light")
+                            Text("Dark").tag("dark")
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 140)
+                        .frame(width: 210)
                     }
 
                     AppleSettingsRow(
@@ -952,7 +966,7 @@ struct BackupSettingsView: View {
     }()
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 AppleSettingsGroup("Automatic Backups") {
                     AppleSettingsRow(

@@ -36,7 +36,7 @@ struct AnnotationBackgroundPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
                     presets
                     gradients

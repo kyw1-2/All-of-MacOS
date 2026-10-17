@@ -5,7 +5,7 @@ struct StatisticsView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 overviewCards

@@ -495,7 +495,7 @@ struct AddTriggerSheet: View {
             case .normalMouse:
                 mousePicker
             case .drawings:
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     DrawingPatternComposer(name: $drawingName, samples: $drawingSamples,
                                            certainty: $drawingCertainty,
                                            ignoreDirection: $drawingIgnoreDirection)
@@ -562,7 +562,7 @@ struct AddTriggerSheet: View {
             TextField("Search gestures...", text: $gestureSearch)
                 .textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 1) {
                         ForEach(filteredGestures) { gesture in
                             let selected = selectedGesture == gesture
@@ -975,7 +975,7 @@ struct EditTriggerSheet: View {
     private var gestureEditor: some View {
         switch trigger.input.category {
         case .trackpad:
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 1) {
                     ForEach(TrackpadGesture.allCases) { gesture in
                         let selected = selectedGesture == gesture

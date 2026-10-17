@@ -102,7 +102,7 @@ private struct ClipboardMCPConnectSheet: View {
             if let token = request.token {
                 let instructions = ClipboardMCPSettings.instructions(for: request.client, token: token)
                 Text(instructions.summary).font(.callout)
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     Text(instructions.snippet).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                 }

@@ -293,86 +293,69 @@ struct MainWindow: View {
     @AppStorage("AOMShowLog") private var showLog = false
     @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
     @State private var showingCommandPalette = false
-    @State private var isSidebarCollapsed = false
+    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
-    @AppStorage("AOMAppearance") private var appearance: String = "dark"
+    @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettingsAction
 
     private var isDark: Bool { appearance == "dark" }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Modern Apple Sidebar (Un-cluttered Super-App Hubs & App Profiles)
-            if !isSidebarCollapsed {
-                ModernSidebarView(
-                    showLog: $showLog,
-                    showTouchVisualizer: $showTouchVisualizer,
-                    showingCommandPalette: $showingCommandPalette,
-                    isCollapsed: $isSidebarCollapsed
-                )
+        NavigationSplitView(columnVisibility: $sidebarVisibility) {
+            ModernSidebarView()
+                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
                 .tutorialAnchor(.sidebar)
-                .transition(.move(edge: .leading).combined(with: .opacity))
-
-                Divider()
-            }
-
-            // Dynamic Detail Canvas (CleanShot X, Paste, Shortcuts, and Window Tiling)
-            Group {
-                switch appState.selectedMainTab {
-                case .gestures:
-                    ModernGesturesWorkspace()
-                        .tutorialAnchor(.triggers)
-                        .tutorialAnchor(.actions)
-
-                case .snapping:
-                    ModernWindowSnappingView()
-
-                case .capture:
-                    CaptureStudioView()
-
-                case .clipboard:
-                    ClipboardStudioView()
-
-                case .insights:
-                    StatisticsView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Detachable Diagnostic Drawer
-            if showLog || showTouchVisualizer {
-                DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
-                    .transition(.move(edge: .trailing))
-            }
-        }
-        .overlay(alignment: .topLeading) {
-            if isSidebarCollapsed {
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        isSidebarCollapsed = false
+        } detail: {
+            HStack(spacing: 0) {
+                Group {
+                    switch appState.selectedMainTab {
+                    case .gestures:
+                        ModernGesturesWorkspace()
+                            .tutorialAnchor(.triggers)
+                            .tutorialAnchor(.actions)
+                    case .snapping: ModernWindowSnappingView()
+                    case .capture: CaptureStudioView()
+                    case .clipboard: ClipboardStudioView()
+                    case .insights: StatisticsView()
                     }
-                } label: {
-                    Image(systemName: "sidebar.leading")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .padding(6)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                        )
-                        .shadow(color: Color.black.opacity(0.12), radius: 4, y: 2)
                 }
-                .buttonStyle(.plain)
-                .padding(.leading, 78)
-                .padding(.top, 12)
-                .help("Show Sidebar (⌘⌥S)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showLog || showTouchVisualizer {
+                    Divider()
+                    DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                }
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .navigationTitle(appState.selectedMainTab.title)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { showingCommandPalette.toggle() } label: {
+                        Label("Commands", systemImage: "command")
+                    }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .help("Commands (⌘K)")
+                    Menu {
+                        Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
+                        Toggle("Console", isOn: $showLog)
+                        Divider()
+                        Picker("Appearance", selection: $appearance) {
+                            Text("System").tag("system")
+                            Text("Light").tag("light")
+                            Text("Dark").tag("dark")
+                        }
+                        Divider()
+                        Button("Settings…") { openSettingsAction() }
+                    } label: {
+                        Label("View Options", systemImage: "ellipsis.circle")
+                    }
+                    .help("View options")
+                }
             }
         }
-        .frame(minWidth: 880, minHeight: 560)
-        // The window is the material; panes on top of it are translucent fills.
-        .translucentPane(.sidebar)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 1000, minHeight: 620)
+        .scrollIndicators(.hidden)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
             // Opt-in, single-value layout probe for diagnosing split view regressions.
             if UserDefaults.standard.bool(forKey: "AOMLayoutProbeEnabled") {
@@ -400,7 +383,7 @@ struct MainWindow: View {
                 appState.showTutorialRequested = false
             }
         }
-        .navigationTitle("")
+
         .preferredColorScheme(appearance == "system" ? nil : (isDark ? .dark : .light))
     }
 

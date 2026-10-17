@@ -193,7 +193,7 @@ struct TutorialOverlayView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(currentStep.title)
                     .font(.title2)
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     tutorialBodyText(currentStep.bodyText)
                         .font(.body)
                         .foregroundColor(.secondary)

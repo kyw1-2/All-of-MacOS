@@ -55,7 +55,7 @@ struct CaptureSettingsView: View {
     private var afterAction: AfterCaptureAction { AfterCaptureAction(rawValue: afterActionRaw) ?? .showOverlay }
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 if !permissionGranted { permissionGroup }
 

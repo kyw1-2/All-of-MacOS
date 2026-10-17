@@ -71,6 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var suppressionObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AOMScrollChromePolicy.shared.start()
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
         if showIcon {
             setupMenuBarIcon()
@@ -152,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // menu-bar app needs.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
             if let window = NSApp.windows.first(where: { $0.isVisible }) {
-                window.minSize = NSSize(width: 1300, height: 650)
+                window.minSize = NSSize(width: 1040, height: 650)
                 mainWindow = window
                 window.delegate = self
             }

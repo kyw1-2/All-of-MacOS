@@ -34,8 +34,6 @@ struct ClipboardStudioView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
-            Divider()
 
             VStack(spacing: 12) {
                 pinboardsBar
@@ -51,7 +49,7 @@ struct ClipboardStudioView: View {
             if filteredEntries.isEmpty {
                 emptyStateView
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 290), spacing: 14)], spacing: 14) {
                         ForEach(filteredEntries) { entry in
                             ClipboardStudioCard(
@@ -87,6 +85,7 @@ struct ClipboardStudioView: View {
                 .suppressScrollerReservation()
             }
         }
+        .toolbar { ToolbarItemGroup(placement: .automatic) { headerBar } }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.18))
         .sheet(isPresented: $showingSettings) {
@@ -115,34 +114,7 @@ struct ClipboardStudioView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.on.clipboard.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.indigo)
-                    Text("Clipboard Memory")
-                        .font(.headline.weight(.bold))
 
-                    if store.paused {
-                        HStack(spacing: 4) {
-                            Circle().fill(Color.orange).frame(width: 6, height: 6)
-                            Text(store.pauseRemainingSeconds > 0
-                                 ? "Paused (\(store.pauseRemainingSeconds)s)"
-                                 : "Paused")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.orange)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.orange.opacity(0.15)))
-                    }
-                }
-                Text("Searchable history, collections, smart format previews & on-device OCR")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
 
             HStack(spacing: 8) {
                 // Pause Controls
@@ -154,8 +126,6 @@ struct ClipboardStudioView: View {
                         Label("Resume", systemImage: "play.fill")
                             .foregroundStyle(.green)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 } else {
                     Menu {
                         Button("Pause for 5 Minutes") { store.pause(for: 300) }
@@ -165,8 +135,6 @@ struct ClipboardStudioView: View {
                     } label: {
                         Label("Pause…", systemImage: "pause.fill")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                     .help("Temporarily stop recording copied items")
                 }
 
@@ -183,21 +151,15 @@ struct ClipboardStudioView: View {
                 } label: {
                     Label("Clear…", systemImage: "trash")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
 
                 Button {
                     showingSettings = true
                 } label: {
                     Label("Options", systemImage: "gearshape")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.background.opacity(0.4))
+        .labelStyle(.iconOnly)
     }
 
     // MARK: - Pinboards Bar
@@ -594,7 +556,7 @@ private struct ClipboardStudioCard: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: Color.black.opacity(isHovered ? 0.12 : 0.05), radius: isHovered ? 4 : 2, y: isHovered ? 2 : 1)
+
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)

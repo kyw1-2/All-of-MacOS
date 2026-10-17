@@ -974,7 +974,7 @@ private struct AnnotationEditorView: View {
             let fit = zoom ?? fitScale(for: canvasSize, in: geometry.size)
             let drawn = canvasSize.scaled(by: fit)
             let origin = document.imageOrigin(scale: scale).scaled(by: fit)
-            ScrollView([.horizontal, .vertical]) {
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
                 ZStack(alignment: .topLeading) {
                     if let rendered = document.render(scale: scale, draft: privacyDraft) {
                         Image(decorative: rendered, scale: scale).resizable()
@@ -1337,7 +1337,7 @@ private struct AnnotationEditorView: View {
     }
 
     private var layers: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 12) {
                 if document.objects.isEmpty { Text("No annotations yet").foregroundStyle(.secondary) }
                 if !document.objects.isEmpty {

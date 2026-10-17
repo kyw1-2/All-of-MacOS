@@ -40,10 +40,8 @@ struct CaptureStudioView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
-            Divider()
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
                     if recordingService.isRecording {
                         activeRecordingBanner
@@ -57,6 +55,7 @@ struct CaptureStudioView: View {
             }
             .suppressScrollerReservation()
         }
+        .toolbar { ToolbarItemGroup(placement: .automatic) { headerBar } }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.18))
         .sheet(isPresented: $showingSettingsSheet) {
@@ -91,20 +90,7 @@ struct CaptureStudioView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.orange)
-                    Text("Capture Studio")
-                        .font(.headline.weight(.bold))
-                }
-                Text("Instant screenshots, scrolling capture, screen recording & OCR")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
-            Spacer()
 
             HStack(spacing: 8) {
                 Button {
@@ -113,8 +99,6 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Desktop Icons", systemImage: "macwindow.on.rectangle")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .help("Hide or show icons on the desktop")
 
                 Button {
@@ -122,8 +106,6 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Open Image…", systemImage: "pencil.tip.crop.circle")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .help("Open any image or project file in Annotation Editor")
 
                 Button {
@@ -131,14 +113,10 @@ struct CaptureStudioView: View {
                 } label: {
                     Label("Options", systemImage: "gearshape")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .help("Capture and overlay preferences")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.background.opacity(0.4))
+        .labelStyle(.iconOnly)
     }
 
     // MARK: - Active Recording Banner
@@ -209,8 +187,8 @@ struct CaptureStudioView: View {
     private var launchpadSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("QUICK CAPTURE LAUNCHPAD", systemImage: "sparkles")
-                    .font(.caption.weight(.bold))
+                Label("Capture", systemImage: "sparkles")
+                    .font(.headline)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if CaptureCoordinator.shared.canRestoreQuickAccess {
@@ -222,7 +200,7 @@ struct CaptureStudioView: View {
                 }
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)], spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 12)], spacing: 12) {
                 LaunchpadCard(
                     title: "Area",
                     icon: "viewfinder",
@@ -279,8 +257,8 @@ struct CaptureStudioView: View {
     private var gallerySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("RECENT CAPTURES & PROJECTS", systemImage: "photo.stack")
-                    .font(.caption.weight(.bold))
+                Label("Recent Captures", systemImage: "photo.stack")
+                    .font(.headline)
                     .foregroundStyle(.secondary)
 
                 Spacer()
@@ -426,43 +404,15 @@ private struct LaunchpadCard: View {
     let accentColor: Color
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(accentColor.opacity(0.12))
-                        .frame(width: 44, height: 44)
-
-                    Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(accentColor)
-                }
-
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .shadow(color: Color.black.opacity(isHovering ? 0.12 : 0.04),
-                            radius: isHovering ? 5 : 2, y: isHovering ? 2 : 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isHovering ? accentColor.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .scaleEffect(isHovering ? 1.02 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isHovering)
+            Label(title, systemImage: icon)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 }
 
@@ -606,7 +556,7 @@ private struct CaptureCard: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: Color.black.opacity(0.06), radius: 3, y: 1)
+
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)

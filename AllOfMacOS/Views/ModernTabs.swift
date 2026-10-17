@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Top-level navigation hubs for All of MacOS.
@@ -98,45 +99,88 @@ struct ModernMainTabBar: View {
     }
 }
 
-// MARK: - Scroller Reservation Suppression
-
-/// Completely eliminates legacy scrollbar tracks from reserving layout width or flashing,
-/// while preserving smooth wheel and trackpad scrolling across all macOS versions.
-struct HideScroller: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let scrollView = view.enclosingScrollView {
-                scrollView.hasVerticalScroller = false
-                scrollView.hasHorizontalScroller = false
-                scrollView.verticalScroller?.alphaValue = 0
-                scrollView.horizontalScroller?.alphaValue = 0
-                scrollView.scrollerStyle = .overlay
-                scrollView.autohidesScrollers = true
-            }
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            if let scrollView = nsView.enclosingScrollView {
-                scrollView.hasVerticalScroller = false
-                scrollView.hasHorizontalScroller = false
-                scrollView.verticalScroller?.alphaValue = 0
-                scrollView.horizontalScroller?.alphaValue = 0
-                scrollView.scrollerStyle = .overlay
-                scrollView.autohidesScrollers = true
-            }
-        }
-    }
-}
+// MARK: - Scroll chrome
 
 extension View {
     func suppressScrollerReservation() -> some View {
-        self
-            .scrollIndicators(.hidden)
-            .background(HideScroller())
+        scrollIndicators(.hidden).background(NativeScrollChrome(.hidden))
     }
 }
 
+/// App-owned scroll views keep their native scrolling behavior without tracks.
+/// Observe AppKit's resets as SwiftUI updates Lists, Forms and text editors.
+/// No global preferences, method swizzling or wheel event interception.
+@MainActor
+final class AOMScrollChromePolicy {
+    static let shared = AOMScrollChromePolicy()
+    private var notificationTokens: [NSObjectProtocol] = []
+    private let surfaces = NSMapTable<NSScrollView, Surface>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private var pending = false
+
+    func start() {
+        guard notificationTokens.isEmpty else { return }
+        for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification] {
+            notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleRefresh() }
+            })
+        }
+        refresh()
+    }
+
+    private func scheduleRefresh() {
+        guard !pending else { return }
+        pending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pending = false
+            self.refresh()
+        }
+    }
+
+    private func refresh() {
+        // Native file dialogs retain their system behavior.
+        for window in NSApp.windows where window.isVisible && !(window is NSSavePanel) {
+            if let content = window.contentView { attach(in: content) }
+        }
+    }
+
+    func attach(in view: NSView) {
+        if let scroll = view as? NSScrollView, surfaces.object(forKey: scroll) == nil {
+            surfaces.setObject(Surface(scroll), forKey: scroll)
+        }
+        for child in view.subviews { attach(in: child) }
+    }
+
+    @MainActor
+    private final class Surface {
+        private weak var scroll: NSScrollView?
+        private var observations: [NSKeyValueObservation] = []
+        private var applying = false
+
+        init(_ scroll: NSScrollView) {
+            self.scroll = scroll
+            observations = [
+                scroll.observe(\.hasVerticalScroller, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.apply() }
+                },
+                scroll.observe(\.hasHorizontalScroller, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.apply() }
+                },
+                scroll.observe(\.scrollerStyle, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.apply() }
+                }
+            ]
+            apply()
+        }
+
+        private func apply() {
+            guard !applying, let scroll else { return }
+            applying = true
+            defer { applying = false }
+            if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
+            if !scroll.autohidesScrollers { scroll.autohidesScrollers = true }
+            if scroll.hasVerticalScroller { scroll.hasVerticalScroller = false }
+            if scroll.hasHorizontalScroller { scroll.hasHorizontalScroller = false }
+        }
+    }
+}

@@ -19,10 +19,8 @@ struct ModernWindowSnappingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
-            Divider()
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     // Master Status Card
                     statusCard
@@ -40,6 +38,7 @@ struct ModernWindowSnappingView: View {
             }
             .suppressScrollerReservation()
         }
+        .toolbar { ToolbarItemGroup(placement: .automatic) { headerBar } }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.16))
         .overlay(alignment: .bottom) {
@@ -61,31 +60,15 @@ struct ModernWindowSnappingView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Image(systemName: "macwindow.on.rectangle")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.blue)
-                    Text("Window Snapping & Tiling")
-                        .font(.headline.weight(.bold))
-                }
-                Text("Drag windows to screen edges or use shortcut presets to tile seamlessly")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
-            Spacer()
 
             Toggle("Window Snapping", isOn: Binding(
                 get: { appState.currentPreset.snappingEnabled },
                 set: { appState.setSnappingEnabled($0) }
             ))
             .toggleStyle(.switch)
-            .controlSize(.small)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.background.opacity(0.4))
+        .labelStyle(.iconOnly)
     }
 
     // MARK: - Status Card
@@ -129,7 +112,7 @@ struct ModernWindowSnappingView: View {
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: Color.black.opacity(0.04), radius: 3, y: 1)
+
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -141,8 +124,8 @@ struct ModernWindowSnappingView: View {
 
     private var stageSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("INTERACTIVE DISPLAY STAGE", systemImage: "display")
-                .font(.caption.weight(.bold))
+            Label("Layout Preview", systemImage: "display")
+                .font(.headline)
                 .foregroundStyle(.secondary)
 
             ZStack {
@@ -227,8 +210,8 @@ struct ModernWindowSnappingView: View {
 
     private var collectionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("PRESET LAYOUT COLLECTIONS", systemImage: "square.grid.2x2")
-                .font(.caption.weight(.bold))
+            Label("Collections", systemImage: "square.grid.2x2")
+                .font(.headline)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
@@ -275,7 +258,7 @@ struct ModernWindowSnappingView: View {
     private var zonesGridSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("AVAILABLE SNAP ZONES", systemImage: "rectangle.split.3x3")
-                .font(.caption.weight(.bold))
+                .font(.headline)
                 .foregroundStyle(.secondary)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)], spacing: 12) {

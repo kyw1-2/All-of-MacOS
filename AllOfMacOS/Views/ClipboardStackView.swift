@@ -58,7 +58,7 @@ struct ClipboardStackView: View {
                         .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }.padding(.horizontal, 16).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(orderedRows.enumerated()), id: \.element.position) { ordinal, row in
                             stackRow(row.entry, position: row.position, ordinal: ordinal)

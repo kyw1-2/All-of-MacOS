@@ -107,7 +107,7 @@ struct DrawingPatternComposer: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Choose a starter shape, or draw your own")
                 .font(.headline)
-            ScrollView(.horizontal) {
+            ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 9) {
                     ForEach(DrawingPatternLibrary.templates) { template in
                         Button {
@@ -251,7 +251,7 @@ private struct DrawingEditorSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Configure Drawing Gesture").font(.title2.bold())
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 DrawingPatternComposer(name: $name, samples: $samples,
                                        certainty: $certainty, ignoreDirection: $ignoreDirection)
                     .padding(4)

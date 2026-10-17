@@ -13,7 +13,7 @@ struct AppSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Label("APPLICATIONS", systemImage: "square.grid.2x2")
@@ -488,7 +488,7 @@ struct ActivationGroupEditorSheet: View {
                         TextField("Search applications", text: $searchText).textFieldStyle(.roundedBorder)
                         Button("Browse…", action: chooseApps)
                     }
-                    ScrollView {
+                    ScrollView(showsIndicators: false) {
                         LazyVStack(spacing: 2) {
                             ForEach(choices, id: \.bundleID) { app in
                                 if let id = app.bundleID {
@@ -632,7 +632,7 @@ struct CustomSnapZonesEditor: View {
                         .frame(maxWidth: .infinity,alignment: .leading)
                     Button("Select All Layouts") { for index in zones.indices { zones[index].isEnabled = true } }
                         .buttonStyle(.bordered).disabled(zones.isEmpty)
-                    ScrollView {
+                    ScrollView(showsIndicators: false) {
                         LazyVStack(spacing: 6) {
                             ForEach(zones) { zone in
                                 Button { selectedID = zone.id } label: {
@@ -657,7 +657,7 @@ struct CustomSnapZonesEditor: View {
                 }
                 if let selected = selection {
                     VStack(alignment: .leading, spacing: 10) {
-                        ScrollView { SnapZoneDetailEditor(zone: selected).padding(3) }.frame(height: 365)
+                        ScrollView(showsIndicators: false) { SnapZoneDetailEditor(zone: selected).padding(3) }.frame(height: 365)
                         HStack {
                             Spacer()
                             Button("Duplicate") {

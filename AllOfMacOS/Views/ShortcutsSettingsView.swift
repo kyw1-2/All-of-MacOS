@@ -27,7 +27,7 @@ struct ShortcutsSettingsView: View {
     ]
 
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 headerBanner
 
