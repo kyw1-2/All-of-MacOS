@@ -74,6 +74,20 @@ enum OverlayCorner: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// CleanShot's "Position on screen" only offers Left / Right (bottom
+    /// corners). The top corners stay available as AOM extras.
+    var positionName: String {
+        switch self {
+        case .bottomLeft: return "Left"
+        case .bottomRight: return "Right"
+        case .topLeft: return "Top Left"
+        case .topRight: return "Top Right"
+        }
+    }
+
+    /// Picker order: the two CleanShot positions first, then the AOM extras.
+    static let pickerOrder: [OverlayCorner] = [.bottomLeft, .bottomRight, .topLeft, .topRight]
+
     var isLeft: Bool { self == .bottomLeft || self == .topLeft }
     var isTop: Bool { self == .topLeft || self == .topRight }
 }
@@ -92,26 +106,43 @@ enum OverlaySize: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Position on CleanShot's 5-tick "Overlay size" slider (0…4).
+    var sliderIndex: Int { Self.allCases.firstIndex(of: self) ?? 1 }
+
+    /// Clamped inverse of `sliderIndex`; out-of-range values snap to the ends.
+    static func fromSliderIndex(_ index: Int) -> OverlaySize {
+        allCases[min(allCases.count - 1, max(0, index))]
+    }
+
     /// Thumbnail edge length in points.
     var thumbnailSide: CGFloat {
         switch self {
         case .extraSmall: return 100
-        case .small: return 120
+        case .small: return 132
         case .medium: return 160
-        case .large: return 220
-        case .extraLarge: return 270
+        case .large: return 210
+        case .extraLarge: return 260
         }
     }
 
-    /// Fixed width allowing all 7 action buttons to breathe comfortably.
+    /// Card width; the thumbnail is aspect-fit inside `panelWidth × thumbnailSide`.
     var panelWidth: CGFloat {
         switch self {
-        case .extraSmall: return 235
-        case .small: return 240
+        case .extraSmall: return 180
+        case .small: return 230
         case .medium: return 270
-        case .large: return 315
-        case .extraLarge: return 365
+        case .large: return 330
+        case .extraLarge: return 400
         }
+    }
+}
+
+/// CleanShot's auto-close interval menu (tags are seconds).
+enum OverlayAutoCloseInterval {
+    static let choices: [Int] = [5, 10, 15, 30, 60, 120, 300, 600]
+
+    static func label(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min"
     }
 }
 
@@ -188,6 +219,9 @@ enum CaptureSettings {
         static let pinnedCorners = "AOMPinnedCorners"
         static let pinnedBorder = "AOMPinnedBorder"
         static let recognizeKeepsLineBreaks = "AOMOCRKeepsLineBreaks"
+        static let crosshairMode = "AOMCaptureCrosshairMode"
+        static let showsMagnifier = "AOMCaptureShowsMagnifier"
+        static let selfTimerInterval = "AOMCaptureSelfTimerInterval"
     }
 
     static var format: CaptureFormat {
@@ -261,12 +295,12 @@ enum CaptureSettings {
     }
 
     static var overlayCorner: OverlayCorner {
-        get { OverlayCorner(rawValue: d.string(forKey: Key.overlayCorner) ?? "") ?? .bottomRight }
+        get { OverlayCorner(rawValue: d.string(forKey: Key.overlayCorner) ?? "") ?? .bottomLeft }
         set { d.set(newValue.rawValue, forKey: Key.overlayCorner) }
     }
 
     static var overlaySize: OverlaySize {
-        get { OverlaySize(rawValue: d.string(forKey: Key.overlaySize) ?? "") ?? .medium }
+        get { OverlaySize(rawValue: d.string(forKey: Key.overlaySize) ?? "") ?? .small }
         set { d.set(newValue.rawValue, forKey: Key.overlaySize) }
     }
 
@@ -277,8 +311,9 @@ enum CaptureSettings {
 
     /// If true, auto-close saves previously unsaved captures first. On a
     /// write failure the overlay remains open for manual recovery.
+    /// CleanShot's auto-close "Action" defaults to "Save and Close".
     static var overlayAutoCloseSave: Bool {
-        get { d.bool(forKey: Key.overlayAutoCloseSave) }
+        get { d.object(forKey: Key.overlayAutoCloseSave) as? Bool ?? true }
         set { d.set(newValue, forKey: Key.overlayAutoCloseSave) }
     }
 
@@ -418,5 +453,54 @@ enum CaptureSettings {
     static var ocrKeepsLineBreaks: Bool {
         get { d.object(forKey: Key.recognizeKeepsLineBreaks) as? Bool ?? true }
         set { d.set(newValue, forKey: Key.recognizeKeepsLineBreaks) }
+    }
+
+    /// Crosshair guides on the area-selection overlay (CleanShot "Crosshair mode").
+    static var crosshairMode: CrosshairMode {
+        get { CrosshairMode(rawValue: d.string(forKey: Key.crosshairMode) ?? "") ?? .always }
+        set { d.set(newValue.rawValue, forKey: Key.crosshairMode) }
+    }
+
+    /// Pixel loupe next to the pointer while selecting. Holding Shift still
+    /// shows it on demand when this is off (AOM behaviour).
+    static var showsMagnifier: Bool {
+        get { d.object(forKey: Key.showsMagnifier) as? Bool ?? false }
+        set { d.set(newValue, forKey: Key.showsMagnifier) }
+    }
+
+    /// Countdown used by the dedicated Self-Timer mode (2/5/10/15 s, default 2).
+    /// Independent of `selfTimerSeconds`, which delays *every* capture.
+    static var selfTimerInterval: Int {
+        get {
+            let value = d.integer(forKey: Key.selfTimerInterval)
+            return SelfTimerInterval.choices.contains(value) ? value : 2
+        }
+        set { d.set(SelfTimerInterval.choices.contains(newValue) ? newValue : 2, forKey: Key.selfTimerInterval) }
+    }
+}
+
+enum SelfTimerInterval {
+    static let choices = [2, 5, 10, 15]
+}
+
+/// CleanShot "Crosshair mode": Always enabled / When ⌘ Command is pressed / Disabled.
+enum CrosshairMode: String, CaseIterable, Identifiable {
+    case always, whileCommand, disabled
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .always: return "Always Enabled"
+        case .whileCommand: return "When ⌘ Command Is Pressed"
+        case .disabled: return "Disabled"
+        }
+    }
+
+    func showsCrosshair(commandPressed: Bool) -> Bool {
+        switch self {
+        case .always: return true
+        case .whileCommand: return commandPressed
+        case .disabled: return false
+        }
     }
 }

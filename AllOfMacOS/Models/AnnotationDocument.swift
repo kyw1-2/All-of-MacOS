@@ -129,6 +129,154 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// The annotate toolbar, in CleanShot X order with its single-letter keys
+/// (V R F E L A T P H C D M, plus K crop and B background).
+///
+/// "Redact" covers AOM's three privacy kinds (pixelate / blur / black out),
+/// chosen from the properties bar as CleanShot's "Redaction style".
+/// "Marker" is AOM's rectangular highlighter, kept as an extra after the
+/// CleanShot segments.
+enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
+    case move, rectangle, filledRectangle, ellipse, line, arrow, text, redact,
+         spotlight, counter, draw, highlighter
+    case marker
+    case crop, background
+
+    var id: String { rawValue }
+
+    /// The segmented tool group (CleanShot's 12 + AOM marker).
+    static let segments: [AnnotationToolbarItem] = [
+        .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow, .text,
+        .redact, .spotlight, .counter, .draw, .highlighter, .marker,
+    ]
+
+    var title: String {
+        switch self {
+        case .move: return "Move"
+        case .rectangle: return "Rectangle"
+        case .filledRectangle: return "Filled Rectangle"
+        case .ellipse: return "Ellipse"
+        case .line: return "Line"
+        case .arrow: return "Arrow"
+        case .text: return "Text"
+        case .redact: return "Redact"
+        case .spotlight: return "Spotlight"
+        case .counter: return "Counter"
+        case .draw: return "Draw"
+        case .highlighter: return "Highlighter"
+        case .marker: return "Marker"
+        case .crop: return "Crop"
+        case .background: return "Background"
+        }
+    }
+
+    var shortcut: Character? {
+        switch self {
+        case .move: return "v"
+        case .rectangle: return "r"
+        case .filledRectangle: return "f"
+        case .ellipse: return "e"
+        case .line: return "l"
+        case .arrow: return "a"
+        case .text: return "t"
+        case .redact: return "p"
+        case .spotlight: return "h"
+        case .counter: return "c"
+        case .draw: return "d"
+        case .highlighter: return "m"
+        case .marker: return nil
+        case .crop: return "k"
+        case .background: return "b"
+        }
+    }
+
+    var help: String {
+        guard let shortcut else { return title }
+        return "\(title) (\(String(shortcut).uppercased()))"
+    }
+
+    var symbol: String {
+        switch self {
+        case .move: return "cursorarrow"
+        case .rectangle: return "rectangle"
+        case .filledRectangle: return "rectangle.fill"
+        case .ellipse: return "circle"
+        case .line: return "line.diagonal"
+        case .arrow: return "arrow.up.right"
+        case .text: return "textformat"
+        case .redact: return "eye.slash"
+        case .spotlight: return "flashlight.on.fill"
+        case .counter: return "1.circle.fill"
+        case .draw: return "pencil.tip"
+        case .highlighter: return "highlighter"
+        case .marker: return "rectangle.inset.filled"
+        case .crop: return "crop"
+        case .background: return "photo.artframe"
+        }
+    }
+
+    /// Document kinds this item draws; the first is its default.
+    var kinds: [AnnotationKind] {
+        switch self {
+        case .move: return [.move]
+        case .rectangle: return [.rectangle]
+        case .filledRectangle: return [.filledRectangle]
+        case .ellipse: return [.ellipse]
+        case .line: return [.line]
+        case .arrow: return [.arrow]
+        case .text: return [.text]
+        case .redact: return [.pixelate, .blur, .redact]
+        case .spotlight: return [.spotlight]
+        case .counter: return [.counter]
+        case .draw: return [.draw]
+        case .highlighter: return [.drawHighlight]
+        case .marker: return [.highlighter]
+        case .crop: return [.crop]
+        case .background: return []
+        }
+    }
+
+    static func forShortcut(_ character: Character) -> AnnotationToolbarItem? {
+        let lowered = Character(character.lowercased())
+        return allCases.first { $0.shortcut == lowered }
+    }
+
+    static func item(for kind: AnnotationKind) -> AnnotationToolbarItem? {
+        allCases.first { $0.kinds.contains(kind) }
+    }
+}
+
+/// CleanShot "Redaction style" names for AOM's privacy kinds.
+enum AnnotationRedactionStyle: CaseIterable, Identifiable {
+    case pixelate, blur, blackOut
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
+        case .blackOut: return "Black Out"
+        }
+    }
+
+    var kind: AnnotationKind {
+        switch self {
+        case .pixelate: return .pixelate
+        case .blur: return .blur
+        case .blackOut: return .redact
+        }
+    }
+
+    init?(kind: AnnotationKind) {
+        switch kind {
+        case .pixelate: self = .pixelate
+        case .blur: self = .blur
+        case .redact: self = .blackOut
+        default: return nil
+        }
+    }
+}
+
 /// How an object is painted.
 struct AnnotationStyle: Equatable, Codable {
     var color: AnnotationColor = .red
@@ -175,11 +323,17 @@ struct AnnotationStyle: Equatable, Codable {
 /// machine reads back identically on another, and so the palette stays a
 /// deliberate set rather than drifting into arbitrary values.
 enum AnnotationColor: String, CaseIterable, Identifiable, Codable {
-    case red, orange, yellow, green, blue, purple, pink, black, white, gray
+    // Declaration order is the swatch order: CleanShot's palette, then gray.
+    // Raw values are what is persisted, so reordering is format-compatible.
+    case black, red, orange, yellow, green, turquoise, blue, purple, pink, white, gray
 
     var id: String { rawValue }
 
     var displayName: String { rawValue.capitalized }
+
+    /// CleanShot X's default palette, in its order.
+    static let palette: [AnnotationColor] = [.black, .red, .orange, .yellow, .green,
+                                             .turquoise, .blue, .purple, .pink, .white]
 
     var nsColor: NSColor {
         switch self {
@@ -187,6 +341,7 @@ enum AnnotationColor: String, CaseIterable, Identifiable, Codable {
         case .orange: return NSColor(srgbRed: 1.00, green: 0.58, blue: 0.00, alpha: 1)
         case .yellow: return NSColor(srgbRed: 1.00, green: 0.80, blue: 0.00, alpha: 1)
         case .green: return NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1)
+        case .turquoise: return NSColor(srgbRed: 0.19, green: 0.78, blue: 0.80, alpha: 1)
         case .blue: return NSColor(srgbRed: 0.00, green: 0.48, blue: 1.00, alpha: 1)
         case .purple: return NSColor(srgbRed: 0.69, green: 0.32, blue: 0.87, alpha: 1)
         case .pink: return NSColor(srgbRed: 1.00, green: 0.18, blue: 0.33, alpha: 1)

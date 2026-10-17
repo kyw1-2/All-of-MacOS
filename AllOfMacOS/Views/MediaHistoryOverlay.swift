@@ -208,11 +208,26 @@ final class MediaHistoryOverlayController: NSObject {
 enum MediaHistoryFilter: String, CaseIterable, Identifiable {
     case all = "All"
     case screenshots = "Screenshots"
-    case recordings = "Recordings"
+    case recordings = "Videos"
+    // AOM extras, shown after the CleanShot trio.
     case scrolling = "Scrolling"
-    case pinned = "Pinned"
+    case pinned = "Kept"
 
     var id: String { rawValue }
+
+    /// CleanShot's filter buttons; the rest are AOM extras.
+    static let primary: [MediaHistoryFilter] = [.all, .screenshots, .recordings]
+    static let extras: [MediaHistoryFilter] = [.scrolling, .pinned]
+
+    func includes(_ entry: CaptureHistoryEntry) -> Bool {
+        switch self {
+        case .all: return true
+        case .screenshots: return entry.kind != .videoRecording
+        case .recordings: return entry.kind == .videoRecording
+        case .scrolling: return entry.kind == .scrolling
+        case .pinned: return entry.isPinned
+        }
+    }
 
     var icon: String {
         switch self {
@@ -220,8 +235,47 @@ enum MediaHistoryFilter: String, CaseIterable, Identifiable {
         case .screenshots: return "camera.viewfinder"
         case .recordings: return "video.fill"
         case .scrolling: return "arrow.up.and.down.text.horizontal"
-        case .pinned: return "pin"
+        case .pinned: return "bookmark"
         }
+    }
+}
+
+/// CleanShot "Keep History" choices mapped onto AOM's count/age limits.
+enum MediaHistoryRetention: CaseIterable, Identifiable {
+    case never, oneDay, threeDays, oneWeek, oneMonth
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .never: return "Never"
+        case .oneDay: return "1 Day"
+        case .threeDays: return "3 Days"
+        case .oneWeek: return "1 Week"
+        case .oneMonth: return "1 Month"
+        }
+    }
+
+    /// Age limit in days; `never` disables history (capacity 0).
+    var days: Int {
+        switch self {
+        case .never: return 0
+        case .oneDay: return 1
+        case .threeDays: return 3
+        case .oneWeek: return 7
+        case .oneMonth: return 30
+        }
+    }
+
+    static func current(capacity: Int, retentionDays: Int) -> MediaHistoryRetention? {
+        if capacity == 0 { return .never }
+        return allCases.first { $0 != .never && $0.days == retentionDays }
+    }
+
+    /// Resulting (capacity, retentionDays). Re-enabling restores the default
+    /// capacity when history had been switched off.
+    func apply(capacity: Int, retentionDays: Int) -> (capacity: Int, retentionDays: Int) {
+        if self == .never { return (0, retentionDays) }
+        return (capacity == 0 ? 40 : capacity, days)
     }
 }
 
@@ -240,19 +294,7 @@ struct MediaHistoryOverlayView: View {
     @State private var previewEntry: CaptureHistoryEntry?
 
     private var filteredEntries: [CaptureHistoryEntry] {
-        var result: [CaptureHistoryEntry]
-        switch selectedFilter {
-        case .all:
-            result = history.entries
-        case .screenshots:
-            result = history.entries.filter { $0.kind != .scrolling && $0.kind != .videoRecording }
-        case .recordings:
-            result = history.entries.filter { $0.kind == .videoRecording }
-        case .scrolling:
-            result = history.entries.filter { $0.kind == .scrolling }
-        case .pinned:
-            result = history.entries.filter { $0.isPinned }
-        }
+        var result = history.entries.filter(selectedFilter.includes)
 
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !query.isEmpty {
@@ -326,7 +368,7 @@ struct MediaHistoryOverlayView: View {
             controller?.onDeleteSelection = {
                 guard let id = selectedID,
                       let entry = filteredEntries.first(where: { $0.id == id }) else { return false }
-                deleteEntry(entry) // Same non-file-destructive behavior as context-menu Delete.
+                confirmAndDelete(entry) // Same non-file-destructive behavior as context-menu Delete.
                 return true
             }
             updateSheetState()
@@ -338,13 +380,13 @@ struct MediaHistoryOverlayView: View {
         }
         .onChange(of: previewEntry?.id) { _, _ in updateSheetState() }
         .onChange(of: showingClearConfirmation) { _, _ in updateSheetState() }
-        .alert("Clear Capture History?", isPresented: $showingClearConfirmation) {
+        .alert("Are you sure you want to delete all files from history?", isPresented: $showingClearConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Clear All", role: .destructive) {
+            Button("Delete All", role: .destructive) {
                 history.removeAll()
             }
         } message: {
-            Text("Remove all captures from history, including AOM's cached thumbnails? Separately saved screenshots and recordings will be preserved.")
+            Text("AOM's cached copies are removed. Screenshots and recordings you saved elsewhere are kept.")
         }
     }
 
@@ -375,41 +417,80 @@ struct MediaHistoryOverlayView: View {
             .background(Color.primary.opacity(0.065), in: Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
-                    ForEach(MediaHistoryFilter.allCases) { filter in
-                        Button { selectedFilter = filter } label: {
-                            Label(filter.rawValue, systemImage: filter.icon)
-                                .font(.system(size: 12, weight: selectedFilter == filter ? .semibold : .regular))
-                                .padding(.horizontal, 10).frame(height: 30)
-                                .background(selectedFilter == filter ? Color.primary.opacity(0.12) : Color.clear, in: Capsule())
-                        }.buttonStyle(.plain)
-                    }
+                    ForEach(MediaHistoryFilter.primary) { filter in filterButton(filter) }
+                    Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 18).padding(.horizontal, 3)
+                    ForEach(MediaHistoryFilter.extras) { filter in filterButton(filter) }
                 }
             }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: 470)
             Spacer(minLength: 0)
             Menu {
-                Menu("Keep Unpinned Captures") {
-                    ForEach([1, 7, 14, 30, 0], id: \.self) { days in
-                        Button {
-                            history.retentionDays = days
-                        } label: {
-                            if history.retentionDays == days {
-                                Label(days == 0 ? "Until Capacity Limit" : "\(days) days", systemImage: "checkmark")
-                            } else {
-                                Text(days == 0 ? "Until Capacity Limit" : "\(days) days")
-                            }
+                Menu("Keep History") {
+                    let current = MediaHistoryRetention.current(capacity: CaptureSettings.historyCapacity,
+                                                                retentionDays: history.retentionDays)
+                    ForEach(MediaHistoryRetention.allCases) { choice in
+                        Button { setRetention(choice) } label: {
+                            if current == choice { Label(choice.title, systemImage: "checkmark") }
+                            else { Text(choice.title) }
                         }
                     }
+                    Divider()
+                    Button { setRetention(nil) } label: {
+                        if current == nil { Label("Until Capacity Limit", systemImage: "checkmark") }
+                        else { Text("Until Capacity Limit") }
+                    }
                 }
-                Button("Clear Unpinned Captures", role: .destructive) { history.removeUnpinned() }
                 Divider()
-                Button("Clear All History…", role: .destructive) { showingClearConfirmation = true }
+                Button("Clear History…", role: .destructive) { showingClearConfirmation = true }
                     .disabled(history.entries.isEmpty)
-            } label: { Image(systemName: "ellipsis").frame(width: 25, height: 28) }
+                Button("Clear All Except Kept", role: .destructive) { history.removeUnpinned() }
+                    .disabled(history.entries.isEmpty)
+            } label: {
+                Image(systemName: "gearshape").font(.system(size: 13)).frame(width: 25, height: 28)
+            }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("History Settings").accessibilityLabel("History Settings")
             Button { controller?.dismiss() } label: {
                 Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).frame(width: 25, height: 28)
-            }.buttonStyle(.plain).help("Close (Esc)")
+            }.buttonStyle(.plain).help("Close (Esc)").accessibilityLabel("Close")
         }.padding(.horizontal, 20).frame(height: 52)
+    }
+
+    private func filterButton(_ filter: MediaHistoryFilter) -> some View {
+        Button { selectedFilter = filter } label: {
+            Label(filter.rawValue, systemImage: filter.icon)
+                .font(.system(size: 13, weight: selectedFilter == filter ? .semibold : .regular))
+                .padding(.horizontal, 10).frame(height: 28)
+                .background(selectedFilter == filter ? Color.primary.opacity(0.12) : Color.clear, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
+    }
+
+    /// nil = AOM's "Until Capacity Limit" (no age limit).
+    private func setRetention(_ choice: MediaHistoryRetention?) {
+        guard let choice else {
+            if CaptureSettings.historyCapacity == 0 { CaptureSettings.historyCapacity = 40 }
+            history.retentionDays = 0
+            return
+        }
+        if choice == .never {
+            let unkept = history.entries.filter { !$0.isPinned }.count
+            if unkept > 0 {
+                controller?.isShowingSheet = true
+                let alert = NSAlert()
+                alert.messageText = "Turn off Capture History?"
+                alert.informativeText = "\(unkept) capture(s) will be removed from history. Kept captures and files you saved are not affected."
+                alert.addButton(withTitle: "Turn Off")
+                alert.addButton(withTitle: "Cancel")
+                let response = alert.runModal()
+                updateSheetState()
+                guard response == .alertFirstButtonReturn else { return }
+            }
+        }
+        let applied = choice.apply(capacity: CaptureSettings.historyCapacity, retentionDays: history.retentionDays)
+        CaptureSettings.historyCapacity = applied.capacity
+        history.retentionDays = applied.retentionDays   // also re-trims
     }
 
     private var galleryContent: some View {
@@ -431,7 +512,8 @@ struct MediaHistoryOverlayView: View {
                                         onCopy: { copyEntry(entry) },
                                         onAnnotate: { annotateEntry(entry) },
                                         onPin: { pinEntry(entry) },
-                                        onDelete: { deleteEntry(entry) },
+                                        onRestore: { restoreEntry(entry) },
+                                        onDelete: { confirmAndDelete(entry) },
                                         onPreview: { previewEntry = entry }
                                     ).frame(width: side).id(entry.id)
                                 }
@@ -458,11 +540,14 @@ struct MediaHistoryOverlayView: View {
                 .foregroundStyle(.secondary.opacity(0.5))
 
             VStack(spacing: 4) {
-                Text(searchQuery.isEmpty ? "No captures in history" : "No captures matching \"\(searchQuery)\"")
+                Text(CaptureSettings.historyCapacity == 0 ? "Capture History is disabled."
+                     : searchQuery.isEmpty ? "No files to restore..." : "No captures matching \"\(searchQuery)\"")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text(searchQuery.isEmpty ? "Press ⇧⌘4 to capture an area or ⇧⌘3 for fullscreen." : "Try clearing your search query or switching filters.")
+                Text(CaptureSettings.historyCapacity == 0 ? "Choose Keep History in the settings menu to turn it on."
+                     : searchQuery.isEmpty ? "Captures you take appear here so closed ones can be restored."
+                     : "Try clearing your search query or switching filters.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -558,6 +643,37 @@ struct MediaHistoryOverlayView: View {
         controller?.dismiss()
     }
 
+    /// Reopens the capture as a Quick Access overlay (CleanShot "Restore").
+    private func restoreEntry(_ entry: CaptureHistoryEntry) {
+        controller?.dismiss()
+        CaptureCoordinator.shared.restoreToQuickAccess(entry)
+    }
+
+    private static let skipDeleteConfirmKey = "AOMHistoryDeleteWithoutConfirmation"
+
+    /// Removing a never-saved capture loses it, so that case asks first
+    /// (with CleanShot's "Don't ask again"). Saved files are never deleted.
+    private func confirmAndDelete(_ entry: CaptureHistoryEntry) {
+        let saved = entry.fileURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        if !saved, !UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey) {
+            controller?.isShowingSheet = true
+            let alert = NSAlert()
+            alert.messageText = "Are you sure you want to delete “\(entry.displayName)”?"
+            alert.informativeText = "This capture was never saved to disk and cannot be restored afterwards."
+            alert.addButton(withTitle: "Delete")
+            alert.addButton(withTitle: "Cancel")
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't ask again"
+            let response = alert.runModal()
+            updateSheetState()
+            guard response == .alertFirstButtonReturn else { return }
+            if alert.suppressionButton?.state == .on {
+                UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
+            }
+        }
+        deleteEntry(entry)
+    }
+
     private func deleteEntry(_ entry: CaptureHistoryEntry) {
         let entries = filteredEntries
         let index = entries.firstIndex { $0.id == entry.id }
@@ -583,9 +699,11 @@ private struct CaptureHistoryCard: View {
     let onCopy: () -> Void
     let onAnnotate: () -> Void
     let onPin: () -> Void
+    let onRestore: () -> Void
     let onDelete: () -> Void
     let onPreview: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     var body: some View {
@@ -601,7 +719,7 @@ private struct CaptureHistoryCard: View {
                 radius: isHovered ? 10 : 4, y: 3)
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.14)) { isHovered = hovering }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.14)) { isHovered = hovering }
         }
         .gesture(
             TapGesture(count: 2).exclusively(before: TapGesture())
@@ -661,17 +779,19 @@ private struct CaptureHistoryCard: View {
         .frame(height: thumbnailHeight)
     }
 
+    /// CleanShot order: Copy, Annotate, Pin, Restore, Delete.
     private var hoverActions: some View {
         HStack(spacing: 6) {
             cardButton("doc.on.doc",
-                       entry.kind == .videoRecording ? "Copy MP4 File" : "Copy Image", onCopy)
+                       entry.kind == .videoRecording ? "Copy MP4 File (⌘C)" : "Copy (⌘C)", onCopy)
             if entry.kind == .videoRecording {
-                cardButton("film.stack", "Edit Recording", onAnnotate)
+                cardButton("film.stack", "Edit Recording (⌘E)", onAnnotate)
             } else {
-                cardButton("pencil.tip.crop.circle", "Annotate", onAnnotate)
-                cardButton("pin.fill", "Pin to Screen", onPin)
+                cardButton("pencil.tip.crop.circle", "Annotate (⌘E)", onAnnotate)
+                cardButton("pin.fill", "Pin to the Screen", onPin)
             }
-            cardButton("arrow.up.left.and.arrow.down.right", "Preview (Space)", onPreview)
+            cardButton("arrow.uturn.backward", "Restore to Quick Access", onRestore)
+            cardButton("trash", "Delete from History (⌫)", onDelete)
         }
     }
 
@@ -702,6 +822,7 @@ private struct CaptureHistoryCard: View {
             Button("Play Recording…", action: onPreview)
             Button("Edit Recording…", action: onAnnotate)
             Button("Copy MP4 File", action: onCopy)
+            Button("Restore to Quick Access", action: onRestore)
             if let url = entry.playableVideoURL {
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -712,6 +833,7 @@ private struct CaptureHistoryCard: View {
             Button("Annotate…", action: onAnnotate)
             Button("Pin to Screen", action: onPin)
             Button("Preview…", action: onPreview)
+            Button("Restore to Quick Access", action: onRestore)
             Button("Copy QR Code") {
                 Task { @MainActor in
                     do {
@@ -739,7 +861,7 @@ private struct CaptureHistoryCard: View {
         }
         Divider()
         Button(entry.isPinned ? "Unpin from History" : "Keep in History") { CaptureHistory.shared.togglePin(entry) }
-        Button("Remove from History", role: .destructive, action: onDelete)
+        Button("Delete from History…", role: .destructive, action: onDelete)
     }
 
     private func cardButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void, tint: Color = .primary) -> some View {
@@ -752,6 +874,7 @@ private struct CaptureHistoryCard: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func iconForKind(_ kind: CaptureKind) -> String {

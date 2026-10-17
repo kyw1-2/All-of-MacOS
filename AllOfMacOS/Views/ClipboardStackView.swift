@@ -22,81 +22,117 @@ struct ClipboardStackView: View {
         }
     }
 
+    /// Rows in paste order, so the first row is always what ⌘V delivers next.
+    private var orderedRows: [(position: Int, entry: ClipboardEntry)] {
+        state.stackReversed ? rows.reversed() : rows
+    }
+
+    // Paste Stack (PasteStack.storyboard): 264 pt column, close button on the
+    // leading edge, centred bold title, direction toggle on the trailing edge,
+    // 44 pt rows and a centred "Empty" label.
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.accentColor)
-                Text("Paste Stack").font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button { state.stack.reverse() } label: { Image(systemName: "arrow.up.arrow.down") }
-                    .help("Reverse Order").disabled(rows.count < 2)
-                Button { controller.stopStack() } label: { Image(systemName: "xmark") }
-                    .help("Close Paste Stack")
-            }.buttonStyle(.plain).padding(15)
-            Divider().opacity(0.4)
-            if rows.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "square.on.square.dashed").font(.system(size: 32)).foregroundStyle(.tertiary)
-                    Text("Copy items to build a stack").font(.system(size: 13, weight: .medium))
-                    Text("Press ⌘V in your destination to paste in order.").font(.caption).foregroundStyle(.secondary)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                Text("Paste Stack").font(.system(size: 13, weight: .bold))
+                HStack {
+                    Button { controller.stopStack() } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                    }
+                    .help("Close Paste Stack").accessibilityLabel("Close Paste Stack")
+                    Spacer()
+                    Button { state.stackReversed.toggle() } label: {
+                        Image(systemName: state.stackReversed ? "arrow.up.square" : "arrow.down.square")
+                            .font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 16, height: 16)
+                    }
+                    .help(state.stackReversed ? "Pasting newest first — click for oldest first"
+                                              : "Pasting oldest first — click for newest first")
+                    .accessibilityLabel("Paste Order")
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 8).frame(height: 32)
+            if orderedRows.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Empty").font(.system(size: 13)).foregroundStyle(.tertiary)
+                    Text("Copy items to add them. ⌘V pastes them in order.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }.padding(.horizontal, 16).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 6) {
-                        ForEach(Array(rows.enumerated()), id: \.element.position) { ordinal, row in
-                            let index = row.position
-                            let entry = row.entry
-                            HStack(spacing: 9) {
-                                Text("\(ordinal + 1)").font(.system(size: 11, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(.secondary).frame(width: 19)
-                                if let data = entry.imageData, let image = NSImage(data: data) {
-                                    Image(nsImage: image).resizable().scaledToFit().frame(width: 36, height: 36)
-                                } else {
-                                    Image(systemName: entry.kind == .link ? "link" : "doc.text")
-                                        .foregroundStyle(Color.accentColor).frame(width: 28)
-                                }
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                    Text(entry.previewText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
-                                }
-                                Spacer(minLength: 0)
-                                Button { if state.stack.indices.contains(index) { state.stack.remove(at: index) } } label: {
-                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                                }.buttonStyle(.plain).help("Remove from Stack")
-                            }
-                            .padding(9).frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                            .background(Color.primary.opacity(ordinal == 0 ? 0.08 : 0.035),
-                                        in: RoundedRectangle(cornerRadius: 10))
-                            .contextMenu {
-                                Button("Move to Top") {
-                                    guard state.stack.indices.contains(index) else { return }
-                                    let moved = state.stack.remove(at: index)
-                                    state.stack.insert(moved, at: 0)
-                                }
-                                Button("Remove from Stack") { if state.stack.indices.contains(index) { state.stack.remove(at: index) } }
-                            }
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(orderedRows.enumerated()), id: \.element.position) { ordinal, row in
+                            stackRow(row.entry, position: row.position, ordinal: ordinal)
+                            if ordinal < orderedRows.count - 1 { Divider().padding(.leading, 52) }
                         }
-                    }.padding(10)
+                    }.padding(.horizontal, 6)
                 }
             }
             if !state.status.isEmpty {
-                Text(state.status).font(.caption2).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 5)
+                Text(state.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 4)
             }
-            Text("⌘V Paste Next · ⇧⌘V Plain Text").font(.caption2).foregroundStyle(.secondary).padding(.bottom, 7)
-            Divider().opacity(0.4)
+            Divider().opacity(0.5)
             HStack(spacing: 7) {
-                Circle().fill(state.stackMode ? Color.green : Color.secondary).frame(width: 6, height: 6)
-                Button(state.stackMode ? "Collecting" : "Paused") { state.stackMode.toggle() }
-                    .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
+                Button { state.stackMode.toggle() } label: {
+                    HStack(spacing: 5) {
+                        Circle().fill(state.stackMode ? Color.green : Color.secondary).frame(width: 6, height: 6)
+                        Text(state.stackMode ? "Collecting" : "Paused")
+                    }
+                }
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                .help(state.stackMode ? "New copies are added to the stack" : "New copies are not added")
                 Spacer()
                 Button("Paste Next") { controller.pasteNext() }
-                    .buttonStyle(.borderedProminent).controlSize(.small).disabled(rows.isEmpty)
-            }.padding(12)
+                    .controlSize(.small).disabled(orderedRows.isEmpty)
+                    .help("Paste the next item (⌘V in the destination does the same)")
+            }.padding(.horizontal, 10).frame(height: 36)
         }
+        .frame(width: 264)
         .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
             .allowsHitTesting(false))
+    }
+
+    private func stackRow(_ entry: ClipboardEntry, position index: Int, ordinal: Int) -> some View {
+        HStack(spacing: 8) {
+            Group {
+                if let data = entry.imageData, let image = NSImage(data: data) {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else if let url = entry.fileURLs.first {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().scaledToFit()
+                } else if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
+                    Image(nsImage: icon).resizable().scaledToFit()
+                } else {
+                    Image(systemName: entry.kind == .link ? "link" : "doc.text").foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(alignment: .topLeading) {
+                if ordinal == 0 {
+                    Circle().fill(Color.accentColor).frame(width: 8, height: 8).offset(x: -3, y: -3)
+                        .accessibilityLabel("Next")
+                }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.previewText.isEmpty ? entry.title : entry.previewText)
+                    .font(.system(size: 12, weight: ordinal == 0 ? .semibold : .regular)).lineLimit(1)
+                Text(entry.sourceName ?? entry.kind.displayName).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button { if state.stack.indices.contains(index) { state.stack.remove(at: index) } } label: {
+                Image(systemName: "minus.circle").foregroundStyle(.tertiary)
+            }.buttonStyle(.plain).help("Remove from Stack").accessibilityLabel("Remove from Stack")
+        }
+        .padding(.horizontal, 6).frame(height: 44)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Paste Next First") {
+                guard state.stack.indices.contains(index) else { return }
+                let moved = state.stack.remove(at: index)
+                if state.stackReversed { state.stack.append(moved) } else { state.stack.insert(moved, at: 0) }
+            }
+            Button("Remove from Stack") { if state.stack.indices.contains(index) { state.stack.remove(at: index) } }
+        }
     }
 }

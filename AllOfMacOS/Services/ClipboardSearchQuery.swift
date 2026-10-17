@@ -27,7 +27,9 @@ struct ClipboardSearchQuery {
 
     func matches(_ entry: ClipboardEntry, boards: [ClipboardPinboard]) -> Bool {
         let searchable = [entry.title, entry.text ?? "", entry.recognizedText ?? "",
-                          entry.sourceName ?? "", entry.sourceBundleID ?? "",
+                          // App names only: bundle IDs like com.apple.* would make
+                          // "apple" match every clip from an Apple app.
+                          entry.sourceName ?? "",
                           entry.fileURLs.map(\.path).joined(separator: " ")]
         return terms.allSatisfy { term in
             let matched: Bool

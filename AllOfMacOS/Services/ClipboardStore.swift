@@ -154,6 +154,16 @@ final class ClipboardStore: ObservableObject {
         lastChangeCount = pasteboard.changeCount
     }
 
+    /// Isolated stores only (UI preview/tests): seed sample items through the
+    /// normal capture path. The system pasteboard is never touched.
+    func seedIsolatedPasteboard(sourceName: String, sourceBundleID: String,
+                                _ write: (NSPasteboard) -> Void) {
+        guard isolated else { return }
+        pasteboard.clearContents()
+        write(pasteboard)
+        poll(sourceName: sourceName, sourceBundleID: sourceBundleID)
+    }
+
     func poll(sourceName: String? = nil, sourceBundleID: String? = nil) {
         let count = pasteboard.changeCount
         guard !isLoading else { lastChangeCount = count; return }
@@ -226,7 +236,7 @@ final class ClipboardStore: ObservableObject {
     /// Creates a local reusable clip without changing the system pasteboard.
     /// Pinboards and history share the same stored entry format.
     @discardableResult
-    func createTextItem(_ text: String) -> ClipboardEntry? {
+    func createTextItem(_ text: String, rtfData: Data? = nil) -> ClipboardEntry? {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty, text.utf8.count <= Self.maximumEntryBytes else {
             if text.utf8.count > Self.maximumEntryBytes {
@@ -235,7 +245,7 @@ final class ClipboardStore: ObservableObject {
             return nil
         }
         let entry = ClipboardEntry.captured(
-            items: [[NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]],
+            items: [Self.textRepresentations(text, rtfData: rtfData)],
             sourceName: "All of MacOS", sourceBundleID: "com.kyw.allofmacos",
             at: now())
         entries.insert(entry, at: 0)
@@ -268,8 +278,11 @@ final class ClipboardStore: ObservableObject {
         scheduleSave()
     }
 
+    /// Paste's eight Pinboard colours, in its picker order.
+    nonisolated static let boardColors = ["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"]
+
     func setBoardColor(id: UUID, color: String) {
-        guard ["red", "orange", "yellow", "green", "blue", "purple"].contains(color),
+        guard Self.boardColors.contains(color),
               let index = boards.firstIndex(where: { $0.id == id }) else { return }
         boards[index].color = color
         scheduleSave()
@@ -302,11 +315,40 @@ final class ClipboardStore: ObservableObject {
         scheduleSave()
     }
 
-    func editText(entryID: UUID, text: String) {
+    /// Plain text is always present; RTF is kept only when it adds formatting.
+    static func textRepresentations(_ text: String, rtfData: Data?) -> [String: Data] {
+        var item = [NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]
+        if let rtfData, !rtfData.isEmpty, hasFormatting(rtfData) {
+            item[NSPasteboard.PasteboardType.rtf.rawValue] = rtfData
+        }
+        return item
+    }
+
+    private static func hasFormatting(_ rtf: Data) -> Bool {
+        guard let attributed = try? NSAttributedString(
+            data: rtf, options: [.documentType: NSAttributedString.DocumentType.rtf],
+            documentAttributes: nil), attributed.length > 0 else { return false }
+        var formatted = false
+        attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length)) { attrs, _, stop in
+            if let font = attrs[.font] as? NSFont,
+               !NSFontManager.shared.traits(of: font).intersection([.boldFontMask, .italicFontMask]).isEmpty {
+                formatted = true
+            }
+            for key in [NSAttributedString.Key.underlineStyle, .strikethroughStyle] {
+                if let value = attrs[key] as? NSNumber, value.intValue != 0 { formatted = true }
+            }
+            if formatted { stop.pointee = true }
+        }
+        return formatted
+    }
+
+    func editText(entryID: UUID, text: String, rtfData: Data? = nil) {
         guard let index = entries.firstIndex(where: { $0.id == entryID }), [.text, .link, .color].contains(entries[index].kind) else { return }
         guard text.utf8.count <= Self.maximumEntryBytes else { lastError = StoreError.tooLarge.localizedDescription; return }
         let old = entries[index]
-        var edited = ClipboardEntry.captured(items: [[NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]],
+        let representations = old.kind == .text ? Self.textRepresentations(text, rtfData: rtfData)
+            : [NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]
+        var edited = ClipboardEntry.captured(items: [representations],
                                              sourceName: old.sourceName, sourceBundleID: old.sourceBundleID, at: old.createdAt)
         edited.id = old.id
         edited.title = old.title

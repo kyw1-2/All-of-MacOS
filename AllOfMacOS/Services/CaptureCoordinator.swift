@@ -45,10 +45,18 @@ final class CaptureCoordinator {
             return
         }
         persistRecentlyClosed()
-        showOverlay(for: restored)
+        showOverlay(for: restored, explicit: true)
     }
 
     var hasVisibleQuickAccess: Bool { !overlayControllers.isEmpty }
+
+    /// Capture History "Restore": reopen any history entry as an overlay.
+    /// Works even when "Show Overlay" after capture is off, since it is explicit.
+    func restoreToQuickAccess(_ entry: CaptureHistoryEntry) {
+        recentlyClosed.removeAll { $0.id == entry.id }
+        persistRecentlyClosed()
+        showOverlay(for: entry, explicit: true)
+    }
 
     private func reflowOverlaysByDisplay() {
         // Index separately on every physical display: one capture on an
@@ -77,6 +85,25 @@ final class CaptureCoordinator {
         for overlay in Array(overlayControllers.reversed()) {
             overlay.dismiss(deleteFile: false)
         }
+    }
+
+    /// CleanShot's "Close All…" asks first, because unsaved cards disappear
+    /// from the screen (they remain restorable from Capture History).
+    func confirmCloseAllQuickAccess() {
+        guard !overlayControllers.isEmpty else { return }
+        let unsaved = overlayControllers.filter(\.hasUnsavedMedia).count
+        if unsaved > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Do you want to close all overlays?"
+            alert.informativeText = unsaved == 1
+                ? "One capture has not been saved. It stays available in Capture History."
+                : "\(unsaved) captures have not been saved. They stay available in Capture History."
+            alert.addButton(withTitle: "Close All")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        closeAllQuickAccess()
     }
 
     /// Save only the cards whose files can be written. Keep failed cards on
@@ -171,6 +198,9 @@ final class CaptureCoordinator {
                     throw CaptureError.noWindowFound
                 }
                 return (try await ScreenCaptureService.shared.captureWindow(target), .window)
+            case .timer:
+                try await Self.countDown(CaptureSettings.selfTimerInterval)
+                return (try await ScreenCaptureService.shared.captureArea(rect), .area)
             case .text:
                 let result = try await ScreenCaptureService.shared.captureArea(rect)
                 let text = try await TextRecognitionService.recognize(result.image,
@@ -276,6 +306,24 @@ final class CaptureCoordinator {
         }
     }
 
+    /// CleanShot "Capture Window": hover to highlight a window, click to capture
+    /// (Space switches to area selection). Esc cancels.
+    func captureWindowInteractive() {
+        run(kind: .window) { [weak self] in
+            guard let self else { return nil }
+            guard let rect = await self.presentSelection(startInWindowMode: true) else { return nil }
+            if self.selectionOverlay?.selectedMode == .window,
+               let id = self.selectionOverlay?.selectedWindowID {
+                let windows = try await ScreenCaptureService.shared.capturableWindows()
+                guard let window = windows.first(where: { $0.windowID == id }) else {
+                    throw CaptureError.noWindowFound
+                }
+                return (try await ScreenCaptureService.shared.captureWindow(window), .window)
+            }
+            return (try await ScreenCaptureService.shared.captureArea(rect), .area)
+        }
+    }
+
     func captureActiveWindow() {
         run(kind: .window) { [weak self] in
             guard let self else { return nil }
@@ -322,15 +370,13 @@ final class CaptureCoordinator {
     /// The stored self-timer applies to every capture; this action forces one for
     /// a single binding without changing the global preference.
     func captureWithSelfTimer(seconds: Int? = nil) {
-        let requested = seconds ?? max(1, CaptureSettings.selfTimerSeconds)
+        let requested = seconds ?? CaptureSettings.selfTimerInterval
         run(kind: .area, appliesSelfTimer: false) { [weak self] in
             guard let self else { return nil }
-            for remaining in stride(from: requested, through: 1, by: -1) {
-                GestureHUD.shared.show(title: "\(remaining)", detail: "Capturing…")
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            GestureHUD.shared.dismiss()
+            // CleanShot order: choose the area first, then count down so menus
+            // or hover states can be arranged before the pixels are read.
             guard let rect = await self.presentSelection() else { return nil }
+            try await Self.countDown(requested)
             let result = try await ScreenCaptureService.shared.captureArea(rect)
             return (result, CaptureKind.area)
         }
@@ -424,14 +470,39 @@ final class CaptureCoordinator {
     /// A self-timer gives the user time to arrange a menu or hover state, so it
     /// counts down on screen rather than silently waiting.
     private func runSelfTimerIfNeeded() async throws {
-        let seconds = CaptureSettings.selfTimerSeconds
+        try await Self.countDown(CaptureSettings.selfTimerSeconds)
+    }
+
+    /// On-screen countdown; Escape cancels (the HUD is not key, so a global
+    /// monitor is used and removed again).
+    private static func countDown(_ seconds: Int) async throws {
         guard seconds > 0 else { return }
+        var cancelled = false
+        let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { cancelled = true }
+        }
+        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { cancelled = true; return nil }
+            return event
+        }
+        defer {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            if let local { NSEvent.removeMonitor(local) }
+        }
         for remaining in stride(from: seconds, through: 1, by: -1) {
-            GestureHUD.shared.show(title: "\(remaining)", detail: "Capturing…")
-            try await Task.sleep(nanoseconds: 1_000_000_000)
+            GestureHUD.shared.show(title: "\(remaining)", detail: "Capturing… · Esc to cancel")
+            for _ in 0..<10 {
+                try await Task.sleep(nanoseconds: 100_000_000)
+                if cancelled {
+                    GestureHUD.shared.dismiss()
+                    throw CaptureError.cancelled
+                }
+            }
         }
         // Clear the countdown before the selection UI appears underneath it.
         GestureHUD.shared.dismiss()
+        // Let the HUD fade out before ScreenCaptureKit reads the pixels.
+        try await Task.sleep(nanoseconds: 150_000_000)
     }
 
     private func finish(_ result: CaptureResult, kind: CaptureKind,
@@ -484,8 +555,9 @@ final class CaptureCoordinator {
         showOverlay(for: entry)
     }
 
-    private func showOverlay(for entry: CaptureHistoryEntry, forcedAutoCloseSeconds: TimeInterval? = nil) {
-        guard CaptureSettings.overlayEnabled else { return }
+    private func showOverlay(for entry: CaptureHistoryEntry, forcedAutoCloseSeconds: TimeInterval? = nil,
+                             explicit: Bool = false) {
+        guard explicit || CaptureSettings.overlayEnabled else { return }
         let controller = QuickAccessOverlayController(
             entry: entry, stackIndex: overlayControllers.count,
             forcedAutoCloseSeconds: forcedAutoCloseSeconds)
@@ -526,6 +598,22 @@ final class CaptureCoordinator {
 
     // MARK: - Desktop icons
 
+    /// Whether Finder currently draws desktop icons (`CreateDesktop`, default true).
+    var desktopIconsVisible: Bool {
+        (CFPreferencesCopyAppValue("CreateDesktop" as CFString, "com.apple.finder" as CFString) as? Bool) ?? true
+    }
+
+    /// CleanShot's menu-bar "Hide Desktop Icons / Show Desktop Icons" toggle.
+    /// Same Finder mechanism as the capture-time option; restarts Finder.
+    func toggleDesktopIcons() {
+        let domain = "com.apple.finder" as CFString
+        let hide = desktopIconsVisible
+        CFPreferencesSetAppValue("CreateDesktop" as CFString, (!hide) as CFBoolean, domain)
+        CFPreferencesAppSynchronize(domain)
+        Self.restartFinder()
+        GestureHUD.shared.show(title: "Desktop Icons", detail: hide ? "Hidden" : "Visible")
+    }
+
     /// Hides the desktop icons for the duration of the capture.
     ///
     /// This writes a Finder preference and restarts Finder, which is why it is
@@ -561,9 +649,9 @@ final class CaptureCoordinator {
 
     /// Presents the area-selection overlay and returns the chosen global rect, or
     /// `nil` when the user pressed Escape.
-    private func presentSelection() async -> CGRect? {
+    private func presentSelection(startInWindowMode: Bool = false) async -> CGRect? {
         await withCheckedContinuation { continuation in
-            let controller = SelectionOverlayController { rect in
+            let controller = SelectionOverlayController(startInWindowMode: startInWindowMode) { rect in
                 continuation.resume(returning: rect)
             }
             selectionOverlay = controller

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Vision
+import ImageIO
 import UniformTypeIdentifiers
 
 /// Opens the annotate editor for a capture.
@@ -59,11 +60,100 @@ final class AnnotationEditorController {
         }
         open(capture: entry, url: entry.fileURL)
     }
+
+    /// CleanShot "Open…": an image (or an AOM annotation project) from disk.
+    func chooseImageOrProject() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP, .gif, .bmp, AnnotationProject.contentType]
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Open"
+        NSApp.activate(ignoringOtherApps: true)
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            MainActor.assumeIsolated {
+                for url in panel.urls { self?.openFile(at: url) }
+            }
+        }
+    }
+
+    /// Opens an image file for annotation; the source file is never overwritten.
+    func openFile(at url: URL) {
+        if url.pathExtension.lowercased() == AnnotationProject.contentType.preferredFilenameExtension {
+            openProject(at: url)
+            return
+        }
+        guard let entry = Self.entry(fromImageAt: url) else {
+            GestureHUD.shared.show(title: "Could Not Open", detail: url.lastPathComponent)
+            return
+        }
+        open(capture: entry, url: nil)
+    }
+
+    /// CleanShot "Open from Clipboard".
+    func openFromClipboard() {
+        guard let entry = Self.entryFromPasteboard(.general) else {
+            GestureHUD.shared.show(title: "No Image on Clipboard", detail: "Copy an image or image file first.")
+            return
+        }
+        open(capture: entry, url: nil)
+    }
+
+    static func entry(fromImageAt url: URL) -> CaptureHistoryEntry? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        // Honour the file's DPI so a Retina PNG opens at its on-screen size.
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let dpi = (props?[kCGImagePropertyDPIWidth] as? Double) ?? 72
+        let scale = max(1, min(4, (dpi / 72).rounded()))
+        return CaptureHistoryEntry(image: image, kind: .area, capturedAt: Date(),
+                                   windowTitle: url.deletingPathExtension().lastPathComponent,
+                                   fileURL: nil, scale: CGFloat(scale))
+    }
+
+    static func entryFromPasteboard(_ pasteboard: NSPasteboard) -> CaptureHistoryEntry? {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self],
+                                             options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let url = urls.first, let entry = entry(fromImageAt: url) {
+            return entry
+        }
+        guard let image = NSImage(pasteboard: pasteboard),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = image.size.width > 0 ? max(1, (CGFloat(cgImage.width) / image.size.width).rounded()) : 1
+        return CaptureHistoryEntry(image: cgImage, kind: .area, capturedAt: Date(),
+                                   windowTitle: "Clipboard Image", fileURL: nil, scale: scale)
+    }
+}
+
+/// Bridges the SwiftUI editor's unsaved state to the window's close handling.
+@MainActor
+final class AnnotationEditorSession {
+    var isDirty: () -> Bool = { false }
+    /// Saves (or applies, for clipboard edits); returns false on failure.
+    var commit: () -> Bool = { true }
+    var close: () -> Void = {}
+}
+
+/// "Do you want to save the changes you made to the screenshot?"
+enum AnnotationClosePrompt {
+    enum Choice: Equatable { case save, dontSave, cancel }
+
+    static let message = "Do you want to save the changes you made to the screenshot?"
+    static let buttons = ["Save", "Don't Save", "Cancel"]
+
+    static func choice(for response: NSApplication.ModalResponse) -> Choice {
+        switch response {
+        case .alertFirstButtonReturn: return .save
+        case .alertSecondButtonReturn: return .dontSave
+        default: return .cancel
+        }
+    }
 }
 
 private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     private let capture: CaptureHistoryEntry
+    private let session = AnnotationEditorSession()
+    private var closeConfirmed = false
 
     init(capture: CaptureHistoryEntry, url: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
         self.capture = capture
@@ -81,8 +171,36 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 740, height: 480)
         super.init(window: window)
-        window.contentView = NSHostingView(rootView: AnnotationEditorView(capture: capture, fileURL: url, document: document, projectURL: projectURL, onApply: onApply))
+        window.contentView = NSHostingView(rootView: AnnotationEditorView(capture: capture, fileURL: url, document: document, projectURL: projectURL, onApply: onApply, session: session))
         window.delegate = self
+        session.close = { [weak self] in
+            self?.closeConfirmed = true
+            self?.window?.close()
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !closeConfirmed, session.isDirty() else { return true }
+        let alert = NSAlert()
+        alert.messageText = AnnotationClosePrompt.message
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        for title in AnnotationClosePrompt.buttons { alert.addButton(withTitle: title) }
+        alert.buttons[1].keyEquivalent = "d"
+        alert.buttons[1].keyEquivalentModifierMask = .command
+        alert.beginSheetModal(for: sender) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch AnnotationClosePrompt.choice(for: response) {
+                case .save:
+                    if self.session.commit() { self.session.close() }
+                case .dontSave:
+                    self.session.close()
+                case .cancel:
+                    break
+                }
+            }
+        }
+        return false
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -107,6 +225,11 @@ private struct AnnotationEditorView: View {
     @State private var presets = AnnotationStylePreset.load()
 
     @State private var document: AnnotationDocument
+    private let session: AnnotationEditorSession?
+    /// Snapshot at open / last save, for the unsaved-changes prompt.
+    @State private var savedState: AnnotationSavedState
+    @State private var redactKind: AnnotationKind = .pixelate
+    @FocusState private var textFieldFocused: Bool
     @State private var tool: AnnotationKind = .arrow
     @State private var style = AnnotationStyle()
     @State private var selectedID: UUID?
@@ -138,13 +261,21 @@ private struct AnnotationEditorView: View {
     /// Which handle of a selected object is being dragged, if any.
     @State private var activeHandle: ResizeHandle?
 
-    init(capture: CaptureHistoryEntry, fileURL: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
+    init(capture: CaptureHistoryEntry, fileURL: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil,
+         session: AnnotationEditorSession? = nil) {
         self.capture = capture
         self.fileURL = fileURL
         self.onApply = onApply
+        self.session = session
         _projectURL = State(initialValue: projectURL)
-        _document = State(initialValue: document ?? AnnotationDocument(baseImage: capture.image))
+        let initial = document ?? AnnotationDocument(baseImage: capture.image)
+        _document = State(initialValue: initial)
+        _savedState = State(initialValue: AnnotationSavedState(initial))
     }
+
+    private var isDirty: Bool { AnnotationSavedState(document) != savedState }
+
+    private func markSaved() { savedState = AnnotationSavedState(document) }
 
     private var scale: CGFloat {
         guard capture.pointSize.width > 0, capture.image.width > 0 else {
@@ -158,12 +289,20 @@ private struct AnnotationEditorView: View {
         VStack(spacing: 0) {
             if cropMode { cropToolbar } else { toolbar }
             Divider()
+            if !cropMode {
+                propertiesBar
+                Divider()
+            }
             canvas
             Divider()
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .background(CaptureKeyEventHandler(handle: handleEditorKey))
+        .onAppear {
+            session?.isDirty = { isDirty }
+            session?.commit = { commitChanges() }
+        }
         .ignoresSafeArea(.container, edges: .top)
         .sheet(isPresented: $showingResize) {
             AnnotationResizeDialog(pixelWidth: document.croppedImage.width,
@@ -208,137 +347,328 @@ private struct AnnotationEditorView: View {
 
     // MARK: - Toolbar
 
-    private let mainTools: [AnnotationKind] = [
-        .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow,
-        .text, .pixelate, .blur, .highlighter, .counter, .draw, .drawHighlight
-    ]
-
+    /// CleanShot layout: crop / background / add image on the left, the
+    /// segmented tool group in the middle, output actions on the right
+    /// (Drag, Pin, Copy ⇧⌘C, Save ⌘S ▾ Save As ⇧⌘S, Done).
     private var toolbar: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Color.clear.frame(width: 68, height: 32)
-            capsuleButton("crop", help: "Crop & Resize (C)", active: cropMode) { selectTool(.crop) }
-                .keyboardShortcut("c", modifiers: [])
-            capsuleButton("photo.badge.plus", help: "Add Screenshot…") { addScreenshot() }
-            capsuleButton("photo", help: "Background", active: backgroundPopover) {
-                if !backgroundPopover { document.beginChange() }
-                backgroundPopover.toggle()
-            }
+            capsuleButton(AnnotationToolbarItem.crop.symbol, help: AnnotationToolbarItem.crop.help,
+                          active: cropMode) { selectToolbarItem(.crop) }
+            capsuleButton(AnnotationToolbarItem.background.symbol, help: AnnotationToolbarItem.background.help,
+                          active: backgroundPopover) { selectToolbarItem(.background) }
             .popover(isPresented: $backgroundPopover) { backgroundOptions.padding(18).frame(width: 320) }
+            capsuleButton("photo.badge.plus", help: "Add Screenshot From File…") { addScreenshot() }
             ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 9) {
-            HStack(spacing: 0) {
-                ForEach(mainTools) { kind in
-                    toolButton(kind)
-                    if kind != mainTools.last {
-                        Rectangle().fill(Color.primary.opacity(0.09)).frame(width: 1, height: 16)
-                    }
-                }
-            }
-            .padding(2)
-            .background(Color.primary.opacity(0.065), in: Capsule())
-
-            Button { colorPopover.toggle() } label: {
-                HStack(spacing: 5) {
-                    Circle().fill(Color(nsColor: style.resolvedColor))
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
-                        .frame(width: 18, height: 18)
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 10).frame(height: 32)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-            }
-            .buttonStyle(.plain).help("Color").accessibilityLabel("Color")
-            .popover(isPresented: $colorPopover) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Color").font(.headline)
-                    ColorSwatchRow(selection: $style.color).onChange(of: style.color) { _, _ in
-                        style.customColorHex = nil; applyStyleToSelection()
-                    }
-                    ColorPicker("Custom Color", selection: Binding(get: { Color(nsColor: style.resolvedColor) }, set: { value in
-                        guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
-                        style.customColorHex = String(format: "%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
-                        applyStyleToSelection()
-                    }), supportsOpacity: false)
-                    section("Opacity") { slider(value: $style.opacity, range: 0.1...1, label: "\(Int(style.opacity * 100))%") }
-                }.padding(18).frame(width: 230)
-            }
-            Button { optionsPopover.toggle() } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "line.diagonal").font(.system(size: 18, weight: .heavy))
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
-                }.padding(.horizontal, 10).frame(height: 32)
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-            }
-            .buttonStyle(.plain).help("Thickness and Tool Options").accessibilityLabel("Tool Options")
-            .popover(isPresented: $optionsPopover) { toolOptions.padding(18).frame(width: 270) }
-            capsuleButton(canvasLocked ? "lock.fill" : "lock.open.fill", help: "Lock Canvas", active: canvasLocked) { canvasLocked.toggle() }
-
-            Menu {
-                Button("Undo") { document.undo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
-                Button("Redo") { document.redo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                Divider()
-                Button("Save Project") { saveProject(saveAs: false) }.keyboardShortcut("s", modifiers: [.command, .shift])
-                Button("Save Project As…") { saveProject(saveAs: true) }
-                Button("Open Project…") { AnnotationEditorController.shared.chooseProject() }.keyboardShortcut("o", modifiers: .command)
-                Menu("Export Image") {
-                    ForEach(CaptureFormat.allCases) { format in
-                        Button(format.displayName) { saveAs(format: format) }
-                    }
-                }
-                Menu("Style Presets") {
-                    Button("Save Current Style…") { saveStylePreset() }
-                    ForEach(presets) { preset in
-                        Button(preset.name) { style = preset.style; applyStyleToSelection() }
-                    }
-                    if !presets.isEmpty {
-                        Menu("Remove Preset") {
-                            ForEach(presets) { preset in
-                                Button(preset.name) { presets.removeAll { $0.id == preset.id }; AnnotationStylePreset.save(presets) }
-                            }
+                HStack(spacing: 0) {
+                    ForEach(AnnotationToolbarItem.segments) { item in
+                        if item == .marker {
+                            Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 1, height: 18)
+                                .padding(.horizontal, 3)
                         }
+                        toolButton(item)
                     }
                 }
-                Divider()
-                Button("Resize Image…") { showingResize = true }
-                Menu("Rotate / Flip") {
-                    Button("Rotate 90° Clockwise") { transformImage(.rotateClockwise) }
-                    Button("Rotate 90° Counterclockwise") { transformImage(.rotateCounterclockwise) }
-                    Divider()
-                    Button("Flip Horizontally") { transformImage(.flipHorizontal) }
-                    Button("Flip Vertically") { transformImage(.flipVertical) }
-                }
-                Button("Smart Highlight Text…") { showingSmartHighlight = true }
-                Divider()
-                Button("Layers…") { layersPopover = true }
-                Button("Blur") { selectTool(.blur) }
-                Button("Redact") { selectTool(.redact) }
-                Button("Spotlight") { selectTool(.spotlight) }
-                Button("Delete Selected") { deleteSelection() }.disabled(selectedID == nil).keyboardShortcut(.delete, modifiers: [])
-                Divider()
-                Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
-                Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
-            } label: { Image(systemName: "ellipsis").frame(width: 26, height: 30) }
-            .menuStyle(.borderlessButton).fixedSize().help("More Options")
-            .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
-        }
-            .padding(.vertical, 2)
-            .background(NativeScrollChrome(.hidden))
+                .padding(2)
+                .background(Color.primary.opacity(0.065), in: Capsule())
+                .padding(.vertical, 2)
+                .background(NativeScrollChrome(.hidden))
             }
             .scrollIndicators(.hidden)
-            Spacer(minLength: 0)
-            if let onApply {
-                Button("Apply to Clipboard") {
-                    if let image = renderedImage() { onApply(image); status = "Updated clipboard image." }
-                }.buttonStyle(.borderedProminent).fixedSize()
-            }
-            Button { saveAs() } label: {
-                Text("Save as…").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
-                    .background(Color.accentColor, in: Capsule())
-            }.buttonStyle(.plain).keyboardShortcut("s", modifiers: .command).fixedSize()
+            .frame(maxWidth: .infinity)
+            moreMenu
+            outputActions
         }
         .padding(.horizontal, 12).frame(height: 50)
         .background(.regularMaterial)
+    }
+
+    private var outputActions: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 38, height: 32)
+                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .contentShape(Capsule())
+                .onDrag { dragProvider() }
+                .help("Drag the edited image to another app")
+                .accessibilityLabel("Drag image to another app")
+            capsuleButton("pin.fill", help: "Pin to the Screen") { pin() }
+            capsuleButton("doc.on.doc", help: "Copy to Clipboard (⇧⌘C)") { copyToClipboard() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            HStack(spacing: 0) {
+                Button { saveToExportLocation() } label: {
+                    Text("Save").font(.system(size: 13, weight: .medium))
+                        .padding(.leading, 12).padding(.trailing, 6).frame(height: 32)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save to the export location (⌘S)")
+                Menu {
+                    Button("Save") { saveToExportLocation() }
+                    Button("Save As…") { saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
+                    Menu("Export As") {
+                        ForEach(CaptureFormat.allCases) { format in
+                            Button(format.displayName) { saveAs(format: format) }
+                        }
+                    }
+                    Divider()
+                    Button("Save Project") { saveProject(saveAs: false) }.keyboardShortcut("s", modifiers: [.command, .option])
+                    Button("Save Project As…") { saveProject(saveAs: true) }
+                } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .padding(.trailing, 8).frame(height: 32)
+                .help("Save options")
+                .accessibilityLabel("Save options")
+            }
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            if let onApply {
+                Button("Apply to Clipboard") {
+                    if let image = renderedImage() { onApply(image); markSaved(); status = "Updated clipboard image." }
+                }.buttonStyle(.bordered).controlSize(.large).fixedSize()
+            }
+            Button { done() } label: {
+                Text("Done").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
+                    .background(Color.accentColor, in: Capsule())
+            }
+            .buttonStyle(.plain).fixedSize()
+            .help(onApply != nil ? "Apply to the clipboard and close" : "Save changes and close")
+            .accessibilityLabel("Done")
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("Undo") { document.undo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canUndo).keyboardShortcut("z", modifiers: .command)
+            Button("Redo") { document.redo(); restoreSelectionAfterHistoryChange() }.disabled(!document.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+            Divider()
+            Button("Open…") { AnnotationEditorController.shared.chooseImageOrProject() }.keyboardShortcut("o", modifiers: .command)
+            Menu("Style Presets") {
+                Button("Save Current Style…") { saveStylePreset() }
+                ForEach(presets) { preset in
+                    Button(preset.name) { style = preset.style; applyStyleToSelection() }
+                }
+                if !presets.isEmpty {
+                    Menu("Remove Preset") {
+                        ForEach(presets) { preset in
+                            Button(preset.name) { presets.removeAll { $0.id == preset.id }; AnnotationStylePreset.save(presets) }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Resize Image…") { showingResize = true }
+            Menu("Rotate / Flip") {
+                Button("Rotate 90° Clockwise") { transformImage(.rotateClockwise) }
+                Button("Rotate 90° Counterclockwise") { transformImage(.rotateCounterclockwise) }
+                Divider()
+                Button("Flip Horizontally") { transformImage(.flipHorizontal) }
+                Button("Flip Vertically") { transformImage(.flipVertical) }
+            }
+            Button("Smart Highlight Text…") { showingSmartHighlight = true }
+            Divider()
+            Button("Layers…") { layersPopover = true }
+            Button("Delete Selected") { deleteSelection() }.disabled(selectedID == nil).keyboardShortcut(.delete, modifiers: [])
+            Divider()
+            Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
+            Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
+        } label: { Image(systemName: "ellipsis").frame(width: 26, height: 30) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("More Options").accessibilityLabel("More Options")
+        .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
+    }
+
+    // MARK: - Properties bar
+
+    /// Contextual properties for the active tool (or the selected object).
+    private var propertiesBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                palette
+                propertyDivider
+                toolProperties
+                propertyDivider
+                propertySlider("Opacity", value: Binding(get: { CGFloat(style.opacity) }, set: { style.opacity = Double($0) }),
+                               range: 0.1...1, width: 70, label: "\(Int(style.opacity * 100))%")
+                Button { optionsPopover.toggle() } label: {
+                    Image(systemName: "slider.horizontal.3").frame(width: 26, height: 24)
+                }
+                .buttonStyle(.plain).help("More Tool Options").accessibilityLabel("More Tool Options")
+                .popover(isPresented: $optionsPopover) { toolOptions.padding(18).frame(width: 270) }
+                if inspectedKind == .draw || inspectedKind == .drawHighlight {
+                    Toggle(isOn: $canvasLocked) {
+                        Image(systemName: canvasLocked ? "lock.fill" : "lock.open")
+                    }
+                    .toggleStyle(.button).help("Lock Canvas").accessibilityLabel("Lock Canvas")
+                }
+            }
+            .font(.system(size: 13))
+            .controlSize(.small)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(NativeScrollChrome(.hidden))
+        }
+        .scrollIndicators(.hidden)
+        .background(.bar)
+    }
+
+    private var propertyDivider: some View {
+        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 18)
+    }
+
+    private var palette: some View {
+        HStack(spacing: 5) {
+            ForEach(AnnotationColor.palette) { color in
+                Button {
+                    style.color = color
+                    style.customColorHex = nil
+                    applyStyleToSelection()
+                } label: {
+                    Circle().fill(Color(nsColor: color.nsColor))
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
+                        .frame(width: 16, height: 16)
+                        .padding(2)
+                        .overlay(Circle().strokeBorder(Color.accentColor,
+                                                       lineWidth: style.customColorHex == nil && style.color == color ? 2 : 0))
+                }
+                .buttonStyle(.plain)
+                .help(color.displayName)
+                .accessibilityLabel(color.displayName)
+                .accessibilityAddTraits(style.customColorHex == nil && style.color == color ? .isSelected : [])
+            }
+            ColorPicker("Custom Color", selection: Binding(get: { Color(nsColor: style.resolvedColor) }, set: { value in
+                guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
+                style.customColorHex = String(format: "%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
+                applyStyleToSelection()
+            }), supportsOpacity: false)
+            .labelsHidden()
+            .help("Custom Color")
+        }
+    }
+
+    @ViewBuilder private var toolProperties: some View {
+        let kind = inspectedKind
+        switch kind {
+        case .rectangle, .ellipse, .line, .arrow, .draw, .drawHighlight, .highlighter, .spotlight:
+            if kind != .spotlight && kind != .highlighter {
+                propertySlider("Thickness", value: $style.thickness, range: 1...20, width: 90,
+                               label: "\(Int(style.thickness)) pt")
+            }
+            if kind == .arrow {
+                Picker("Arrow style", selection: $style.arrowStyle) {
+                    ForEach(ArrowStyle.allCases) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().frame(width: 110)
+                .help("Arrow style")
+                .onChange(of: style.arrowStyle) { _, _ in applyStyleToSelection() }
+            }
+            if kind == .rectangle {
+                propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
+                               label: "\(Int(style.cornerRadius)) pt")
+            }
+            if kind == .spotlight || kind == .highlighter {
+                Text(kind == .spotlight ? "Dims everything outside the shape" : "Rectangular marker")
+                    .foregroundStyle(.secondary)
+            }
+        case .filledRectangle:
+            propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
+                           label: "\(Int(style.cornerRadius)) pt")
+        case .text:
+            propertySlider("Font size", value: $style.fontSize, range: 10...96, width: 90,
+                           label: "\(Int(style.fontSize)) pt")
+            Toggle("B", isOn: Binding(get: { style.bold ?? true }, set: { style.bold = $0; applyStyleToSelection() }))
+                .toggleStyle(.button).bold().help("Bold").accessibilityLabel("Bold")
+            Toggle("I", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
+                .toggleStyle(.button).italic().help("Italic").accessibilityLabel("Italic")
+            Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
+                .toggleStyle(.button).help("Outlined text style")
+            if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .text {
+                TextField("Text", text: Binding(
+                    get: { object.text },
+                    set: { newValue in
+                        document.beginChange()
+                        var updated = object; updated.text = newValue; document.update(updated)
+                    }))
+                .textFieldStyle(.roundedBorder)
+                .focused($textFieldFocused)
+                .frame(width: 200)
+                .accessibilityLabel("Text content")
+            }
+        case .counter:
+            Text("Next number").foregroundStyle(.secondary)
+            Stepper(value: $counterValue, in: 1...9999) {
+                Text("\(counterValue)").monospacedDigit().frame(minWidth: 28)
+            }
+            .help("Starting number")
+            Button("Reset") { counterValue = 1 }.help("Restart numbering at 1")
+        case .pixelate, .blur, .redact:
+            Picker("Redaction style", selection: Binding(
+                get: { AnnotationRedactionStyle(kind: kind) ?? .pixelate },
+                set: { selectRedaction($0) })) {
+                ForEach(AnnotationRedactionStyle.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            .help("Redaction style")
+            if kind == .pixelate {
+                Picker("Pixel size", selection: $style.pixelBlockSize) {
+                    ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
+                }
+                .labelsHidden().frame(width: 80).help("Pixel block size")
+                .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
+            } else if kind == .blur {
+                propertySlider("Intensity", value: $style.blurRadius, range: 1...64, width: 80,
+                               label: "\(Int(style.blurRadius)) px")
+            }
+        case .move:
+            Text(selectedID == nil ? "Select an object to edit it · Arrow keys nudge (⇧ 10 px)"
+                                   : "Arrow keys nudge (⇧ 10 px) · ⌫ deletes")
+                .foregroundStyle(.secondary)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func propertySlider(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>,
+                                width: CGFloat, label: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title).foregroundStyle(.secondary)
+            Slider(value: Binding(get: { Double(value.wrappedValue) },
+                                  set: { value.wrappedValue = CGFloat($0); applyStyleToSelection() }),
+                   in: Double(range.lowerBound)...Double(range.upperBound))
+                .frame(width: width)
+                .accessibilityLabel(title)
+                .accessibilityValue(label)
+            Text(label).monospacedDigit().foregroundStyle(.secondary).frame(minWidth: 36, alignment: .leading)
+        }
+    }
+
+    private func selectRedaction(_ redaction: AnnotationRedactionStyle) {
+        redactKind = redaction.kind
+        if let id = selectedID, var object = document.objects.first(where: { $0.id == id }),
+           AnnotationRedactionStyle(kind: object.kind) != nil {
+            document.beginChange()
+            object.kind = redaction.kind
+            document.update(object)
+        } else {
+            selectTool(redaction.kind)
+        }
+    }
+
+    private func selectToolbarItem(_ item: AnnotationToolbarItem) {
+        switch item {
+        case .background:
+            if !backgroundPopover { document.beginChange() }
+            backgroundPopover.toggle()
+        case .crop:
+            selectTool(cropMode ? .move : .crop)
+        case .redact:
+            selectTool(redactKind)
+        default:
+            if let kind = item.kinds.first { selectTool(kind) }
+        }
     }
 
     private func capsuleButton(_ symbol: String, help: String, active: Bool = false,
@@ -348,6 +678,7 @@ private struct AnnotationEditorView: View {
                 .foregroundStyle(active ? Color.white : Color.primary)
                 .frame(width: 38, height: 32)
                 .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .contentShape(Capsule())
         }.buttonStyle(.plain).help(help).accessibilityLabel(help)
     }
 
@@ -410,64 +741,48 @@ private struct AnnotationEditorView: View {
         if kind != .move { selectedID = nil }
     }
 
-    private func toolButton(_ kind: AnnotationKind) -> some View {
-        Button { selectTool(kind) } label: {
-            Image(systemName: toolSymbol(kind))
+    private func toolButton(_ item: AnnotationToolbarItem) -> some View {
+        let active = item.kinds.contains(tool) && !cropMode
+        return Button { selectToolbarItem(item) } label: {
+            Image(systemName: item.symbol)
                 .font(.system(size: 14, weight: .semibold))
                 .frame(width: 33, height: 29)
-                .background(tool == kind ? Color.accentColor : Color.clear, in: Capsule())
-                .foregroundStyle(tool == kind ? Color.white : Color.primary)
+                .background(active ? Color.accentColor : Color.clear, in: Capsule())
+                .foregroundStyle(active ? Color.white : Color.primary)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(kind == .move ? "Move · Arrow keys: 1 px · Shift-arrow: 10 px · Esc: Deselect" : kind.displayName)
-        .accessibilityLabel(kind.displayName)
-    }
-
-    private func toolSymbol(_ kind: AnnotationKind) -> String {
-        switch kind {
-        case .move: return "cursorarrow"
-        case .draw: return "pencil.tip"
-        case .drawHighlight: return "highlighter"
-        case .highlighter: return "rectangle.inset.filled"
-        case .counter: return "1.circle.fill"
-        default: return kind.iconName
-        }
+        .help(item.help)
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private var footer: some View {
-        ZStack {
-            HStack {
-                Menu {
-                    Button("Fit to Window") { zoom = nil }
-                    ForEach([25, 50, 75, 100, 125, 150, 200, 300, 400], id: \.self) { percent in
-                        Button("\(percent)%") { zoom = CGFloat(percent) / 100 }
-                    }
-                } label: {
-                    Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit")
-                        .font(.system(size: 12, weight: .medium)).frame(width: 60, height: 30)
+        HStack {
+            Menu {
+                Button("Fit to Window") { zoom = nil }
+                ForEach([25, 50, 75, 100, 125, 150, 200, 300, 400], id: \.self) { percent in
+                    Button("\(percent)%") { zoom = CGFloat(percent) / 100 }
                 }
-                .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 8)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-                .help("Zoom")
-                if cropMode {
-                    Toggle("Snap to edges", isOn: $snapToEdges).toggleStyle(.checkbox).font(.system(size: 12))
-                    Text("Hold Command ⌘ to disable snapping.").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !cropMode {
-                AnnotationShareButton(image: renderedImage(), scale: scale).frame(width: 38, height: 32)
-                capsuleButton("pin.fill", help: "Pin to Screen") { pin() }
-                capsuleButton("doc.on.doc.fill", help: "Copy (⌘C)") { copyToClipboard() }.keyboardShortcut("c", modifiers: .command)
-                }
+            } label: {
+                Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit")
+                    .font(.system(size: 12, weight: .medium)).frame(width: 60, height: 30)
             }
+            .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 8)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .help("Zoom").accessibilityLabel("Zoom")
+            if cropMode {
+                Toggle("Snap to edges", isOn: $snapToEdges).toggleStyle(.checkbox).font(.system(size: 12))
+                Text("Hold Command ⌘ to disable snapping.").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(document.croppedImage.width) × \(document.croppedImage.height) px")
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
             if !cropMode {
-            CaptureDragHandle()
-                .onDrag { dragProvider() }
-                .help("Drag the edited image to another app")
+                AnnotationShareButton(image: renderedImage(), scale: scale).frame(width: 38, height: 32)
             }
         }
-        .padding(.horizontal, 14).frame(height: 50)
+        .padding(.horizontal, 14).frame(height: 44)
         .background(.regularMaterial)
     }
 
@@ -769,7 +1084,8 @@ private struct AnnotationEditorView: View {
             object.style.fontSize = style.fontSize
             document.add(object)
             selectedID = object.id
-            optionsPopover = true
+            // Type straight into the properties bar's text field.
+            DispatchQueue.main.async { textFieldFocused = true }
         } else {
             var object = AnnotationObject(kind: .counter,
                                           rect: CGRect(x: point.x - 14, y: point.y - 14, width: 28, height: 28),
@@ -1057,6 +1373,14 @@ private struct AnnotationEditorView: View {
               !colorPopover, !optionsPopover, !backgroundPopover, !layersPopover else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         guard modifiers.isEmpty || modifiers == .shift else { return false }
+        // CleanShot single-letter tool keys (never while typing: the key
+        // handler skips editable text views).
+        if modifiers.isEmpty, !event.isARepeat,
+           let character = event.charactersIgnoringModifiers?.first,
+           let item = AnnotationToolbarItem.forShortcut(character) {
+            selectToolbarItem(item)
+            return true
+        }
         if event.keyCode == 53 {
             guard selectedID != nil || tool != .move else { return false }
             selectedID = nil
@@ -1142,12 +1466,52 @@ private struct AnnotationEditorView: View {
                 do {
                     let data = try ScreenCaptureService.shared.encode(result, format: format)
                     try data.write(to: url, options: .atomic)
+                    markSaved()
                     status = "Saved \(url.lastPathComponent)."
                 } catch {
                     status = "Save failed: \(error.localizedDescription)"
                 }
             }
         }
+    }
+
+    /// ⌘S: a new "… Edited" file in the export location. Source files are
+    /// never overwritten.
+    @discardableResult
+    private func saveToExportLocation() -> Bool {
+        guard let image = renderedImage() else { status = "Nothing to save."; return false }
+        let result = CaptureResult(image: image,
+                                   globalRect: CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale,
+                                                      height: CGFloat(image.height) / scale),
+                                   scale: scale, kind: capture.kind,
+                                   windowTitle: capture.windowTitle, capturedAt: capture.capturedAt)
+        do {
+            let name = CaptureNaming.defaultName(for: result) + " Edited"
+            let url = try ScreenCaptureService.shared.writeToDisk(result, fileName: name)
+            markSaved()
+            status = "Saved \(url.lastPathComponent)."
+            return true
+        } catch {
+            status = "Save failed: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Save (or apply to the clipboard for clipboard edits).
+    private func commitChanges() -> Bool {
+        if let onApply {
+            guard let image = renderedImage() else { return false }
+            onApply(image)
+            markSaved()
+            return true
+        }
+        return saveToExportLocation()
+    }
+
+    /// Done: keep the changes, then close.
+    private func done() {
+        if isDirty, !commitChanges() { return }
+        session?.close()
     }
 
     private func pin() {
@@ -1485,5 +1849,25 @@ enum AnnotationSmartTextMatcher {
             guard bounds.width > 0, bounds.height > 0 else { return nil }
             return bounds
         }.prefix(100).map { $0 }
+    }
+}
+
+/// Comparable snapshot of everything the user can change in the editor.
+private struct AnnotationSavedState: Equatable {
+    let objects: [AnnotationObject]
+    let cropRect: CGRect?
+    let background: AnnotationBackground
+    let baseImage: CGImage
+
+    init(_ document: AnnotationDocument) {
+        objects = document.objects
+        cropRect = document.cropRect
+        background = document.background
+        baseImage = document.baseImage
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.objects == rhs.objects && lhs.cropRect == rhs.cropRect
+            && lhs.background == rhs.background && lhs.baseImage === rhs.baseImage
     }
 }

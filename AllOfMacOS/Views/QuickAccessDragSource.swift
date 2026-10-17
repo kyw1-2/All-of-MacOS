@@ -12,6 +12,8 @@ struct QuickAccessDragSource: NSViewRepresentable {
     var isLeftCorner: Bool
     var didClick: (() -> Void)? = nil
     var didFinishWithModifiers: ((Bool, Bool) -> Void)? = nil
+    /// Shared with the card's hosting view so a swipe anywhere on the card counts.
+    var swipeTracker: QuickAccessSwipeTracker? = nil
 
     func makeNSView(context: Context) -> DraggableView {
         let view = DraggableView()
@@ -28,6 +30,7 @@ struct QuickAccessDragSource: NSViewRepresentable {
         view.isLeftCorner = isLeftCorner
         view.didClick = didClick
         view.didFinishWithModifiers = didFinishWithModifiers
+        view.swipeTracker = swipeTracker
     }
 
     final class DraggableView: NSView, NSDraggingSource {
@@ -39,6 +42,7 @@ struct QuickAccessDragSource: NSViewRepresentable {
         var isLeftCorner = false
         var didFinishWithModifiers: ((Bool, Bool) -> Void)?
         var didClick: (() -> Void)?
+        var swipeTracker: QuickAccessSwipeTracker?
         private var pendingClick: DispatchWorkItem?
         private var mouseDownPoint = NSPoint.zero
         private var handledDoubleClick = false
@@ -105,15 +109,22 @@ struct QuickAccessDragSource: NSViewRepresentable {
         }
 
         override func scrollWheel(with event: NSEvent) {
+            if let swipeTracker {
+                // Direction-aware (natural scrolling) tracker owned by the card.
+                if !swipeTracker.handle(event) { super.scrollWheel(with: event) }
+                return
+            }
             guard event.hasPreciseScrollingDeltas,
                   abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) else {
                 super.scrollWheel(with: event)
                 return
             }
-            horizontalScroll += event.scrollingDeltaX
-            if abs(horizontalScroll) > 65 {
-                let expectedSign: CGFloat = isLeftCorner ? 1 : -1
-                if horizontalScroll * expectedSign > 0 { didSwipe?() }
+            horizontalScroll += QuickAccessPolicy.fingerDelta(
+                event.scrollingDeltaX, invertedFromDevice: event.isDirectionInvertedFromDevice)
+            if let swipe = QuickAccessPolicy.swipeGesture(fingerDX: horizontalScroll, fingerDY: 0,
+                                                          isLeftCorner: isLeftCorner),
+               swipe == .dismiss {
+                didSwipe?()
                 horizontalScroll = 0
             }
             if event.phase == .ended || event.momentumPhase == .ended {

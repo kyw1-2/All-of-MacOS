@@ -86,6 +86,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // Important tab is distinguishable from Clipboard History.
                 _ = store.createTextItem("Recent clipboard entry — not pinned")
                 _ = store.createTextItem("Draft text available only in Clipboard History")
+                // Image, file and link samples from real app identities, so
+                // header colours, file icons and size pills can be reviewed.
+                let samples: [(String, String, (NSPasteboard) -> Void)] = [
+                    ("Safari", "com.apple.Safari", { $0.setString("https://www.apple.com/macos/", forType: .string) }),
+                    ("Finder", "com.apple.finder", { $0.writeObjects([URL(fileURLWithPath: "/Applications/Safari.app") as NSURL]) }),
+                    ("Finder", "com.apple.finder", { $0.writeObjects([URL(fileURLWithPath: "/System/Library/Desktop Pictures") as NSURL,
+                                                                      URL(fileURLWithPath: "/etc/hosts") as NSURL]) }),
+                    ("Preview", "com.apple.Preview", { board in
+                        let image = NSImage(size: NSSize(width: 640, height: 400), flipped: false) { rect in
+                            NSGradient(colors: [.systemTeal, .systemIndigo])?.draw(in: rect, angle: 35)
+                            return true
+                        }
+                        if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                            board.setData(png, forType: .png)
+                        }
+                    }),
+                    ("Terminal", "com.apple.Terminal", { $0.setString("swift build -c release -j 2\ngit status --short", forType: .string) }),
+                ]
+                for (name, bundleID, write) in samples {
+                    store.seedIsolatedPasteboard(sourceName: name, sourceBundleID: bundleID, write)
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+                await store.finishPendingCaptures()
+                let args = ProcessInfo.processInfo.arguments
+                if args.contains("--aom-clipboard-preview-select") {
+                    let state = ClipboardPanelController.shared.state
+                    let ids = state.results(in: store).map(\.id)
+                    if ids.count > 2 { state.select(ids[1], in: state.results(in: store)); state.select(ids[2], in: state.results(in: store), toggle: true) }
+                    state.commandHeld = true
+                    state.status = "Copied to clipboard."
+                }
+                if args.contains("--aom-clipboard-preview-filters") {
+                    let state = ClipboardPanelController.shared.state
+                    state.searchExpanded = true
+                    state.query = "apple"
+                    try? await Task.sleep(for: .milliseconds(600))
+                    state.filtersExpanded = true
+                }
                 ClipboardPanelController.shared.show()
             }
         }

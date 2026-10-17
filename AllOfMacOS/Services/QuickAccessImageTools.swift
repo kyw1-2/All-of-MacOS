@@ -21,11 +21,25 @@ enum QuickAccessImageTools {
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.interpolationQuality = .high
-        context.translateBy(x: 0, y: CGFloat(image.width))
-        context.rotate(by: -.pi / 2)
+        // Counter-clockwise quarter turn: (x, y) -> (H - y, x), so the original
+        // top edge becomes the left edge (CleanShot "Rotate Left").
+        context.translateBy(x: CGFloat(image.height), y: 0)
+        context.rotate(by: .pi / 2)
         context.draw(image, in: CGRect(x: 0, y: 0,
                                        width: image.width, height: image.height))
         return context.makeImage()
+    }
+
+    /// Arbitrary pixel resize used by the Quick Access "Resize…" command.
+    static func resized(_ image: CGImage, width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, width <= 32_768, height <= 32_768 else { return nil }
+        return draw(image, width: width, height: height)
+    }
+
+    /// Height that keeps the aspect ratio for a requested width (and vice versa).
+    static func proportionalSide(_ requested: Int, original: Int, otherOriginal: Int) -> Int {
+        guard original > 0 else { return max(1, otherOriginal) }
+        return max(1, Int((Double(requested) * Double(otherOriginal) / Double(original)).rounded()))
     }
 
     private static func draw(_ image: CGImage, width: Int, height: Int,

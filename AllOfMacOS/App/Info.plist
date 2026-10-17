@@ -4,67 +4,6 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
-	<key>CFBundleExecutable</key>
-	<string>AllOfMacOS</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>com.kyw.allofmacos</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>All of MacOS</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.kyw.allofmacos.capture</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>aom</string>
-			</array>
-		</dict>
-	</array>
-	<key>CFBundleShortVersionString</key>
-	<string>1.1.1</string>
-	<key>CFBundleVersion</key>
-	<string>2026101601</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>AOM records microphone audio only when microphone recording is selected and you start a screen recording.</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
-	<key>LSUIElement</key>
-	<true/>
-	<key>NSMainStoryboardFile</key>
-	<string></string>
-	<key>NSPrincipalClass</key>
-	<string>NSApplication</string>
-	<key>NSCameraUsageDescription</key>
-	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.kyw.allofmacos.annotation-project</string>
-			<key>UTTypeDescription</key>
-			<string>AOM Annotation Project</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>aomannotation</string>
-				</array>
-			</dict>
-		</dict>
-	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -92,6 +31,47 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleExecutable</key>
+	<string>AllOfMacOS</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.kyw.allofmacos</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>All of MacOS</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.1.2</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.kyw.allofmacos.capture</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>aom</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>2026101701</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
+	<key>NSMainStoryboardFile</key>
+	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AOM records microphone audio only when microphone recording is selected and you start a screen recording.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 	<key>NSServices</key>
 	<array>
 		<dict>
@@ -104,15 +84,35 @@
 			<string>annotateFiles</string>
 			<key>NSPortName</key>
 			<string>All of MacOS</string>
+			<key>NSRequiredContext</key>
+			<dict>
+				<key>NSTextContent</key>
+				<string>FilePath</string>
+			</dict>
 			<key>NSSendTypes</key>
 			<array>
 				<string>public.file-url</string>
 				<string>NSFilenamesPboardType</string>
 			</array>
-			<key>NSRequiredContext</key>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>AOM Annotation Project</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.kyw.allofmacos.annotation-project</string>
+			<key>UTTypeTagSpecification</key>
 			<dict>
-				<key>NSTextContent</key>
-				<string>FilePath</string>
+				<key>public.filename-extension</key>
+				<array>
+					<string>aomannotation</string>
+				</array>
 			</dict>
 		</dict>
 	</array>

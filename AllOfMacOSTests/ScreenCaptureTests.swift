@@ -557,6 +557,9 @@ final class ScreenCaptureTests: XCTestCase {
                 XCTAssertEqual(Array(header.prefix(2)), [0xFF, 0xD8])
             case .tiff:
                 XCTAssertTrue(Array(header.prefix(2)) == [0x49, 0x49] || Array(header.prefix(2)) == [0x4D, 0x4D])
+            case .webp:
+                XCTAssertEqual(String(decoding: header.prefix(4), as: UTF8.self), "RIFF")
+                XCTAssertEqual(String(decoding: header[8..<12], as: UTF8.self), "WEBP")
             case .heic:
                 // ftyp box, with the brand at bytes 8…11.
                 XCTAssertEqual(String(decoding: header[4..<8], as: UTF8.self), "ftyp")
@@ -594,16 +597,19 @@ final class ScreenCaptureTests: XCTestCase {
         CaptureHistory.shared.removeAll()
 
         let image = makeImage(width: 8, height: 8)
+        // Recent timestamps: 1970 dates would be removed by the age limit
+        // (default 30 days) before the count limit is even exercised.
+        let base = Date().addingTimeInterval(-60)
         for index in 0..<6 {
             let result = CaptureResult(image: image, globalRect: .zero, scale: 1, kind: .area,
-                                       capturedAt: Date(timeIntervalSince1970: TimeInterval(index)))
+                                       capturedAt: base.addingTimeInterval(TimeInterval(index)))
             CaptureHistory.shared.add(result, url: nil)
         }
         XCTAssertEqual(CaptureHistory.shared.entries.count, 3)
         // Newest first, so the most recent capture is the one the "Last Capture"
         // actions operate on.
         XCTAssertEqual(CaptureHistory.shared.entries.first?.capturedAt,
-                       Date(timeIntervalSince1970: 5))
+                       base.addingTimeInterval(5))
     }
 
     @MainActor
@@ -644,7 +650,11 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertTrue(shortcuts.hasActiveShortcuts)
         for action in CaptureShortcutAction.allCases {
             let sc = shortcuts.shortcut(for: action)
-            XCTAssertNotNil(sc, "\(action.displayName) should have a default CleanShot shortcut")
+            if action == .allInOne || action == .openProject {
+                XCTAssertNil(sc, "Optional commands must not reserve a default global shortcut")
+            } else {
+                XCTAssertNotNil(sc, "\(action.displayName) should have a default shortcut")
+            }
         }
 
         // Verify specific key combinations:

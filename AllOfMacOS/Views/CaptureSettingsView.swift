@@ -27,14 +27,18 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureFreezeScreen") private var freezeScreen = false
     @AppStorage("AOMCaptureAfterAction") private var afterActionRaw = AfterCaptureAction.showOverlay.rawValue
     @AppStorage("AOMCaptureOverlayEnabled") private var overlayEnabled = true
-    @AppStorage("AOMCaptureOverlayCorner") private var overlayCornerRaw = OverlayCorner.bottomRight.rawValue
-    @AppStorage("AOMCaptureOverlaySize") private var overlaySizeRaw = OverlaySize.medium.rawValue
+    @AppStorage("AOMCaptureOverlayCorner") private var overlayCornerRaw = OverlayCorner.bottomLeft.rawValue
+    @AppStorage("AOMCaptureOverlaySize") private var overlaySizeRaw = OverlaySize.small.rawValue
     @AppStorage("AOMCaptureOverlayAutoClose") private var autoCloseRaw = OverlayAutoClose.never.rawValue
     @AppStorage("AOMCaptureOverlayInterval") private var overlayInterval = 5
     @AppStorage("AOMCaptureOverlayActiveDisplay") private var overlayActiveDisplay = true
     @AppStorage("AOMCaptureOverlayCloseAfterDrag") private var overlayCloseAfterDrag = true
-    @AppStorage("AOMCaptureOverlayAutoCloseSave") private var overlayAutoCloseSave = false
-    @AppStorage("AOMCaptureOverlayAsksForName") private var asksNameOnSave = false
+    @AppStorage("AOMCaptureOverlayAutoCloseSave") private var overlayAutoCloseSave = true
+    // Must match CaptureSettings.asksForNameAfterCapture's key (was a dead key).
+    @AppStorage("AOMCaptureAsksForName") private var asksNameOnSave = false
+    @AppStorage("AOMCaptureCrosshairMode") private var crosshairModeRaw = CrosshairMode.always.rawValue
+    @AppStorage("AOMCaptureShowsMagnifier") private var showsMagnifier = false
+    @AppStorage("AOMCaptureSelfTimerInterval") private var selfTimerInterval = 2
     @AppStorage("AOMCaptureHistoryCapacity") private var historyCapacity = 40
     @AppStorage("AOMCaptureHistoryRetentionDays") private var historyRetentionDays = 30
     @AppStorage("AOMOCRKeepsLineBreaks") private var ocrKeepsLineBreaks = true
@@ -141,6 +145,18 @@ struct CaptureSettingsView: View {
                              subtitle: "Hold the desktop still while you draw the selection", showDivider: true) {
                 Toggle("", isOn: $freezeScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
+            AppleSettingsRow(icon: "plus.viewfinder", iconColor: .indigo, title: "Crosshair Mode",
+                             subtitle: "Guides while selecting an area", showDivider: true) {
+                Picker("", selection: $crosshairModeRaw) {
+                    ForEach(CrosshairMode.allCases) { Text($0.displayName).tag($0.rawValue) }
+                }
+                .pickerStyle(.menu).labelsHidden().frame(width: 220)
+            }
+            AppleSettingsRow(icon: "magnifyingglass", iconColor: .teal, title: "Show Magnifier",
+                             subtitle: "Pixel loupe next to the pointer; hold ⇧ to show it on demand",
+                             showDivider: true) {
+                Toggle("", isOn: $showsMagnifier).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
             AppleSettingsRow(icon: "speaker.wave.2", iconColor: .green, title: "Play Sound",
                              subtitle: "Play the system capture sound", showDivider: true) {
                 Toggle("", isOn: $playsSound).labelsHidden().toggleStyle(.switch).controlSize(.small)
@@ -149,8 +165,16 @@ struct CaptureSettingsView: View {
                              subtitle: "Temporarily restarts Finder to clear the desktop", showDivider: true) {
                 Toggle("", isOn: $hidesDesktopIcons).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
-            AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Self-Timer",
-                             subtitle: selfTimer == 0 ? "No delay" : "\(selfTimer) second delay",
+            AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Self-Timer Interval",
+                             subtitle: "Countdown used by the Self-Timer capture mode",
+                             showDivider: true) {
+                Picker("", selection: $selfTimerInterval) {
+                    ForEach(SelfTimerInterval.choices, id: \.self) { Text("\($0) Seconds").tag($0) }
+                }
+                .pickerStyle(.menu).labelsHidden().frame(width: 120)
+            }
+            AppleSettingsRow(icon: "timer.circle", iconColor: .orange, title: "Delay Every Capture",
+                             subtitle: selfTimer == 0 ? "No delay" : "\(selfTimer) second delay before any capture",
                              showDivider: false) {
                 Picker("", selection: $selfTimer) {
                     Text("Off").tag(0)
@@ -269,6 +293,7 @@ struct CaptureSettingsView: View {
                              subtitle: "The age and count limits both apply. Pinned captures are kept.", showDivider: false) {
                 Picker("", selection: $historyRetentionDays) {
                     Text("1 Day").tag(1)
+                    Text("3 Days").tag(3)
                     Text("7 Days").tag(7)
                     Text("14 Days").tag(14)
                     Text("30 Days").tag(30)
@@ -326,74 +351,114 @@ struct CaptureSettingsView: View {
         AppleSettingsGroup("Quick Access Overlay") {
             AppleSettingsRow(icon: "rectangle.on.rectangle", iconColor: .indigo,
                              title: "Show Overlay",
-                             subtitle: "Floating thumbnail with copy, annotate and pin",
+                             subtitle: "Floating thumbnail with copy, save, annotate and pin",
                              showDivider: true) {
                 Toggle("", isOn: $overlayEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
-            AppleSettingsRow(icon: "arrow.up.left.and.arrow.down.right", iconColor: .teal,
-                             title: "Size", subtitle: nil, showDivider: true) {
-                Picker("", selection: $overlaySizeRaw) {
-                    ForEach(OverlaySize.allCases) { Text($0.displayName).tag($0.rawValue) }
-                }
-                .pickerStyle(.menu).labelsHidden().frame(width: 140)
-            }
-            AppleSettingsRow(icon: "square.grid.3x3.topleft.filled", iconColor: .purple,
-                             title: "Corner", subtitle: nil, showDivider: true) {
+            AppleSettingsRow(icon: "rectangle.lefthalf.inset.filled", iconColor: .purple,
+                             title: "Position on Screen", subtitle: nil, showDivider: true) {
                 Picker("", selection: $overlayCornerRaw) {
-                    ForEach(OverlayCorner.allCases) { Text($0.displayName).tag($0.rawValue) }
+                    ForEach(OverlayCorner.pickerOrder.prefix(2)) { Text($0.positionName).tag($0.rawValue) }
+                    Divider()
+                    ForEach(OverlayCorner.pickerOrder.dropFirst(2)) { Text($0.positionName).tag($0.rawValue) }
                 }
                 .pickerStyle(.menu).labelsHidden().frame(width: 140)
             }
-            AppleSettingsRow(icon: "display", iconColor: .blue, title: "Follow Active Display",
-                             subtitle: "Appear on the screen the pointer is on", showDivider: true) {
+            AppleSettingsRow(icon: "display", iconColor: .blue, title: "Move to Active Screen",
+                             subtitle: "Active screen is the screen where your cursor is pointing", showDivider: true) {
                 Toggle("", isOn: $overlayActiveDisplay).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
-            AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .teal,
-                             title: "Save Button Asks for Name",
-                             subtitle: "Show Save As instead of instantly saving",
+            AppleSettingsRow(icon: "arrow.up.left.and.arrow.down.right", iconColor: .teal,
+                             title: "Overlay Size",
+                             subtitle: (OverlaySize(rawValue: overlaySizeRaw) ?? .small).displayName,
                              showDivider: true) {
-                Toggle("", isOn: $asksNameOnSave)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "hand.draw", iconColor: .green,
-                             title: "Close After Drop",
-                             subtitle: "Hide only after a file is successfully dropped in another app",
-                             showDivider: true) {
-                Toggle("", isOn: $overlayCloseAfterDrag)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "xmark.circle", iconColor: .red, title: "Auto Close",
-                             subtitle: autoCloseRaw == OverlayAutoClose.afterInterval.rawValue
-                                ? "Closes \(overlayInterval) seconds after appearing" : nil,
-                             showDivider: autoCloseRaw == OverlayAutoClose.afterInterval.rawValue) {
-                Picker("", selection: $autoCloseRaw) {
-                    ForEach(OverlayAutoClose.allCases) { Text($0.displayName).tag($0.rawValue) }
+                Slider(value: Binding(
+                    get: { Double((OverlaySize(rawValue: overlaySizeRaw) ?? .small).sliderIndex) },
+                    set: { overlaySizeRaw = OverlaySize.fromSliderIndex(Int($0.rounded())).rawValue }),
+                       in: 0...4, step: 1) {
+                    Text("Overlay size")
+                } minimumValueLabel: {
+                    Image(systemName: "rectangle.fill").font(.system(size: 8))
+                } maximumValueLabel: {
+                    Image(systemName: "rectangle.fill").font(.system(size: 14))
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 200)
+                .labelsHidden()
+                .frame(width: 180)
+                .controlSize(.small)
+                .accessibilityValue((OverlaySize(rawValue: overlaySizeRaw) ?? .small).displayName)
             }
-            if autoCloseRaw == OverlayAutoClose.afterInterval.rawValue {
-                AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Delay",
+            AppleSettingsRow(icon: "xmark.circle", iconColor: .red, title: "Auto-Close",
+                             subtitle: autoCloseEnabled.wrappedValue
+                                ? "\(overlayAutoCloseSave ? "Saves and closes" : "Closes") after \(OverlayAutoCloseInterval.label(overlayInterval))"
+                                : "Overlays stay until you close them",
+                             showDivider: true) {
+                Toggle("", isOn: autoCloseEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if autoCloseEnabled.wrappedValue {
+                AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .green,
+                                 title: "Action", subtitle: "If saving fails, the overlay stays for retry",
+                                 showDivider: true) {
+                    Picker("", selection: $overlayAutoCloseSave) {
+                        Text("Save and Close").tag(true)
+                        Text("Close").tag(false)
+                    }
+                    .pickerStyle(.menu).labelsHidden().frame(width: 140)
+                }
+                AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Interval",
                                  subtitle: nil, showDivider: true) {
                     Picker("", selection: $overlayInterval) {
-                        Text("3 s").tag(3)
-                        Text("5 s").tag(5)
-                        Text("10 s").tag(10)
-                        Text("30 s").tag(30)
-                        Text("1 min").tag(60)
-                        Text("5 min").tag(300)
-                        Text("10 min").tag(600)
+                        ForEach(OverlayAutoCloseInterval.choices, id: \.self) {
+                            Text(OverlayAutoCloseInterval.label($0)).tag($0)
+                        }
+                        if !OverlayAutoCloseInterval.choices.contains(overlayInterval) {
+                            Text(OverlayAutoCloseInterval.label(overlayInterval)).tag(overlayInterval)
+                        }
                     }
-                    .pickerStyle(.menu).labelsHidden().frame(width: 90)
-                }
-                AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .green,
-                                 title: "Save Before Auto-Close",
-                                 subtitle: "If saving fails, keep the overlay for retry",
-                                 showDivider: false) {
-                    Toggle("", isOn: $overlayAutoCloseSave)
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .pickerStyle(.menu).labelsHidden().frame(width: 100)
                 }
             }
+            AppleSettingsRow(icon: "hand.draw", iconColor: .green,
+                             title: "Close After Dragging",
+                             subtitle: closeAfterDrag.wrappedValue
+                                ? "Hold ⌥ (Option) while dropping to keep the overlay"
+                                : "Hold ⌥ (Option) while dropping to close the overlay",
+                             showDivider: true) {
+                Toggle("", isOn: closeAfterDrag)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "square.and.arrow.down.on.square", iconColor: .teal,
+                             title: "Save Button Behavior",
+                             subtitle: asksNameOnSave
+                                ? "Press with ⌥ (Option) to use the export location without asking"
+                                : "Press with ⌥ (Option) to choose the destination",
+                             showDivider: false) {
+                Picker("", selection: $asksNameOnSave) {
+                    Text("Save to Export Location").tag(false)
+                    Text("Ask for Destination").tag(true)
+                }
+                .pickerStyle(.menu).labelsHidden().frame(width: 190)
+            }
         }
+    }
+
+    /// CleanShot's "Auto-close: Enable". Maps onto the stored mode; a legacy
+    /// "After Dragging" mode is surfaced through Close After Dragging instead.
+    private var autoCloseEnabled: Binding<Bool> {
+        Binding(get: { autoCloseRaw == OverlayAutoClose.afterInterval.rawValue },
+                set: { enabled in
+                    if autoCloseRaw == OverlayAutoClose.afterDrag.rawValue { overlayCloseAfterDrag = true }
+                    autoCloseRaw = (enabled ? OverlayAutoClose.afterInterval : .never).rawValue
+                })
+    }
+
+    private var closeAfterDrag: Binding<Bool> {
+        Binding(get: { overlayCloseAfterDrag || autoCloseRaw == OverlayAutoClose.afterDrag.rawValue },
+                set: { value in
+                    overlayCloseAfterDrag = value
+                    if !value, autoCloseRaw == OverlayAutoClose.afterDrag.rawValue {
+                        autoCloseRaw = OverlayAutoClose.never.rawValue
+                    }
+                })
     }
 
     // MARK: - Text recognition

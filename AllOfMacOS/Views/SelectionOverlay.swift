@@ -9,6 +9,12 @@ extension NSScreen {
     var displayID: CGDirectDisplayID {
         (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
+
+    /// This screen's frame in global top-left-origin (ScreenCaptureKit) points.
+    var sckFrame: CGRect {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? frame.height
+        return CGRect(x: frame.minX, y: primaryHeight - frame.maxY, width: frame.width, height: frame.height)
+    }
 }
 
 /// The dimmed full-screen overlay the user drags a capture rectangle on.
@@ -18,6 +24,10 @@ extension NSScreen {
 /// window spanning the union of all screens would be simpler, but macOS will not
 /// let a window draw across displays with different backing scales without
 /// resampling, which makes the dim layer visibly soft on one of them.
+///
+/// In All-In-One (`integrated`) mode a finished drag becomes a *pending*
+/// selection: it can be moved (drag inside, arrow keys), sized via the W × H
+/// fields, and is captured with Return or by choosing a mode (A F W S T O R).
 @MainActor
 final class SelectionOverlayController {
     private(set) static var activeController: SelectionOverlayController?
@@ -35,15 +45,24 @@ final class SelectionOverlayController {
     private var didFinish = false
     private var globalKeyMonitor: Any?
 
-    init(integrated: Bool = false, completion: @escaping (CGRect?) -> Void) {
+    init(integrated: Bool = false, startInWindowMode: Bool = false,
+         completion: @escaping (CGRect?) -> Void) {
         self.completion = completion
         state.integrated = integrated
+        if startInWindowMode {
+            state.mode = .window
+            state.captureMode = .window
+        }
     }
 
     func present() {
         Self.activeController = self
         let screens = NSScreen.screens
         guard !screens.isEmpty else { finish(nil); return }
+
+        state.activate = { [weak self] mode in self?.activate(mode) }
+        state.commitPending = { [weak self] in self?.commitPending() }
+        state.activeDisplayID = (screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? screens[0]).displayID
 
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             if event.keyCode == 53 {
@@ -53,23 +72,19 @@ final class SelectionOverlayController {
             }
         }
 
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { self.finish(nil); return nil }
-            if event.keyCode == 49, !self.state.isDragging {
-                self.state.mode = self.state.mode == .area ? .window : .area
-                self.state.captureMode = self.state.mode == .window ? .window : .area
-                return nil
-            }
-            return event
+            return self.handleLocal(event)
         }
 
-        // A frozen backdrop is captured before the dimming goes up, so windows
-        // that animate underneath the selection cannot move mid-drag.
-        let frozen = CaptureSettings.freezeScreen ? Self.freezeBackdrops(for: screens) : [:]
+        // A still backdrop is captured before the dimming goes up. It is shown
+        // when Freeze Screen is on and feeds the pixel magnifier.
+        let needsBackdrop = CaptureSettings.freezeScreen || CaptureSettings.showsMagnifier
+        let backdrops = needsBackdrop ? Self.freezeBackdrops(for: screens) : [:]
 
         for (index, screen) in screens.enumerated() {
-            let window = SelectionWindow(screen: screen, frozen: frozen[screen.displayID], state: state)
+            let window = SelectionWindow(screen: screen, backdrop: backdrops[screen.displayID],
+                                         showsBackdrop: CaptureSettings.freezeScreen, state: state)
             window.onCommit = { [weak self] rect in self?.finish(rect) }
             window.onCancel = { [weak self] in self?.finish(nil) }
             windows.append(window)
@@ -77,6 +92,76 @@ final class SelectionOverlayController {
         }
         NSApp.activate(ignoringOtherApps: true)
         windows.first?.makeKey()
+    }
+
+    private func handleLocal(_ event: NSEvent) -> NSEvent? {
+        if event.type == .flagsChanged {
+            state.commandDown = event.modifierFlags.contains(.command)
+            state.shiftDown = event.modifierFlags.contains(.shift)
+            return event
+        }
+        if event.keyCode == 53 { finish(nil); return nil }
+        // Typing into the W × H fields must not switch modes.
+        if NSApp.keyWindow?.firstResponder is NSText { return event }
+        guard !state.isDragging else { return event }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control])
+        guard modifiers.isEmpty else { return event }
+
+        if event.keyCode == 49 { // Space: window ↔ area
+            activate(state.captureMode == .window ? .area : .window)
+            return nil
+        }
+        if state.integrated {
+            if let mode = IntegratedCaptureMode.forKey(event.charactersIgnoringModifiers ?? "") {
+                activate(mode)
+                return nil
+            }
+            if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
+                commitPending()
+                return nil
+            }
+            if let pending = state.pendingRect,
+               let moved = AllInOneSelection.nudged(pending, keyCode: event.keyCode,
+                                                    large: event.modifierFlags.contains(.shift),
+                                                    within: displayFrame(containing: pending)) {
+                state.pendingRect = moved
+                return nil
+            }
+        }
+        return event
+    }
+
+    /// Mode buttons and single-letter keys share this path. With a pending
+    /// selection an area-based mode captures immediately (CleanShot AIO).
+    private func activate(_ mode: IntegratedCaptureMode) {
+        switch mode {
+        case .fullscreen:
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.screens.first
+            guard let screen else { return }
+            state.captureMode = .fullscreen
+            finish(screen.sckFrame)
+        case .window:
+            state.captureMode = .window
+            state.mode = .window
+            state.pendingRect = nil
+        default:
+            state.captureMode = mode
+            state.mode = .area
+            if let pending = state.pendingRect { finish(pending) }
+        }
+    }
+
+    private func commitPending() {
+        guard let pending = state.pendingRect else { return }
+        if state.captureMode == .window || state.captureMode == .fullscreen { state.captureMode = .area }
+        finish(pending)
+    }
+
+    private func displayFrame(containing rect: CGRect) -> CGRect {
+        let frames = NSScreen.screens.map(\.sckFrame)
+        return frames.max { $0.intersection(rect).width * $0.intersection(rect).height <
+                            $1.intersection(rect).width * $1.intersection(rect).height } ?? rect
     }
 
     private func finish(_ rect: CGRect?) {
@@ -90,6 +175,8 @@ final class SelectionOverlayController {
         if Self.activeController === self {
             Self.activeController = nil
         }
+        state.activate = nil
+        state.commitPending = nil
         // Tear the overlays down before handing the rect back: the capture that
         // follows must not photograph the selection UI itself.
         let toClose = windows
@@ -123,6 +210,44 @@ final class SelectionOverlayController {
     }
 }
 
+/// Pure helpers for the All-In-One selection, kept AppKit-free for tests.
+enum AllInOneSelection {
+    /// Arrow-key nudge (1 pt, 10 pt with Shift), clamped inside `bounds`.
+    /// Returns nil for keys that are not arrows.
+    static func nudged(_ rect: CGRect, keyCode: UInt16, large: Bool, within bounds: CGRect) -> CGRect? {
+        let step: CGFloat = large ? 10 : 1
+        var moved = rect
+        switch keyCode {
+        case 123: moved.origin.x -= step   // ←
+        case 124: moved.origin.x += step   // →
+        case 125: moved.origin.y += step   // ↓ (top-left origin)
+        case 126: moved.origin.y -= step   // ↑
+        default: return nil
+        }
+        return clamped(moved, within: bounds)
+    }
+
+    /// Keeps the rectangle's size where possible and its origin inside `bounds`.
+    static func clamped(_ rect: CGRect, within bounds: CGRect) -> CGRect {
+        guard bounds.width > 0, bounds.height > 0 else { return rect }
+        let width = min(max(1, rect.width), bounds.width)
+        let height = min(max(1, rect.height), bounds.height)
+        let x = min(max(bounds.minX, rect.minX), bounds.maxX - width)
+        let y = min(max(bounds.minY, rect.minY), bounds.maxY - height)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Applies W × H pixel values typed into the toolbar, anchored at the origin.
+    static func resized(_ rect: CGRect, pixelWidth: Int?, pixelHeight: Int?,
+                        scale: CGFloat, within bounds: CGRect) -> CGRect {
+        let s = max(1, scale)
+        var result = rect
+        if let pixelWidth, pixelWidth > 0 { result.size.width = CGFloat(pixelWidth) / s }
+        if let pixelHeight, pixelHeight > 0 { result.size.height = CGFloat(pixelHeight) / s }
+        return clamped(result, within: bounds)
+    }
+}
+
 /// One display's worth of selection overlay.
 private final class SelectionWindow: NSPanel {
     var onCommit: ((CGRect) -> Void)?
@@ -133,7 +258,7 @@ private final class SelectionWindow: NSPanel {
     private let hostScreen: NSScreen
     private let state: SelectionState
 
-    init(screen: NSScreen, frozen: CGImage?, state: SelectionState) {
+    init(screen: NSScreen, backdrop: CGImage?, showsBackdrop: Bool, state: SelectionState) {
         self.state = state
         self.hostScreen = screen
         super.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
@@ -149,8 +274,10 @@ private final class SelectionWindow: NSPanel {
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         acceptsMouseMovedEvents = true
+        setAccessibilityLabel("Capture selection")
 
-        let view = SelectionView(state: state, screen: hostScreen, frozen: frozen,
+        let view = SelectionView(state: state, screen: hostScreen, backdrop: backdrop,
+                                 showsBackdrop: showsBackdrop,
                                  onCommit: { [weak self] rect in self?.onCommit?(rect) },
                                  onCancel: { [weak self] in self?.onCancel?() })
         contentView = NSHostingView(rootView: view)
@@ -179,18 +306,70 @@ private final class SelectionWindow: NSPanel {
     }
 }
 
+/// All-In-One toolbar modes, in CleanShot's order with its single-letter keys.
 enum IntegratedCaptureMode: String, CaseIterable {
-    case area = "Area", window = "Window", fullscreen = "Screen", scrolling = "Scroll", recording = "Record", text = "Text"
+    case area = "Area"
+    case fullscreen = "Fullscreen"
+    case window = "Window"
+    case scrolling = "Scrolling"
+    case timer = "Self-Timer"
+    case text = "Text"
+    case recording = "Record"
+
     var icon: String {
         switch self {
         case .area: return "viewfinder"
-        case .window: return "macwindow"
         case .fullscreen: return "display"
-        case .scrolling: return "scroll"
-        case .recording: return "record.circle"
+        case .window: return "macwindow"
+        case .scrolling: return "arrow.up.and.down.text.horizontal"
+        case .timer: return "timer"
         case .text: return "text.viewfinder"
+        case .recording: return "record.circle"
         }
     }
+
+    var title: String {
+        switch self {
+        case .area: return "Capture Area"
+        case .fullscreen: return "Capture Fullscreen"
+        case .window: return "Capture Window"
+        case .scrolling: return "Scrolling Capture"
+        case .timer: return "Self-Timer"
+        case .text: return "Capture Text"
+        case .recording: return "Record Screen"
+        }
+    }
+
+    var keyLabel: String {
+        switch self {
+        case .area: return "A"
+        case .fullscreen: return "F"
+        case .window: return "Space/W"
+        case .scrolling: return "S"
+        case .timer: return "T"
+        case .text: return "O"
+        case .recording: return "R"
+        }
+    }
+
+    /// Tooltip text, e.g. "Capture Window (Space/W)".
+    var tooltip: String { "\(title) (\(keyLabel))" }
+
+    static func forKey(_ characters: String) -> IntegratedCaptureMode? {
+        switch characters.lowercased() {
+        case "a": return .area
+        case "f": return .fullscreen
+        case "w": return .window
+        case "s": return .scrolling
+        case "t": return .timer
+        case "o": return .text
+        case "r": return .recording
+        default: return nil
+        }
+    }
+
+    /// Modes that act on a dragged rectangle.
+    var usesArea: Bool { self != .fullscreen && self != .window }
 }
 
 /// CleanShot X style selection modes: drag rectangle area or press Space to select a window.
@@ -207,7 +386,7 @@ struct WindowCandidate: Equatable {
     let title: String
 }
 
-/// Shared drag state for one overlay window.
+/// Shared drag state for all overlay windows.
 private final class SelectionState: ObservableObject {
     @Published var captureMode: IntegratedCaptureMode = .area
     var integrated = false
@@ -216,6 +395,14 @@ private final class SelectionState: ObservableObject {
     @Published var anchor: CGPoint?
     @Published var current: CGPoint?
     @Published var isDragging = false
+    /// All-In-One: a finished drag awaiting a mode / Return (global SCK points).
+    @Published var pendingRect: CGRect?
+    @Published var commandDown = false
+    @Published var shiftDown = false
+    /// The display whose window shows the All-In-One toolbar.
+    @Published var activeDisplayID: CGDirectDisplayID = 0
+    var activate: ((IntegratedCaptureMode) -> Void)?
+    var commitPending: (() -> Void)?
 
     /// The rectangle the user has drawn so far, normalized so a drag in any
     /// direction produces a positive-size rect.
@@ -231,66 +418,106 @@ private final class SelectionState: ObservableObject {
 private struct SelectionView: View {
     @ObservedObject var state: SelectionState
     let screen: NSScreen
-    let frozen: CGImage?
+    let backdrop: CGImage?
+    let showsBackdrop: Bool
     let onCommit: (CGRect) -> Void
     let onCancel: () -> Void
 
     /// Tracks the pointer for the crosshair, magnifier, and window detection.
     @State private var pointer: CGPoint = .zero
-    @State private var isMagnifying = false
+    @State private var pointerInside = false
+    /// Set when a drag started inside the pending selection (move, not redraw).
+    @State private var moveOrigin: CGRect?
+
     private var selectionRect: CGRect? { state.rect.map { localRect(for: $0) } }
+    private var pendingLocal: CGRect? {
+        guard let pending = state.pendingRect, pending.intersects(screen.sckFrame) else { return nil }
+        return localRect(for: pending)
+    }
     private var hoveredTarget: WindowCandidate? {
         guard let target = state.hoveredWindow else { return nil }
         return WindowCandidate(windowID: target.windowID, sckRect: target.sckRect, localRect: localRect(for: target.sckRect), appName: target.appName, title: target.title)
+    }
+    private var showsToolbar: Bool { state.integrated && state.activeDisplayID == screen.displayID }
+    private var showsCrosshair: Bool {
+        state.mode == .area && !state.isDragging && pendingLocal == nil && pointerInside
+            && CaptureSettings.crosshairMode.showsCrosshair(commandPressed: state.commandDown)
+    }
+    private var showsMagnifier: Bool {
+        state.mode == .area && pointerInside && moveOrigin == nil
+            && (CaptureSettings.showsMagnifier || state.shiftDown)
     }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .top) {
-                backdrop(size: geometry.size)
-                dimLayer(size: geometry.size)
+                canvas(size: geometry.size)
+
+                // Controls sit above the gesture layer so clicks and typing in
+                // the toolbar never start a new selection.
+                if showsToolbar {
+                    AllInOneToolbar(state: state, screen: screen, onCancel: onCancel)
+                        .fixedSize()
+                        .position(toolbarPosition(in: geometry.size))
+                } else if !state.integrated {
+                    instructionBadge
+                }
+            }
+        }
+    }
+
+    private func canvas(size: CGSize) -> some View {
+            ZStack(alignment: .top) {
+                backdropLayer(size: size)
+                dimLayer(size: size)
 
                 // CleanShot X: Window selection highlight when Space is pressed
                 if state.mode == .window, let target = hoveredTarget {
                     windowHighlight(target: target)
                 }
 
-                // CleanShot X: Area drag selection
-                if state.mode == .area, let rect = selectionRect, state.isDragging {
+                // Area drag selection / All-In-One pending selection
+                if state.mode == .area, let rect = activeRect {
                     border(rect: rect)
+                }
+                if state.mode == .area, state.isDragging, moveOrigin == nil, let rect = selectionRect {
                     dimensionLabel(rect: rect)
                 }
 
                 // Crosshairs & cursor UI
-                if state.mode == .area && !state.isDragging {
-                    crosshair(size: geometry.size)
-                } else if state.mode == .window {
-                    windowCursor(size: geometry.size)
+                if showsCrosshair {
+                    crosshair(size: size)
+                } else if state.mode == .window && pointerInside {
+                    windowCursor(size: size)
                 }
 
-                if state.integrated { modeToolbar } else { instructionBadge }
-
-                if isMagnifying, let rect = selectionRect, state.isDragging {
-                    MagnifierView(frozen: frozen, pointer: pointer, rect: rect, screen: screen)
-                        .position(magnifierPosition(in: geometry.size))
+                if showsMagnifier {
+                    MagnifierView(image: backdrop, pointer: pointer, screen: screen)
+                        .position(magnifierPosition(in: size))
                         .allowsHitTesting(false)
                 }
             }
+            .frame(width: size.width, height: size.height)
             .contentShape(Rectangle())
-            .gesture(state.mode == .area && state.captureMode != .fullscreen ? dragGesture : nil)
+            .gesture(state.mode == .area ? dragGesture : nil)
             .onTapGesture {
-                if state.captureMode == .fullscreen {
-                    onCommit(globalRect(for: CGRect(origin: .zero, size: screen.frame.size)))
-                } else if state.mode == .window, let target = hoveredTarget {
+                if state.mode == .window, let target = hoveredTarget {
                     onCommit(target.sckRect)
                 }
             }
             .onContinuousHover { phase in
-                if case .active(let point) = phase {
+                switch phase {
+                case .active(let point):
                     pointer = point
+                    pointerInside = true
+                    if state.activeDisplayID != screen.displayID, state.pendingRect == nil {
+                        state.activeDisplayID = screen.displayID
+                    }
                     if state.mode == .window {
                         detectWindowUnderPointer(localPoint: point)
                     }
+                case .ended:
+                    pointerInside = false
                 }
             }
             .onChange(of: state.mode) { _, mode in
@@ -300,16 +527,20 @@ private struct SelectionView: View {
                     detectWindowUnderPointer(localPoint: point)
                 }
             }
+    }
 
-        }
+    /// The rectangle currently drawn: the live drag, else the pending selection.
+    private var activeRect: CGRect? {
+        if state.isDragging, moveOrigin == nil, let rect = selectionRect { return rect }
+        return pendingLocal
     }
 
     // MARK: - Layers
 
     @ViewBuilder
-    private func backdrop(size: CGSize) -> some View {
-        if let frozen {
-            Image(decorative: frozen, scale: screen.backingScaleFactor)
+    private func backdropLayer(size: CGSize) -> some View {
+        if showsBackdrop, let backdrop {
+            Image(decorative: backdrop, scale: screen.backingScaleFactor)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
                 .frame(width: size.width, height: size.height)
@@ -320,7 +551,7 @@ private struct SelectionView: View {
 
     private func dimLayer(size: CGSize) -> some View {
         Group {
-            if state.mode == .area, let rect = selectionRect, state.isDragging {
+            if state.mode == .area, let rect = activeRect {
                 Path { path in
                     path.addRect(CGRect(origin: .zero, size: size))
                     path.addRect(rect)
@@ -330,7 +561,8 @@ private struct SelectionView: View {
                 // Cut out the hovered window from the dimming layer
                 Path { path in
                     path.addRect(CGRect(origin: .zero, size: size))
-                    path.addRoundedRect(in: target.localRect, cornerSize: CGSize(width: 8, height: 8))
+                    path.addRoundedRect(in: target.localRect, cornerSize: CGSize(width: 8, height: 8),
+                                        style: .continuous)
                 }
                 .fill(Color.black.opacity(0.42), style: FillStyle(eoFill: true))
             } else {
@@ -346,13 +578,11 @@ private struct SelectionView: View {
     @ViewBuilder
     private func windowHighlight(target: WindowCandidate) -> some View {
         ZStack {
-            // Soft glowing accent tint inside the window
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.accentColor.opacity(0.18))
                 .frame(width: target.localRect.width, height: target.localRect.height)
                 .position(x: target.localRect.midX, y: target.localRect.midY)
 
-            // Prominent CleanShot-style border
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.accentColor, lineWidth: 2.5)
                 .frame(width: target.localRect.width, height: target.localRect.height)
@@ -366,7 +596,7 @@ private struct SelectionView: View {
                     .foregroundStyle(Color.accentColor)
 
                 Text(target.appName)
-                    .font(.system(size: 11.5, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(.white)
 
                 if !target.title.isEmpty {
@@ -399,22 +629,18 @@ private struct SelectionView: View {
     }
 
     private func windowCursor(size: CGSize) -> some View {
-        ZStack {
-            // CleanShot camera icon floating near the cursor
-            HStack(spacing: 4) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("Click to capture")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.accentColor, in: Capsule())
-            .shadow(color: Color.black.opacity(0.4), radius: 4, y: 2)
-            .position(x: min(pointer.x + 65, size.width - 70), y: min(pointer.y + 24, size.height - 20))
+        HStack(spacing: 4) {
+            Image(systemName: "camera.fill")
+                .font(.system(size: 13, weight: .bold))
+            Text("Click to capture")
+                .font(.system(size: 11, weight: .semibold))
         }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.accentColor, in: Capsule())
+        .shadow(color: Color.black.opacity(0.4), radius: 4, y: 2)
+        .position(x: min(pointer.x + 65, size.width - 70), y: min(pointer.y + 24, size.height - 20))
         .allowsHitTesting(false)
     }
 
@@ -429,9 +655,9 @@ private struct SelectionView: View {
             // Corner handles for CleanShot X feel
             ForEach([-1.0, 1.0], id: \.self) { hX in
                 ForEach([-1.0, 1.0], id: \.self) { hY in
-                    RoundedRectangle(cornerRadius: 1)
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                         .fill(Color.white)
-                        .frame(width: 5, height: 5)
+                        .frame(width: 6, height: 6)
                         .shadow(color: Color.black.opacity(0.6), radius: 1)
                         .position(
                             x: rect.midX + hX * (rect.width / 2),
@@ -449,22 +675,18 @@ private struct SelectionView: View {
                 Image(systemName: "camera.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text("Click to select window")
-                    .font(.system(size: 12, weight: .bold))
-                Text("•")
-                    .foregroundStyle(.white.opacity(0.5))
-                Text("Space for area selection • Esc to cancel")
+                Text("Click a window to capture it.")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Space for area · Esc to cancel")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.85))
             } else {
                 Image(systemName: "viewfinder")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text("Drag to capture area")
-                    .font(.system(size: 12, weight: .bold))
-                Text("•")
-                    .foregroundStyle(.white.opacity(0.5))
-                Text("Space to select window • Esc to cancel")
+                Text("Drag to select capture area.")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Space to select a window · Esc to cancel")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.85))
             }
@@ -473,12 +695,14 @@ private struct SelectionView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(.ultraThinMaterial, in: Capsule())
+        .environment(\.colorScheme, .dark)
         .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
         .shadow(color: Color.black.opacity(0.35), radius: 10, y: 3)
         .padding(.top, 24)
         .allowsHitTesting(false)
     }
 
+    /// W × H readout that follows the cursor while dragging.
     private func dimensionLabel(rect: CGRect) -> some View {
         let pixels = pixelSize(for: rect)
         return Text("\(Int(pixels.width)) × \(Int(pixels.height))")
@@ -487,9 +711,9 @@ private struct SelectionView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.2), lineWidth: 0.5))
-            .position(labelPosition(for: rect))
+            .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+            .position(cursorLabelPosition())
             .allowsHitTesting(false)
     }
 
@@ -510,7 +734,7 @@ private struct SelectionView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .position(x: pointer.x + 52, y: pointer.y + 16)
         }
         .allowsHitTesting(false)
@@ -521,53 +745,43 @@ private struct SelectionView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if state.anchor == nil {
-                    state.anchor = globalRect(for: CGRect(origin: value.startLocation, size: .zero)).origin
-                    isMagnifying = NSEvent.modifierFlags.contains(.shift)
+                if state.anchor == nil && moveOrigin == nil {
+                    // In All-In-One, dragging inside the pending selection moves it.
+                    if state.integrated, let pending = state.pendingRect,
+                       localRect(for: pending).contains(value.startLocation) {
+                        moveOrigin = pending
+                    } else {
+                        state.anchor = globalRect(for: CGRect(origin: value.startLocation, size: .zero)).origin
+                    }
+                }
+                if let origin = moveOrigin {
+                    let moved = origin.offsetBy(dx: value.translation.width, dy: value.translation.height)
+                    state.pendingRect = AllInOneSelection.clamped(moved, within: screen.sckFrame)
+                    return
                 }
                 let mouse = NSEvent.mouseLocation
                 state.current = CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.height ?? 0) - mouse.y)
                 state.isDragging = true
-                isMagnifying = NSEvent.modifierFlags.contains(.shift)
+                pointer = value.location
             }
-            .onEnded { value in
+            .onEnded { _ in
+                if moveOrigin != nil {
+                    moveOrigin = nil
+                    return
+                }
                 let committed = state.rect
                 state.isDragging = false
                 state.anchor = nil
                 state.current = nil
                 guard let rect = committed, rect.width >= 2, rect.height >= 2 else { return }
-                onCommit(rect)
-            }
-    }
-
-    private var modeToolbar: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                ForEach(IntegratedCaptureMode.allCases, id: \.self) { mode in
-                    Button {
-                        state.captureMode = mode
-                        state.mode = mode == .window ? .window : .area
-                        state.anchor = nil; state.current = nil; state.isDragging = false
-                        if mode == .window { detectWindowUnderPointer(localPoint: pointer) }
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: mode.icon).font(.system(size: 18))
-                            Text(mode.rawValue).font(.system(size: 11, weight: .medium))
-                        }.frame(width: 62, height: 48)
-                            .background(state.captureMode == mode ? Color.accentColor.opacity(0.85) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain)
+                if state.integrated {
+                    // CleanShot AIO keeps the area; a mode or Return captures it.
+                    state.pendingRect = rect
+                    state.activeDisplayID = screen.displayID
+                } else {
+                    onCommit(rect)
                 }
-                Divider().frame(height: 30)
-                Button(action: onCancel) { Image(systemName: "xmark").frame(width: 30, height: 48) }
-                    .buttonStyle(.plain).help("Cancel (Esc)")
-            }.padding(7).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-            Text(state.captureMode == .window ? "Click a window · Space for area · Esc to cancel" :
-                 state.captureMode == .fullscreen ? "Click the display to capture · Esc to cancel" :
-                 "Drag to select · Shift for magnifier · Esc to cancel")
-                .font(.system(size: 11)).padding(6).background(.black.opacity(0.7), in: Capsule())
-                .allowsHitTesting(false)
-        }.foregroundStyle(.white).padding(.top, 24)
+            }
     }
 
     // MARK: - Window Detection (CleanShot X style)
@@ -609,15 +823,8 @@ private struct SelectionView: View {
     }
 
     private func localRect(for sck: CGRect) -> CGRect {
-        let primaryScreen = NSScreen.screens.first ?? screen
-        let primaryHeight = primaryScreen.frame.height
-        let screenTopInSCK = primaryHeight - screen.frame.maxY
-        let screenLeftInSCK = screen.frame.minX
-
-        let localX = sck.minX - screenLeftInSCK
-        let localY = sck.minY - screenTopInSCK
-
-        return CGRect(x: localX, y: localY, width: sck.width, height: sck.height)
+        let frame = screen.sckFrame
+        return CGRect(x: sck.minX - frame.minX, y: sck.minY - frame.minY, width: sck.width, height: sck.height)
     }
 
     // MARK: - Geometry
@@ -625,110 +832,233 @@ private struct SelectionView: View {
     /// Converts a view-local rect to a global top-left-origin rect in points
     /// matching ScreenCaptureKit / SCDisplay coordinates.
     private func globalRect(for local: CGRect) -> CGRect {
-        let primaryScreen = NSScreen.screens.first ?? screen
-        let primaryHeight = primaryScreen.frame.height
-        let screenTopInSCK = primaryHeight - screen.frame.maxY
-        let screenLeftInSCK = screen.frame.minX
-
-        let sckX = screenLeftInSCK + local.minX
-        let sckY = screenTopInSCK + local.minY
-
-        return CGRect(x: sckX, y: sckY, width: local.width, height: local.height)
+        let frame = screen.sckFrame
+        return CGRect(x: frame.minX + local.minX, y: frame.minY + local.minY,
+                      width: local.width, height: local.height)
     }
 
     /// Converts a local rect's size into device pixels.
     private func pixelSize(for rect: CGRect) -> CGSize {
         let global = globalRect(for: rect)
-        let height = NSScreen.screens.first?.frame.height ?? 0
-        let scale = NSScreen.screens.filter {
-            CGRect(x: $0.frame.minX, y: height - $0.frame.maxY,
-                   width: $0.frame.width, height: $0.frame.height).intersects(global)
-        }.map(\.backingScaleFactor).max() ?? screen.backingScaleFactor
+        let scale = NSScreen.screens.filter { $0.sckFrame.intersects(global) }
+            .map(\.backingScaleFactor).max() ?? screen.backingScaleFactor
         return CGSize(width: (rect.width * scale).rounded(), height: (rect.height * scale).rounded())
     }
 
-    private func labelPosition(for rect: CGRect) -> CGPoint {
-        // Prefer just inside the bottom-left of the selection; flip above the
-        // rect when it is too close to the bottom edge to fit.
-        let below = rect.maxY + 16
-        let y = below > screen.frame.height - 24 ? rect.minY - 16 : below
-        return CGPoint(x: rect.minX + 46, y: y)
+    private func cursorLabelPosition() -> CGPoint {
+        // Bottom-right of the cursor, flipped to stay on screen near the edges.
+        let size = screen.frame.size
+        let x = pointer.x + 58 > size.width - 8 ? pointer.x - 50 : pointer.x + 50
+        let y = pointer.y + 30 > size.height - 8 ? pointer.y - 22 : pointer.y + 26
+        return CGPoint(x: x, y: y)
+    }
+
+    private func toolbarPosition(in size: CGSize) -> CGPoint {
+        let clampX: (CGFloat) -> CGFloat = { min(max($0, 260), size.width - 260) }
+        if let rect = pendingLocal {
+            // Below the selection when there is room, else above, else inside.
+            if rect.maxY + 72 < size.height { return CGPoint(x: clampX(rect.midX), y: rect.maxY + 40) }
+            if rect.minY - 72 > 0 { return CGPoint(x: clampX(rect.midX), y: rect.minY - 40) }
+            return CGPoint(x: clampX(rect.midX), y: rect.maxY - 48)
+        }
+        return CGPoint(x: size.width / 2, y: size.height - 120)
     }
 
     private func magnifierPosition(in size: CGSize) -> CGPoint {
         // Keep the loupe away from the edges it would otherwise hang off.
-        let x = min(max(pointer.x + 90, 90), size.width - 90)
-        let y = min(max(pointer.y - 90, 70), size.height - 70)
-        return CGPoint(x: x, y: y)
+        let x = pointer.x + 200 > size.width ? pointer.x - 100 : pointer.x + 100
+        let y = pointer.y + 200 > size.height ? pointer.y - 100 : pointer.y + 100
+        return CGPoint(x: min(max(x, 80), size.width - 80), y: min(max(y, 90), size.height - 90))
     }
 }
 
-/// The pixel loupe shown while Shift is held, so a selection can be placed on an
-/// exact edge.
-private struct MagnifierView: View {
-    let frozen: CGImage?
-    let pointer: CGPoint
-    let rect: CGRect
+/// CleanShot-style All-In-One control bar: seven mode buttons, W × H fields
+/// for the pending selection, a hint line and cancel.
+private struct AllInOneToolbar: View {
+    @ObservedObject var state: SelectionState
     let screen: NSScreen
-
-    private let side: CGFloat = 128
-    private let zoom: CGFloat = 8
+    let onCancel: () -> Void
+    @State private var widthText = ""
+    @State private var heightText = ""
+    @FocusState private var focusedField: SizeField?
+    private enum SizeField { case width, height }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
+            HStack(spacing: 2) {
+                ForEach(Array(IntegratedCaptureMode.allCases.enumerated()), id: \.element) { index, mode in
+                    if index == 1 || index == 3 || index == 6 { separator }
+                    modeButton(mode)
+                }
+                separator
+                sizeFields
+                separator
+                ToolbarIconButton(symbol: "xmark", label: "Cancel", help: "Cancel (Esc)", selected: false,
+                                  action: onCancel)
+            }
+            .padding(6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+
+            Text(hint)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(.black.opacity(0.66), in: Capsule())
+                .allowsHitTesting(false)
+        }
+        .environment(\.colorScheme, .dark)
+        .controlSize(.regular)
+        .onAppear(perform: syncFields)
+        .onChange(of: state.pendingRect) { _, _ in if focusedField == nil { syncFields() } }
+    }
+
+    private var hint: String {
+        if state.captureMode == .window { return "Click a window to capture it. Press Space for area." }
+        if state.pendingRect != nil {
+            return "Press Return or choose a mode to capture. Drag inside to move, arrows to nudge."
+        }
+        switch state.captureMode {
+        case .recording: return "Drag to select the area to record."
+        case .scrolling: return "Drag to select the area to scroll-capture."
+        case .text: return "Drag to select the text to recognize."
+        case .timer: return "Drag to select capture area. The timer starts after you confirm."
+        default: return "Drag to select capture area."
+        }
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Color.white.opacity(0.18)).frame(width: 1, height: 22).padding(.horizontal, 4)
+    }
+
+    private func modeButton(_ mode: IntegratedCaptureMode) -> some View {
+        ToolbarIconButton(symbol: mode.icon, label: mode.title, help: mode.tooltip,
+                          selected: state.captureMode == mode) {
+            state.activate?(mode)
+        }
+    }
+
+    private var scale: CGFloat { screen.backingScaleFactor }
+
+    private var sizeFields: some View {
+        HStack(spacing: 4) {
+            TextField("W", text: $widthText)
+                .focused($focusedField, equals: .width)
+                .accessibilityLabel("Selection width in pixels")
+                .help("Width in pixels")
+            Text("×").foregroundStyle(.secondary)
+            TextField("H", text: $heightText)
+                .focused($focusedField, equals: .height)
+                .accessibilityLabel("Selection height in pixels")
+                .help("Height in pixels")
+        }
+        .textFieldStyle(.roundedBorder)
+        .font(.system(size: 13).monospacedDigit())
+        .multilineTextAlignment(.center)
+        .frame(width: 136)
+        .disabled(state.pendingRect == nil)
+        .onSubmit(applyFields)
+        .onChange(of: focusedField) { old, _ in if old != nil { applyFields() } }
+    }
+
+    private func syncFields() {
+        guard let rect = state.pendingRect else { widthText = ""; heightText = ""; return }
+        widthText = "\(Int((rect.width * scale).rounded()))"
+        heightText = "\(Int((rect.height * scale).rounded()))"
+    }
+
+    private func applyFields() {
+        guard let rect = state.pendingRect else { return }
+        state.pendingRect = AllInOneSelection.resized(
+            rect, pixelWidth: Int(widthText.trimmingCharacters(in: .whitespaces)),
+            pixelHeight: Int(heightText.trimmingCharacters(in: .whitespaces)),
+            scale: scale, within: screen.sckFrame)
+        syncFields()
+    }
+}
+
+private struct ToolbarIconButton: View {
+    let symbol: String
+    let label: String
+    let help: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 34, height: 30)
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .background(selected ? Color.accentColor : hovering ? Color.white.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityHint(help)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Pixel loupe next to the pointer (Show Magnifier setting, or hold Shift).
+private struct MagnifierView: View {
+    let image: CGImage?
+    let pointer: CGPoint
+    let screen: NSScreen
+
+    private let side: CGFloat = 120
+    /// Odd so the centre pixel is well defined.
+    private let pixelCount = 15
+
+    var body: some View {
+        VStack(spacing: 4) {
             ZStack {
-                if let frozen {
-                    Image(decorative: frozen, scale: screen.backingScaleFactor)
+                if let crop = croppedPixels {
+                    Image(decorative: crop, scale: 1)
                         .resizable()
-                        .frame(width: side * zoom, height: side * zoom)
-                        .offset(x: offsetX, y: offsetY)
+                        .interpolation(.none)
                         .frame(width: side, height: side)
-                        .clipped()
                 } else {
                     Color.black.opacity(0.85)
                 }
-                // The crosshair marks the exact pixel the selection will snap to.
-                Path { path in
-                    path.move(to: CGPoint(x: side / 2, y: 0)); path.addLine(to: CGPoint(x: side / 2, y: side))
-                    path.move(to: CGPoint(x: 0, y: side / 2)); path.addLine(to: CGPoint(x: side, y: side / 2))
-                }
-                .stroke(Color.white.opacity(0.7), lineWidth: 0.5)
+                // Centre pixel outline marks the exact pixel under the pointer.
+                let cell = side / CGFloat(pixelCount)
+                Rectangle()
+                    .stroke(Color.white, lineWidth: 1)
+                    .frame(width: cell, height: cell)
+                    .shadow(color: .black.opacity(0.8), radius: 0.5)
             }
             .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.25), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
 
-            HStack(spacing: 8) {
-                Text("\(Int(pixelSize.width)) × \(Int(pixelSize.height))").monospacedDigit()
-                Text("\(Int(pixelOrigin.x)), \(Int(pixelOrigin.y))").monospacedDigit().foregroundStyle(.secondary)
-            }
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
-            .offset(y: -4)
+            Text("\(Int((pointer.x * screen.backingScaleFactor).rounded())), \(Int((pointer.y * screen.backingScaleFactor).rounded()))")
+                .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.black.opacity(0.8), in: Capsule())
         }
         .padding(4)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .accessibilityHidden(true)
     }
 
-    /// The loupe shows the region around the pointer, so the image is shifted so
-    /// that the pointer lands at the centre of the clipped frame.
-    private var offsetX: CGFloat {
-        -(pointer.x * zoom) + side / 2
-    }
-    private var offsetY: CGFloat {
-        -(pointer.y * zoom) + side / 2
-    }
-
-    private var pixelSize: CGSize {
-        let scale = screen.backingScaleFactor
-        return CGSize(width: (rect.width * scale).rounded(), height: (rect.height * scale).rounded())
-    }
-
-    private var pixelOrigin: CGPoint {
-        let scale = screen.backingScaleFactor
-        return CGPoint(x: (rect.minX * scale).rounded(), y: (rect.minY * scale).rounded())
+    /// `pixelCount × pixelCount` device pixels centred on the pointer, clamped
+    /// to the display so the loupe never stretches a partial crop.
+    private var croppedPixels: CGImage? {
+        guard let image else { return nil }
+        let scale = CGFloat(image.width) / max(1, screen.frame.width)
+        let count = CGFloat(pixelCount)
+        let px = (pointer.x * scale).rounded(.down) - (count - 1) / 2
+        let py = (pointer.y * scale).rounded(.down) - (count - 1) / 2
+        let x = min(max(0, px), CGFloat(image.width) - count)
+        let y = min(max(0, py), CGFloat(image.height) - count)
+        return image.cropping(to: CGRect(x: x, y: y, width: count, height: count))
     }
 }

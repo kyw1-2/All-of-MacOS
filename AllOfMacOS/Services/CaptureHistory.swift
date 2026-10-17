@@ -10,7 +10,8 @@ import ImageIO
 /// Nothing" and no file was ever written.
 final class CaptureHistoryEntry: Identifiable {
     let id: UUID
-    let image: CGImage
+    /// Mutable only through `replaceImage` (Quick Access Rotate/Flip/Resize).
+    private(set) var image: CGImage
     let kind: CaptureKind
     let capturedAt: Date
     let windowTitle: String?
@@ -18,7 +19,13 @@ final class CaptureHistoryEntry: Identifiable {
     var fileURL: URL?
     var isPinned: Bool = false
     /// The small preview the overlay draws; built once and reused.
-    lazy var thumbnail: NSImage = Self.makeThumbnail(image)
+    private var cachedThumbnail: NSImage?
+    var thumbnail: NSImage {
+        if let cachedThumbnail { return cachedThumbnail }
+        let made = Self.makeThumbnail(image)
+        cachedThumbnail = made
+        return made
+    }
 
     var displayName: String {
         if let windowTitle, !windowTitle.isEmpty { return windowTitle }
@@ -40,9 +47,19 @@ final class CaptureHistoryEntry: Identifiable {
     /// This is recorded at capture time rather than derived from the pixel size,
     /// because the editor and the pin window size themselves in points and a
     /// derived value would be wrong for any capture that is not 1× or 2×.
-    let pointSize: CGSize
+    private(set) var pointSize: CGSize
     /// The backing scale the capture was taken at.
-    let scale: CGFloat
+    private(set) var scale: CGFloat
+
+    /// Swaps in edited pixels. The on-screen point size follows the new pixel
+    /// size at `scale`, and the cached thumbnail is rebuilt on next access.
+    func replaceImage(_ newImage: CGImage, scale newScale: CGFloat) {
+        image = newImage
+        scale = max(1, newScale)
+        pointSize = CGSize(width: CGFloat(newImage.width) / scale,
+                           height: CGFloat(newImage.height) / scale)
+        cachedThumbnail = nil
+    }
 
     init(id: UUID = UUID(), image: CGImage, kind: CaptureKind, capturedAt: Date,
          windowTitle: String?, fileURL: URL?,
@@ -86,9 +103,21 @@ final class CaptureHistoryEntry: Identifiable {
 /// and MP4s are *referenced*, never moved, overwritten or deleted by the history.
 @MainActor
 final class CaptureHistory: ObservableObject {
-    static let shared = CaptureHistory(directory:
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("AllOfMacOS/CaptureHistory", isDirectory: true))
+    static let shared = CaptureHistory(directory: defaultDirectory)
+
+    /// Test hosts and `--aom-ui-preview` runs must never read, trim or delete
+    /// the installed app's real history cache.
+    static var defaultDirectory: URL {
+        if let preview = PresetManager.previewDirectory {
+            return preview.appendingPathComponent("CaptureHistory", isDirectory: true)
+        }
+        if PresetManager.isRunningTests {
+            return FileManager.default.temporaryDirectory.appendingPathComponent(
+                "AOMTestCaptureHistory-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AllOfMacOS/CaptureHistory", isDirectory: true)
+    }
 
     @Published private(set) var entries: [CaptureHistoryEntry] = []
     private let directory: URL
@@ -173,6 +202,22 @@ final class CaptureHistory: ObservableObject {
         trim()
         persistIndex()
         return entry
+    }
+
+    /// Applies an in-place edit made from Quick Access. A previously written
+    /// file is *detached*, never overwritten: the next Save writes a new file
+    /// containing the edited pixels, so user files are never silently changed.
+    func replaceImage(of entry: CaptureHistoryEntry, with image: CGImage, scale: CGFloat) {
+        entry.replaceImage(image, scale: scale)
+        if entry.kind != .videoRecording { entry.fileURL = nil }
+        guard let stored = entries.first(where: { $0.id == entry.id }) else { return }
+        if stored !== entry {
+            stored.replaceImage(image, scale: scale)
+            if stored.kind != .videoRecording { stored.fileURL = nil }
+        }
+        objectWillChange.send()
+        cacheImage(image, id: entry.id)
+        persistIndex()
     }
 
     func attachFile(_ url: URL, to id: UUID) {

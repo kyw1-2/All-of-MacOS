@@ -516,6 +516,10 @@ enum AOMLauncher {
                 other.activate(options: []); return
             }
         } else { ActionExecutor.onActionExecuted = { _ in } }
+        // Isolated capture-UI preview (no screen capture); see CaptureUIPreview.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            MainActor.assumeIsolated { CaptureUIPreview.show() }
+        }
         AllOfMacOSApp.main()
     }
 
