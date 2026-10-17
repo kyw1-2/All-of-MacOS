@@ -560,6 +560,9 @@ struct AllOfMacOSApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1320, height: 820)
+        // aom:// links and opened files are handled by AppDelegate; without
+        // this every link (Raycast, Shortcuts, Alfred) opened another window.
+        .handlesExternalEvents(matching: [])
         .commands {
             TriggerEditorCommands()
             WorkflowVariableCommands()

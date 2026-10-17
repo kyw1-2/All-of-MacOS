@@ -12,7 +12,7 @@ struct ModernGesturesWorkspace: View {
     @State private var testingTriggerID: UUID?
     @State private var testResult: String?
     @State private var expandedActionIDs: Set<UUID> = []
-    @State private var showTriggerOptions = true
+    @State private var showTriggerOptions = false
     @State private var parentID: UUID?
     @State private var toElse = false
     @State private var replaceActionID: UUID?
