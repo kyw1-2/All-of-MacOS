@@ -41,7 +41,24 @@ struct SystemConditions {
 /// Persist only explicitly configured variables; cap storage to prevent unbounded growth.
 enum WorkflowVariables {
     private static let lock = NSLock()
-    private static var values: [String: String] = UserDefaults.standard.dictionary(forKey: "AOMWorkflowVariables") as? [String: String] ?? [:]
+    private static let defaults = TriggerSuppression.defaultsForCurrentProcess(tag: "Variables")
+    private static var values: [String: String] = defaults.dictionary(forKey: "AOMWorkflowVariables") as? [String: String] ?? [:]
+    static let changed = Notification.Name("AOMWorkflowVariablesChanged")
+
+    static func snapshot() -> [String: String] {
+        lock.lock(); defer { lock.unlock() }
+        return values
+    }
+    static func remove(_ name: String) {
+        lock.lock()
+        let removed = values.removeValue(forKey: name) != nil
+        if removed { defaults.set(values, forKey: "AOMWorkflowVariables") }
+        lock.unlock()
+        if removed { notify() }
+    }
+    private static func notify() {
+        DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: nil) }
+    }
 
     static func value(_ name: String) -> String? {
         lock.lock(); defer { lock.unlock() }
@@ -51,10 +68,13 @@ enum WorkflowVariables {
     static func set(_ name: String, value: String) -> Bool {
         guard !name.isEmpty, name.count <= 64, value.count <= 512,
               name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return false }
-        lock.lock(); defer { lock.unlock() }
-        guard values[name] != nil || values.count < 128 else { return false }
+        lock.lock()
+        guard values[name] != nil || values.count < 128 else { lock.unlock(); return false }
+        let changed = values[name] != value
         values[name] = value
-        UserDefaults.standard.set(values, forKey: "AOMWorkflowVariables")
+        defaults.set(values, forKey: "AOMWorkflowVariables")
+        lock.unlock()
+        if changed { notify() }
         return true
     }
 }
@@ -62,34 +82,78 @@ enum WorkflowVariables {
 /// Evaluates an If/Else action at execution time, independently of its
 /// Run Only When filter. Both branches have normal ordering and cancellation.
 enum WorkflowBranchCondition {
+    /// Operators, in the order the editor lists them. The first six are the
+    /// original set and keep their exact meaning (equals is case-sensitive).
+    /// `is` / `isNot` compare case-insensitively, and numerically when both sides
+    /// are numbers (so "3" is "3.0"). `like` takes `*` and `?` wildcards and must
+    /// match the whole text.
+    static let operators: [(id: String, title: String)] = [
+        ("equals", "equals"), ("notEquals", "does not equal"), ("contains", "contains"),
+        ("regex", "matches regex"), ("greater", "is greater than"), ("less", "is less than"),
+        ("is", "is"), ("isNot", "is not"), ("notContains", "does not contain"),
+        ("beginsWith", "begins with"), ("endsWith", "ends with"), ("like", "is like (* ?)"),
+        ("greaterOrEqual", "is at least"), ("lessOrEqual", "is at most")]
+
+    private static func regexMatches(_ pattern: String, in source: String, whole: Bool = false) -> Bool {
+        guard pattern.count <= 256,
+              let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return false }
+        let safeSource = String(source.prefix(1024))
+        let range = NSRange(safeSource.startIndex..., in: safeSource)
+        guard let match = expression.firstMatch(in: safeSource, range: range) else { return false }
+        return !whole || match.range == range
+    }
+    static func wildcardMatches(_ pattern: String, _ source: String) -> Bool {
+        guard pattern.count <= 256 else { return false }
+        let translated = pattern.map { character -> String in
+            switch character {
+            case "*": return ".*"
+            case "?": return "."
+            default: return NSRegularExpression.escapedPattern(for: String(character))
+            }
+        }.joined()
+        return regexMatches(translated, in: source, whole: true)
+    }
     static func compare(_ source: String, with value: String, operation: String) -> Bool {
+        func numbers() -> (Double, Double)? {
+            guard let a = Double(source.trimmingCharacters(in: .whitespaces)), let b = Double(value.trimmingCharacters(in: .whitespaces)),
+                  a.isFinite, b.isFinite else { return nil }
+            return (a, b)
+        }
         switch operation {
         case "equals": return source == value
         case "notEquals": return source != value
         case "contains": return source.localizedCaseInsensitiveContains(value)
+        case "notContains": return !source.localizedCaseInsensitiveContains(value)
         case "regex":
             guard value.count <= 256,
                   let expression = try? NSRegularExpression(pattern: value, options: [.caseInsensitive]) else { return false }
             let safeSource = String(source.prefix(1024))
             return expression.firstMatch(in: safeSource, range: NSRange(safeSource.startIndex..., in: safeSource)) != nil
-        case "greater":
-            guard let a = Double(source), let b = Double(value), a.isFinite, b.isFinite else { return false }
-            return a > b
-        case "less":
-            guard let a = Double(source), let b = Double(value), a.isFinite, b.isFinite else { return false }
-            return a < b
+        case "is", "isNot":
+            let same = numbers().map { $0 == $1 } ?? (source.caseInsensitiveCompare(value) == .orderedSame)
+            return operation == "is" ? same : !same
+        case "beginsWith": return !value.isEmpty && source.lowercased().hasPrefix(value.lowercased())
+        case "endsWith": return !value.isEmpty && source.lowercased().hasSuffix(value.lowercased())
+        case "like": return wildcardMatches(value, source)
+        case "greater": return numbers().map { $0 > $1 } ?? false
+        case "less": return numbers().map { $0 < $1 } ?? false
+        case "greaterOrEqual": return numbers().map { $0 >= $1 } ?? false
+        case "lessOrEqual": return numbers().map { $0 <= $1 } ?? false
         default: return false
         }
     }
     static func matches(_ parameters: ActionParameters, app: String, title: String,
-                        mouseX: Double, mouseY: Double, variable: (String) -> String?) -> Bool {
+                        mouseX: Double, mouseY: Double, variable: (String) -> String?,
+                        clipboard: () -> String? = { nil }, appName: String = "") -> Bool {
         let source: String
         switch parameters.conditionKind ?? "variable" {
         case "variable":
             guard let name = parameters.variableName, let result = variable(name) else { return false }
             source = result
         case "app": source = app
+        case "appName": source = appName
         case "window": source = title
+        case "clipboard": source = clipboard() ?? ""
         case "mouseX": source = String(mouseX)
         case "mouseY": source = String(mouseY)
         default: return false

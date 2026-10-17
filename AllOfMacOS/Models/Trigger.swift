@@ -6,7 +6,15 @@ enum ExecutionPolicy: String, Codable, CaseIterable {
     case restart = "Restart"
     case parallel = "Parallel (up to 4)"
 }
-enum KeyboardPhase: String, Codable, CaseIterable { case keyDown = "Key down", keyUp = "Key up" }
+/// When a keyboard trigger fires relative to the physical key.
+///
+/// `longPress` and `quickRelease` use the global Long Press Duration / Max
+/// Quick Release Time (see `TriggerKeyHold`). Older presets only contain the
+/// first two raw values, which still decode unchanged.
+enum KeyboardPhase: String, Codable, CaseIterable {
+    case keyDown = "Key down", keyUp = "Key up"
+    case longPress = "Long press", quickRelease = "Quick release"
+}
 
 /// Physical key sequence stroke. Modifier-only presses use their native
 /// keycodes (e.g. left Command = 55), not a fake printable shortcut.
@@ -51,6 +59,15 @@ struct DrawingPoint: Codable, Hashable {
     var y: Double
 }
 
+enum ScreenCorner: String, Codable, CaseIterable, Identifiable {
+    case topLeft = "Top Left", topRight = "Top Right", bottomLeft = "Bottom Left", bottomRight = "Bottom Right"
+    var id: String { rawValue }
+}
+enum ScreenEdge: String, Codable, CaseIterable, Identifiable {
+    case top = "Top", bottom = "Bottom", left = "Left", right = "Right"
+    var id: String { rawValue }
+}
+
 /// Scheduled and system-event triggers. These have no physical input, so they
 /// fire from a monitor that watches time or device state rather than from the
 /// trackpad, keyboard, or mouse path.
@@ -72,6 +89,44 @@ enum SystemTriggerKind: Codable, Hashable {
     case screenLocked
     case screenUnlocked
 
+    // MARK: BTT §2.6 additions. Every payload that can be "any" uses an empty
+    // string (or 0) so a trigger can be created without choosing one.
+    case systemWillSleep
+    case systemDidWake
+    /// The frontmost app changed to / away from this bundle id ("" = any app).
+    case appActivated(String)
+    case appDeactivated(String)
+    case screensaverStarted
+    case screensaverStopped
+    case activeSpaceChanged
+    /// Battery charge crossed below / above the percentage (1...99).
+    case batteryBelow(Int)
+    case batteryAbove(Int)
+    /// Wi-Fi joined / left a network. `ssid` "" = any network. Reading the
+    /// network NAME needs Location permission; without it only "any" works.
+    case wifiConnected(ssid: String)
+    case wifiDisconnected(ssid: String)
+    /// A USB / Bluetooth device appeared or went away; `name` is a
+    /// case-insensitive substring filter ("" = any device).
+    case usbConnected(name: String)
+    case usbDisconnected(name: String)
+    case bluetoothConnected(name: String)
+    case bluetoothDisconnected(name: String)
+    case inputSourceChanged
+    case audioOutputChanged
+    case clipboardChanged
+    /// A file, or the immediate contents of a folder, was modified.
+    case fileDidChange(path: String)
+    /// The pointer rested in a screen corner / on a screen edge for `dwellMs`.
+    /// Edge hover requires being within `minDistance` px of the edge.
+    case screenCornerHover(corner: ScreenCorner, dwellMs: Int)
+    case screenEdgeHover(edge: ScreenEdge, dwellMs: Int, minDistance: Int)
+    /// A workflow variable changed value ("" = any variable).
+    case variableChanged(name: String)
+
+    static let defaultHoverDwellMs = 300
+    static let defaultEdgeDistancePx = 4
+
     var displayName: String {
         switch self {
         case .daily(let h, let m): return String(format: "Every day at %02d:%02d", h, m)
@@ -85,6 +140,28 @@ enum SystemTriggerKind: Codable, Hashable {
         case .powerSourceChanged(let ac): return ac ? "Power connected" : "Switched to battery"
         case .screenLocked: return "Screen locks"
         case .screenUnlocked: return "Screen unlocks"
+        case .systemWillSleep: return "Mac is about to sleep"
+        case .systemDidWake: return "Mac wakes from sleep"
+        case .appActivated(let id): return id.isEmpty ? "Any app becomes active" : "App becomes active: \(SystemTriggerKind.appName(id))"
+        case .appDeactivated(let id): return id.isEmpty ? "Any app becomes inactive" : "App becomes inactive: \(SystemTriggerKind.appName(id))"
+        case .screensaverStarted: return "Screensaver starts"
+        case .screensaverStopped: return "Screensaver stops"
+        case .activeSpaceChanged: return "Active space changes"
+        case .batteryBelow(let p): return "Battery drops below \(p)%"
+        case .batteryAbove(let p): return "Battery rises above \(p)%"
+        case .wifiConnected(let s): return s.isEmpty ? "Wi-Fi connects" : "Wi-Fi connects: \(s)"
+        case .wifiDisconnected(let s): return s.isEmpty ? "Wi-Fi disconnects" : "Wi-Fi disconnects: \(s)"
+        case .usbConnected(let n): return n.isEmpty ? "USB device connects" : "USB device connects: \(n)"
+        case .usbDisconnected(let n): return n.isEmpty ? "USB device disconnects" : "USB device disconnects: \(n)"
+        case .bluetoothConnected(let n): return n.isEmpty ? "Bluetooth device connects" : "Bluetooth device connects: \(n)"
+        case .bluetoothDisconnected(let n): return n.isEmpty ? "Bluetooth device disconnects" : "Bluetooth device disconnects: \(n)"
+        case .inputSourceChanged: return "Input source changes"
+        case .audioOutputChanged: return "Audio output device changes"
+        case .clipboardChanged: return "Clipboard changes"
+        case .fileDidChange(let path): return path.isEmpty ? "File or folder changes" : "File changes: \((path as NSString).lastPathComponent)"
+        case .screenCornerHover(let c, _): return "Pointer hovers \(c.rawValue.lowercased()) screen corner"
+        case .screenEdgeHover(let e, _, _): return "Pointer hovers \(e.rawValue.lowercased()) screen edge"
+        case .variableChanged(let n): return n.isEmpty ? "Any variable changes" : "Variable changes: \(n)"
         }
     }
 
@@ -98,6 +175,25 @@ enum SystemTriggerKind: Codable, Hashable {
         case .powerSourceChanged: return "bolt"
         case .screenLocked: return "lock"
         case .screenUnlocked: return "lock.open"
+        case .systemWillSleep: return "moon.zzz"
+        case .systemDidWake: return "sun.max"
+        case .appActivated: return "app.badge.checkmark"
+        case .appDeactivated: return "app.dashed"
+        case .screensaverStarted, .screensaverStopped: return "display.and.arrow.down"
+        case .activeSpaceChanged: return "rectangle.3.group"
+        case .batteryBelow: return "battery.25"
+        case .batteryAbove: return "battery.100"
+        case .wifiConnected: return "wifi"
+        case .wifiDisconnected: return "wifi.slash"
+        case .usbConnected, .usbDisconnected: return "cable.connector"
+        case .bluetoothConnected, .bluetoothDisconnected: return "dot.radiowaves.left.and.right"
+        case .inputSourceChanged: return "globe"
+        case .audioOutputChanged: return "speaker.wave.2"
+        case .clipboardChanged: return "doc.on.clipboard"
+        case .fileDidChange: return "doc.badge.gearshape"
+        case .screenCornerHover: return "rectangle.inset.topleft.filled"
+        case .screenEdgeHover: return "rectangle.topthird.inset.filled"
+        case .variableChanged: return "character.cursor.ibeam"
         }
     }
 
@@ -122,6 +218,10 @@ enum TriggerInput: Codable, Hashable {
     case keyboardShortcut(KeyboardShortcut)
     case keySequence([KeySequenceStroke])
     case mouseButton(MouseButton)
+    /// Richer Normal Mouse trigger (any button, multi-click, long press, drag
+    /// direction, scroll). `.mouseButton` stays for buttons 3-7 single presses
+    /// so every existing preset decodes and behaves exactly as before.
+    case mouse(MouseTriggerSpec)
     case drawingPattern(String)
     case namedTrigger(String)
     case systemEvent(SystemTriggerKind)
@@ -132,6 +232,7 @@ enum TriggerInput: Codable, Hashable {
         case .keyboardShortcut(let shortcut): return shortcut.displayString
         case .keySequence(let strokes): return strokes.map(\.displayName).joined(separator: " → ")
         case .mouseButton(let button): return button.rawValue
+        case .mouse(let spec): return spec.displayName
         case .drawingPattern(let name): return "Drawing: \(name)"
         case .namedTrigger(let name): return name
         case .systemEvent(let kind): return kind.displayName
@@ -142,7 +243,7 @@ enum TriggerInput: Codable, Hashable {
         switch self {
         case .trackpadGesture: return .trackpad
         case .keyboardShortcut, .keySequence: return .keyboard
-        case .mouseButton: return .normalMouse
+        case .mouseButton, .mouse: return .normalMouse
         case .drawingPattern: return .drawings
         case .namedTrigger, .systemEvent: return .otherTriggers
         }
@@ -150,7 +251,7 @@ enum TriggerInput: Codable, Hashable {
 }
 
 struct Trigger: Identifiable, Codable, Hashable {
-    let id: UUID
+    var id: UUID
     var name: String
     var input: TriggerInput
     var actions: [TriggerAction]
@@ -176,10 +277,28 @@ struct Trigger: Identifiable, Codable, Hashable {
     var drawingSamples: [[DrawingPoint]] = [] // User-drawn templates for .drawingPattern
     var drawingCertainty: Double = 0.7
     var drawingIgnoreDirection: Bool = false
+    // MARK: Trigger-level options (BTT parity). All default to "off" so presets
+    // written before they existed behave exactly as before.
+    /// Free-form note shown in the editor (BTT's trigger description).
+    var notes: String = ""
+    /// Wait this long after the trigger is recognized before running its
+    /// actions (BTTDelayBeforeTriggering). 0 = immediately.
+    var delayBeforeTriggeringMs: Int = 0
+    /// Keyboard shortcuts: minimum / maximum time the key must be held
+    /// (BTTKeyboardShortcutMinTime / MaxTime). 0 = no limit.
+    var minHoldMs: Int = 0
+    var maxHoldMs: Int = 0
+    /// Trackpad "Long Touch": how long the fingers must rest, in ms (BTT 0.1–5 s, default 0.5 s).
+    var longTouchDurationMs: Int = 500
+    /// Display-only color tag; the engine never reads it. Free-form name or hex.
+    var colorLabel: String?
+    /// Display-only grouping folder name; the engine never reads it.
+    var folder: String?
 
     var supportsHold: Bool {
         switch input {
         case .keyboardShortcut, .mouseButton: return true
+        case .mouse(let spec): return spec.kind == .click
         case .trackpadGesture(let g): return g.rawValue.contains("Click")
         default: return false
         }
@@ -206,6 +325,7 @@ struct Trigger: Identifiable, Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, input, actions, isFavorite, isEnabled, appBundleID, activationGroupID, order, suppressClick, hapticFeedback, requiredModifiers, executionPolicy, keyboardPhase, repeatWhileHeld, holdDelayMs, holdIntervalMs, sequenceMaxGapMs, sequenceOrderRelevant, sequenceHoldMs, drawingSamples, drawingCertainty, drawingIgnoreDirection
+        case notes, delayBeforeTriggeringMs, minHoldMs, maxHoldMs, colorLabel, folder, longTouchDurationMs
     }
 
     init(from decoder: Decoder) throws {
@@ -233,6 +353,13 @@ struct Trigger: Identifiable, Codable, Hashable {
         drawingSamples = try container.decodeIfPresent([[DrawingPoint]].self, forKey: .drawingSamples) ?? []
         drawingCertainty = try container.decodeIfPresent(Double.self, forKey: .drawingCertainty) ?? 0.7
         drawingIgnoreDirection = try container.decodeIfPresent(Bool.self, forKey: .drawingIgnoreDirection) ?? false
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        delayBeforeTriggeringMs = max(0, try container.decodeIfPresent(Int.self, forKey: .delayBeforeTriggeringMs) ?? 0)
+        minHoldMs = max(0, try container.decodeIfPresent(Int.self, forKey: .minHoldMs) ?? 0)
+        maxHoldMs = max(0, try container.decodeIfPresent(Int.self, forKey: .maxHoldMs) ?? 0)
+        longTouchDurationMs = min(max(try container.decodeIfPresent(Int.self, forKey: .longTouchDurationMs) ?? 500, 100), 5000)
+        colorLabel = try container.decodeIfPresent(String.self, forKey: .colorLabel)
+        folder = try container.decodeIfPresent(String.self, forKey: .folder)
     }
 
     var displayName: String {
@@ -272,7 +399,7 @@ enum TriggerListQuery {
         let scope = scopeLabel(trigger, preset: preset)
         let group = preset.activationGroups.first { $0.id == trigger.activationGroupID }
         let app = trigger.activationGroupID == nil ? scope + " " + (trigger.appBundleID ?? "All Apps") : ""
-        let all = [trigger.displayName, trigger.input.displayName, actions, scope].joined(separator: " ")
+        let all = [trigger.displayName, trigger.input.displayName, actions, scope, trigger.notes, trigger.folder ?? ""].joined(separator: " ")
         func contains(_ text: String, _ value: String) -> Bool { text.localizedStandardContains(value) }
         return tokens(query).allSatisfy { token in
             let parts = token.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
@@ -280,7 +407,9 @@ enum TriggerListQuery {
             let value = String(parts[1]); guard !value.isEmpty else { return false }
             switch parts[0].lowercased() {
             case "app": return contains(app, value)
-            case "group": return contains(group?.name ?? "", value)
+            case "group": return contains([group?.name ?? "", trigger.folder ?? ""].joined(separator: " "), value)
+            case "folder": return contains(trigger.folder ?? "", value)
+            case "notes": return contains(trigger.notes, value)
             case "action": return contains(actions, value)
             case "type":
                 let alias: String

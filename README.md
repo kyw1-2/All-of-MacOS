@@ -2,6 +2,10 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.1.4
+
+Adds trigger organization, pause controls, global gesture settings, workflow variables, and expanded trigger/action catalogs. See [release notes](docs/1.1.4-release-notes.md) and [BTT catalog comparison and remaining gaps](docs/1.1.4-btt-catalog-comparison.md).
+
 ## Features
 
 - Trackpad, keyboard, window-management and automation controls
@@ -23,8 +27,9 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 On macOS with Xcode:
 
 ```bash
-swift test
-./build-and-sign.sh
+brew list webp >/dev/null 2>&1 || brew install webp
+swift test --scratch-path "$HOME/.cache/aom-build"
+ALLOFMACOS_SCRATCH_PATH="$HOME/.cache/aom-build" ALLOFMACOS_SKIP_AUTO_RELEASE=1 ./build-and-sign.sh
 codesign --verify --deep --strict "build/All of MacOS.app"
 ```
 

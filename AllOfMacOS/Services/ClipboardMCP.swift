@@ -32,7 +32,7 @@ final class ClipboardMCPSettings: ObservableObject {
 
     private let defaults: UserDefaults
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey); ClipboardMCPServer.shared.refresh() } }
-    @Published private(set) var tools: [ClipboardMCPTool] { didSet { save() } }
+    @Published private(set) var tools: [ClipboardMCPTool] { didSet { save(); ClipboardMCPServer.shared.refresh() } }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

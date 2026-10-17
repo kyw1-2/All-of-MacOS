@@ -21,6 +21,28 @@ final class SystemTriggerMonitor {
     private var entries: [Entry] = []
     private var activationGroups: [ActivationGroup] = []
 
+    // BTT §2.6 additions. The provider supplies raw OS signals; tests pass a
+    // fake so no real sleep / USB / Bluetooth / Wi-Fi is ever involved.
+    private let provider: SystemSignalProvider
+    private let screenFrames: () -> [CGRect]
+    private let clock: () -> TimeInterval
+    private let scheduler: (TimeInterval, @escaping () -> Void) -> Void
+    private var tracker = SystemTransitionTracker()
+    private var hover = ScreenHoverRecognizer(zones: [])
+    private var hoverGeneration = UUID()
+    private var lastFileFire: [String: TimeInterval] = [:]
+    /// Minimum gap between firings for one watched path (editors write several times per save).
+    static let fileDebounce: TimeInterval = 0.25
+
+    init(provider: SystemSignalProvider = LiveSystemSignalProvider(),
+         screenFrames: @escaping () -> [CGRect] = { NSScreen.screens.map(\.frame) },
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         scheduler: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }) {
+        self.provider = provider; self.screenFrames = screenFrames
+        self.clock = clock; self.scheduler = scheduler
+    }
+
     private var timer: Timer?
     /// The absolute minute (day-scoped) a daily/weekly entry last fired, so a
     /// tick inside the same minute does not repeat it while the next day still
@@ -57,9 +79,78 @@ final class SystemTriggerMonitor {
         }
         startTimerIfNeeded()
         installObserversIfNeeded()
+        installSignalSources()
+    }
+
+    private func installSignalSources() {
+        let kinds = entries.map(\.kind)
+        let needs = SignalSource.needs(for: kinds)
+        tracker.reset()
+        hover = ScreenHoverRecognizer(zones: Set(kinds.compactMap(Self.hoverZone)))
+        for case .variableChanged(let name) in kinds where !name.isEmpty {
+            tracker.seedVariable(name, value: WorkflowVariables.value(name))
+        }
+        guard !needs.isEmpty else { return }
+        provider.start(needs) { [weak self] signal in self?.handle(signal) }
+    }
+
+    private static func hoverZone(_ kind: SystemTriggerKind) -> ScreenHoverRecognizer.Zone? {
+        switch kind {
+        case .screenCornerHover(let corner, let dwell): return .corner(corner, dwellMs: max(0, dwell))
+        case .screenEdgeHover(let edge, let dwell, let distance): return .edge(edge, dwellMs: max(0, dwell), minDistance: distance)
+        default: return nil
+        }
+    }
+
+    /// Entry point for every OS-derived signal. Stateful kinds are reduced to
+    /// transitions here, then matched against the registered triggers.
+    func handle(_ signal: SystemSignal) {
+        switch signal {
+        case .battery(let percent):
+            let ids = tracker.batteryTransitions(percent: percent, entries: entries.map { ($0.id, $0.kind) })
+            for entry in entries where ids.contains(entry.id) { fire(entry, reason: entry.kind.displayName) }
+        case .wifi(let ssid):
+            for transition in tracker.wifiTransitions(ssid) {
+                switch transition {
+                case .connected(let name):
+                    fireMatching { if case .wifiConnected(let f) = $0 { return f.isEmpty || f.caseInsensitiveCompare(name) == .orderedSame }; return false }
+                case .disconnected(let name):
+                    fireMatching { if case .wifiDisconnected(let f) = $0 { return f.isEmpty || f.caseInsensitiveCompare(name) == .orderedSame }; return false }
+                }
+            }
+        case .variable(let name, let value):
+            let seed = WorkflowVariables.value(name) == value ? nil : WorkflowVariables.value(name)
+            guard tracker.variableChanged(name: name, value: value, seed: seed) else { return }
+            fireMatching { if case .variableChanged(let wanted) = $0 { return wanted.isEmpty || wanted == name }; return false }
+        case .fileChanged(let path):
+            let now = clock()
+            if let last = lastFileFire[path], now - last < Self.fileDebounce { return }
+            lastFileFire[path] = now
+            fireMatching { SystemSignalMatcher.matches($0, signal) }
+        case .pointer(let point):
+            hover.move(to: point, screens: screenFrames(), now: clock())
+            pollHover()
+        default:
+            fireMatching { SystemSignalMatcher.matches($0, signal) }
+        }
+    }
+
+    /// Fires dwell-complete zones and schedules a wake for the next pending one.
+    func pollHover() {
+        for zone in hover.poll(now: clock()) {
+            fireMatching { Self.hoverZone($0) == zone }
+        }
+        guard let deadline = hover.nextDeadline else { return }
+        let generation = UUID(); hoverGeneration = generation
+        scheduler(max(0, deadline - clock()) + 0.005) { [weak self] in
+            guard let self, self.hoverGeneration == generation else { return }
+            self.pollHover()
+        }
     }
 
     func unregisterAll() {
+        provider.stop()
+        hoverGeneration = UUID(); hover.reset(); tracker.reset(); lastFileFire.removeAll()
         timer?.invalidate(); timer = nil
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         observers.removeAll()

@@ -310,8 +310,8 @@ class AppState: ObservableObject {
         var updated = latest(trigger)
         if let parentID {
             guard ActionTree.edit(&updated.actions, id: parentID, change: { list, i in
-                guard list[i].actionType == .actionGroup || list[i].actionType == .ifElse else { return }
-                if toElse && list[i].actionType == .ifElse {
+                guard list[i].actionType.canContainChildren else { return }
+                if toElse && list[i].actionType.canContainElseChildren {
                     list[i].parameters.elseChildren = (list[i].parameters.elseChildren ?? []) + [action]
                 } else {
                     list[i].parameters.children = (list[i].parameters.children ?? []) + [action]
@@ -357,7 +357,7 @@ class AppState: ObservableObject {
         guard ActionTree.edit(&updated.actions, id: action.id, change: { list, i in list.remove(at: i) }) else { return }
         if let parentID {
             guard ActionTree.edit(&updated.actions, id: parentID, change: { list, i in
-                guard list[i].actionType == .actionGroup || list[i].actionType == .ifElse else { return }
+                guard list[i].actionType.canContainChildren else { return }
                 list[i].parameters.children = (list[i].parameters.children ?? []) + [action]
             }) else { return }
         } else { updated.actions.append(action) }

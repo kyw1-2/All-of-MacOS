@@ -23,11 +23,17 @@ class ActionExecutor {
     }
     private static var sequences: [UUID: Invocation] = [:]
     private(set) static var registeredTriggers: [Trigger] = []
+    // Keep tombstones so queued callbacks cannot turn a deleted/disabled binding
+    // into an ad-hoc invocation using stale fallback actions.
+    private(set) static var inactiveTriggerIDs = Set<UUID>()
     private static var activationGroups: [ActivationGroup] = []
     private static var holds: [UUID: HoldRepeater] = [:]
 
     static func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         let next = triggers.filter(\.isEnabled)
+        inactiveTriggerIDs.formUnion(registeredTriggers.map(\.id))
+        inactiveTriggerIDs.formUnion(triggers.map(\.id))
+        inactiveTriggerIDs.subtract(next.map(\.id))
         let groupsChanged = activationGroups != groups
         for id in Array(holds.keys) where groupsChanged || registeredTriggers.first(where: { $0.id == id }) != next.first(where: { $0.id == id }) {
             cancelSequence(id)
@@ -67,10 +73,15 @@ class ActionExecutor {
         let active = Array(sequences.values)
         active.forEach { $0.context.cancelled = true }
         active.forEach { $0.runner.cancel() }
+        if onActionExecuted == nil {
+            ExtendedActions.releaseHeldModifiers()
+            WindowDragController.shared.stop()
+        }
     }
     /// Physical inputs enter here; editor tests and Named Trigger calls never start a hold loop.
     static func fire(triggerID: UUID, fallbackActions: [TriggerAction], fromTrackpad: Bool = false,
                      isHeld: (() -> Bool)? = nil) {
+        guard TriggerGate.admit(triggerID: triggerID, trigger: nil, redispatch: { fire(triggerID: triggerID, fallbackActions: fallbackActions, fromTrackpad: fromTrackpad, isHeld: isHeld) }) else { return }
         let trigger = registeredTriggers.first { $0.id == triggerID }
         let startApp = externalBundleID
         let startModifiers = NSEvent.modifierFlags.rawValue & TriggerResolver.modifierMask
@@ -83,7 +94,7 @@ class ActionExecutor {
         guard holds[triggerID] == nil, holds.count < 16 else { return }
         let repeater = HoldRepeater(delayMs: trigger.holdDelayMs, intervalMs: trigger.holdIntervalMs,
             isHeld: {
-                isHeld() && externalBundleID == startApp &&
+                isHeld() && TriggerSuppression.shared.allows(trigger) && externalBundleID == startApp &&
                 NSEvent.modifierFlags.rawValue & TriggerResolver.modifierMask == startModifiers &&
                 (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true)
             }, perform: run)
@@ -138,9 +149,14 @@ class ActionExecutor {
                 done(ok)
                 return
             }
+            if ControlFlowActions.handles(action.actionType) {
+                ControlFlowActions.perform(action, testing: onActionExecuted != nil,
+                                           isCancelled: { context.cancelled }, completion: done)
+                return
+            }
             let selected = action.parameters.useCurrentWindow == true ? executionWindow() : target
-            if onActionExecuted == nil, action.actionType.category == .windowManagement,
-               ![ActionType.undoWindowPlacement, .saveWindowLayout, .restoreWindowLayout].contains(action.actionType), selected == nil {
+            if onActionExecuted == nil, action.actionType.needsFocusedWindow,
+               action.parameters.windowTarget != "underCursor", selected == nil {
                 GestureLog.shared.logFromAnyThread("No accessible window for this step", level: .error); done(false); return
             }
             executeAction(action, windowTarget: selected, fromTrackpad: fromTrackpad, completion: done)
@@ -175,7 +191,9 @@ class ActionExecutor {
             }
             let location = WorkflowBranchCondition.cursorFraction()
             return WorkflowBranchCondition.matches(p, app: app?.bundleIdentifier ?? "", title: title,
-                mouseX: location.x, mouseY: location.y, variable: { WorkflowVariables.value($0) })
+                mouseX: location.x, mouseY: location.y, variable: { WorkflowVariables.value($0) },
+                clipboard: { NSPasteboard.general.string(forType: .string) },
+                appName: app?.localizedName ?? "")
         })
         sequences[key] = Invocation(triggerID: triggerID, context: context, runner: runner)
         runner.run(actions) { ok in sequences.removeValue(forKey: key); completion?(ok) }
@@ -261,6 +279,24 @@ class ActionExecutor {
         if let hook = onActionExecuted {
             hook(action)
             completion(true)
+            return
+        }
+
+        // Destructive actions ask first unless the step explicitly opts out.
+        if action.actionType.isDestructive, action.parameters.requiresConfirmation != false {
+            ActionConfirmation.confirm(action.actionType) { confirmed in
+                guard confirmed else {
+                    GestureLog.shared.logFromAnyThread("\(action.actionType.rawValue) cancelled", level: .action)
+                    completion(false); return
+                }
+                var approved = action
+                approved.parameters.requiresConfirmation = false
+                executeAction(approved, windowTarget: windowTarget, fromTrackpad: fromTrackpad, completion: completion)
+            }
+            return
+        }
+        if ExtendedActions.handles(action.actionType) {
+            ExtendedActions.perform(action, completion: completion)
             return
         }
 
@@ -483,6 +519,8 @@ class ActionExecutor {
             onMain { ClipboardStore.shared.paused.toggle() }
         case .toggleCaptureOverlay:
             onMain { CaptureSettings.overlayEnabled.toggle() }
+        default:
+            break // 1.1.4 actions are dispatched above (ExtendedActions, WindowManager, ControlFlowActions, runner).
         }
     }
 
@@ -844,6 +882,8 @@ final class ActionSequenceRunner {
     private let matches: (TriggerAction) -> Bool
     private let branchMatches: (TriggerAction) -> Bool
     private var cancelled = false
+    /// Set by Break Loop; the nearest Repeat N Times clears it and stops iterating.
+    private var breakPending = false
     private var finish: ((Bool) -> Void)?
     init(perform: @escaping Perform, matches: @escaping (TriggerAction) -> Bool = { _ in true },
          branchMatches: @escaping (TriggerAction) -> Bool = { _ in false }) {
@@ -885,6 +925,8 @@ final class ActionSequenceRunner {
             guard self.matches(action) else { self.sequence(actions, index: index + 1, completion: completion); return }
             self.iteration(action, remaining: action.parameters.repeatCount ?? 1) { ok in
                 guard ok || action.parameters.continueOnFailure == true else { completion(false); return }
+                // Break Loop skips the rest of every enclosing list up to its loop.
+                if self.breakPending { completion(true); return }
                 self.later(action.parameters.delayAfterMs ?? 0) {
                     self.sequence(actions, index: index + 1, completion: completion)
                 }
@@ -897,7 +939,7 @@ final class ActionSequenceRunner {
         let done: (Bool) -> Void = { ok in
             guard !replied, !self.cancelled else { return }; replied = true
             guard ok else { completion(false); return }
-            guard remaining > 1 else { completion(true); return }
+            guard remaining > 1, !self.breakPending else { completion(true); return }
             // Yield even for a zero interval to avoid deep synchronous recursion.
             DispatchQueue.main.async {
                 self.later(action.parameters.repeatIntervalMs ?? 0) { self.iteration(action, remaining: remaining - 1, completion: completion) }
@@ -910,6 +952,38 @@ final class ActionSequenceRunner {
             sequence(branch ?? [], index: 0, completion: done)
         } else if action.actionType == .wait {
             later(action.parameters.waitMs ?? 250) { done(true) }
+        } else if action.actionType == .repeatLoop {
+            loop(action.parameters.children ?? [], remaining: action.parameters.loopCount ?? 2, completion: done)
+        } else if action.actionType == .breakLoop {
+            ActionExecutor.onActionExecuted?(action)
+            breakPending = true; done(true)
+        } else if action.actionType == .cycleActions {
+            let steps = action.parameters.children ?? []
+            guard !steps.isEmpty else { done(true); return }
+            let step = ActionFlowState.nextCycleIndex(id: action.id, count: steps.count, resetAfter: action.parameters.cycleResetSeconds)
+            sequence([steps[step]], index: 0, completion: done)
+        } else if action.actionType == .toggleOnOff {
+            let on = ActionFlowState.nextToggle(id: action.id)
+            sequence((on ? action.parameters.children : action.parameters.elseChildren) ?? [], index: 0, completion: done)
+        } else if action.actionType == .debounce {
+            ActionExecutor.onActionExecuted?(action)
+            // Only the newest run with this action's id continues; older ones stop.
+            let token = ActionFlowState.beginDebounce(action.id)
+            later(action.parameters.waitMs ?? 500) {
+                done(ActionFlowState.isLatestDebounce(action.id, token: token))
+            }
         } else { perform(action, done) }
+    }
+    /// Repeat N Times. Yields between passes so a long loop never recurses deeply
+    /// or starves the main queue.
+    private func loop(_ steps: [TriggerAction], remaining: Int, completion: @escaping (Bool) -> Void) {
+        guard !cancelled else { return }
+        guard remaining > 0 else { completion(true); return }
+        sequence(steps, index: 0) { [weak self] ok in
+            guard let self, !self.cancelled else { return }
+            guard ok else { completion(false); return }
+            if self.breakPending { self.breakPending = false; completion(true); return }
+            DispatchQueue.main.async { self.loop(steps, remaining: remaining - 1, completion: completion) }
+        }
     }
 }

@@ -22,14 +22,24 @@ MACOS="$CONTENTS/MacOS"
 BINARY_NAME="AllOfMacOS"
 
 echo "==> swift build (release; limited parallelism)"
-swift build -c release -j "${ALLOFMACOS_BUILD_JOBS:-2}"
+SCRATCH="${ALLOFMACOS_SCRATCH_PATH:-$PWD/.build}"
+swift build -c release --scratch-path "$SCRATCH" -j "${ALLOFMACOS_BUILD_JOBS:-2}"
 
-BIN="$(swift build -c release --show-bin-path)/AllOfMacOS"
+BIN="$(swift build -c release --scratch-path "$SCRATCH" --show-bin-path)/AllOfMacOS"
 echo "==> Assembling app bundle at $APP"
 rm -rf "$APP"
 mkdir -p "$MACOS"
 cp "$BIN" "$MACOS/$BINARY_NAME"
 cp AllOfMacOS/App/Info.plist "$CONTENTS/Info.plist"
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    SOURCE_REVISION="$(git rev-parse HEAD)"
+    /usr/libexec/PlistBuddy -c "Add :AOMSourceRevision string $SOURCE_REVISION" "$CONTENTS/Info.plist"
+    if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+        /usr/libexec/PlistBuddy -c 'Add :AOMSourceDirty bool true' "$CONTENTS/Info.plist"
+    else
+        /usr/libexec/PlistBuddy -c 'Add :AOMSourceDirty bool false' "$CONTENTS/Info.plist"
+    fi
+fi
 # SwiftPM excludes asset catalogs. Package the same complete icon set used by Xcode.
 ICON_SET="$PWD/AllOfMacOS/Assets.xcassets/AppIcon.appiconset"
 ICON_WORK="$(mktemp -d)"

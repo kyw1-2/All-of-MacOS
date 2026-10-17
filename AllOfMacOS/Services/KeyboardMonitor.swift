@@ -226,6 +226,14 @@ class KeyboardMonitor: ObservableObject {
         self.systemMonitoringEnabled = systemMonitoringEnabled; self.builtinHandler = builtinHandler
     }
     private var pressApps: [UInt16: String] = [:]
+    private var pressTimes: [UInt16: TimeInterval] = [:]
+    private var pressSerial: [UInt16: UUID] = [:]
+    /// Injectable so hold-time behavior is testable without real waiting or input.
+    var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var scheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    var timingDefaults: UserDefaults = TriggerTimingSettings.store
     private var registrationGeneration = UUID()
     private var globalMonitors: [Any] = []
     private var triggerEventTap: CFMachPort?
@@ -370,9 +378,17 @@ class KeyboardMonitor: ObservableObject {
         if !isDown {
             guard let bindings = pressed.removeValue(forKey: keyCode) else { return false }
             let sameApp = pressApps.removeValue(forKey: keyCode) == (NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")
+            // Invalidate any pending hold timers for this physical press.
+            pressSerial[keyCode] = nil
+            let heldMs = pressTimes.removeValue(forKey: keyCode).map { Int(max(0, clock() - $0) * 1000) } ?? 0
             for trigger in bindings {
                 ActionExecutor.releaseHold(trigger.id)
-                if trigger.keyboardPhase == .keyUp, sameApp,
+                let plan = TriggerKeyHold.plan(phase: trigger.keyboardPhase, minHoldMs: trigger.minHoldMs,
+                                               longPressMs: TriggerTimingSettings.keyboardLongPressMs(timingDefaults))
+                if plan == .onRelease, sameApp,
+                   TriggerKeyHold.acceptsRelease(phase: trigger.keyboardPhase, heldMs: heldMs, minHoldMs: trigger.minHoldMs,
+                                                 maxHoldMs: trigger.maxHoldMs,
+                                                 quickReleaseMaxMs: TriggerTimingSettings.keyboardQuickReleaseMs(timingDefaults)),
                    trigger.appBundleID == nil || trigger.appBundleID == NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                    UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true { fire(trigger, keyCode: keyCode) }
             }
@@ -382,7 +398,10 @@ class KeyboardMonitor: ObservableObject {
         guard !isRepeat, UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return false }
 
         let shortcut = KeyboardShortcut(keyCode: keyCode, modifiers: modifiers.intersection([.command, .option, .control, .shift, .function]))
-        let matches = TriggerResolver.resolve(registeredTriggers, payload: shortcut,
+        // A paused/suppressed keyboard never swallows keys or runs user
+        // bindings; AOM's own built-in shortcuts below are unaffected.
+        let suppressed = !TriggerSuppression.shared.allows(kind: .keyboard)
+        let matches = suppressed ? [] : TriggerResolver.resolve(registeredTriggers, payload: shortcut,
             frontBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
             payloadOf: { if case .keyboardShortcut(let shortcut) = $0.input { return KeyboardShortcut(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers.intersection([.command, .option, .control, .shift, .function])) }; return nil }, appBundleIDOf: { $0.appBundleID }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
         if matches.isEmpty {
@@ -396,8 +415,26 @@ class KeyboardMonitor: ObservableObject {
             return handled
         }
         pressed[keyCode] = matches
-        pressApps[keyCode] = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        for trigger in matches where trigger.keyboardPhase == .keyDown { fire(trigger, keyCode: keyCode) }
+        let pressApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        pressApps[keyCode] = pressApp
+        pressTimes[keyCode] = clock()
+        let serial = UUID()
+        pressSerial[keyCode] = serial
+        let longPressMs = TriggerTimingSettings.keyboardLongPressMs(timingDefaults)
+        for trigger in matches {
+            switch TriggerKeyHold.plan(phase: trigger.keyboardPhase, minHoldMs: trigger.minHoldMs, longPressMs: longPressMs) {
+            case .immediately: fire(trigger, keyCode: keyCode)
+            case .onRelease: break
+            case .afterHold(let ms):
+                scheduler(Double(ms) / 1000) { [weak self] in
+                    // Still the same physical press, still held, same app.
+                    guard let self, self.pressSerial[keyCode] == serial,
+                          self.pressed[keyCode]?.contains(where: { $0.id == trigger.id }) == true,
+                          NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "" == pressApp else { return }
+                    self.fire(trigger, keyCode: keyCode)
+                }
+            }
+        }
         return true
     }
     private func fire(_ trigger: Trigger, keyCode: UInt16) {
@@ -416,6 +453,7 @@ class KeyboardMonitor: ObservableObject {
     }
     private func releaseKeys() {
         let bindings = pressed.values.flatMap { $0 }; pressed.removeAll(); pressApps.removeAll()
+        pressTimes.removeAll(); pressSerial.removeAll()
         for trigger in bindings { ActionExecutor.releaseHold(trigger.id) }
     }
     func unregisterAll() {

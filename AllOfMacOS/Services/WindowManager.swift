@@ -274,12 +274,41 @@ final class WindowManager: ObservableObject {
         if type == .saveWindowLayout { completion(saveLayout(name: parameters.windowLayoutName ?? "")); return }
         if type == .restoreWindowLayout { restoreLayout(name: parameters.windowLayoutName ?? "", completion: completion); return }
         guard !layoutBusy else { completion(false); return }
-        guard let target = target ?? captureTarget(), let current = frame(of: target) else {
+        // Pointer-follow moves and resizes pick their own window under the cursor.
+        if WindowDragMath.verb(for: type) != nil {
+            completion(WindowDragController.shared.perform(type, timeout: parameters.windowDragTimeoutSeconds, target: target))
+            return
+        }
+        var chosen = target
+        if parameters.windowTarget == "underCursor",
+           [.moveResizeWindow, .zoomWindow, .closeWindow, .toggleFullscreenWindow].contains(type) {
+            guard let under = captureTarget(atMousePoint: NSEvent.mouseLocation) else {
+                fail("No window under the cursor", completion); return
+            }
+            chosen = under
+        }
+        guard let target = chosen ?? captureTarget(), let current = frame(of: target) else {
             fail("No accessible focused window", completion); return
         }
         guard !moving.contains("\(target.pid):\(CFHash(target.window))") else { completion(false); return }
         if type == .minimizeWindow {
             completion(AXUIElementSetAttributeValue(target.window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success)
+            return
+        }
+        if type == .zoomWindow || type == .closeWindow {
+            let attribute = type == .zoomWindow ? kAXZoomButtonAttribute : kAXCloseButtonAttribute
+            var button: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(target.window, attribute as CFString, &button) == .success,
+                  let button, CFGetTypeID(button) == AXUIElementGetTypeID() else {
+                fail("The window has no \(type == .zoomWindow ? "zoom" : "close") button", completion); return
+            }
+            completion(AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success)
+            return
+        }
+        if type == .toggleFullscreenWindow {
+            var state: CFTypeRef?
+            let fullscreen = AXUIElementCopyAttributeValue(target.window, "AXFullScreen" as CFString, &state) == .success ? (state as? Bool ?? false) : false
+            completion(AXUIElementSetAttributeValue(target.window, "AXFullScreen" as CFString, fullscreen ? kCFBooleanFalse : kCFBooleanTrue) == .success)
             return
         }
         let displays = screens()
@@ -293,7 +322,7 @@ final class WindowManager: ObservableObject {
         case "next": chosenIndex = (index + (displays.count > 1 ? 1 : 0)) % displays.count
         default: chosenIndex = index
         }
-        let visible = type == .customSnapWindow ? displays[chosenIndex].visible : displays[index].visible
+        let visible = (type == .customSnapWindow || type == .moveResizeWindow) ? displays[chosenIndex].visible : displays[index].visible
         let desired: CGRect
         switch type {
         case .customSnapWindow:
@@ -304,6 +333,16 @@ final class WindowManager: ObservableObject {
             }
             desired = WindowGeometry.snapFrame(normalized: normalized, visible: visible)
         case .maximizeWindow: desired = visible
+        case .snapWindowTopHalf: desired = WindowGeometry.topHalf(of: visible)
+        case .snapWindowBottomHalf: desired = WindowGeometry.bottomHalf(of: visible)
+        case .moveResizeWindow:
+            guard let frame = WindowGeometry.customFrame(current: current, visible: visible,
+                    unit: parameters.moveResizeUnit ?? "percent", anchor: parameters.moveResizeAnchor ?? "topLeft",
+                    x: parameters.moveResizeX ?? 0, y: parameters.moveResizeY ?? 0,
+                    width: parameters.moveResizeWidth, height: parameters.moveResizeHeight) else {
+                fail("Invalid Move / Resize values", completion); return
+            }
+            desired = frame
         case .centerWindow: desired = WindowGeometry.moved(current, into: visible, maximize: false)
         case .moveWindowNextMonitor, .moveWindowPreviousMonitor, .moveWindowNextMonitorAndMaximize:
             guard displays.count > 1 else { fail("A second display is required", completion); return }

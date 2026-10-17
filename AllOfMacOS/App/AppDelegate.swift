@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import ImageIO
 import UniformTypeIdentifiers
@@ -67,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var appState: AppState?
     private weak var mainWindow: NSWindow?
     private var menuBarObserver: NSKeyValueObservation?
+    private var suppressionObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
@@ -74,6 +76,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupMenuBarIcon()
         }
         observeMenuBarSetting()
+        // Reflect Pause AOM in the menu-bar icon whenever the pause state changes.
+        suppressionObserver = TriggerSuppression.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.updateStatusIcon() }
         if PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-clipboard-preview") {
             Task { @MainActor in
                 let store = ClipboardStore.shared
@@ -252,6 +258,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// process. Without this, quitting while dimmed would leave the screen dark
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
+        ActionExecutor.cancelAllSequences()
         MainActor.assumeIsolated { ClipboardMCPServer.shared.stopForTermination() }
         DisplayControlService.clearAllSoftwareDims()
     }
@@ -390,6 +397,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         snapItem.state = snapping ? .on : .off; snapItem.target = self
         snapItem.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: nil)
         menu.addItem(snapItem)
+        menu.addItem(pauseMenuItem())
 
         menu.addItem(NSMenuItem.separator())
 
@@ -526,10 +534,78 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // MARK: - Pause AOM (TriggerSuppression)
+
+    /// "Pause AOM ▸ for 5 min / 1 h / until resumed · Pause for <App> · Resume".
+    private func pauseMenuItem() -> NSMenuItem {
+        let suppression = TriggerSuppression.shared
+        let item = NSMenuItem(title: suppression.isPaused ? "Pause AOM (active)" : "Pause AOM", action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: suppression.isPaused ? "pause.circle.fill" : "pause.circle", accessibilityDescription: nil)
+        let submenu = NSMenu()
+        if let status = suppression.statusDescription {
+            let header = NSMenuItem(title: status, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            submenu.addItem(header)
+            submenu.addItem(.separator())
+        }
+        for (title, seconds) in AppDelegate.pauseDurations {
+            let entry = NSMenuItem(title: title, action: #selector(pauseForDuration(_:)), keyEquivalent: "")
+            entry.target = self; entry.representedObject = NSNumber(value: seconds)
+            submenu.addItem(entry)
+        }
+        let untilResumed = NSMenuItem(title: "Until Resumed", action: #selector(pauseUntilResumed), keyEquivalent: "")
+        untilResumed.target = self
+        submenu.addItem(untilResumed)
+        if let front = NSWorkspace.shared.frontmostApplication, let id = front.bundleIdentifier,
+           id != Bundle.main.bundleIdentifier {
+            submenu.addItem(.separator())
+            let paused = suppression.pause.appBundleIDs.contains(id)
+            let name = front.localizedName ?? id
+            let appItem = NSMenuItem(title: paused ? "Resume for \(name)" : "Pause for \(name)",
+                                     action: #selector(togglePauseForApp(_:)), keyEquivalent: "")
+            appItem.target = self; appItem.representedObject = id
+            appItem.state = paused ? .on : .off
+            submenu.addItem(appItem)
+        }
+        // Apps paused earlier but no longer frontmost stay reachable.
+        for id in suppression.pause.appBundleIDs.sorted() where id != NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+            let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)
+                .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? id
+            let entry = NSMenuItem(title: "Resume for \(name)", action: #selector(togglePauseForApp(_:)), keyEquivalent: "")
+            entry.target = self; entry.representedObject = id; entry.state = .on
+            submenu.addItem(entry)
+        }
+        submenu.addItem(.separator())
+        let resume = NSMenuItem(title: "Resume", action: #selector(resumeTriggers), keyEquivalent: "")
+        resume.target = self
+        resume.isEnabled = suppression.isPaused || !suppression.pause.appBundleIDs.isEmpty
+        submenu.addItem(resume)
+        item.submenu = submenu
+        return item
+    }
+
+    static let pauseDurations: [(String, TimeInterval)] = [("for 5 Minutes", 300), ("for 1 Hour", 3600)]
+
+    @objc private func pauseForDuration(_ sender: NSMenuItem) {
+        guard let seconds = (sender.representedObject as? NSNumber)?.doubleValue else { return }
+        TriggerSuppression.shared.pause(for: seconds)
+        ActionExecutor.cancelAllSequences()
+    }
+    @objc private func pauseUntilResumed() {
+        TriggerSuppression.shared.pauseUntilResumed()
+        ActionExecutor.cancelAllSequences()
+    }
+    @objc private func togglePauseForApp(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        TriggerSuppression.shared.toggleApp(id)
+    }
+    @objc private func resumeTriggers() { TriggerSuppression.shared.resume() }
+
     private func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
-        let symbolName = enabled ? "hand.point.up.braille" : "hand.raised.slash"
+        let paused = TriggerSuppression.shared.isPaused
+        let symbolName = !enabled ? "hand.raised.slash" : (paused ? "pause.circle" : "hand.point.up.braille")
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "All of MacOS")
     }
 

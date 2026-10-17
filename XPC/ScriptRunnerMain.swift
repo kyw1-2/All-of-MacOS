@@ -9,7 +9,7 @@ final class Runner: NSObject, ScriptRunnerProtocol {
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
     private func isCancelled() -> Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
     func run(_ kind: String, source: String, timeout: Double, reply: @escaping (Int32, String, Bool) -> Void) {
-        guard ["shell", "applescript"].contains(kind), source.utf8.count <= 1_048_576, timeout.isFinite else { reply(-1, "Invalid request", false); return }
+        guard ScriptRunnerKinds.allowed.contains(kind), source.utf8.count <= 1_048_576, timeout.isFinite else { reply(-1, "Invalid request", false); return }
         lock.lock()
         guard active == 0, !cancelled else { lock.unlock(); reply(-1, "Runner busy", false); return }
         active += 1; lock.unlock()
@@ -20,7 +20,8 @@ final class Runner: NSObject, ScriptRunnerProtocol {
         }
     }
     private func execute(_ kind: String, _ source: String, _ timeout: Double) -> (Int32, String, Bool) {
-        let executable = kind == "shell" ? "/bin/zsh" : "/usr/bin/osascript"
+        guard let command = ScriptRunnerKinds.command(for: kind) else { return (-1, "Invalid request", false) }
+        let executable = command.executable
         // A private temp file avoids argv limits and keeps script contents out of ps.
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let descriptor = open(file.path, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0o600)
@@ -43,7 +44,7 @@ final class Runner: NSObject, ScriptRunnerProtocol {
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP)); posix_spawnattr_setpgroup(&attr, 0)
         // Keep the Swift String array distinct from the C argv pointers.
         // macOS 15 Xcode otherwise infers UnsafePointer<CChar> for the literal.
-        let arguments: [String] = [executable, file.path]
+        let arguments: [String] = [executable] + command.arguments + [file.path]
         let strings: [UnsafeMutablePointer<CChar>?] =
             arguments.map { value in value.withCString { strdup($0) } }
         defer { strings.forEach { free($0) } }

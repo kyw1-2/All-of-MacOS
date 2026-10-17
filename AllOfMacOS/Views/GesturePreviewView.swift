@@ -223,6 +223,26 @@ struct GesturePreviewView: View {
         case .cornerForceClickBottomRight:
             PositionClickAnimation(position: .bottomRight, animating: animating)
 
+        // Touch Start / Long Touch / Release: the resting-finger artwork with the right finger count.
+        case .oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart:
+            TapAnimation(fingerCount: gesture.touchHoldFingerCount ?? 1, animating: animating)
+        case .oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch:
+            TapAnimation(fingerCount: gesture.touchHoldFingerCount ?? 1, animating: animating, isClick: true)
+        case .releaseLastFingerAfter1: TapAnimation(fingerCount: 1, animating: animating)
+        case .releaseLastFingerAfter2: TapAnimation(fingerCount: 2, animating: animating)
+        case .releaseLastFingerAfter3: TapAnimation(fingerCount: 3, animating: animating)
+        case .releaseLastFingerAfter4: TapAnimation(fingerCount: 4, animating: animating)
+        case .releaseLastFingerAfter5: TapAnimation(fingerCount: 5, animating: animating)
+        case .releaseLastFingerRegardless: TapAnimation(fingerCount: 1, animating: animating)
+        // Two-finger edge swipes move inward from the named side.
+        case .twoFingerSwipeFromLeftEdge: SwipeAnimation(fingerCount: 2, direction: .right, animating: animating)
+        case .twoFingerSwipeFromRightEdge: SwipeAnimation(fingerCount: 2, direction: .left, animating: animating)
+        case .twoFingerSwipeFromTopEdge: SwipeAnimation(fingerCount: 2, direction: .down, animating: animating)
+        case .twoFingerSwipeFromBottomEdge: SwipeAnimation(fingerCount: 2, direction: .up, animating: animating)
+        case .threeFingerTapTop, .threeFingerTapBottom: TapAnimation(fingerCount: 3, animating: animating)
+        case .scrollUp: SwipeAnimation(fingerCount: 2, direction: .up, animating: animating)
+        case .scrollDown: SwipeAnimation(fingerCount: 2, direction: .down, animating: animating)
+
         // Press-drag
         case .twoFingerPressDragLeft:
             SwipeAnimation(fingerCount: 2, direction: .left, animating: animating)

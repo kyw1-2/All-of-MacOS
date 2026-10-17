@@ -73,9 +73,10 @@ final class WindowAndMouseActionsTests: XCTestCase {
 
     func testMouseActionsAreClassifiedAndEveryOneHasAnIcon() {
         let mouse = ActionType.allCases.filter { $0.category == .mouseActions }
-        XCTAssertEqual(mouse.count, 14, "the mouse family is the 14 synthesised pointer actions")
+        // 14 original pointer actions + 7 added in 1.1.4 (modifier clicks, custom click, custom scroll, relative move).
+        XCTAssertEqual(mouse.count, 21, "the mouse family is the 14 original synthesised pointer actions plus the 7 added in 1.1.4")
         XCTAssertTrue(mouse.allSatisfy { !$0.iconName.isEmpty })
-        XCTAssertEqual(Set(mouse).count, 14)
+        XCTAssertEqual(Set(mouse).count, 21)
         for action in mouse { XCTAssertFalse(action.rawValue.isEmpty) }
     }
 

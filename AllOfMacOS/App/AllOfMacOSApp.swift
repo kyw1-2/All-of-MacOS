@@ -561,6 +561,7 @@ struct AllOfMacOSApp: App {
         .defaultSize(width: 1300, height: 700)
         .commands {
             TriggerEditorCommands()
+            WorkflowVariableCommands()
             CommandGroup(after: .newItem) {
                 Button("Open Annotation Project…") { AnnotationEditorController.shared.chooseProject() }
                     .keyboardShortcut("o", modifiers: .command)
@@ -572,6 +573,10 @@ struct AllOfMacOSApp: App {
                 .keyboardShortcut("q", modifiers: .command)
             }
         }
+
+        Window("Workflow Variables", id: "workflow-variables") {
+            WorkflowVariablesView()
+        }.defaultSize(width: 620, height: 440)
 
         Settings {
             SettingsView()
@@ -692,6 +697,8 @@ struct SettingsView: View {
             GeneralSettingsView()
                 .environmentObject(appState)
                 .tabItem { Label("General", systemImage: "gearshape") }
+            GestureSettingsView()
+                .tabItem { Label("Gestures", systemImage: "hand.draw") }
             AppearanceSettingsView()
                 .environmentObject(appState)
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }

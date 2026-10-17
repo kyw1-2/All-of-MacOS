@@ -58,7 +58,9 @@ jobs:
           xcodebuild -version
 
       - name: Test application
-        run: swift test -j 2
+        run: |
+          brew list webp >/dev/null 2>&1 || brew install webp
+          swift test -j 2
 
       - name: Import AOM Dev signing identity into ephemeral keychain
         uses: apple-actions/import-codesign-certs@v7

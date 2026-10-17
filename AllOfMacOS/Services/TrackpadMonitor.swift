@@ -62,6 +62,11 @@ class TrackpadMonitor {
     private var registrationGeneration = UUID()
     private var monitors: [Any] = []
     private var registeredTriggers: [Binding] = []
+    /// Long Touch hold time (seconds) per registered trigger id.
+    private var longTouchDurations: [UUID: Double] = [:]
+    /// Held modifiers; injectable so scroll+modifier triggers are testable.
+    var modifierFlagsProvider: () -> UInt = { NSEvent.modifierFlags.rawValue }
+    private var trackpadScroll = ScrollStepper(step: 40, minInterval: 0.15)
     private var activationGroups: [ActivationGroup] = []
     // Click suppression via CGEventTap
     private var clickSuppressEventTap: CFMachPort?
@@ -101,8 +106,7 @@ class TrackpadMonitor {
     private let swipeThreshold: CGFloat = 50
     // Minimum velocity (points/sec) for a swipe to fire — per-gesture, fast flick vs slow scroll
     private func swipeMinVelocity(for gesture: TrackpadGesture) -> CGFloat {
-        let stored = UserDefaults.standard.double(forKey: "AOMSwipeMinVelocity_\(gesture.rawValue)")
-        return stored > 0 ? CGFloat(stored) : 200
+        CGFloat(GestureSensitivity.velocity(for: gesture))
     }
 
     // Press-drag tracking
@@ -165,8 +169,12 @@ class TrackpadMonitor {
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         activationGroups = groups
         invalidateRecognition()
+        longTouchDurations.removeAll()
         registeredTriggers = triggers.compactMap { trigger in
             guard trigger.isEnabled, case .trackpadGesture(let gesture) = trigger.input else { return nil }
+            // Scroll triggers without a modifier would fire on every scroll.
+            if TriggerValidation.problem(for: trigger) != nil { return nil }
+            if gesture.isLongTouch { longTouchDurations[trigger.id] = Double(trigger.longTouchDurationMs) / 1000 }
             return (trigger.id, gesture, trigger.actions, trigger.appBundleID, trigger.suppressClick, trigger.hapticFeedback, trigger.requiredModifiers, trigger.activationGroupID)
         }
         guard systemMonitoringEnabled else { return }
@@ -337,8 +345,14 @@ class TrackpadMonitor {
         }
         let enabled = Set(applicableTriggers.map(\.gesture))
         var session = sessions[deviceID] ?? ContactGestureSession()
+        let applicable = applicableTriggers
         let gestures = session.update(points, timestamp: timestamp, pressed: pressedButtons != 0,
-            enabled: enabled, restTime: tipTapMinRestTime, minVelocity: { [self] in swipeMinVelocity(for: $0) })
+            enabled: enabled, restTime: tipTapMinRestTime, minVelocity: { [self] in swipeMinVelocity(for: $0) },
+            longTouchDurations: { [self] gesture in
+                let durations = applicable.filter { $0.gesture == gesture }.compactMap { longTouchDurations[$0.id] }
+                return durations.isEmpty ? [0.5] : Array(Set(durations))
+            })
+        let longTouchDuration = session.lastLongTouchDuration
         sessions[deviceID] = session
         if session.peak >= 2 { rawOwnedUntil = ProcessInfo.processInfo.systemUptime + 0.3 }
         if systemMonitoringEnabled && deviceID != UInt64.max {
@@ -355,6 +369,8 @@ class TrackpadMonitor {
                 handleTap(.oneFingerTap, double: .oneFingerDoubleTap, at: timestamp, device: deviceID)
             case .fourFingerTap:
                 handleTap(.fourFingerTap, double: .fourFingerDoubleTap, at: timestamp, device: deviceID)
+            case .oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch:
+                queueGesture(gesture, deviceID: deviceID, longTouchDuration: longTouchDuration)
             default: queueGesture(gesture, deviceID: deviceID)
             }
         }
@@ -514,7 +530,7 @@ class TrackpadMonitor {
         guard UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return [] }
         let front = frontmostBundleID()
         return registeredTriggers.filter { binding in
-            guard TriggerResolver.modifiersMatch(binding.requiredModifiers, NSEvent.modifierFlags.rawValue) else { return false }
+            guard TriggerResolver.modifiersMatch(binding.requiredModifiers, modifierFlagsProvider()) else { return false }
             if let id = binding.activationGroupID { return activationGroups.contains { $0.id == id && $0.matches(front) } }
             if let bundleID = binding.appBundleID { return bundleID == front }
             return !activationGroups.contains { $0.matches(front) && $0.disableGlobalTriggers }
@@ -570,7 +586,7 @@ class TrackpadMonitor {
         // Only freeze the pointer when a drawing gesture is actually bound —
         // otherwise a plain drag gets swallowed by a tap nobody asked for.
         guard suppress, UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
-              !matchingTriggers(for: gesture).isEmpty else {
+              TriggerSuppression.shared.allows(kind: .trackpad), !matchingTriggers(for: gesture).isEmpty else {
             stopSuppressingMouse()
             return
         }
@@ -600,7 +616,8 @@ class TrackpadMonitor {
                     DispatchQueue.main.async { [weak owner] in owner?.stopSuppressingMouse() }
                     return .passUnretained(event)
                 }
-                if event.getIntegerValueField(.eventSourceUserData) == 0x475454 ||
+                if !TriggerSuppression.shared.allows(kind: .trackpad) ||
+                   event.getIntegerValueField(.eventSourceUserData) == 0x475454 ||
                    ProcessInfo.processInfo.systemUptime >= owner.suppressionDeadline || NSEvent.pressedMouseButtons & 1 == 0 {
                     return .passUnretained(event)
                 }
@@ -1104,8 +1121,25 @@ class TrackpadMonitor {
             precise: event.hasPreciseScrollingDeltas, timestamp: event.timestamp)
     }
 
+    /// "Scroll Up/Down (modifier key needed)": discrete steps from two-finger
+    /// scrolling while the trigger's modifiers are held. Runs even when the raw
+    /// multitouch source is active, because scrolling is not part of that stream.
+    /// Direction follows the delivered delta: positive Y = Up.
+    private func processScrollTrigger(deltaX: CGFloat, deltaY: CGFloat, momentumPhase: NSEvent.Phase, timestamp: TimeInterval) {
+        guard momentumPhase.isEmpty else { return }
+        var wanted = Set<MouseTriggerKind>()
+        for entry in applicableTriggers {
+            if entry.gesture == .scrollUp { wanted.insert(.scrollUp) }
+            if entry.gesture == .scrollDown { wanted.insert(.scrollDown) }
+        }
+        guard !wanted.isEmpty,
+              let kind = trackpadScroll.feed(dx: Double(deltaX), dy: Double(deltaY), time: timestamp, wanted: wanted) else { return }
+        queueGesture(kind == .scrollUp ? .scrollUp : .scrollDown)
+    }
+
     func processScroll(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase,
                        momentumPhase: NSEvent.Phase = [], precise: Bool = true, timestamp: TimeInterval) {
+        processScrollTrigger(deltaX: deltaX, deltaY: deltaY, momentumPhase: momentumPhase, timestamp: timestamp)
         guard !source.running, ProcessInfo.processInfo.systemUptime >= rawOwnedUntil else { return }
         let now = Date(timeIntervalSince1970: timestamp)
         guard precise, momentumPhase.isEmpty else { return }
@@ -1237,6 +1271,7 @@ class TrackpadMonitor {
         }
         guard type == .leftMouseDown || type == .rightMouseDown else { return false }
         suppressedButtons.remove(button) // Resynchronize on a fresh down after a lost up.
+        guard TriggerSuppression.shared.allows(kind: .trackpad) else { return false }
         let enabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
         if enabled, type == .leftMouseDown, tipTapShield.contains(now) {
             // Pair every residual click, including a delayed second click,
@@ -1263,7 +1298,7 @@ class TrackpadMonitor {
     /// click gesture that has suppressClick enabled, or nil if no suppression should happen.
     func clickGestureToSuppress() -> TrackpadGesture? {
         let globalEnabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
-        guard globalEnabled else { return nil }
+        guard globalEnabled, TriggerSuppression.shared.allows(kind: .trackpad) else { return nil }
 
         // Determine which gesture would fire based on finger count and position
         let gesture: TrackpadGesture?
@@ -1306,12 +1341,18 @@ class TrackpadMonitor {
 
     private func matchingTriggers(for gesture: TrackpadGesture) -> [(id: UUID, gesture: TrackpadGesture, actions: [TriggerAction], appBundleID: String?, suppressClick: Bool, hapticFeedback: Bool, requiredModifiers: UInt?, activationGroupID: UUID?)] {
         TriggerResolver.resolve(registeredTriggers, payload: gesture,
-            frontBundleID: frontmostBundleID(), payloadOf: { $0.gesture }, appBundleIDOf: { $0.appBundleID }, modifiers: NSEvent.modifierFlags.rawValue, requiredModifiersOf: { $0.requiredModifiers }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+            frontBundleID: frontmostBundleID(), payloadOf: { $0.gesture }, appBundleIDOf: { $0.appBundleID }, modifiers: modifierFlagsProvider(), requiredModifiersOf: { $0.requiredModifiers }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
     }
 
-    private func queueGesture(_ gesture: TrackpadGesture, deviceID: UInt64? = nil) {
+    private func queueGesture(_ gesture: TrackpadGesture, deviceID: UInt64? = nil, longTouchDuration: Double? = nil) {
+        guard TriggerSuppression.shared.allows(kind: .trackpad) else { return }
         let generation = registrationGeneration
-        let targets = matchingTriggers(for: gesture)
+        var targets = matchingTriggers(for: gesture)
+        if let longTouchDuration {
+            // Only the triggers that configured exactly this hold time fire now;
+            // longer ones fire when their own time elapses.
+            targets = targets.filter { abs((longTouchDurations[$0.id] ?? 0.5) - longTouchDuration) < 0.001 }
+        }
         if [.tipTapLeft, .tipTapRight, .tipTapMiddle].contains(gesture),
            UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
            targets.contains(where: { $0.suppressClick && $0.actions.contains(where: \.isEnabled) }) {
@@ -1340,7 +1381,7 @@ class TrackpadMonitor {
 
         // Check global toggle — detect but don't fire when disabled
         let globalEnabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
-        guard globalEnabled else {
+        guard globalEnabled, TriggerSuppression.shared.allows(kind: .trackpad) else {
             GestureLog.shared.logFromAnyThread("Gesture \(gesture.rawValue) — paused", level: .noMatch)
             return
         }

@@ -272,3 +272,60 @@ final class AudioOutputService {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: poll)
     }
 }
+
+// MARK: - Absolute volume and microphone mute (1.1.4)
+
+extension AudioOutputService {
+    /// Percentage points needed to move `current` (0…1) to `target` (0…100).
+    /// nil when the target is not a usable percentage.
+    static func volumeDelta(current: Float32, targetPercent: Double) -> Double? {
+        guard targetPercent.isFinite, (0...100).contains(targetPercent), current.isFinite else { return nil }
+        return targetPercent - Double(current) * 100
+    }
+
+    /// Sets the output volume to an exact percentage by stepping through
+    /// `adjustVolume`, so unmute-on-increase and read-back verification apply.
+    func setVolume(percent: Double, completion: @escaping (Bool) -> Void) {
+        guard let current = Self.currentVolume(),
+              let delta = Self.volumeDelta(current: current, targetPercent: percent) else { completion(false); return }
+        if abs(delta) < 0.05 { completion(true); return }
+        adjustVolume(percentagePoints: delta, completion: completion)
+    }
+
+    private static func defaultInputDeviceID() -> AudioDeviceID? {
+        var property = address(kAudioHardwarePropertyDefaultInputDevice)
+        var id: AudioDeviceID = 0; var size = UInt32(MemoryLayout.size(ofValue: id))
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &id) == noErr,
+              id != 0 else { return nil }
+        return id
+    }
+
+    /// Mute switches on the default input device, one per channel that has one.
+    private static func inputMuteProperties(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {
+        [kAudioObjectPropertyElementMain, 1, 2].compactMap { element -> AudioObjectPropertyAddress? in
+            var property = address(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeInput)
+            property.mElement = element
+            var writable: DarwinBoolean = false
+            guard AudioObjectHasProperty(device, &property),
+                  AudioObjectIsPropertySettable(device, &property, &writable) == noErr, writable.boolValue else { return nil }
+            return property
+        }
+    }
+
+    /// Flips the default microphone's mute state. Returns the new muted state,
+    /// or nil when the input exposes no writable mute switch (many USB mics).
+    @discardableResult
+    static func toggleInputMute() -> Bool? {
+        guard let device = defaultInputDeviceID() else { return nil }
+        var properties = inputMuteProperties(device)
+        guard !properties.isEmpty else { return nil }
+        var first: UInt32 = 0; var size = UInt32(MemoryLayout.size(ofValue: first))
+        guard AudioObjectGetPropertyData(device, &properties[0], 0, nil, &size, &first) == noErr else { return nil }
+        var next: UInt32 = first == 0 ? 1 : 0
+        var ok = true
+        for index in properties.indices {
+            ok = AudioObjectSetPropertyData(device, &properties[index], 0, nil, UInt32(MemoryLayout.size(ofValue: next)), &next) == noErr && ok
+        }
+        return ok ? next != 0 : nil
+    }
+}

@@ -18,6 +18,49 @@ struct ContactGestureSession {
     private var swipe = ContactSwipeRecognizer()
     private var pinchStart: (distance: Float, angle: Float)?
     private var pairIDs: [Int] = []
+    // BTT parity additions: touch start / long touch / release / edge swipe.
+    private var countSince: Double = 0
+    private var holdSince: Double = 0
+    private var holdAnchors: [Int: TouchPoint] = [:]
+    private var touchStartFired = Set<Int>()
+    private var longTouchFired = Set<String>()
+    private var edgeOrigin2: PadEdge?
+    private var edgeSwipeFired = false
+    private var consumedByLongTouch = false
+    /// The Long Touch duration (seconds) that produced the most recent
+    /// `*LongTouch` result, so the caller can route it to the triggers that
+    /// configured exactly that duration.
+    private(set) var lastLongTouchDuration: Double?
+    /// Fingers must stay in the same place this much (normalized) to count as resting.
+    static let longTouchMoveTolerance: Float = 0.03
+    /// A finger count must persist this long before Touch Start fires, so
+    /// fingers that land a frame apart report the final count only.
+    static let touchStartSettle: Double = 0.05
+    /// Fingers within this distance of a pad side count as "on the edge".
+    static let edgeZone: Float = 0.12
+    /// Inward travel needed for "2 Finger Swipe From Edge".
+    static let edgeSwipeDistance: Float = 0.10
+
+    enum PadEdge { case left, right, top, bottom }
+
+    /// The pad side both fingers started on, or nil when they began in the interior.
+    static func twoFingerEdge(_ points: [TouchPoint]) -> PadEdge? {
+        guard points.count == 2 else { return nil }
+        let zone = edgeZone
+        let candidates: [(PadEdge, Bool, Float)] = [
+            (.left, points.allSatisfy { $0.x < zone }, points.map(\.x).max() ?? 1),
+            (.right, points.allSatisfy { $0.x > 1 - zone }, 1 - (points.map(\.x).min() ?? 0)),
+            (.top, points.allSatisfy { $0.y > 1 - zone }, 1 - (points.map(\.y).min() ?? 0)),
+            (.bottom, points.allSatisfy { $0.y < zone }, points.map(\.y).max() ?? 1)]
+        return candidates.filter { $0.1 }.min { $0.2 < $1.2 }?.0
+    }
+
+    /// Where a 3-finger tap landed: nil for the middle band.
+    static func threeFingerTapRegion(centroidY: Float) -> TrackpadGesture? {
+        if centroidY > 0.60 { return .threeFingerTapTop }
+        if centroidY < 0.40 { return .threeFingerTapBottom }
+        return nil
+    }
     private struct Tip {
         var rest: [Int: TouchPoint]
         var tapper: TouchPoint
@@ -104,7 +147,8 @@ struct ContactGestureSession {
 
     mutating func update(_ next: [TouchPoint], timestamp: Double, pressed: Bool,
                          enabled: Set<TrackpadGesture>, restTime: Double,
-                         minVelocity: (TrackpadGesture) -> CGFloat) -> [TrackpadGesture] {
+                         minVelocity: (TrackpadGesture) -> CGFloat,
+                         longTouchDurations: (TrackpadGesture) -> [Double] = { _ in [0.5] }) -> [TrackpadGesture] {
         guard timestamp.isFinite else { return [] }
         if let lastTimestamp, timestamp < lastTimestamp { return [] }
         let previous = points
@@ -112,15 +156,22 @@ struct ContactGestureSession {
         var result: [TrackpadGesture] = []
         let ids = Set(next.map(\.id))
         let previousIDs = Set(previous.map(\.id))
+        lastLongTouchDuration = nil
         if previous.isEmpty && !next.isEmpty {
             peak = 0; travel = 0; consumed = false; origins = [:]; swipe = ContactSwipeRecognizer()
             pinchStart = nil; pairIDs = []
+            touchStartFired.removeAll(); longTouchFired.removeAll(); edgeOrigin2 = nil; edgeSwipeFired = false; consumedByLongTouch = false
             if let pending = tip, timestamp - (pending.interruptedAt ?? timestamp) > 0.08 { tip = nil }
+        }
+        if next.count != previous.count {
+            countSince = timestamp; holdSince = timestamp
+            holdAnchors = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         }
         if next.count > peak {
             peak = next.count; peakTime = timestamp
             origins = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             travel = 0
+            edgeOrigin2 = next.count == 2 ? Self.twoFingerEdge(next) : nil
         }
         for point in next {
             if let origin = origins[point.id] { travel = max(travel, hypot(point.x - origin.x, point.y - origin.y)) }
@@ -217,11 +268,67 @@ struct ContactGestureSession {
                 }
             }
         }
+        // Touch Start: the Nth finger has landed and the count has settled.
+        if !pressed, !next.isEmpty, next.count == peak,
+           let start = TrackpadGesture.touchStart(fingers: next.count), enabled.contains(start),
+           !touchStartFired.contains(next.count), timestamp - countSince >= Self.touchStartSettle {
+            touchStartFired.insert(next.count)
+            result.append(start)
+        }
+        // Long Touch: resting (not moving) for the configured duration. Movement restarts the clock.
+        // Another gesture consuming the touch blocks a long touch, but a long touch
+        // that already fired must not stop a longer-configured one from firing.
+        if !pressed, !consumed || consumedByLongTouch, !next.isEmpty, next.count == peak {
+            let moved = next.contains { point in
+                guard let anchor = holdAnchors[point.id] else { return true }
+                return hypot(point.x - anchor.x, point.y - anchor.y) > Self.longTouchMoveTolerance
+            }
+            if moved {
+                holdSince = timestamp
+                holdAnchors = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            } else if let long = TrackpadGesture.longTouch(fingers: next.count), enabled.contains(long) {
+                let due = longTouchDurations(long).sorted().first {
+                    !longTouchFired.contains("\(next.count):\(Int(($0 * 1000).rounded()))") && timestamp - holdSince >= $0 - 1e-6
+                }
+                if let due {
+                    longTouchFired.insert("\(next.count):\(Int((due * 1000).rounded()))")
+                    lastLongTouchDuration = due
+                    result.append(long); consume(); consumedByLongTouch = true
+                }
+            }
+        }
+        // 2-finger swipe from a pad edge takes priority over the plain swipe it would also match.
+        var swipeEnabled = enabled
+        if let edge = edgeOrigin2, peak == 2 {
+            let edgeGestures: [PadEdge: TrackpadGesture] = [.left: .twoFingerSwipeFromLeftEdge, .right: .twoFingerSwipeFromRightEdge,
+                                                            .top: .twoFingerSwipeFromTopEdge, .bottom: .twoFingerSwipeFromBottomEdge]
+            if let gesture = edgeGestures[edge], enabled.contains(gesture) {
+                swipeEnabled.subtract([.twoFingerSwipeUp, .twoFingerSwipeDown, .twoFingerSwipeLeft, .twoFingerSwipeRight])
+                if !consumed, !pressed, !edgeSwipeFired, next.count == 2 {
+                    let dx = next.reduce(Float(0)) { $0 + ($1.x - (origins[$1.id]?.x ?? $1.x)) } / 2
+                    let dy = next.reduce(Float(0)) { $0 + ($1.y - (origins[$1.id]?.y ?? $1.y)) } / 2
+                    let inward: Float, across: Float
+                    switch edge {
+                    case .left: inward = dx; across = dy
+                    case .right: inward = -dx; across = dy
+                    case .top: inward = -dy; across = dx
+                    case .bottom: inward = dy; across = dx
+                    }
+                    if inward >= Self.edgeSwipeDistance, inward > abs(across) * 1.2 {
+                        edgeSwipeFired = true
+                        result.append(gesture); consume()
+                    }
+                }
+            }
+        }
         if !consumed, !pressed, let detected = swipe.update(next, peak: peak, timestamp: timestamp,
-                                                            enabled: enabled, minVelocity: minVelocity) {
+                                                            enabled: swipeEnabled, minVelocity: minVelocity) {
             result.append(detected); consume()
         }
         if next.isEmpty && !previous.isEmpty {
+            // Release Last Finger fires however the touch ended (tap, swipe, hold).
+            if let release = TrackpadGesture.releaseLast(after: peak), enabled.contains(release) { result.append(release) }
+            if enabled.contains(.releaseLastFingerRegardless) { result.append(.releaseLastFingerRegardless) }
             let elapsed = timestamp - peakTime
             let tap: TrackpadGesture?
             switch peak {
@@ -231,7 +338,11 @@ struct ContactGestureSession {
             // A single-finger tap is resolved by where it landed.
             case 1: tap = ContactGestureSession.positionalTap(at: origins.values.first ?? TouchPoint(id: 0, x: 0.5, y: 0.5, size: 0))
             case 2: tap = .twoFingerTap
-            case 3: tap = .threeFingerTap
+            case 3:
+                // A tap in the top or bottom band is its own gesture when bound.
+                let centroidY = origins.isEmpty ? 0.5 : origins.values.reduce(Float(0)) { $0 + $1.y } / Float(origins.count)
+                if let region = Self.threeFingerTapRegion(centroidY: centroidY), enabled.contains(region) { tap = region }
+                else { tap = .threeFingerTap }
             case 4: tap = .fourFingerTap
             case 5: tap = .fiveFingerTap
             default: tap = nil

@@ -47,6 +47,7 @@ enum GestureReplaySuite {
             var trigger = Trigger(name: "Replay", input: .trackpadGesture(gesture))
             var parameters = ActionParameters(); parameters.text = gesture.rawValue
             trigger.actions = [TriggerAction(actionType: .typeText, parameters: parameters)]
+            if gesture.isTrackpadScroll { trigger.requiredModifiers = NSEvent.ModifierFlags.option.rawValue }
             monitor.registerTriggers([trigger])
             var fired: [String] = []
             ActionExecutor.onActionExecuted = { fired.append($0.parameters.text ?? "wrong action") }
@@ -189,6 +190,42 @@ enum GestureReplaySuite {
                 let pressed = (0..<fingers).map { point($0, x, y, pressure: 0.8) }
                 frame(pressed, 1)
                 monitor.handleMousePress(); monitor.handleMouseRelease()
+            case .oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart:
+                let n = gesture.touchHoldFingerCount ?? 1
+                let points = (0..<n).map { point($0, 0.2 + Float($0) * 0.12, 0.5) }
+                frame(points, 1); frame(points, 1.03); frame(points, 1.08); frame(points, 1.2)
+            case .oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch:
+                let n = gesture.touchHoldFingerCount ?? 1
+                let points = (0..<n).map { point($0, 0.2 + Float($0) * 0.12, 0.5) }
+                for i in 0...7 { frame(points, 1 + Double(i) * 0.1) } // rests 0.7 s, default threshold 0.5 s
+            case .releaseLastFingerAfter1, .releaseLastFingerAfter2, .releaseLastFingerAfter3,
+                 .releaseLastFingerAfter4, .releaseLastFingerAfter5, .releaseLastFingerRegardless:
+                let n = gesture == .releaseLastFingerRegardless ? 2 : (gesture.rawValue.first(where: \.isNumber).flatMap { Int(String($0)) } ?? 1)
+                let points = (0..<n).map { point($0, 0.2 + Float($0) * 0.12, 0.5) }
+                frame(points, 1); frame(Array(points.prefix(max(0, n - 1))), 1.1); frame(points, 1.15, state: 7)
+                if n > 1 { frame([], 1.2) } // the final finger lifting is the release
+            case .twoFingerSwipeFromLeftEdge, .twoFingerSwipeFromRightEdge, .twoFingerSwipeFromTopEdge, .twoFingerSwipeFromBottomEdge:
+                let left = gesture == .twoFingerSwipeFromLeftEdge, right = gesture == .twoFingerSwipeFromRightEdge
+                let top = gesture == .twoFingerSwipeFromTopEdge
+                let start: [TouchPoint] = left ? [point(1, 0.03, 0.45), point(2, 0.05, 0.55)]
+                    : right ? [point(1, 0.97, 0.45), point(2, 0.95, 0.55)]
+                    : top ? [point(1, 0.45, 0.96), point(2, 0.55, 0.94)]
+                    : [point(1, 0.45, 0.04), point(2, 0.55, 0.06)]
+                let dx: Float = left ? 0.2 : right ? -0.2 : 0
+                let dy: Float = top ? -0.2 : (left || right) ? 0 : 0.2
+                frame(start, 1)
+                let moved = start.map { point($0.id, $0.x + dx, $0.y + dy) }
+                frame(moved, 1.1); frame(moved, 1.2, state: 7)
+            case .threeFingerTapTop, .threeFingerTapBottom:
+                let y: Float = gesture == .threeFingerTapTop ? 0.85 : 0.15
+                let points = (0..<3).map { point($0, 0.3 + Float($0) * 0.15, y) }
+                frame(points, 1); frame(points, 1.1, state: 7)
+            case .scrollUp, .scrollDown:
+                // Scrolling arrives as scroll events with the modifier held, not as contacts.
+                monitor.modifierFlagsProvider = { NSEvent.ModifierFlags.option.rawValue }
+                let dy: CGFloat = gesture == .scrollUp ? 25 : -25
+                monitor.processScroll(deltaX: 0, deltaY: dy, phase: .changed, timestamp: 1)
+                monitor.processScroll(deltaX: 0, deltaY: dy, phase: .changed, timestamp: 1.05)
             case .drawTriangle:
                 let corners: [(Float, Float)] = [(0.3, 0.3), (0.7, 0.3), (0.5, 0.65), (0.3, 0.3)]
                 for side in 0..<3 { for i in 0...12 {

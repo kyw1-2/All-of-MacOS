@@ -32,7 +32,9 @@ jobs:
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'AllOfMacOS/App/Info.plist')" = 'com.kyw.allofmacos'
       - name: Test
-        run: swift test -j 2
+        run: |
+          brew list webp >/dev/null 2>&1 || brew install webp
+          swift test -j 2
       - name: Build test application
         env:
           ALLOFMACOS_SIGN_ID: '-'

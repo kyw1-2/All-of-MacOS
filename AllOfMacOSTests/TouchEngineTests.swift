@@ -104,6 +104,31 @@ final class TouchEngineTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.02)); XCTAssertEqual(count, 1)
     }
 
+    func testPausedTrackpadPassesNewClicksButFinishesAnAlreadyConsumedPair() {
+        let old = UserDefaults.standard.object(forKey: "AOMGlobalEnabled")
+        UserDefaults.standard.set(true, forKey: "AOMGlobalEnabled")
+        let monitor = TrackpadMonitor(systemMonitoringEnabled: false)
+        ActionExecutor.onActionExecuted = { _ in }
+        var trigger = Trigger(name: "Click", input: .trackpadGesture(.twoFingerClick))
+        trigger.suppressClick = true; trigger.actions = [TriggerAction(actionType: .playPause)]
+        monitor.registerTriggers([trigger])
+        defer {
+            monitor.unregisterAll(); ActionExecutor.onActionExecuted = nil
+            TriggerSuppression.shared.resume()
+            UserDefaults.standard.set(old, forKey: "AOMGlobalEnabled")
+        }
+        monitor.processTouchFrame([point(1, 0.3), point(2, 0.7)], count: 2, timestamp: 1, pressedButtons: 0)
+        TriggerSuppression.shared.pauseUntilResumed()
+        XCTAssertNil(monitor.clickGestureToSuppress())
+        XCTAssertFalse(monitor.shouldSuppressMouseEvent(.rightMouseDown))
+        XCTAssertFalse(monitor.shouldSuppressMouseEvent(.rightMouseUp))
+        TriggerSuppression.shared.resume()
+        XCTAssertTrue(monitor.shouldSuppressMouseEvent(.rightMouseDown))
+        TriggerSuppression.shared.pauseUntilResumed()
+        XCTAssertTrue(monitor.shouldSuppressMouseEvent(.rightMouseUp), "Finish a swallowed down without leaking an unmatched up")
+        XCTAssertFalse(monitor.shouldSuppressMouseEvent(.rightMouseDown))
+    }
+
     func testSuppressionPairsLongRightClickAndDoesNotSwallowNextUp() {
         let old = UserDefaults.standard.object(forKey: "AOMGlobalEnabled")
         UserDefaults.standard.set(true, forKey: "AOMGlobalEnabled")

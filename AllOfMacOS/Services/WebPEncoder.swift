@@ -5,9 +5,14 @@ import Darwin
 enum WebPEncoder {
     static func encode(image: CGImage, quality: Double) -> Data? {
         guard image.width > 0, image.height > 0, image.width <= 16383, image.height <= 16383,
-              Int64(image.width) * Int64(image.height) <= 100_000_000,
-              let frameworks = Bundle.main.privateFrameworksURL else { return nil }
-        let libraryURL = frameworks.appendingPathComponent("libwebp.7.dylib")
+              Int64(image.width) * Int64(image.height) <= 100_000_000 else { return nil }
+        // SwiftPM test executables have no app Frameworks folder. Only tests may
+        // use the developer-installed codec; distributed apps use their signed copy.
+        let candidates = PresetManager.isRunningTests
+            ? ["/opt/homebrew/opt/webp/lib/libwebp.7.dylib", "/usr/local/opt/webp/lib/libwebp.7.dylib"] : []
+        let bundled = Bundle.main.privateFrameworksURL?.appendingPathComponent("libwebp.7.dylib").path
+        guard let path = ([bundled].compactMap { $0 } + candidates).first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
+        let libraryURL = URL(fileURLWithPath: path)
         guard let library = dlopen(libraryURL.path, RTLD_NOW | RTLD_LOCAL) else { return nil }
         defer { dlclose(library) }
         typealias Encode = @convention(c) (UnsafePointer<UInt8>?, Int32, Int32, Int32, Float, UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?) -> Int

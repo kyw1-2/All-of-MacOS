@@ -551,6 +551,8 @@ struct ActionConfigView: View {
                         })) {
                             Text("Variable").tag("variable")
                             Text("Frontmost App Bundle ID").tag("app")
+                            Text("Frontmost App Name").tag("appName")
+                            Text("Clipboard Text").tag("clipboard")
                             Text("Focused Window Title").tag("window")
                             Text("Pointer X (0–1)").tag("mouseX")
                             Text("Pointer Y (0–1)").tag("mouseY")
@@ -561,12 +563,9 @@ struct ActionConfigView: View {
                         Picker("Comparison", selection: Binding(get: { action.parameters.conditionOperator ?? "equals" }, set: { op in
                             saveAction { $0.parameters.conditionOperator = op }
                         })) {
-                            Text("Equals").tag("equals")
-                            Text("Not equals").tag("notEquals")
-                            Text("Contains").tag("contains")
-                            Text("Regex matches").tag("regex")
-                            Text("Greater than (numeric)").tag("greater")
-                            Text("Less than (numeric)").tag("less")
+                            ForEach(WorkflowBranchCondition.operators, id: \.id) { entry in
+                                Text(entry.title).tag(entry.id)
+                            }
                         }
                         TextField("Compare to", text: stringParameter(\.conditionValue))
                         Text("THEN: \(action.parameters.children?.count ?? 0) steps   ELSE: \(action.parameters.elseChildren?.count ?? 0) steps")
@@ -847,10 +846,28 @@ struct ActionConfigView: View {
                 }
 
             default:
-                GroupBox("Info") {
-                    Text("This action requires no additional configuration.")
-                        .foregroundColor(.secondary)
-                        .padding(8)
+                if ActionParameterForm.handles(action.actionType) {
+                    ActionParameterForm(action: action, triggers: appState.currentPreset.triggers) { modify in saveAction(modify) }
+                } else {
+                    GroupBox("Info") {
+                        Text(action.actionType.description)
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                    }
+                }
+            }
+
+            if action.actionType.isDestructive {
+                GroupBox("Safety") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Ask for confirmation before running", isOn: Binding(
+                            get: { action.parameters.requiresConfirmation != false },
+                            set: { on in saveAction { $0.parameters.requiresConfirmation = on ? nil : false } }))
+                        if action.parameters.requiresConfirmation == false {
+                            Label("This will run without asking. \(action.actionType.rawValue) cannot be undone.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                    }.padding(8)
                 }
             }
 
@@ -976,8 +993,7 @@ struct SwipeVelocityConfig: View {
 
     init(gesture: TrackpadGesture) {
         self.gesture = gesture
-        let stored = UserDefaults.standard.double(forKey: "AOMSwipeMinVelocity_\(gesture.rawValue)")
-        _velocity = State(initialValue: stored > 0 ? stored : 500)
+        _velocity = State(initialValue: GestureSensitivity.velocity(for: gesture))
     }
 
     var body: some View {
@@ -991,10 +1007,9 @@ struct SwipeVelocityConfig: View {
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.accentColor)
                 }
-                Slider(value: $velocity, in: 50...2000, step: 50)
-                    .onChange(of: velocity) { _, newValue in
-                        UserDefaults.standard.set(newValue, forKey: defaultsKey)
-                    }
+                Slider(value: Binding(get: { velocity }, set: {
+                    velocity = $0; UserDefaults.standard.set($0, forKey: defaultsKey)
+                }), in: 50...2000, step: 50)
                 HStack {
                     Text("Any swipe")
                         .font(.caption2)
@@ -1003,6 +1018,10 @@ struct SwipeVelocityConfig: View {
                     Text("Fast flick only")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                }
+                Button("Use Global Default") {
+                    UserDefaults.standard.removeObject(forKey: defaultsKey)
+                    velocity = GestureSensitivity.velocity(for: gesture)
                 }
                 Text("Higher values require a faster flick, avoiding conflicts with normal scrolling.")
                     .font(.caption)

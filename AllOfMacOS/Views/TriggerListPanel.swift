@@ -35,6 +35,8 @@ struct TriggerListPanel: View {
     @State private var showingEditTrigger = false
     @State private var addCategory: TriggerCategory = .trackpad
     @FocusState private var searchFocused: Bool
+    @ObservedObject private var clipboard = TriggerClipboard.shared
+    @AppStorage("AOMGroupTriggersByFolder") private var groupByFolder = false
 
     var body: some View {
         let conflicts = TriggerConflictKey.counts(appState.currentPreset.triggers)
@@ -97,6 +99,8 @@ struct TriggerListPanel: View {
                     .frame(width: 120, alignment: .leading)
 
                     Spacer(minLength: 0)
+                    Toggle(isOn: $groupByFolder) { Image(systemName: "folder") }
+                        .toggleStyle(.button).help("Group triggers by folder")
                 }
                 if appState.isSearchingTriggers {
                     Text("Searching all apps, groups and input types, including disabled triggers.")
@@ -130,7 +134,15 @@ struct TriggerListPanel: View {
                         appState.selectedAction = nil
                     }
                 )) {
-                    if appState.selectedTriggerCategory == .all && !appState.isSearchingTriggers && !appState.displayedTriggers.contains(where: \.isFavorite) {
+                    if groupByFolder {
+                        ForEach(Array(Set(appState.displayedTriggers.map { $0.folder ?? "" })).sorted(), id: \.self) { folder in
+                            Section(folder.isEmpty ? "Ungrouped" : folder) {
+                                ForEach(appState.displayedTriggers.filter { ($0.folder ?? "") == folder }) { trigger in
+                                    triggerRow(trigger, conflicts: conflicts)
+                                }
+                            }
+                        }
+                    } else if appState.selectedTriggerCategory == .all && !appState.isSearchingTriggers && !appState.displayedTriggers.contains(where: \.isFavorite) {
                         ForEach(TriggerCategory.inputCategories) { category in
                             let items = appState.displayedTriggers.filter { $0.input.category == category }
                             if !items.isEmpty {
@@ -178,6 +190,9 @@ struct TriggerListPanel: View {
                         .accessibilityLabel("Move trigger down")
                 }
                 Spacer()
+                Button { pasteTrigger() } label: { Image(systemName: "doc.on.clipboard") }
+                    .help("Paste copied trigger into the current scope")
+                    .disabled(clipboard.copied == nil)
             }.padding(8)
         }
         .background(.background.opacity(0.22))
@@ -206,11 +221,24 @@ struct TriggerListPanel: View {
                 Button("Edit") { appState.selectedTrigger = trigger; showingEditTrigger = true }
                 Button(trigger.isEnabled ? "Disable" : "Enable") { appState.toggleTrigger(trigger) }
                 Button(trigger.isFavorite ? "Unpin from Top" : "Pin to Top") { appState.toggleFavorite(trigger) }
+                Button("Copy Trigger") { clipboard.copied = trigger }
+                Button("Paste Trigger") { pasteTrigger() }.disabled(clipboard.copied == nil)
+                Button("Duplicate") {
+                    appState.addTrigger(TriggerClipboard.duplicate(trigger))
+                }
                 Button("Move Up") { appState.moveTrigger(trigger, offset: -1) }.disabled(!appState.canMoveTrigger(trigger, offset: -1))
                 Button("Move Down") { appState.moveTrigger(trigger, offset: 1) }.disabled(!appState.canMoveTrigger(trigger, offset: 1))
                 Divider()
                 Button("Delete", role: .destructive) { appState.removeTrigger(trigger) }
             }
+    }
+
+    private func pasteTrigger() {
+        guard let source = clipboard.copied else { return }
+        var copy = TriggerClipboard.duplicate(source)
+        copy.appBundleID = appState.selectedActivationGroupID == nil ? appState.selectedAppTarget.bundleID : nil
+        copy.activationGroupID = appState.selectedActivationGroupID
+        appState.addTrigger(copy)
     }
 
     private func beginNewTrigger() {
@@ -340,12 +368,22 @@ struct TriggerRow: View {
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
 
+                if let label = trigger.colorLabel, !label.isEmpty {
+                    Label(label, systemImage: "tag.fill").font(.caption2)
+                        .foregroundStyle(TriggerLabel.color(label))
+                }
+                if let folder = trigger.folder, !folder.isEmpty {
+                    Label(folder, systemImage: "folder").font(.caption2).foregroundStyle(.secondary)
+                }
+                if !trigger.notes.isEmpty {
+                    Text(trigger.notes).font(.caption2).foregroundStyle(.secondary).lineLimit(1).help(trigger.notes)
+                }
                 if let scope { Text(scope).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
                 if trigger.requiredModifiers != nil {
                     Text(trigger.modifierLabel).font(.caption.weight(.semibold)).foregroundStyle(.tint)
                 }
-                if trigger.keyboardPhase == .keyUp || trigger.repeatWhileHeld {
-                    Text(trigger.repeatWhileHeld ? "Repeat while held" : "Key up").font(.caption).foregroundStyle(.secondary)
+                if (trigger.input.category == .keyboard && trigger.keyboardPhase != .keyDown) || trigger.repeatWhileHeld {
+                    Text(trigger.repeatWhileHeld ? "Repeat while held" : trigger.keyboardPhase.rawValue).font(.caption).foregroundStyle(.secondary)
                 }
                 Text("\(trigger.input.displayName) · \(trigger.actions.count) action\(trigger.actions.count == 1 ? "" : "s")")
                     .font(.caption)
@@ -404,7 +442,10 @@ struct AddTriggerSheet: View {
     }
 
     @State private var selectedGesture: TrackpadGesture = .twoFingerSwipeUp
-    @State private var selectedMouseButton: MouseButton = .button3
+    @State private var mouseSpec = MouseTriggerSpec(button: 2, kind: .click)
+    @State private var mouseModifiers: UInt = 0
+    @State private var trackpadModifiers: UInt = 0
+    @State private var longTouchMs = 500
     @State private var recordedShortcut: KeyboardShortcut?
     @State private var keyboardMode = "shortcut"
     @State private var sequenceStrokes: [KeySequenceStroke] = []
@@ -487,6 +528,8 @@ struct AddTriggerSheet: View {
         switch category {
         case .keyboard: return keyboardMode == "sequence" ?
             ((sequenceHoldEnabled ? sequenceStrokes.count == 1 : sequenceStrokes.count >= 2) && sequenceStrokes.count <= 6) : recordedShortcut != nil
+        case .trackpad: return TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers) == nil
+        case .normalMouse: return TriggerValidation.problem(for: mouseInput, requiredModifiers: mouseModifiers) == nil
         case .drawings: return !drawingSamples.isEmpty && !drawingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .otherTriggers: return canAddOtherTrigger
         case .all: return false
@@ -574,6 +617,16 @@ struct AddTriggerSheet: View {
             .background(Color(nsColor: .textBackgroundColor))
             .cornerRadius(6)
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
+            if selectedGesture.isLongTouch {
+                Stepper("Hold for \(String(format: "%.1f", Double(longTouchMs) / 1000)) s", value: $longTouchMs, in: 100...5000, step: 100)
+            }
+            if selectedGesture.isTrackpadScroll {
+                RequiredModifierToggles(modifiers: $trackpadModifiers)
+                if let problem = TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -638,17 +691,12 @@ struct AddTriggerSheet: View {
     }
 
     private var mousePicker: some View {
-        VStack(alignment: .leading) {
-            Text("Select Mouse Button:")
-                .font(.subheadline)
-            Picker("Button", selection: $selectedMouseButton) {
-                ForEach(MouseButton.allCases) { button in
-                    Text(button.rawValue).tag(button)
-                }
-            }
-            .labelsHidden()
-        }
+        MouseTriggerEditor(spec: $mouseSpec, modifiers: $mouseModifiers)
     }
+
+    /// Plain presses of the extra buttons stay in the original `.mouseButton`
+    /// encoding so they keep conflict-matching with existing triggers.
+    private var mouseInput: TriggerInput { MouseTriggerEditor.input(for: mouseSpec) }
 
     private var otherTriggerPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -805,6 +853,7 @@ struct AddTriggerSheet: View {
     }
 
     private func addTrigger() {
+        guard canAdd else { return }
         let input: TriggerInput
         switch category {
         case .trackpad:
@@ -817,7 +866,7 @@ struct AddTriggerSheet: View {
                 input = .keyboardShortcut(shortcut)
             }
         case .normalMouse:
-            input = .mouseButton(selectedMouseButton)
+            input = mouseInput
         case .drawings:
             input = .drawingPattern(drawingName)
         case .otherTriggers:
@@ -832,6 +881,11 @@ struct AddTriggerSheet: View {
             appBundleID: appState.selectedActivationGroupID == nil ? appState.selectedAppTarget.bundleID : nil
         )
         trigger.activationGroupID = appState.selectedActivationGroupID
+        if case .mouse = input { trigger.requiredModifiers = mouseModifiers == 0 ? nil : mouseModifiers }
+        if case .trackpadGesture(let gesture) = input {
+            if gesture.isTrackpadScroll, trackpadModifiers != 0 { trigger.requiredModifiers = trackpadModifiers }
+            if gesture.isLongTouch { trigger.longTouchDurationMs = longTouchMs }
+        }
         if case .drawingPattern = input {
             trigger.drawingSamples = drawingSamples
             trigger.drawingCertainty = drawingCertainty
@@ -853,8 +907,12 @@ struct EditTriggerSheet: View {
     let trigger: Trigger
     @State private var triggerName: String = ""
     @State private var selectedGesture: TrackpadGesture = .twoFingerSwipeUp
-    @State private var selectedMouseButton: MouseButton = .button3
+    @State private var mouseSpec = MouseTriggerSpec(button: 2, kind: .click)
+    @State private var mouseModifiers: UInt = 0
     @State private var changeGesture = false
+    @State private var notes = ""
+    @State private var folder = ""
+    @State private var colorLabel = ""
 
     var body: some View {
         VStack(spacing: 16) {
@@ -869,6 +927,15 @@ struct EditTriggerSheet: View {
             TextField("Trigger Name", text: $triggerName)
                 .textFieldStyle(.roundedBorder)
 
+            TextField("Notes", text: $notes, axis: .vertical).lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+            TextField("Folder (optional)", text: $folder).textFieldStyle(.roundedBorder)
+            Picker("Color label", selection: $colorLabel) {
+                Text("None").tag("")
+                ForEach(TriggerLabel.names, id: \.self) { Text($0).tag($0) }
+                if !colorLabel.isEmpty && !TriggerLabel.names.contains(colorLabel) { Text(colorLabel).tag(colorLabel) }
+            }
+
             // Option to change the gesture/input
             Toggle("Change gesture", isOn: $changeGesture)
 
@@ -882,19 +949,25 @@ struct EditTriggerSheet: View {
                 Spacer()
                 Button("Save") { saveTrigger() }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(changeGesture && (
+                        (trigger.input.category == .normalMouse
+                         && TriggerValidation.problem(for: MouseTriggerEditor.input(for: mouseSpec), requiredModifiers: mouseModifiers) != nil) ||
+                        (trigger.input.category == .trackpad
+                         && TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trigger.requiredModifiers) != nil)))
             }
         }
         .padding(20)
         .frame(width: 420)
         .onAppear {
             triggerName = trigger.name
+            notes = trigger.notes; folder = trigger.folder ?? ""; colorLabel = trigger.colorLabel ?? ""
             // Pre-select current gesture if applicable
             if case .trackpadGesture(let g) = trigger.input {
                 selectedGesture = g
             }
-            if case .mouseButton(let b) = trigger.input {
-                selectedMouseButton = b
-            }
+            if case .mouseButton(let b) = trigger.input { mouseSpec = MouseTriggerSpec(legacy: b) }
+            if case .mouse(let spec) = trigger.input { mouseSpec = spec }
+            mouseModifiers = (trigger.requiredModifiers ?? 0) & TriggerResolver.modifierMask
         }
     }
 
@@ -944,12 +1017,7 @@ struct EditTriggerSheet: View {
             .cornerRadius(6)
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
         case .normalMouse:
-            Picker("Button", selection: $selectedMouseButton) {
-                ForEach(MouseButton.allCases) { button in
-                    Text(button.rawValue).tag(button)
-                }
-            }
-            .labelsHidden()
+            MouseTriggerEditor(spec: $mouseSpec, modifiers: $mouseModifiers)
         default:
             Text("Cannot change this input type here")
                 .foregroundColor(.secondary)
@@ -972,13 +1040,21 @@ struct EditTriggerSheet: View {
     private func saveTrigger() {
         var updated = trigger
         updated.name = triggerName
+        updated.notes = notes
+        let cleanFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.folder = cleanFolder.isEmpty ? nil : cleanFolder
+        updated.colorLabel = colorLabel.isEmpty ? nil : colorLabel
 
         if changeGesture {
             switch trigger.input.category {
             case .trackpad:
                 updated.input = .trackpadGesture(selectedGesture)
             case .normalMouse:
-                updated.input = .mouseButton(selectedMouseButton)
+                let input = MouseTriggerEditor.input(for: mouseSpec)
+                // Left/right/scroll triggers without a modifier are refused, exactly as at creation.
+                guard TriggerValidation.problem(for: input, requiredModifiers: mouseModifiers) == nil else { return }
+                updated.input = input
+                if case .mouse = input { updated.requiredModifiers = mouseModifiers == 0 ? nil : mouseModifiers }
             default:
                 break
             }
@@ -1009,6 +1085,67 @@ struct TriggerEditorCommands: Commands {
         }
         CommandGroup(before: .textEditing) {
             Button("Search Triggers") { editor?.search() }.keyboardShortcut("f", modifiers: .command).disabled(editor == nil)
+        }
+    }
+}
+
+
+/// Picks a Normal Mouse trigger: button, what it does, and the required
+/// modifiers. Left/right buttons and scroll show BTT's "you would lose the
+/// click" warning until a modifier is chosen, and the owning sheet refuses to
+/// create the trigger meanwhile (`TriggerValidation`).
+struct MouseTriggerEditor: View {
+    @Binding var spec: MouseTriggerSpec
+    @Binding var modifiers: UInt
+
+    static func input(for spec: MouseTriggerSpec) -> TriggerInput {
+        if spec.kind == .click, let legacy = MouseButton.from(cgButton: Int64(spec.button)) { return .mouseButton(legacy) }
+        return .mouse(spec)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Mouse trigger:").font(.subheadline)
+            Picker("Action", selection: Binding(get: { spec.kind }, set: { spec = MouseTriggerSpec(button: spec.button, kind: $0) })) {
+                Section("Press") {
+                    ForEach([MouseTriggerKind.click, .doubleClick, .tripleClick, .longPress]) { Text($0.rawValue).tag($0) }
+                }
+                Section("Drag") {
+                    ForEach([MouseTriggerKind.dragUp, .dragDown, .dragLeft, .dragRight]) { Text($0.rawValue).tag($0) }
+                }
+                Section("Scroll wheel") {
+                    ForEach([MouseTriggerKind.scrollUp, .scrollDown, .scrollLeft, .scrollRight]) { Text($0.rawValue).tag($0) }
+                }
+            }
+            if !spec.kind.isScroll {
+                Picker("Button", selection: Binding(get: { spec.button }, set: { spec = MouseTriggerSpec(button: $0, kind: spec.kind) })) {
+                    ForEach(MouseTriggerSpec.pickerButtons, id: \.self) { Text(MouseTriggerSpec.buttonName($0) + ($0 < 3 ? "" : " (\($0 + 1))")).tag($0) }
+                }
+            }
+            RequiredModifierToggles(modifiers: $modifiers)
+            if let problem = TriggerValidation.problem(for: MouseTriggerEditor.input(for: spec), requiredModifiers: modifiers) {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+
+/// ⌃ ⌥ ⇧ ⌘ fn toggle row bound to a raw `NSEvent.ModifierFlags` mask.
+struct RequiredModifierToggles: View {
+    @Binding var modifiers: UInt
+    private static let choices: [(String, NSEvent.ModifierFlags)] = [
+        ("⌃", .control), ("⌥", .option), ("⇧", .shift), ("⌘", .command), ("fn", .function)]
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Required modifiers").font(.caption).foregroundStyle(.secondary)
+            ForEach(Self.choices, id: \.0) { label, flag in
+                Toggle(label, isOn: Binding(
+                    get: { modifiers & flag.rawValue != 0 },
+                    set: { on in if on { modifiers |= flag.rawValue } else { modifiers &= ~flag.rawValue } }))
+                    .toggleStyle(.button)
+            }
         }
     }
 }

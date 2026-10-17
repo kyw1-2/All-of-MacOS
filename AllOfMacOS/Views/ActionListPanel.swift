@@ -218,28 +218,77 @@ struct ActionInspectorPanel: View {
                                                 var updated = row.action
                                                 updated.isEnabled.toggle()
                                                 appState.updateAction(in: trigger, action: updated)
+                                            },
+                                            onCopy: {
+                                                ActionClipboard.copied = row.action
+                                                testResult = "Copied “\(row.action.displayName)”"
+                                            },
+                                            onAddInside: {
+                                                parentID = row.id; toElse = false; replaceActionID = nil
+                                                appState.showingAddAction = true
+                                            },
+                                            onAddElse: {
+                                                parentID = row.id; toElse = true; replaceActionID = nil
+                                                appState.showingAddAction = true
                                             }
                                         )
+                                        .draggable(row.id.uuidString)
+                                        .dropDestination(for: String.self) { items, _ in
+                                            guard let text = items.first, let dragged = UUID(uuidString: text),
+                                                  var updated = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }) else { return false }
+                                            guard ActionTree.move(&updated.actions, id: dragged, before: row.id),
+                                                  ActionTree.problem(updated.actions) == nil else { return false }
+                                            appState.updateTrigger(updated)
+                                            return true
+                                        }
                                     }
 
                                     // Add Additional Action
-                                    Button {
-                                        parentID = nil
-                                        toElse = false
-                                        replaceActionID = nil
-                                        appState.showingAddAction = true
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "plus.circle.fill")
-                                            Text("Attach Additional Action")
-                                                .font(.subheadline.weight(.medium))
+                                    HStack(spacing: 8) {
+                                        Button {
+                                            parentID = nil
+                                            toElse = false
+                                            replaceActionID = nil
+                                            appState.showingAddAction = true
+                                        } label: {
+                                            HStack(spacing: 6) {
+                                                Image(systemName: "plus.circle.fill")
+                                                Text("Attach Additional Action")
+                                                    .font(.subheadline.weight(.medium))
+                                            }
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
                                         }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 8)
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.regular)
+                                        .help("Choose an action to add at the end of this trigger")
+
+                                        if ActionClipboard.copied != nil {
+                                            Button {
+                                                if let copy = ActionClipboard.pasteCopy() {
+                                                    appState.addAction(to: trigger, action: copy)
+                                                    testResult = "Pasted “\(copy.displayName)”"
+                                                }
+                                            } label: {
+                                                Label("Paste Action", systemImage: "doc.on.clipboard")
+                                                    .padding(.vertical, 8)
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.regular)
+                                            .help("Paste the copied action at the end of this trigger")
+                                        }
                                     }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
                                     .padding(.top, 4)
+                                    // Dropping on this strip moves a dragged action to the end of the list.
+                                    Color.clear.frame(height: 10)
+                                        .dropDestination(for: String.self) { items, _ in
+                                            guard let text = items.first, let dragged = UUID(uuidString: text),
+                                                  var updated = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }),
+                                                  ActionTree.moveToEnd(&updated.actions, id: dragged) else { return false }
+                                            appState.updateTrigger(updated)
+                                            return true
+                                        }
+                                        .accessibilityHidden(true)
                                 }
                             }
                         }
@@ -308,6 +357,9 @@ struct ActionCardView: View {
     let onDuplicate: () -> Void
     let onDelete: () -> Void
     let onToggleEnable: () -> Void
+    var onCopy: () -> Void = {}
+    var onAddInside: () -> Void = {}
+    var onAddElse: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -350,12 +402,32 @@ struct ActionCardView: View {
 
                 // Header buttons
                 HStack(spacing: 5) {
+                    if action.actionType.canContainChildren {
+                        Button(action: onAddInside) {
+                            Image(systemName: "plus.circle").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .help(action.actionType == .toggleOnOff ? "Add an action to the ON list"
+                              : action.actionType == .ifElse ? "Add an action to THEN" : "Add an action inside")
+                        .accessibilityLabel(action.actionType == .toggleOnOff ? "Add action to ON list"
+                                            : action.actionType == .ifElse ? "Add action to THEN" : "Add action inside \(action.displayName)")
+                    }
+                    if action.actionType.canContainElseChildren {
+                        Button(action: onAddElse) {
+                            Image(systemName: "plus.circle.fill").font(.caption).foregroundStyle(.orange)
+                        }
+                        .buttonStyle(.plain)
+                        .help(action.actionType == .toggleOnOff ? "Add an action to the OFF list" : "Add an action to ELSE")
+                        .accessibilityLabel(action.actionType == .toggleOnOff ? "Add action to OFF list" : "Add action to ELSE")
+                    }
+
                     Button(action: onChangeAction) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
                     .help("Change this action type")
+                    .accessibilityLabel("Change action type")
 
                     Button(action: onMoveUp) {
                         Image(systemName: "arrow.up")
@@ -363,6 +435,7 @@ struct ActionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Move up")
+                    .accessibilityLabel("Move action up")
 
                     Button(action: onMoveDown) {
                         Image(systemName: "arrow.down")
@@ -370,6 +443,15 @@ struct ActionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Move down")
+                    .accessibilityLabel("Move action down")
+
+                    Button(action: onCopy) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy action (then use Paste Action)")
+                    .accessibilityLabel("Copy action")
 
                     Button(action: onDuplicate) {
                         Image(systemName: "plus.square.on.square")
@@ -377,6 +459,7 @@ struct ActionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Duplicate action")
+                    .accessibilityLabel("Duplicate action")
 
                     Button(action: onToggleEnable) {
                         Image(systemName: action.isEnabled ? "eye" : "eye.slash")
@@ -384,7 +467,8 @@ struct ActionCardView: View {
                             .foregroundStyle(action.isEnabled ? Color.secondary : Color.orange)
                     }
                     .buttonStyle(.plain)
-                    .help(action.isEnabled ? "Disable" : "Enable")
+                    .help(action.isEnabled ? "Disable this step without deleting it" : "Enable this step")
+                    .accessibilityLabel(action.isEnabled ? "Disable action" : "Enable action")
 
                     Button(action: onDelete) {
                         Image(systemName: "trash")
@@ -393,6 +477,7 @@ struct ActionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Delete action")
+                    .accessibilityLabel("Delete action")
 
                     Button(action: onToggleExpand) {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
@@ -401,6 +486,8 @@ struct ActionCardView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.leading, 2)
+                    .help(isExpanded ? "Hide options" : "Show options")
+                    .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
                 }
             }
             .padding(.horizontal, 10)
@@ -445,7 +532,7 @@ struct ActionCardView: View {
         case .annotateLastCapture, .pinLastCapture, .copyLastCapture, .saveLastCapture,
              .ocrLastCapture, .openCaptureHistory, .unpinAllCaptures, .toggleCaptureOverlay:
             return CaptureHistory.shared.mostRecent?.displayName ?? "no capture yet"
-        default: return nil
+        default: return ActionSummary.detail(action)
         }
     }
 }
@@ -512,7 +599,7 @@ struct ActionRow: View {
         case .annotateLastCapture, .pinLastCapture, .copyLastCapture, .saveLastCapture,
              .ocrLastCapture, .openCaptureHistory, .unpinAllCaptures, .toggleCaptureOverlay:
             return CaptureHistory.shared.mostRecent?.displayName ?? "no capture yet"
-        default: return nil
+        default: return ActionSummary.detail(action)
         }
     }
 }
@@ -523,29 +610,54 @@ struct AddActionSheet: View {
     var replaceActionID: UUID? = nil
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedCategory: ActionCategory = .windowManagement
+
+    /// "Favorites & Recent" first, then the categories, like BTT's selector.
+    private enum Section: Hashable {
+        case quick
+        case category(ActionCategory)
+    }
+    private let store = ActionPickerStore()
+    @State private var section: Section
     @State private var searchText = ""
+    @State private var favorites: [ActionType]
+    @State private var recents: [ActionType]
+
+    init(parentID: UUID? = nil, toElse: Bool = false, replaceActionID: UUID? = nil) {
+        self.parentID = parentID; self.toElse = toElse; self.replaceActionID = replaceActionID
+        let store = ActionPickerStore()
+        let hasQuick = !store.favorites.isEmpty || !store.recents.isEmpty
+        _section = State(initialValue: hasQuick ? .quick : .category(.windowManagement))
+        _favorites = State(initialValue: store.favorites)
+        _recents = State(initialValue: store.recents)
+    }
+
+    private var hidden: Set<ActionType> { [.toggleDoNotDisturb] }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action to Group"))
+                Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action Inside"))
                     .font(.headline)
                 Spacer()
                 Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
+                    .help("Close without adding")
+                    .accessibilityLabel("Close")
             }
             .padding(.horizontal)
             .padding(.top, 14)
             .padding(.bottom, 8)
 
             HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search actions...", text: $searchText)
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                TextField("Search actions by name or what they do…", text: $searchText)
                     .textFieldStyle(.plain)
+                    .accessibilityLabel("Search actions")
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
+                        .help("Clear search")
+                        .accessibilityLabel("Clear search")
                 }
             }
             .padding(6)
@@ -554,57 +666,39 @@ struct AddActionSheet: View {
             .padding(.bottom, 10)
 
             HSplitView {
-                // Category list
-                List(ActionCategory.allCases, selection: $selectedCategory) { category in
-                    HStack(spacing: 7) {
-                        Image(systemName: category.iconName)
-                            .font(.system(size: 13))
-                            .foregroundStyle(selectedCategory == category ? Color.accentColor : Color.secondary)
-                            .frame(width: 18)
-                        Text(category.rawValue)
-                            .font(.system(size: 13, weight: selectedCategory == category ? .semibold : .regular))
+                List(selection: Binding<Section?>(get: { section }, set: { if let value = $0 { section = value; searchText = "" } })) {
+                    sidebarRow("Favorites & Recent", icon: "star", selected: section == .quick).tag(Section.quick)
+                    ForEach(ActionCategory.allCases) { category in
+                        sidebarRow(category.rawValue, icon: category.iconName, selected: section == .category(category))
+                            .tag(Section.category(category))
                     }
-                    .tag(category)
                 }
                 .listStyle(.sidebar)
-                .frame(width: 190)
+                .frame(width: 200)
 
-                // Action list for selected category
                 ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(filteredActions) { actionType in
-                            HStack(spacing: 10) {
-                                Image(systemName: actionType.iconName)
-                                    .font(.system(size: 14))
-                                    .frame(width: 22)
-                                    .foregroundColor(.accentColor)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(actionType.rawValue)
-                                        .font(.system(size: 13, weight: .medium))
-                                    if !searchText.isEmpty {
-                                        Text(actionType.category.rawValue)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                    LazyVStack(alignment: .leading, spacing: 3) {
+                        if !searchText.isEmpty {
+                            let found = ActionSearch.results(for: searchText, in: ActionType.allCases.filter { !hidden.contains($0) })
+                            if found.isEmpty {
+                                emptyNote("No action matches “\(searchText)”. Try a verb (click, scroll, speak) or an app area (window, space, volume).")
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.clear)
-                            .cornerRadius(6)
-                            .contentShape(Rectangle())
-                            .onTapGesture { addAction(actionType) }
+                            ForEach(found) { row($0, showsCategory: true) }
+                        } else if section == .quick {
+                            heading("Favorite Actions")
+                            if favorites.isEmpty { emptyNote("Click the star next to any action to keep it here.") }
+                            ForEach(favorites) { row($0) }
+                            heading("Recently Used")
+                            if recents.isEmpty { emptyNote("Actions you add show up here.") }
+                            ForEach(recents) { row($0) }
+                        } else if case .category(let category) = section {
+                            ForEach(ActionType.actionsForCategory(category).filter { !hidden.contains($0) }) { row($0) }
                         }
                     }
                     .padding(6)
                 }
             }
-            .frame(height: 380)
+            .frame(height: 420)
 
             Divider()
 
@@ -615,6 +709,7 @@ struct AddActionSheet: View {
                         Button("Activate app → wait → maximize") { addTemplate([.activateApplication, .wait, .maximizeWindow], name: "Open workspace") }
                         Button("Shortcut → wait → shortcut") { addTemplate([.sendKeyStroke, .wait, .sendKeyStroke], name: "Keyboard sequence") }
                     }
+                    .help("Add several steps at once")
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -622,15 +717,66 @@ struct AddActionSheet: View {
             }
             .padding(12)
         }
-        .frame(width: 600)
+        .frame(width: 720)
     }
 
-    private var filteredActions: [ActionType] {
-        if searchText.isEmpty {
-            return ActionType.actionsForCategory(selectedCategory).filter { $0 != .toggleDoNotDisturb }
+    private func sidebarRow(_ title: String, icon: String, selected: Bool) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 13))
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .frame(width: 18)
+            Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
         }
-        // Search across ALL categories when there's a search query
-        return ActionType.allCases.filter { $0 != .toggleDoNotDisturb && $0.rawValue.localizedCaseInsensitiveContains(searchText) }
+    }
+    private func heading(_ title: String) -> some View {
+        Text(title.uppercased()).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.top, 8).accessibilityAddTraits(.isHeader)
+    }
+    private func emptyNote(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
+    }
+
+    private func row(_ type: ActionType, showsCategory: Bool = false) -> some View {
+        let isFavorite = favorites.contains(type)
+        return HStack(spacing: 6) {
+            Button { addAction(type) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: type.iconName)
+                        .font(.system(size: 14))
+                        .frame(width: 22)
+                        .foregroundColor(.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(type.rawValue).font(.system(size: 13, weight: .medium))
+                        Text(type.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        if showsCategory || !type.parameterHint.isEmpty {
+                            Text([showsCategory ? type.category.rawValue : nil, type.parameterHint.isEmpty ? nil : "Options: " + type.parameterHint]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(type.rawValue)
+            .accessibilityHint(type.description)
+
+            Button {
+                store.toggleFavorite(type)
+                favorites = store.favorites
+            } label: {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isFavorite ? "Remove from Favorite Actions" : "Add to Favorite Actions")
+            .accessibilityLabel(isFavorite ? "Remove \(type.rawValue) from favorites" : "Add \(type.rawValue) to favorites")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func addTemplate(_ types: [ActionType], name: String) {
@@ -647,31 +793,18 @@ struct AddActionSheet: View {
 
     private func addAction(_ actionType: ActionType) {
         guard let trigger = appState.selectedTrigger else { return }
+        store.recordUse(actionType)
 
         if let replaceID = replaceActionID,
            var target = ActionTree.rows(trigger.actions).first(where: { $0.id == replaceID })?.action {
             target.actionType = actionType
-            target.parameters = ActionParameters()
-            if actionType == .setVariable {
-                target.parameters.variableName = "state"; target.parameters.variableValue = "on"
-            }
-            if actionType == .ifElse {
-                target.parameters.variableName = "state"
-                target.parameters.conditionValue = "on"
-            }
+            target.parameters = actionType.defaultParameters
             appState.updateAction(in: trigger, action: target)
             dismiss()
             return
         }
 
-        var action = TriggerAction(actionType: actionType)
-        if actionType == .setVariable {
-            action.parameters.variableName = "state"; action.parameters.variableValue = "on"
-        }
-        if actionType == .ifElse {
-            action.parameters.variableName = "state"
-            action.parameters.conditionValue = "on"
-        }
+        let action = TriggerAction(actionType: actionType, parameters: actionType.defaultParameters)
         appState.addAction(to: trigger, action: action, parentID: parentID, toElse: toElse)
         dismiss()
     }

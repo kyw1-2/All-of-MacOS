@@ -46,7 +46,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.3</string>
+	<string>1.1.4</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -59,11 +59,13 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2026101702</string>
+	<string>2026101703</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Run your configured automations when Bluetooth devices connect or disconnect.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
 	<key>NSMainStoryboardFile</key>

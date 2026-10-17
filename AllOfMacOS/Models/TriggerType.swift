@@ -134,7 +134,68 @@ enum TrackpadGesture: String, CaseIterable, Identifiable, Codable {
     case cornerForceClickBottomLeft = "Corner Force Click Bottom Left"
     case cornerForceClickBottomRight = "Corner Force Click Bottom Right"
 
+    // MARK: BTT parity additions (names follow BTT's trigger list)
+
+    // Touch Start: fires when the Nth finger has landed and settled.
+    case oneFingerTouchStart = "1 Finger Touch Start"
+    case twoFingerTouchStart = "2 Finger Touch Start"
+    case threeFingerTouchStart = "3 Finger Touch Start"
+    case fourFingerTouchStart = "4 Finger Touch Start"
+    case fiveFingerTouchStart = "5 Finger Touch Start"
+    // Long Touch: N fingers resting without moving for `Trigger.longTouchDurationMs`.
+    case oneFingerLongTouch = "1 Finger Long Touch"
+    case twoFingerLongTouch = "2 Finger Long Touch"
+    case threeFingerLongTouch = "3 Finger Long Touch"
+    case fourFingerLongTouch = "4 Finger Long Touch"
+    case fiveFingerLongTouch = "5 Finger Long Touch"
+    // Release Last Finger: fires when the final finger lifts.
+    case releaseLastFingerAfter1 = "Release Last Finger After Previous Touch With 1 Finger"
+    case releaseLastFingerAfter2 = "Release Last Finger After Previous Touch With 2 Fingers"
+    case releaseLastFingerAfter3 = "Release Last Finger After Previous Touch With 3 Fingers"
+    case releaseLastFingerAfter4 = "Release Last Finger After Previous Touch With 4 Fingers"
+    case releaseLastFingerAfter5 = "Release Last Finger After Previous Touch With 5 Fingers"
+    case releaseLastFingerRegardless = "Release Last Finger Regardless of How Many Were Touching Before"
+    // Two fingers that begin on a pad edge and swipe inward.
+    case twoFingerSwipeFromLeftEdge = "2 Finger Swipe From Left Edge"
+    case twoFingerSwipeFromRightEdge = "2 Finger Swipe From Right Edge"
+    case twoFingerSwipeFromTopEdge = "2 Finger Swipe From Top Edge"
+    case twoFingerSwipeFromBottomEdge = "2 Finger Swipe From Bottom Edge"
+    // 3-finger taps resolved by where the hand landed.
+    case threeFingerTapTop = "3 Finger Tap Top"
+    case threeFingerTapBottom = "3 Finger Tap Bottom"
+    // Two-finger scrolling with a modifier held; REQUIRES a modifier.
+    case scrollUp = "Scroll Up (modifier key needed)"
+    case scrollDown = "Scroll Down (modifier key needed)"
+
     var id: String { rawValue }
+
+    /// Finger count for Touch Start / Long Touch gestures.
+    var touchHoldFingerCount: Int? {
+        switch self {
+        case .oneFingerTouchStart, .oneFingerLongTouch: return 1
+        case .twoFingerTouchStart, .twoFingerLongTouch: return 2
+        case .threeFingerTouchStart, .threeFingerLongTouch: return 3
+        case .fourFingerTouchStart, .fourFingerLongTouch: return 4
+        case .fiveFingerTouchStart, .fiveFingerLongTouch: return 5
+        default: return nil
+        }
+    }
+    var isTouchStart: Bool { [.oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart].contains(self) }
+    var isLongTouch: Bool { [.oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch].contains(self) }
+    static func touchStart(fingers: Int) -> TrackpadGesture? {
+        [nil, .oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart][safe: fingers] ?? nil
+    }
+    static func longTouch(fingers: Int) -> TrackpadGesture? {
+        [nil, .oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch][safe: fingers] ?? nil
+    }
+    static func releaseLast(after fingers: Int) -> TrackpadGesture? {
+        [nil, .releaseLastFingerAfter1, .releaseLastFingerAfter2, .releaseLastFingerAfter3, .releaseLastFingerAfter4, .releaseLastFingerAfter5][safe: fingers] ?? nil
+    }
+    var isTrackpadScroll: Bool { self == .scrollUp || self == .scrollDown }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 enum MouseButton: String, CaseIterable, Identifiable, Codable {
@@ -168,6 +229,104 @@ enum MouseButton: String, CaseIterable, Identifiable, Codable {
         default: return nil
         }
     }
+}
+
+/// What a Normal Mouse trigger reacts to (BTT §2.3).
+enum MouseTriggerKind: String, CaseIterable, Identifiable, Codable {
+    case click = "Click"
+    case doubleClick = "Double Click"
+    case tripleClick = "Triple Click"
+    case longPress = "Long Press"
+    case dragUp = "Drag Up"
+    case dragDown = "Drag Down"
+    case dragLeft = "Drag Left"
+    case dragRight = "Drag Right"
+    case scrollUp = "Scroll Up"
+    case scrollDown = "Scroll Down"
+    case scrollLeft = "Scroll Left"
+    case scrollRight = "Scroll Right"
+
+    var id: String { rawValue }
+    var isScroll: Bool { [.scrollUp, .scrollDown, .scrollLeft, .scrollRight].contains(self) }
+    var isDrag: Bool { [.dragUp, .dragDown, .dragLeft, .dragRight].contains(self) }
+    /// Number of consecutive presses for the click family, otherwise nil.
+    var clickCount: Int? {
+        switch self {
+        case .click: return 1
+        case .doubleClick: return 2
+        case .tripleClick: return 3
+        default: return nil
+        }
+    }
+}
+
+/// A Normal Mouse trigger: a button (0 left, 1 right, 2 middle, 3+ extra
+/// buttons, as in CGEvent's `mouseEventButtonNumber`) plus what it does.
+/// Scroll triggers carry no button; it is normalized to 0.
+struct MouseTriggerSpec: Codable, Hashable {
+    static let maxButton = 31
+    /// Buttons the picker offers: left, right, middle and extra buttons 4…16.
+    static let pickerButtons = Array(0...15)
+
+    var button: Int
+    var kind: MouseTriggerKind
+
+    init(button: Int, kind: MouseTriggerKind) {
+        self.kind = kind
+        self.button = kind.isScroll ? 0 : min(max(button, 0), Self.maxButton)
+    }
+
+    enum CodingKeys: String, CodingKey { case button, kind }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(button: try c.decodeIfPresent(Int.self, forKey: .button) ?? 0,
+                  kind: try c.decodeIfPresent(MouseTriggerKind.self, forKey: .kind) ?? .click)
+    }
+
+    static func buttonName(_ button: Int) -> String {
+        switch button {
+        case 0: return "Left"
+        case 1: return "Right"
+        case 2: return "Middle"
+        default: return "Button \(button + 1)"
+        }
+    }
+
+    var displayName: String {
+        kind.isScroll ? kind.rawValue : "\(Self.buttonName(button)) \(kind.rawValue)"
+    }
+
+    /// Left and right buttons are the ones a user cannot afford to lose.
+    var isPrimaryButton: Bool { !kind.isScroll && (button == 0 || button == 1) }
+
+    /// Legacy `.mouseButton` equivalent, used to share one display/lookup path.
+    init(legacy button: MouseButton) {
+        self.init(button: Int(button.cgButtonNumber), kind: .click)
+    }
+}
+
+/// Creation-time validation that is independent of any UI.
+enum TriggerValidation {
+    /// A human-readable reason this trigger must not be created, or nil.
+    ///
+    /// Mirrors BTT's warning that binding the left (or right) button without a
+    /// modifier would take the click away from the whole system: the same
+    /// reasoning applies to scroll, which would hijack every scroll.
+    static func problem(for input: TriggerInput, requiredModifiers: UInt?) -> String? {
+        let held = (requiredModifiers ?? 0) & TriggerResolver.modifierMask
+        if case .trackpadGesture(let gesture) = input, gesture.isTrackpadScroll, held == 0 {
+            return "Scroll triggers need at least one required modifier key; otherwise every scroll would fire them."
+        }
+        guard case .mouse(let spec) = input else { return nil }
+        if spec.isPrimaryButton && held == 0 {
+            return "\(MouseTriggerSpec.buttonName(spec.button)) button triggers need at least one required modifier key; otherwise you would lose normal \(MouseTriggerSpec.buttonName(spec.button).lowercased()) clicks."
+        }
+        if spec.kind.isScroll && held == 0 {
+            return "Scroll triggers need at least one required modifier key; otherwise every scroll would be intercepted."
+        }
+        return nil
+    }
+    static func problem(for trigger: Trigger) -> String? { problem(for: trigger.input, requiredModifiers: trigger.requiredModifiers) }
 }
 
 struct KeyboardShortcut: Codable, Equatable, Hashable {

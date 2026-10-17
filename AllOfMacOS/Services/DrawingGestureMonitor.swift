@@ -95,6 +95,7 @@ final class DrawingGestureMonitor {
         path.removeAll(keepingCapacity: true); started = nil; startedApp = nil; drawing = false
     }
     private func process(_ event: NSEvent) {
+        guard TriggerSuppression.shared.allows(kind: .drawing) else { reset(); return }
         let flags = event.modifierFlags
         let active = flags.contains(.control) && flags.contains(.option)
         switch event.type {
