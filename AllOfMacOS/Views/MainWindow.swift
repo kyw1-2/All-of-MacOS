@@ -293,6 +293,7 @@ struct MainWindow: View {
     @AppStorage("AOMShowLog") private var showLog = false
     @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
     @State private var showingCommandPalette = false
+    @State private var isSidebarCollapsed = false
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "dark"
@@ -303,14 +304,18 @@ struct MainWindow: View {
     var body: some View {
         HStack(spacing: 0) {
             // Modern Apple Sidebar (Un-cluttered Super-App Hubs & App Profiles)
-            ModernSidebarView(
-                showLog: $showLog,
-                showTouchVisualizer: $showTouchVisualizer,
-                showingCommandPalette: $showingCommandPalette
-            )
-            .tutorialAnchor(.sidebar)
+            if !isSidebarCollapsed {
+                ModernSidebarView(
+                    showLog: $showLog,
+                    showTouchVisualizer: $showTouchVisualizer,
+                    showingCommandPalette: $showingCommandPalette,
+                    isCollapsed: $isSidebarCollapsed
+                )
+                .tutorialAnchor(.sidebar)
+                .transition(.move(edge: .leading).combined(with: .opacity))
 
-            Divider()
+                Divider()
+            }
 
             // Dynamic Detail Canvas (CleanShot X, Paste, Shortcuts, and Window Tiling)
             Group {
@@ -339,6 +344,30 @@ struct MainWindow: View {
             if showLog || showTouchVisualizer {
                 DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                     .transition(.move(edge: .trailing))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if isSidebarCollapsed {
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isSidebarCollapsed = false
+                    }
+                } label: {
+                    Image(systemName: "sidebar.leading")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.12), radius: 4, y: 2)
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 78)
+                .padding(.top, 12)
+                .help("Show Sidebar (⌘⌥S)")
             }
         }
         .frame(minWidth: 880, minHeight: 560)

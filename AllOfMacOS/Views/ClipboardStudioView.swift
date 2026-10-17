@@ -84,7 +84,7 @@ struct ClipboardStudioView: View {
                     }
                     .padding(16)
                 }
-                .scrollIndicators(.hidden)
+                .suppressScrollerReservation()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

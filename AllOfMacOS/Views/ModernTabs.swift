@@ -97,3 +97,46 @@ struct ModernMainTabBar: View {
         )
     }
 }
+
+// MARK: - Scroller Reservation Suppression
+
+/// Completely eliminates legacy scrollbar tracks from reserving layout width or flashing,
+/// while preserving smooth wheel and trackpad scrolling across all macOS versions.
+struct HideScroller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let scrollView = view.enclosingScrollView {
+                scrollView.hasVerticalScroller = false
+                scrollView.hasHorizontalScroller = false
+                scrollView.verticalScroller?.alphaValue = 0
+                scrollView.horizontalScroller?.alphaValue = 0
+                scrollView.scrollerStyle = .overlay
+                scrollView.autohidesScrollers = true
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let scrollView = nsView.enclosingScrollView {
+                scrollView.hasVerticalScroller = false
+                scrollView.hasHorizontalScroller = false
+                scrollView.verticalScroller?.alphaValue = 0
+                scrollView.horizontalScroller?.alphaValue = 0
+                scrollView.scrollerStyle = .overlay
+                scrollView.autohidesScrollers = true
+            }
+        }
+    }
+}
+
+extension View {
+    func suppressScrollerReservation() -> some View {
+        self
+            .scrollIndicators(.hidden)
+            .background(HideScroller())
+    }
+}
+

@@ -55,7 +55,7 @@ struct CaptureStudioView: View {
                 }
                 .padding(20)
             }
-            .scrollIndicators(.hidden)
+            .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.18))
@@ -265,7 +265,7 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "OCR Text",
-                    icon: "character.text.viewfinder",
+                    icon: "text.viewfinder",
                     accentColor: .orange
                 ) {
                     CaptureCoordinator.shared.captureText()

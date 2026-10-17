@@ -9,6 +9,7 @@ struct ModernSidebarView: View {
     @Binding var showLog: Bool
     @Binding var showTouchVisualizer: Bool
     @Binding var showingCommandPalette: Bool
+    @Binding var isCollapsed: Bool
     @State private var showingAppPicker = false
     @AppStorage("AOMAppearance") private var appearance: String = "dark"
     @Environment(\.openSettings) private var openSettingsAction
@@ -35,6 +36,7 @@ struct ModernSidebarView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 12)
             }
+            .suppressScrollerReservation()
 
             Divider()
 
@@ -80,9 +82,27 @@ struct ModernSidebarView: View {
             Spacer(minLength: 4)
 
             UpdateBadgeView(updateChecker: appState.updateChecker)
+
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    isCollapsed = true
+                }
+            } label: {
+                Image(systemName: "sidebar.leading")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Collapse Sidebar")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.top, 28)
+        .padding(.bottom, 10)
     }
 
     // MARK: - Hubs Section

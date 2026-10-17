@@ -88,7 +88,7 @@ struct ModernGesturesWorkspace: View {
                 emptyTriggersView
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 6) {
+                    LazyVStack(spacing: 3) {
                         ForEach(filteredTriggers) { trigger in
                             let isSelected = appState.selectedTrigger?.id == trigger.id
 
@@ -118,9 +118,9 @@ struct ModernGesturesWorkspace: View {
                             )
                         }
                     }
-                    .padding(8)
+                    .padding(6)
                 }
-                .scrollIndicators(.hidden)
+                .suppressScrollerReservation()
             }
         }
         .background(.background.opacity(0.2))
@@ -130,21 +130,45 @@ struct ModernGesturesWorkspace: View {
         VStack(spacing: 8) {
             // Scope & Add Action
             HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    if let icon = appState.selectedAppTarget.icon {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 15, height: 15)
-                    } else {
-                        Image(systemName: appState.selectedAppTarget.isGlobal ? "globe" : "app.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
+                Menu {
+                    Button {
+                        appState.selectedAppTarget = .allApps
+                    } label: {
+                        Label("Global Gestures", systemImage: "globe")
                     }
+                    if !appState.currentPreset.appTargets.isEmpty {
+                        Divider()
+                        ForEach(appState.currentPreset.appTargets) { target in
+                            Button {
+                                appState.selectedAppTarget = target
+                            } label: {
+                                Text(target.name)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if let icon = appState.selectedAppTarget.icon {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                        } else {
+                            Image(systemName: appState.selectedAppTarget.isGlobal ? "globe" : "app.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
 
-                    Text(appState.selectedAppTarget.isGlobal ? "Global Gestures" : appState.selectedAppTarget.name)
-                        .font(.system(size: 13, weight: .bold))
-                        .lineLimit(1)
+                        Text(appState.selectedAppTarget.isGlobal ? "Global Gestures" : appState.selectedAppTarget.name)
+                            .font(.system(size: 13, weight: .bold))
+                            .lineLimit(1)
+
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary.opacity(0.8))
+                    }
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
 
                 Spacer()
 
@@ -165,10 +189,10 @@ struct ModernGesturesWorkspace: View {
                 .help("Create a new gesture or shortcut")
             }
 
-            // Search Field
+            // Compact Search Field
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
 
                 TextField("Search gestures…", text: $searchQuery)
@@ -178,43 +202,44 @@ struct ModernGesturesWorkspace: View {
                 if !searchQuery.isEmpty {
                     Button { searchQuery = "" } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
+                            .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
             )
 
-            // Category Filter Segmented Tabs
-            HStack(spacing: 2) {
-                deviceFilterTab(title: "All", category: .all, icon: "sparkles")
-                deviceFilterTab(title: "Trackpad", category: .trackpad, icon: "hand.tap.fill")
-                deviceFilterTab(title: "Keys", category: .keyboard, icon: "keyboard.fill")
-                deviceFilterTab(title: "Mouse", category: .normalMouse, icon: "computermouse.fill")
+            // Innovative Apple Glass Tag Strip
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    glassFilterTag(title: "All", category: .all, icon: "sparkles")
+                    glassFilterTag(title: "Trackpad", category: .trackpad, icon: "hand.tap.fill")
+                    glassFilterTag(title: "Keys", category: .keyboard, icon: "keyboard.fill")
+                    glassFilterTag(title: "Mouse", category: .normalMouse, icon: "computermouse.fill")
+                }
+                .padding(.horizontal, 1)
+                .padding(.vertical, 2)
             }
-            .padding(2)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
-            )
+            .suppressScrollerReservation()
+            .frame(height: 26)
         }
         .padding(.horizontal, 10)
-        .padding(.top, 12)
+        .padding(.top, 10)
         .padding(.bottom, 8)
         .background(.background.opacity(0.25))
     }
 
-    private func deviceFilterTab(title: String, category: TriggerCategory, icon: String) -> some View {
+    private func glassFilterTag(title: String, category: TriggerCategory, icon: String) -> some View {
         let isSelected = selectedDeviceCategory == category
         let count = countForCategory(category)
 
@@ -223,31 +248,34 @@ struct ModernGesturesWorkspace: View {
                 selectedDeviceCategory = category
             }
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.system(size: 9, weight: isSelected ? .bold : .medium))
 
                 Text(title)
-                    .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
 
                 if count > 0 {
                     Text("\(count)")
-                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                         .foregroundStyle(isSelected ? Color.white : .secondary)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(isSelected ? Color.accentColor : Color.primary.opacity(0.08)))
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
-                    .shadow(color: Color.black.opacity(isSelected ? 0.08 : 0), radius: 2, y: 1)
+                Capsule(style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
             )
-            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.06), lineWidth: 0.8)
+            )
+            .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(0.8))
         }
         .buttonStyle(.plain)
     }
@@ -302,7 +330,7 @@ struct ModernGesturesWorkspace: View {
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .scrollIndicators(.hidden)
+                .suppressScrollerReservation()
             } else {
                 emptyCanvasView
             }
@@ -630,48 +658,48 @@ private struct GestureSummaryCard: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 // Category SF Symbol Icon Tile
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(iconColor.opacity(trigger.isEnabled ? 0.14 : 0.06))
-                        .frame(width: 32, height: 32)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(iconColor.opacity(trigger.isEnabled ? 0.15 : 0.06))
+                        .frame(width: 26, height: 26)
 
                     Image(systemName: trigger.input.category.iconName)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(trigger.isEnabled ? iconColor : Color.secondary.opacity(0.6))
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
                         Text(trigger.displayName)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .semibold))
+                            .font(.system(size: 12, weight: isSelected ? .bold : .semibold))
                             .foregroundStyle(trigger.isEnabled ? Color.primary : Color.secondary)
                             .lineLimit(1)
 
                         if trigger.requiredModifiers != nil {
                             Text(trigger.modifierLabel)
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 0.5)
                                 .background(Capsule().fill(Color.accentColor.opacity(0.12)))
                         }
 
                         if trigger.isFavorite {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 9))
+                                .font(.system(size: 8))
                                 .foregroundStyle(.orange)
                         }
                     }
 
                     Text(actionSummaryText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(isSelected ? Color.primary.opacity(0.75) : Color.secondary)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(isSelected ? Color.primary.opacity(0.8) : Color.secondary)
                         .lineLimit(1)
                 }
 
-                Spacer(minLength: 6)
+                Spacer(minLength: 4)
 
                 Toggle("Enabled", isOn: Binding(
                     get: { trigger.isEnabled },
@@ -679,19 +707,19 @@ private struct GestureSummaryCard: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(isSelected
                           ? Color.accentColor.opacity(0.14)
                           : (isHovered ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .controlBackgroundColor).opacity(0.5)))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.04), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.4) : Color.primary.opacity(0.04), lineWidth: 0.8)
             )
             .contentShape(Rectangle())
         }

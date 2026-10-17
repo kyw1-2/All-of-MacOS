@@ -531,7 +531,7 @@ final class ClipboardPanelController {
         var offscreenFrame = panel.frame
         offscreenFrame.origin.y = bottomEdge - offscreenFrame.height - 8
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.20
+            context.duration = 0.10
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().setFrame(offscreenFrame, display: true)
         } completionHandler: { [weak self, weak panel] in
@@ -588,38 +588,35 @@ final class ClipboardPanelController {
             return
         }
         pasteTask?.cancel()
-        // Capture the destination before dismissal clears selection/focus.
-        slideDownAndHide { [weak self] in
-            guard let self else { return }
+        target.activate(options: [.activateIgnoringOtherApps])
+        self.pasteTask = Task { @MainActor [weak self] in
             guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { copied?(); return }
-            target.activate(options: [])
-            self.pasteTask = Task { @MainActor [weak self] in
-                // Wait for focus and physical modifiers, including Command held
-                // for a quick-paste badge. Never inject into a different app.
-                for _ in 0..<200 {
-                    guard !Task.isCancelled, !target.isTerminated else { return }
-                    let focused = NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
-                    let flags = CGEventSource.flagsState(.combinedSessionState)
-                    if focused && flags.intersection([.maskCommand, .maskShift, .maskAlternate, .maskControl]).isEmpty {
-                        guard let source = CGEventSource(stateID: .privateState),
-                              let commandDown = CGEvent(keyboardEventSource: source, virtualKey: 55, keyDown: true),
-                              let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-                              let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false),
-                              let commandUp = CGEvent(keyboardEventSource: source, virtualKey: 55, keyDown: false) else { return }
-                        for (index, event) in [commandDown, down, up, commandUp].enumerated() {
-                            event.flags = index == 3 ? [] : .maskCommand
-                            event.setIntegerValueField(.eventSourceUserData, value: 0x475454)
-                            event.post(tap: .cghidEventTap)
-                        }
-                        ClipboardAudioFeedback.paste()
-                        copied?()
-                        return
+            // Wait for focus and physical modifiers, including Command held
+            // for a quick-paste badge. Never inject into a different app.
+            for _ in 0..<150 {
+                guard !Task.isCancelled, !target.isTerminated else { return }
+                let focused = NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+                let flags = CGEventSource.flagsState(.combinedSessionState)
+                if focused && flags.intersection([.maskCommand, .maskShift, .maskAlternate, .maskControl]).isEmpty {
+                    guard let source = CGEventSource(stateID: .privateState),
+                          let commandDown = CGEvent(keyboardEventSource: source, virtualKey: 55, keyDown: true),
+                          let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                          let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false),
+                          let commandUp = CGEvent(keyboardEventSource: source, virtualKey: 55, keyDown: false) else { return }
+                    for (index, event) in [commandDown, down, up, commandUp].enumerated() {
+                        event.flags = index == 3 ? [] : .maskCommand
+                        event.setIntegerValueField(.eventSourceUserData, value: 0x475454)
+                        event.post(tap: .cghidEventTap)
                     }
-                    do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                    ClipboardAudioFeedback.paste()
+                    copied?()
+                    return
                 }
-                self?.state.status = "Destination unavailable or a modifier is held. Item copied without pasting."
+                do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
             }
+            self?.state.status = "Destination unavailable or a modifier is held. Item copied without pasting."
         }
+        slideDownAndHide()
     }
 
     /// "Paste to Safari" when direct paste can reach the destination.

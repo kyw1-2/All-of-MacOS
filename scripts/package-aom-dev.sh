@@ -12,8 +12,9 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp/}aom-sign.XXXXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/All of MacOS.app"
 ditto "$SOURCE_APP" "$APP"
-codesign --force --sign "AOM Dev" "$APP/Contents/XPCServices/ScriptRunner.xpc"
-codesign --force --sign "AOM Dev" \
+SIGN_ID="$("$PWD/scripts/resolve-signing-identity.sh" "${ALLOFMACOS_SIGN_ID:-AOM Dev}")"
+codesign --force --sign "$SIGN_ID" "$APP/Contents/XPCServices/ScriptRunner.xpc"
+codesign --force --sign "$SIGN_ID" \
     --entitlements AllOfMacOS/AllOfMacOS.entitlements "$APP"
 codesign --verify --deep --strict "$APP"
 codesign -dv --verbose=2 "$APP" 2>&1 | grep -Fx 'Authority=AOM Dev'

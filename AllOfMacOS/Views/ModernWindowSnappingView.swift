@@ -38,7 +38,7 @@ struct ModernWindowSnappingView: View {
                 }
                 .padding(24)
             }
-            .scrollIndicators(.hidden)
+            .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.16))
@@ -321,7 +321,17 @@ struct ModernWindowSnappingView: View {
         case .topRight: actionType = .snapWindowTopRight
         case .bottomLeft: actionType = .snapWindowBottomLeft
         case .bottomRight: actionType = .snapWindowBottomRight
-        case .center: actionType = .centerWindow
+        case .center:
+            var params = ActionParameters()
+            params.snapX = 0.15
+            params.snapY = 0.15
+            params.snapWidth = 0.70
+            params.snapHeight = 0.70
+            WindowManager.shared.execute(.customSnapWindow, target: nil, parameters: params) { success in
+                if success { showToast("Centered window") }
+                else { showToast("Could not center window") }
+            }
+            return
         case .leftThird: actionType = .snapWindowLeftThird
         case .centerThird: actionType = .snapWindowCenterThird
         case .rightThird: actionType = .snapWindowRightThird
@@ -335,8 +345,8 @@ struct ModernWindowSnappingView: View {
 
     private func snapRect(for layout: CustomSnapZone.Layout, in size: CGSize) -> CGRect {
         let w = size.width
-        let h = size.height - 24
-        let y0: CGFloat = 24
+        let h = size.height
+        let y0: CGFloat = 0
 
         switch layout {
         case .leftHalf:
@@ -350,7 +360,9 @@ struct ModernWindowSnappingView: View {
         case .maximize:
             return CGRect(x: 0, y: y0, width: w, height: h)
         case .center:
-            return CGRect(x: w * 0.15, y: y0 + h * 0.15, width: w * 0.7, height: h * 0.7)
+            let cw = w * 0.70
+            let ch = h * 0.70
+            return CGRect(x: (w - cw) / 2, y: (h - ch) / 2, width: cw, height: ch)
         case .topLeft:
             return CGRect(x: 0, y: y0, width: w * 0.5, height: h * 0.5)
         case .topRight:

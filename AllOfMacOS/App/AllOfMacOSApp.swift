@@ -557,7 +557,7 @@ struct AllOfMacOSApp: App {
                     appDelegate.appState = appState
                 }
         }
-        .windowStyle(.titleBar)
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1300, height: 700)
         .commands {
             TriggerEditorCommands()
