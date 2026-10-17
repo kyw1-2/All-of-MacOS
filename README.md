@@ -2,6 +2,10 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.2.1
+
+Apple-native redesign of every page, a responsive ⇧⌘V clipboard shelf, and instant Capture Text. See [release notes](docs/1.2.1-release-notes.md).
+
 ## Version 1.1.4
 
 Adds trigger organization, pause controls, global gesture settings, workflow variables, and expanded trigger/action catalogs. See [release notes](docs/1.1.4-release-notes.md) and [BTT catalog comparison and remaining gaps](docs/1.1.4-btt-catalog-comparison.md).

@@ -407,6 +407,7 @@ struct ModernGesturesWorkspace: View {
                 LabeledContent("Status", value: trigger.isEnabled ? "Enabled" : "Disabled")
             }
             .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .aomSurface()
 
             DisclosureGroup(isExpanded: $showTriggerOptions) {
@@ -416,6 +417,7 @@ struct ModernGesturesWorkspace: View {
                 Label("Sensitivity & Timing", systemImage: "slider.horizontal.3")
                     .font(.callout.weight(.medium))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .aomSurface()
 
             HStack(spacing: 8) {

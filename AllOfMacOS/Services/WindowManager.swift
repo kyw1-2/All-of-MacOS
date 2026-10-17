@@ -531,6 +531,12 @@ final class CustomSnapZoneMonitor {
     private var lastKnownFrame: CGRect?
     private var overlayScreen: NSScreen?
     private var overlayZoneID: UUID?
+    /// Where the button went down. The window under it is only looked up
+    /// once the mouse is actually dragged: an Accessibility hit-test per
+    /// click is a synchronous IPC round trip (and, for AOM's own SwiftUI
+    /// windows, a full accessibility-tree rebuild on the main thread).
+    private var downPoint: CGPoint?
+    private var probedStart = false
 
     var isMonitoring: Bool { globalMonitor != nil && !zones.isEmpty }
     private var requiresOption = false
@@ -545,6 +551,11 @@ final class CustomSnapZoneMonitor {
             self?.handle(event)
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            // AOM's floating panels (clipboard shelf, Quick Access, HUDs) are
+            // never snap targets; their clicks and drags stay untouched.
+            if let window = event.window, window.styleMask.contains(.nonactivatingPanel) || !window.styleMask.contains(.titled) {
+                return event
+            }
             self?.handle(event)
             return event
         }
@@ -553,6 +564,7 @@ final class CustomSnapZoneMonitor {
                                   "Window snapping: global mouse monitoring unavailable", level: globalMonitor != nil ? .detect : .error)
     }
     private func clear() {
+        downPoint = nil; probedStart = false
         startWindow = nil; startFrame = nil
         windowMoved = false; lastFrameProbe = 0; lastKnownFrame = nil
         overlayScreen = nil; overlayZoneID = nil
@@ -601,15 +613,18 @@ final class CustomSnapZoneMonitor {
         switch event.type {
         case .leftMouseDown:
             clear()
-            let pointer = NSEvent.mouseLocation
-            // Hit test the clicked window, not the previous focused window.
-            let target = WindowManager.shared.captureTarget(atMousePoint: pointer)
-            startWindow = target
-            startFrame = target.flatMap { WindowManager.shared.frame(of: $0) }
-            // Seed the centre fallback so a drag that has not yet been probed
-            // still has a frame to judge against.
-            lastKnownFrame = startFrame
+            downPoint = NSEvent.mouseLocation
         case .leftMouseDragged:
+            if !probedStart, let point = downPoint {
+                probedStart = true
+                // Hit test the clicked window, not the previous focused window.
+                let target = WindowManager.shared.captureTarget(atMousePoint: point)
+                startWindow = target
+                startFrame = target.flatMap { WindowManager.shared.frame(of: $0) }
+                // Seed the centre fallback so a drag that has not yet been
+                // probed still has a frame to judge against.
+                lastKnownFrame = startFrame
+            }
             guard let initial = startFrame, let target = startWindow else { return }
             // AX queries are throttled; the overlay is only updated when its
             // active zone or display changes, not on every drag event.

@@ -629,8 +629,12 @@ enum TextRecognitionEngine {
     static func fastPassIsAcceptable(_ pass: OCRPass, leadGroup: TextScriptGroup, priority: [String]) -> Bool {
         let usable = pass.observations.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         guard !usable.isEmpty else { return false }
-        let mean = usable.map(\.confidence).reduce(0, +) / Float(usable.count)
-        guard mean >= 0.4 else { return false }
+        // Weighted by text length: a stray icon glyph read as "88" must not
+        // push a whole page of clean text into the slow voting pipeline.
+        let lengths = usable.map { Float(max(1, $0.text.count)) }
+        let total = lengths.reduce(0, +)
+        let mean = zip(usable, lengths).map { $0.0.confidence * $0.1 }.reduce(0, +) / total
+        guard mean >= 0.35 else { return false }
         let groups = TextScriptGroup.groups(forScripts: TextScriptClassifier.histogram(pass.text), priority: priority)
         return groups.allSatisfy { $0 == leadGroup || $0 == .latin }
     }

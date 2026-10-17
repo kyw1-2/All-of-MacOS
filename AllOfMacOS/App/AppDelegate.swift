@@ -154,6 +154,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 TextRecognitionEngine.prewarm()
                 ScreenCaptureService.shared.prewarm()
+                AOMSystemSound.prewarm()
+                DispatchQueue.global(qos: .utility).async { _ = TextPostProcessor.linkDetector }
+                TextCaptureHUDController.shared.prewarm()
             }
         }
         // Monitor start-up is owned by AppState (see AppState.init) — it runs

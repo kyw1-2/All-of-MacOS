@@ -95,6 +95,7 @@ final class SelectionOverlayController {
         }
         NSApp.activate(ignoringOtherApps: true)
         windows.first?.makeKey()
+        CaptureCoordinator.textLog.info("selection overlay presented")
     }
 
     private func handleLocal(_ event: NSEvent) -> NSEvent? {
@@ -300,7 +301,13 @@ private final class SelectionWindow: NSPanel {
                                  showsBackdrop: showsBackdrop,
                                  onCommit: { [weak self] rect in self?.onCommit?(rect) },
                                  onCancel: { [weak self] in self?.onCancel?() })
-        contentView = NSHostingView(rootView: view)
+        contentView = FirstMouseHostingView(rootView: view)
+    }
+
+    /// The overlay appears over another app without activating AOM. The very
+    /// first press must start the drag instead of only focusing the panel.
+    private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     }
 
     // The overlay is a tool, not a document window: it must be able to take key

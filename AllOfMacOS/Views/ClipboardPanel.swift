@@ -1516,28 +1516,39 @@ final class AppMetadataCache {
     }
 
     static func dominantColor(of image: NSImage) -> Color? {
+        // Raw RGBA bytes from one 24×24 draw; NSBitmapImageRep.colorAt plus a
+        // colour-space conversion per pixel made the first shelf open stall.
         let side = 24
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
-                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side), from: .zero, operation: .copy, fraction: 1)
-        NSGraphicsContext.restoreGraphicsState()
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        var rect = CGRect(x: 0, y: 0, width: side, height: side)
+        guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+              let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: rect)
         var bins = [(weight: CGFloat, r: CGFloat, g: CGFloat, b: CGFloat)](repeating: (0, 0, 0, 0), count: 12)
         var gray: (weight: CGFloat, value: CGFloat) = (0, 0)
-        for x in 0..<side { for y in 0..<side {
-            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), c.alphaComponent > 0.6 else { continue }
-            let h = c.hueComponent, sat = c.saturationComponent, v = c.brightnessComponent
+        for i in 0..<(side * side) {
+            let alpha = CGFloat(pixels[i * 4 + 3]) / 255
+            guard alpha > 0.6 else { continue }
+            let r = CGFloat(pixels[i * 4]) / 255 / alpha, g = CGFloat(pixels[i * 4 + 1]) / 255 / alpha
+            let bl = CGFloat(pixels[i * 4 + 2]) / 255 / alpha
+            let maxC = max(r, g, bl), minC = min(r, g, bl)
+            let v = maxC, sat = maxC > 0 ? (maxC - minC) / maxC : 0
             if sat < 0.22 || v < 0.12 {
                 gray.weight += 1; gray.value += v
                 continue
             }
+            var h: CGFloat
+            let d = maxC - minC
+            if maxC == r { h = (g - bl) / d } else if maxC == g { h = 2 + (bl - r) / d } else { h = 4 + (r - g) / d }
+            h /= 6; if h < 0 { h += 1 }
             let weight = sat * v
-            let i = min(11, Int(h * 12))
-            bins[i].weight += weight
-            bins[i].r += c.redComponent * weight; bins[i].g += c.greenComponent * weight; bins[i].b += c.blueComponent * weight
-        }}
+            let index = min(11, Int(h * 12))
+            bins[index].weight += weight
+            bins[index].r += r * weight; bins[index].g += g * weight; bins[index].b += bl * weight
+        }
         let best = bins.max { $0.weight < $1.weight }!
         let colorful = best.weight > 0 && best.weight * 2.2 > gray.weight * 0.35
         let base: NSColor

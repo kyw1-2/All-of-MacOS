@@ -125,14 +125,19 @@ final class AOMScrollChromePolicy {
     private var pendingWindows: [ObjectIdentifier: (window: NSWindow, due: CFTimeInterval)] = [:]
     private var lastRefresh: [ObjectIdentifier: CFTimeInterval] = [:]
     private var flushScheduled = false
-    static let minimumInterval: CFTimeInterval = 0.35
+    static let minimumInterval: CFTimeInterval = 1.0
 
     func start() {
         guard notificationTokens.isEmpty else { return }
         for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
             notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 let window = note.object as? NSWindow
-                MainActor.assumeIsolated { if let window { self?.scheduleRefresh(window) } }
+                MainActor.assumeIsolated {
+                    // Per-event updates only matter for the window being used;
+                    // background windows refresh when they become key again.
+                    guard let window, name != NSWindow.didUpdateNotification || window.isKeyWindow else { return }
+                    self?.scheduleRefresh(window)
+                }
             })
         }
         for window in NSApp.windows where Self.isManaged(window) { refresh(window) }

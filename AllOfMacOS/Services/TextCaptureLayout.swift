@@ -261,9 +261,12 @@ enum TextPostProcessor {
     }
 
     /// Web/mail links found in `text`, in order of appearance, de-duplicated.
+    /// Building a data detector costs tens of milliseconds; matching with a
+    /// shared one is thread-safe.
+    static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     static func links(in text: String) -> [URL] {
-        guard !text.isEmpty,
-              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return [] }
+        guard !text.isEmpty, let detector = linkDetector else { return [] }
         var seen = Set<String>()
         var result: [URL] = []
         for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {

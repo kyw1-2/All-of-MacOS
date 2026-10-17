@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import AppKit
 import ScreenCaptureKit
 import AVFoundation
@@ -388,20 +389,30 @@ final class CaptureCoordinator {
     /// in `TextCaptureController`.
     func captureText(keepsLineBreaks: Bool? = nil) {
         let keepBreaks = keepsLineBreaks ?? TextCaptureSettings.shared.keepsLineBreaks
+        let requested = Date()
+        Self.textLog.info("capture-text requested")
         run(kind: .area) { [weak self] in
             guard let self else { return nil }
+            Self.textLog.info("capture-text run started +\(Int(Date().timeIntervalSince(requested) * 1000), privacy: .public)ms")
             guard let rect = await self.presentSelection() else { return nil }
+            let selected = Date()
             let result = try await ScreenCaptureService.shared.captureArea(rect)
+            let captured = Date()
             try await self.deliverRecognizedText(result, keepsLineBreaks: keepBreaks)
+            Self.textLog.info("capture-text pixels=\(Int(captured.timeIntervalSince(selected) * 1000), privacy: .public)ms total=\(Int(Date().timeIntervalSince(selected) * 1000), privacy: .public)ms")
             return nil
         }
     }
+
+    static let textLog = Logger(subsystem: "com.kyw.allofmacos", category: "capture-text")
 
     /// Shared tail of every screen text capture (menu, shortcut, All-In-One).
     private func deliverRecognizedText(_ result: CaptureResult, keepsLineBreaks: Bool) async throws {
         guard try await TextCaptureController.shared.deliver(image: result.image, keepsLineBreaks: keepsLineBreaks,
                                                              anchor: result.globalRect) != nil else { return }
+        let added = Date()
         CaptureHistory.shared.add(result, url: nil)
+        Self.textLog.info("history add=\(Int(Date().timeIntervalSince(added) * 1000), privacy: .public)ms")
     }
 
     /// "Capture Text from Clipboard Image" (no selection needed).
@@ -616,7 +627,7 @@ final class CaptureCoordinator {
 
     /// The system's own screenshot sound, so the capture sounds like a macOS one.
     private func playCaptureSound() {
-        NSSound(named: "Grab")?.play()
+        AOMSystemSound.play("Grab")
     }
 
     // MARK: - Desktop icons

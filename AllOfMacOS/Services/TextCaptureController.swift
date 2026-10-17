@@ -50,13 +50,16 @@ final class TextCaptureController {
     func deliver(image: CGImage, keepsLineBreaks: Bool? = nil, anchor: CGRect? = nil,
                  allowsAdditive: Bool = true) async throws -> Outcome? {
         let options = TextRecognitionOptions.fromSettings(settings, keepsLineBreaks: keepsLineBreaks)
-        async let recognition = TextRecognitionService.recognize(image, options: options)
-        let barcodes: [String] = settings.readsBarcodes
+        let started = Date()
+        let readsBarcodes = settings.readsBarcodes
+        async let codes: [String] = readsBarcodes
             ? ((try? await TextRecognitionService.detectBarcodes(image)) ?? []).map(\.payload) : []
-        let result = try await recognition
+        let result = try await TextRecognitionService.recognize(image, options: options)
+        let barcodes = await codes
+        CaptureCoordinator.textLog.info("recognition=\(Int(Date().timeIntervalSince(started) * 1000), privacy: .public)ms passes=\(result.passCount, privacy: .public) live=\(result.usedLiveText, privacy: .public)")
         let output = Self.composeOutput(text: result.text, barcodes: barcodes)
         guard !output.isEmpty else {
-            if settings.playsSound { NSSound(named: "Funk")?.play() }
+            if settings.playsSound { AOMSystemSound.play("Funk") }
             GestureHUD.shared.show(title: "No Text Detected", detail: "The selection contained no recognizable text.")
             return nil
         }
@@ -66,10 +69,13 @@ final class TextCaptureController {
         pasteboard.clearContents()
         pasteboard.setString(clip.text, forType: .string)
 
+        let copied = Date()
         let links = settings.detectsLinks ? TextPostProcessor.links(in: output) : []
-        if settings.playsSound { NSSound(named: "Pop")?.play() }
+        if settings.playsSound { AOMSystemSound.play("Pop") }
         let outcome = Outcome(copiedText: output, appended: clip.appended, links: links, barcodes: barcodes)
+        let linked = Date()
         present(outcome, result: result, anchor: anchor)
+        CaptureCoordinator.textLog.info("deliver links+sound=\(Int(linked.timeIntervalSince(copied) * 1000), privacy: .public)ms hud=\(Int(Date().timeIntervalSince(linked) * 1000), privacy: .public)ms")
         if settings.speaksResult { TextCaptureSpeech.shared.speak(output, languageCode: result.detectedLanguage) }
         return outcome
     }
@@ -100,7 +106,7 @@ final class TextCaptureController {
     func deliverBarcodes(image: CGImage, anchor: CGRect? = nil) async -> [String] {
         let codes = ((try? await TextRecognitionService.detectBarcodes(image)) ?? []).map(\.payload)
         guard !codes.isEmpty else {
-            if settings.playsSound { NSSound(named: "Funk")?.play() }
+            if settings.playsSound { AOMSystemSound.play("Funk") }
             GestureHUD.shared.show(title: "No QR/Bar Code Detected", detail: "Try a larger selection.")
             return []
         }
@@ -109,7 +115,7 @@ final class TextCaptureController {
                                       additive: settings.additiveClipboard)
         pasteboard.clearContents()
         pasteboard.setString(clip.text, forType: .string)
-        if settings.playsSound { NSSound(named: "Pop")?.play() }
+        if settings.playsSound { AOMSystemSound.play("Pop") }
         let links = settings.detectsLinks ? TextPostProcessor.links(in: text) : []
         if settings.showsResultHUD {
             let model = TextCaptureHUDModel(title: codes.count == 1 ? "Code Copied" : "\(codes.count) Codes Copied",

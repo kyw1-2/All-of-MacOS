@@ -301,7 +301,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         } else {
             GestureHUD.shared.show(title: "Recording Saved", detail: url.lastPathComponent)
         }
-        NSSound(named: "Glass")?.play()
+        AOMSystemSound.play("Glass")
         return url
     }
 

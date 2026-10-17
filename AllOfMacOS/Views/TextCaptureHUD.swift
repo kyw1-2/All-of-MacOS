@@ -28,6 +28,22 @@ final class TextCaptureHUDController {
 
     var isVisible: Bool { panel?.isVisible == true }
 
+    /// Builds the panel and lays out a sample result once, off screen, so the
+    /// first real result appears without SwiftUI's cold-start cost.
+    func prewarm() {
+        guard NSApp != nil, panel == nil else { return }
+        let panel = makePanel()
+        self.panel = panel
+        let sample = TextCaptureHUDModel(title: "Text Copied", subtitle: "0 characters", text: "Sample", links: [],
+                                         barcodes: [], languageCode: nil, symbol: "checkmark.circle.fill")
+        let hosting = NSHostingView(rootView: TextCaptureHUDView(
+            model: sample, speech: TextCaptureSpeech.shared, onCopy: {}, onEdit: {}, onSpeak: {},
+            onOpen: { _ in }, onClose: {}, onHover: { _ in }))
+        _ = hosting.fittingSize
+        panel.contentView = hosting
+        panel.contentView = nil
+    }
+
     func show(_ model: TextCaptureHUDModel, anchor: CGRect?, duration: TimeInterval) {
         guard NSApp != nil else { return }
         currentModel = model
