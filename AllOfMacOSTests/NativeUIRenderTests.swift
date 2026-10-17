@@ -11,6 +11,7 @@ final class NativeUIRenderTests: XCTestCase {
             throw XCTSkip("Set AOM_UI_RENDER_PATH for native visual review")
         }
         let output = URL(fileURLWithPath: path, isDirectory: true)
+        UserDefaults.hasSeenTutorial = true
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let state = AppState()
         state.currentPreset = Preset(name: "UI Review")
@@ -28,9 +29,23 @@ final class NativeUIRenderTests: XCTestCase {
                        size: NSSize(width: 1080, height: 700), appearance: dark ? .darkAqua : .aqua,
                        url: output.appendingPathComponent(dark ? "gestures-dark.png" : "gestures-light.png"))
         }
+        for tab in AOMMainTab.allCases {
+            state.selectedMainTab = tab
+            try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
+                       appearance: .aqua, url: output.appendingPathComponent("main-\(tab.title.replacingOccurrences(of: " ", with: "-").lowercased()).png"))
+        }
+        state.selectedMainTab = .gestures
+        let empty = AppState()
+        empty.currentPreset = Preset(name: "Empty Review")
+        empty.currentPreset.triggers = []
+        empty.selectedAppTarget = .allApps
+        try render(MainWindow().environmentObject(empty), size: NSSize(width: 1320, height: 820),
+                   appearance: .darkAqua, url: output.appendingPathComponent("main-gestures-empty-dark.png"))
         for (name, view) in [
             ("capture", AnyView(CaptureStudioView())),
             ("window-tiling", AnyView(ModernWindowSnappingView().environmentObject(state))),
+            ("clipboard", AnyView(ClipboardStudioView())),
+            ("insights", AnyView(StatisticsView().environmentObject(state))),
             ("settings", AnyView(SettingsView().environmentObject(state)))
         ] {
             try render(view, size: name == "settings" ? NSSize(width: 820, height: 640) : NSSize(width: 1080, height: 700),

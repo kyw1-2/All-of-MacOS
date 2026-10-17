@@ -41,8 +41,10 @@ final class TextSniperParityTests: XCTestCase {
 
     private func recognize(_ image: CGImage, keepsLineBreaks: Bool = true,
                            languages: [String] = ["en-US", "ko-KR", "ja-JP", "zh-Hans"],
-                           engine: TextRecognitionEngineMode = .automatic) async throws -> TextRecognitionResult {
+                           engine: TextRecognitionEngineMode = .automatic,
+                           prefersSpeed: Bool = true) async throws -> TextRecognitionResult {
         var options = TextRecognitionOptions()
+        options.prefersSpeed = prefersSpeed
         options.languages = languages
         options.keepsLineBreaks = keepsLineBreaks
         options.engine = engine
@@ -97,7 +99,12 @@ final class TextSniperParityTests: XCTestCase {
 
     func testDarkModeWhiteOnBlack() async throws {
         let image = render("White on black terminal output\n어두운 배경의 흰 글씨", dark: true)
-        let result = try await recognize(image)
+        // The instant path reads light-on-dark text directly…
+        let fast = try await recognize(image)
+        print("[OCR dark fast]", fast.text, "passes:", fast.passCount)
+        assertContains(fast.text, ["White on black", "terminal", "어두운", "배경"])
+        // …and the full voting pipeline still adds its inverted pass.
+        let result = try await recognize(image, prefersSpeed: false)
         print("[OCR dark]", result.text, "inverted:", result.inverted)
         XCTAssertTrue(result.inverted, "A dark capture gets an inverted pass")
         assertContains(result.text, ["White on black", "terminal", "어두운", "배경"])

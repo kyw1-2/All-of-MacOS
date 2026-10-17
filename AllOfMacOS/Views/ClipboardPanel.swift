@@ -33,7 +33,13 @@ final class ClipboardPanelState: ObservableObject {
     @Published var searchFieldActive = false
     @Published var filtersExpanded = false
     @Published var commandHeld = false
-    @Published var visibleCardIDs: [UUID] = []
+    /// Cards currently on screen, for ⌘1–9. Scrolling changes this constantly;
+    /// it only needs to re-render the panel while ⌘ badges are showing, so
+    /// changes are published only then (the next ⌘ press reads the latest).
+    var visibleCardIDs: [UUID] = [] {
+        didSet { if commandHeld, visibleCardIDs != oldValue { objectWillChange.send() } }
+    }
+    func setCommandHeld(_ held: Bool) { if commandHeld != held { commandHeld = held } }
     @Published var stack: [UUID] = []
     @Published var stackMode = false
     /// Paste Stack direction toggle: newest copy first when true.
@@ -427,14 +433,17 @@ final class ClipboardPanelController {
         // Stale messages from an earlier session must not greet the user.
         state.status = ""
         if !wasVisible {
-            state.suggestedIDs = ClipboardIntelligence.shared.suggestions(for: destination, store: store) { [weak self] ids in
-                guard let self, self.isVisible, !self.slidingOut else { return }
+            // Suggestions are computed off the main thread and slot in while
+            // the shelf slides up; opening never waits on Accessibility IPC.
+            state.suggestedIDs = []
+            ClipboardIntelligence.shared.suggestionsAsync(for: destination, store: store) { [weak self] ids in
+                guard let self, self.isVisible, !self.slidingOut, self.state.suggestedIDs != ids else { return }
                 self.state.suggestedIDs = ids
             }
             ClipboardIntelligence.shared.refineClassesWithModel(store.entries)
         }
         state.searchExpanded = !state.query.isEmpty
-        state.commandHeld = NSEvent.modifierFlags.contains(.command)
+        state.setCommandHeld(NSEvent.modifierFlags.contains(.command))
         if wasVisible || !Self.animatesPanel {
             panel.setFrame(target, display: true)
             panel.makeKeyAndOrderFront(nil)
@@ -450,6 +459,7 @@ final class ClipboardPanelController {
                 panel.animator().setFrame(target, display: true)
             }
         }
+        store.defersBackgroundUpdates = true
         installMonitors()
     }
 
@@ -475,6 +485,7 @@ final class ClipboardPanelController {
     }
 
     private func clearPanelInteractionState() {
+        store.defersBackgroundUpdates = false
         previewNavigationGeneration += 1
         for token in [keyMonitor, outsideMonitor, localClickMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(token)
@@ -486,7 +497,7 @@ final class ClipboardPanelController {
         state.preview = nil
         state.editingTitleID = nil
         state.clearSelection()
-        state.commandHeld = false
+        state.setCommandHeld(false)
         state.visibleCardIDs = []
         state.suggestedIDs = []
     }
@@ -647,7 +658,7 @@ final class ClipboardPanelController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self, event.window === self.panel, self.state.editor == nil, self.state.preview == nil else { return event }
             if event.type == .flagsChanged {
-                self.state.commandHeld = event.modifierFlags.contains(.command)
+                self.state.setCommandHeld(event.modifierFlags.contains(.command))
                 return event
             }
             if self.state.editingTitleID != nil { return event }
@@ -1388,7 +1399,7 @@ struct ClipboardPanelView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: spacing) {
                                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                                    ClipboardCardView(entry: entry, number: index + 1,
+                                    ClipboardCardView(entry: entry, revision: store.revision, number: index + 1,
                                                       compact: compact, side: cardSide,
                                                       isSelected: state.selected.contains(entry.id),
                                                       quickNumber: quickIDs.firstIndex(of: entry.id).map { $0 + 1 },
@@ -1398,6 +1409,7 @@ struct ClipboardPanelView: View {
                                                       isSuggested: suggested.contains(entry.id),
                                                       boards: boards,
                                                       store: store, state: state, controller: controller)
+                                        .equatable()
                                         .id(entry.id)
                                         .modifier(ClipboardLegacyVisibilityProbe(id: entry.id))
                                 }
@@ -1457,10 +1469,23 @@ struct ClipboardPanelView: View {
 final class AppMetadataCache {
     static let shared = AppMetadataCache()
     private var iconCache: [String: NSImage] = [:]
+    /// Uninstalled source apps: LaunchServices lookups are not free, so a
+    /// miss is remembered instead of repeated for every card render.
+    private var missingIcons = Set<String>()
+    private var fileIconCache: [String: NSImage] = [:]
+
+    func fileIcon(for url: URL) -> NSImage {
+        if let cached = fileIconCache[url.path] { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        if fileIconCache.count > 300 { fileIconCache.removeAll() }
+        fileIconCache[url.path] = icon
+        return icon
+    }
 
     func icon(for bundleID: String?) -> NSImage? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
         if let cached = iconCache[bundleID] { return cached }
+        if missingIcons.contains(bundleID) { return nil }
 
         var image: NSImage?
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
@@ -1473,6 +1498,7 @@ final class AppMetadataCache {
             iconCache[bundleID] = image
             return image
         }
+        missingIcons.insert(bundleID)
         return nil
     }
 
@@ -1590,8 +1616,11 @@ private extension Color {
 // MARK: - Paste-style Luxury Card View
 
 @MainActor
-private struct ClipboardCardView: View {
+private struct ClipboardCardView: View, Equatable {
     let entry: ClipboardEntry
+    /// Store revision: content edits (rename, pin, OCR, image edit) bump it,
+    /// so equality never has to compare megabytes of pasteboard data.
+    let revision: Int
     let number: Int
     let compact: Bool
     let side: CGFloat
@@ -1618,12 +1647,20 @@ private struct ClipboardCardView: View {
 
     static let radius: CGFloat = 16
 
+    /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
+    /// cards alone instead of re-running every visible card body.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.entry.id == rhs.entry.id && lhs.revision == rhs.revision && lhs.number == rhs.number
+            && lhs.compact == rhs.compact && lhs.side == rhs.side && lhs.isSelected == rhs.isSelected
+            && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
+            && lhs.searchActive == rhs.searchActive && lhs.isPreviewing == rhs.isPreviewing
+            && lhs.isSuggested == rhs.isSuggested && lhs.boards == rhs.boards
+    }
+
     private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
     private var headerTitle: String {
         if let text = entry.text {
-            let automatic = String(text.trimmingCharacters(in: .whitespacesAndNewlines)
-                .split(whereSeparator: \.isNewline).first.map(String.init)?.prefix(100) ?? "Text".prefix(100))
-            return entry.title == automatic ? entry.kind.displayName : entry.title
+            return entry.title == Self.automaticTitle(text) ? entry.kind.displayName : entry.title
         }
         if entry.kind == .file, entry.title == entry.fileURLs.map(\.lastPathComponent).joined(separator: ", ") {
             return entry.fileURLs.count == 1 ? "File" : "\(entry.fileURLs.count) Files"
@@ -1632,6 +1669,19 @@ private struct ClipboardCardView: View {
     }
     private var appIcon: NSImage? {
         AppMetadataCache.shared.icon(for: entry.sourceBundleID)
+    }
+
+    /// The title `ClipboardEntry.captured` derives (first non-empty line,
+    /// 100 characters) without trimming or splitting the whole clip.
+    static func automaticTitle(_ text: String) -> String {
+        guard let start = text.firstIndex(where: { !$0.isWhitespace }) else { return "Text" }
+        let rest = text[start...]
+        let end = rest.firstIndex(where: \.isNewline) ?? rest.endIndex
+        var line = rest[..<end]
+        if end == rest.endIndex {
+            while let last = line.last, last.isWhitespace { line = line.dropLast() }
+        }
+        return String(line.prefix(100))
     }
 
     var body: some View {
@@ -1782,7 +1832,11 @@ private struct ClipboardCardView: View {
             return entry.fileURLs.count == 1 ? Self.abbreviatedPath(entry.fileURLs[0]) : "\(entry.fileURLs.count) files"
         }
         if entry.kind == .link { return URL(string: entry.text ?? "")?.host ?? "Link" }
-        return "\(entry.text?.count ?? 0) characters"
+        // Counting grapheme clusters walks the whole clip; huge texts use the
+        // (equal for Hangul/Latin) UTF-16 length instead.
+        guard let text = entry.text else { return "0 characters" }
+        let count = text.utf16.count > 20_000 ? text.utf16.count : text.count
+        return "\(count.formatted()) characters"
     }
 
     @ViewBuilder
@@ -1807,7 +1861,7 @@ private struct ClipboardCardView: View {
             VStack(spacing: 8) {
                 ZStack {
                     ForEach(Array(entry.fileURLs.prefix(3).enumerated().reversed()), id: \.offset) { offset, url in
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        Image(nsImage: AppMetadataCache.shared.fileIcon(for: url))
                             .resizable().interpolation(.high).scaledToFit()
                             .frame(width: compact ? 44 : 76, height: compact ? 44 : 76)
                             .rotationEffect(.degrees(Double(offset) * -6))
@@ -2312,23 +2366,34 @@ struct NativeScrollChrome: NSViewRepresentable {
     var mode: Mode
     init(_ mode: Mode) { self.mode = mode }
     func makeNSView(context: Context) -> ScrollChromeView { ScrollChromeView(mode: mode) }
-    func updateNSView(_ view: ScrollChromeView, context: Context) { view.mode = mode; view.attach() }
+    func updateNSView(_ view: ScrollChromeView, context: Context) {
+        guard view.mode != mode else { return }
+        view.mode = mode
+        view.attach()
+    }
 
     final class ScrollChromeView: NSView {
         var mode: Mode
         private weak var scrollView: NSScrollView?
         private var observations: [NSKeyValueObservation] = []
         private var applying = false
+        private var attachScheduled = false
         init(mode: Mode) { self.mode = mode; super.init(frame: .zero) }
         required init?(coder: NSCoder) { return nil }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); attach() }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); attach() }
-        override func layout() { super.layout(); attach() }
+        // Layout runs on every scroll frame of a lazy stack; only look for the
+        // scroll view until it has been found (it never changes afterwards).
+        override func layout() { super.layout(); if scrollView == nil { attach() } }
         func attach() {
             guard window != nil else { observations.removeAll(); scrollView = nil; return }
+            guard !attachScheduled else { return }
+            attachScheduled = true
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.attachScheduled = false
+                guard self.window != nil else { return }
                 var target = self.enclosingScrollView
                 if target == nil {
                     var parent = self.superview

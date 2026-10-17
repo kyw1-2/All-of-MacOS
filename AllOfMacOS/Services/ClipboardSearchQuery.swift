@@ -10,8 +10,11 @@ struct ClipboardSearchQuery {
     }
     private var terms: [Term] = []
 
+    private static let tokenExpression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*")+"#)
+
     init(_ query: String) {
-        let expression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*")+"#)
+        guard !query.isEmpty else { return }
+        let expression = Self.tokenExpression
         let range = NSRange(query.startIndex..., in: query)
         for match in expression?.matches(in: query, range: range) ?? [] {
             guard let range = Range(match.range, in: query) else { continue }
@@ -25,12 +28,32 @@ struct ClipboardSearchQuery {
         }
     }
 
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        return formatter
+    }()
+
+    var isEmpty: Bool { terms.isEmpty }
+
+    /// Cheap fields first; the full text and file paths are only searched
+    /// when nothing shorter matched (typing searches every clip per key).
+    private static func contains(_ entry: ClipboardEntry, _ value: String) -> Bool {
+        if entry.title.localizedStandardContains(value) { return true }
+        // App names only: bundle IDs like com.apple.* would make "apple"
+        // match every clip from an Apple app.
+        if let name = entry.sourceName, name.localizedStandardContains(value) { return true }
+        if let text = entry.text, text.localizedStandardContains(value) { return true }
+        if let text = entry.recognizedText, text.localizedStandardContains(value) { return true }
+        if entry.kind == .file, entry.fileURLs.contains(where: { $0.path.localizedStandardContains(value) }) { return true }
+        return false
+    }
+
     func matches(_ entry: ClipboardEntry, boards: [ClipboardPinboard]) -> Bool {
-        let searchable = [entry.title, entry.text ?? "", entry.recognizedText ?? "",
-                          // App names only: bundle IDs like com.apple.* would make
-                          // "apple" match every clip from an Apple app.
-                          entry.sourceName ?? "",
-                          entry.fileURLs.map(\.path).joined(separator: " ")]
+        guard !terms.isEmpty else { return true }
         return terms.allSatisfy { term in
             let matched: Bool
             switch term.field {
@@ -40,15 +63,10 @@ struct ClipboardSearchQuery {
             case "board":
                 matched = boards.contains { entry.pinboardIDs.contains($0.id) && $0.name.localizedStandardContains(term.value) }
             case "before", "after":
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.calendar = Calendar(identifier: .gregorian)
-                formatter.dateFormat = "yyyy-MM-dd"
-                formatter.isLenient = false
-                if let date = formatter.date(from: term.value) {
+                if let date = Self.dayFormatter.date(from: term.value) {
                     matched = term.field == "before" ? entry.lastCopiedAt < date : entry.lastCopiedAt >= date
                 } else { matched = false }
-            default: matched = searchable.contains { $0.localizedStandardContains(term.value) }
+            default: matched = Self.contains(entry, term.value)
             }
             return term.excluded ? !matched : matched
         }

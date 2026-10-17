@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreGraphics
 import ImageIO
+import UniformTypeIdentifiers
 
 /// One capture kept in the session history.
 ///
@@ -140,11 +141,14 @@ final class CaptureHistory: ObservableObject {
         load()
     }
 
-    private func imageURL(for id: UUID) -> URL {
+    private func imageURL(for id: UUID) -> URL { Self.imageURL(for: id, in: directory) }
+
+    private nonisolated static func imageURL(for id: UUID, in directory: URL) -> URL {
         directory.appendingPathComponent(id.uuidString).appendingPathExtension("png")
     }
 
     private func load() {
+        Self.ioQueue.sync {}
         guard let data = try? Data(contentsOf: manifestURL),
               let records = try? JSONDecoder().decode([Record].self, from: data) else { return }
         // The file name is always derived from the validated UUID and stays in
@@ -165,28 +169,48 @@ final class CaptureHistory: ObservableObject {
         trim()
     }
 
+    /// Encoding and disk I/O run on one serial utility queue, in order, so a
+    /// capture never stalls the main thread while the HUD or overlay appears.
+    /// Every instance shares it; opening a history first drains pending writes.
+    private static let ioQueue = DispatchQueue(label: "com.kyw.allofmacos.capture-history-io", qos: .utility)
+
     private func persistIndex() {
-        let records: [Record] = entries.compactMap { entry in
-            guard FileManager.default.fileExists(atPath: imageURL(for: entry.id).path) else {
-                return nil
-            }
-            return Record(id: entry.id, kind: entry.kind, capturedAt: entry.capturedAt,
-                          windowTitle: entry.windowTitle, externalFilePath: entry.fileURL?.path,
-                          scale: Double(entry.scale),
-                          width: Double(entry.pointSize.width), height: Double(entry.pointSize.height),
-                          isPinned: entry.isPinned)
+        let records: [Record] = entries.map { entry in
+            Record(id: entry.id, kind: entry.kind, capturedAt: entry.capturedAt,
+                   windowTitle: entry.windowTitle, externalFilePath: entry.fileURL?.path,
+                   scale: Double(entry.scale),
+                   width: Double(entry.pointSize.width), height: Double(entry.pointSize.height),
+                   isPinned: entry.isPinned)
         }
-        guard let data = try? JSONEncoder().encode(records) else { return }
-        try? data.write(to: manifestURL, options: .atomic)
+        let directory = directory, manifestURL = manifestURL
+        Self.ioQueue.async {
+            let kept = records.filter {
+                FileManager.default.fileExists(atPath: Self.imageURL(for: $0.id, in: directory).path)
+            }
+            guard let data = try? JSONEncoder().encode(kept) else { return }
+            try? data.write(to: manifestURL, options: .atomic)
+        }
     }
 
     private func cacheImage(_ image: CGImage, id: UUID) {
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
-            try png.write(to: imageURL(for: id), options: .atomic)
-        } catch {
-            NSLog("[CaptureHistory] Could not save history cache: %@", error.localizedDescription)
+        let directory = directory, url = imageURL(for: id)
+        Self.ioQueue.async {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+                CGImageDestinationAddImage(destination, image, nil)
+                guard CGImageDestinationFinalize(destination) else { return }
+            } catch {
+                NSLog("[CaptureHistory] Could not save history cache: %@", error.localizedDescription)
+            }
+        }
+    }
+
+    private func removeCachedImages(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        let directory = directory
+        Self.ioQueue.async {
+            for id in ids { try? FileManager.default.removeItem(at: Self.imageURL(for: id, in: directory)) }
         }
     }
 
@@ -227,16 +251,14 @@ final class CaptureHistory: ObservableObject {
 
     func remove(_ entry: CaptureHistoryEntry) {
         entries.removeAll { $0.id == entry.id }
-        try? FileManager.default.removeItem(at: imageURL(for: entry.id))
+        removeCachedImages([entry.id])
         persistIndex()
     }
 
     func removeAll() {
         let removed = entries
         entries.removeAll()
-        for entry in removed {
-            try? FileManager.default.removeItem(at: imageURL(for: entry.id))
-        }
+        removeCachedImages(removed.map(\.id))
         persistIndex()
     }
 
@@ -264,7 +286,7 @@ final class CaptureHistory: ObservableObject {
     func removeUnpinned() {
         let removed = entries.filter { !$0.isPinned }
         entries.removeAll { !$0.isPinned }
-        for entry in removed { try? FileManager.default.removeItem(at: imageURL(for: entry.id)) }
+        removeCachedImages(removed.map(\.id))
         persistIndex()
     }
 
@@ -282,7 +304,7 @@ final class CaptureHistory: ObservableObject {
         }
         let removedIDs = Set(discarded.map(\.id))
         entries.removeAll { removedIDs.contains($0.id) }
-        for entry in discarded { try? FileManager.default.removeItem(at: imageURL(for: entry.id)) }
+        removeCachedImages(discarded.map(\.id))
         persistIndex()
     }
 

@@ -7,275 +7,213 @@ import SwiftUI
 struct ModernWindowSnappingView: View {
     @EnvironmentObject var appState: AppState
     @State private var hoveredLayout: CustomSnapZone.Layout?
-    @State private var selectedCollection: CustomSnapZone.Collection = .essentials
-    @State private var toastMessage: String?
-    @State private var toastTask: Task<Void, Never>?
+    @StateObject private var toast = AOMToastModel()
+    @State private var showingSnapZones = false
+    @State private var showingProfiles = false
+    @State private var showingWindowLayouts = false
 
     private let primaryLayouts: [CustomSnapZone.Layout] = [
-        .leftHalf, .rightHalf, .maximize,
+        .leftHalf, .rightHalf, .maximize, .center,
         .topLeft, .topRight, .bottomLeft, .bottomRight,
-        .leftThird, .centerThird, .rightThird, .center
+        .leftThird, .centerThird, .rightThird,
+        .leftTwoThirds, .rightTwoThirds, .topHalf, .bottomHalf, .nextDisplay
     ]
 
+    private var requiresOption: Bool {
+        appState.activeSnapProfile?.requiresOption ?? appState.currentPreset.snappingRequiresOption
+    }
+    private var showsPreview: Bool {
+        appState.activeSnapProfile?.showsPreview ?? appState.currentPreset.snappingShowsPreview
+    }
+
+    /// The collection whose layouts exactly match the enabled zones, if any.
+    private var currentCollection: CustomSnapZone.Collection? {
+        let enabled = appState.effectiveSnapZones.filter(\.isEnabled)
+        return CustomSnapZone.Collection.allCases.first { collection in
+            collection.replacing(enabled).count == enabled.count
+                && collection.layouts.count == enabled.count
+                && collection.replacing(enabled).allSatisfy { candidate in enabled.contains { $0.id == candidate.id } }
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 24) {
-                    // Master Status Card
-                    statusCard
-
-                    // Interactive Visual Desktop Stage
-                    stageSection
-
-                    // Quick Collections Bar
-                    collectionsSection
-
-                    // Grid of Available Snap Zones
+        GeometryReader { geometry in
+            let wide = geometry.size.width >= 900
+            ScrollView {
+                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                    AOMPageHeader("Window Tiling", subtitle: appState.snapStatus,
+                                  systemImage: "rectangle.split.2x2.fill",
+                                  tint: appState.currentPreset.snappingEnabled ? .blue : .gray) {
+                        Toggle("Drag to Snap", isOn: Binding(
+                            get: { appState.currentPreset.snappingEnabled },
+                            set: { appState.setSnappingEnabled($0) }
+                        ))
+                        .toggleStyle(.switch)
+                    }
+                    if wide {
+                        HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
+                            stageSection.frame(maxWidth: .infinity)
+                            controlsColumn.frame(width: min(360, geometry.size.width * 0.34))
+                        }
+                    } else {
+                        stageSection
+                        controlsColumn
+                    }
                     zonesGridSection
                 }
-                .padding(24)
+                .padding(AOMDesign.pagePadding)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .suppressScrollerReservation()
         }
-        .toolbar { ToolbarItemGroup(placement: .automatic) { headerBar } }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background.opacity(0.16))
-        .overlay(alignment: .bottom) {
-            if let toastMessage {
-                Text(toastMessage)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black.opacity(0.82)))
-                    .shadow(radius: 6)
-                    .padding(.bottom, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .aomToast(toast.message)
+        .sheet(isPresented: $showingSnapZones) {
+            CustomSnapZonesEditor(preset: appState.currentPreset, profile: appState.activeSnapProfile)
+                .environmentObject(appState)
         }
+        .sheet(isPresented: $showingProfiles) { SnapProfilesEditor().environmentObject(appState) }
+        .sheet(isPresented: $showingWindowLayouts) { WindowLayoutsEditor() }
     }
 
-    // MARK: - Header Bar
+    // MARK: - Controls column
 
-    private var headerBar: some View {
-        HStack(spacing: 12) {
-
-
-            Toggle("Window Snapping", isOn: Binding(
-                get: { appState.currentPreset.snappingEnabled },
-                set: { appState.setSnappingEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-        }
-        .labelStyle(.iconOnly)
-    }
-
-    // MARK: - Status Card
-
-    private var statusCard: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(appState.currentPreset.snappingEnabled ? Color.blue.opacity(0.15) : Color.secondary.opacity(0.12))
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: appState.currentPreset.snappingEnabled ? "rectangle.split.2x2" : "rectangle.dashed")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(appState.currentPreset.snappingEnabled ? Color.blue : Color.secondary)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(appState.currentPreset.snappingEnabled ? "Drag-to-Snap Active" : "Window Snapping Disabled")
-                    .font(.system(size: 14, weight: .bold))
-
-                Text(appState.snapStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if appState.currentPreset.snappingEnabled {
-                HStack(spacing: 6) {
-                    Circle().fill(Color.green).frame(width: 8, height: 8)
-                    Text("\(appState.effectiveSnapZones.filter(\.isEnabled).count) Zones Listening")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+    private var controlsColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Snap Layouts", systemImage: "square.grid.2x2",
+                             caption: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones active")
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Collection", selection: Binding<CustomSnapZone.Collection?>(
+                    get: { currentCollection },
+                    set: { if let collection = $0 { applyCollection(collection) } }
+                )) {
+                    ForEach(CustomSnapZone.Collection.allCases) { collection in
+                        Text("\(collection.rawValue) (\(collection.layouts.count))").tag(Optional(collection))
+                    }
+                    if currentCollection == nil {
+                        Text("Custom").tag(CustomSnapZone.Collection?.none)
+                    }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
+                .pickerStyle(.menu)
+                Divider()
+                switchRow("Hold ⌥ Option while dragging", isOn: Binding(
+                    get: { requiresOption },
+                    set: { updateBehavior(requiresOption: $0, showsPreview: showsPreview) }
+                ))
+                switchRow("Show snap preview", isOn: Binding(
+                    get: { showsPreview },
+                    set: { updateBehavior(requiresOption: requiresOption, showsPreview: $0) }
+                ))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .aomSurface()
+
+            VStack(spacing: 8) {
+                AOMActionTile(title: "Edit Snap Zones", systemImage: "rectangle.split.3x3", tint: .blue,
+                              subtitle: "Draw custom zones and targets") { showingSnapZones = true }
+                AOMActionTile(title: "Display Profiles", systemImage: "display.2", tint: .teal,
+                              subtitle: appState.activeSnapProfile?.name ?? "Per-monitor layouts") { showingProfiles = true }
+                AOMActionTile(title: "Saved Windows", systemImage: "macwindow.on.rectangle", tint: .indigo,
+                              subtitle: "Window layouts and undo") { showingWindowLayouts = true }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
     }
 
     // MARK: - Interactive Desktop Stage
 
     private var stageSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Layout Preview", systemImage: "display")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Preview", systemImage: "display",
+                             caption: "Hover a layout below to see where a window lands")
             ZStack {
-                // Simulated macOS Display
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .frame(height: 220)
-                    .shadow(color: Color.black.opacity(0.10), radius: 8, y: 3)
-
-                // Wallpaper gradient simulation
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.35), Color.purple.opacity(0.35), Color.indigo.opacity(0.4)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .padding(8)
-
-                // Menu Bar Simulation
-                VStack {
-                    HStack {
-                        Image(systemName: "apple.logo")
-                            .font(.system(size: 10))
-                        Text("All of MacOS")
-                            .font(.system(size: 9, weight: .bold))
+                RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.55), Color.purple.opacity(0.45), Color.indigo.opacity(0.6)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "apple.logo").font(.system(size: 10))
+                        Text("Finder").font(.system(size: 10, weight: .semibold))
                         Spacer()
-                        Text("Mon 9:41 AM")
-                            .font(.system(size: 9))
-                    }
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.2))
-
-                    Spacer()
-                }
-                .padding(8)
-
-                // Active Layout Preview Overlay
-                if let layout = hoveredLayout {
-                    GeometryReader { geo in
-                        let rect = snapRect(for: layout, in: geo.size)
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.blue.opacity(0.4))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white.opacity(0.8), lineWidth: 2)
-                            )
-                            .overlay(
-                                Text(layout.rawValue)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .shadow(radius: 2)
-                            )
-                            .frame(width: rect.width, height: rect.height)
-                            .position(x: rect.midX, y: rect.midY)
-                            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hoveredLayout)
-                    }
-                    .padding(8)
-                    .padding(.top, 24)
-                } else {
-                    VStack(spacing: 4) {
-                        Image(systemName: "cursorarrow.and.square.on.square.dashed")
-                            .font(.system(size: 26))
-                            .foregroundStyle(.white.opacity(0.7))
-                        Text("Hover over any snap zone below to preview on screen")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-            )
-        }
-    }
-
-    // MARK: - Collections Section
-
-    private var collectionsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Collections", systemImage: "square.grid.2x2")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                ForEach(CustomSnapZone.Collection.allCases) { collection in
-                    let isSelected = selectedCollection == collection
-                    Button {
-                        selectedCollection = collection
-                        applyCollection(collection)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(collection.rawValue)
-                                    .font(.system(size: 13, weight: .semibold))
-                                Spacer()
-                                if isSelected {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Color.blue)
-                                }
-                            }
-
-                            Text("\(collection.layouts.count) preset snap zones")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        TimelineView(.everyMinute) { context in
+                            Text(context.date, format: .dateTime.weekday(.abbreviated).hour().minute())
+                                .font(.system(size: 10))
                         }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(isSelected ? Color.blue.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(isSelected ? Color.blue.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: 1)
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 12)
+                    .frame(height: 20)
+                    .background(.ultraThinMaterial.opacity(0.6))
+                    GeometryReader { geo in
+                        if let layout = hoveredLayout {
+                            let rect = snapRect(for: layout, in: geo.size).insetBy(dx: 4, dy: 4)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(.regularMaterial)
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.85), lineWidth: 1.5))
+                                .overlay(Label(layout.rawValue, systemImage: layout.symbol)
+                                    .font(.callout.weight(.semibold)))
+                                .frame(width: max(0, rect.width), height: max(0, rect.height))
+                                .position(x: rect.midX, y: rect.midY)
+                                .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.85)), value: hoveredLayout)
+                        } else {
+                            VStack(spacing: 6) {
+                                Image(systemName: "cursorarrow.and.square.on.square.dashed").font(.system(size: 26))
+                                Text(requiresOption ? "Hold ⌥ and drag a window to an edge or corner" : "Drag a window to an edge or corner")
+                                    .font(.callout.weight(.medium))
+                            }
+                            .foregroundStyle(.white.opacity(0.92))
+                            .frame(width: geo.size.width, height: geo.size.height)
+                        }
+                    }
                 }
+                .clipShape(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 318)
+            .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(hoveredLayout.map { "Preview: \($0.rawValue)" } ?? "Layout preview")
         }
     }
 
     // MARK: - Zones Grid Section
 
     private var zonesGridSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("AVAILABLE SNAP ZONES", systemImage: "rectangle.split.3x3")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)], spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Tile the Front Window", systemImage: "rectangle.split.3x3",
+                             caption: "Click a layout to move the frontmost window now")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: AOMDesign.gridSpacing)],
+                      spacing: AOMDesign.gridSpacing) {
                 ForEach(primaryLayouts) { layout in
                     SnapLayoutTile(
                         layout: layout,
                         isHovered: hoveredLayout == layout,
                         onHover: { hovering in
-                            hoveredLayout = hovering ? layout : nil
+                            if hovering { hoveredLayout = layout } else if hoveredLayout == layout { hoveredLayout = nil }
                         },
-                        onExecute: {
-                            executeSnap(layout)
-                        }
+                        onExecute: { executeSnap(layout) }
                     )
                 }
             }
         }
+    }
+
+    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title)
+            Spacer(minLength: 8)
+            Toggle(title, isOn: isOn).labelsHidden()
+        }
+    }
+
+    private func updateBehavior(requiresOption: Bool, showsPreview: Bool) {
+        appState.updateSnapSettings(zones: appState.effectiveSnapZones,
+                                    enabled: appState.currentPreset.snappingEnabled,
+                                    requiresOption: requiresOption, showsPreview: showsPreview,
+                                    profileID: appState.activeSnapProfile?.id)
     }
 
     // MARK: - Helpers
@@ -369,16 +307,7 @@ struct ModernWindowSnappingView: View {
         }
     }
 
-    private func showToast(_ message: String) {
-        toastTask?.cancel()
-        toastMessage = message
-        toastTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(.easeOut(duration: 0.3)) {
-                toastMessage = nil
-            }
-        }
-    }
+    private func showToast(_ message: String) { toast.show(message) }
 }
 
 private struct SnapLayoutTile: View {
@@ -390,37 +319,28 @@ private struct SnapLayoutTile: View {
     var body: some View {
         Button(action: onExecute) {
             VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isHovered ? Color.blue.opacity(0.18) : Color.primary.opacity(0.05))
-                        .frame(width: 36, height: 36)
-
-                    Image(systemName: layout.symbol)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(isHovered ? Color.blue : Color.primary)
-                }
-
+                Image(systemName: layout.symbol)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(isHovered ? Color.white : Color.accentColor)
+                    .frame(width: 40, height: 32)
+                    .background(isHovered ? Color.accentColor : Color.accentColor.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Text(layout.rawValue)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .padding(.horizontal, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .shadow(color: Color.black.opacity(isHovered ? 0.10 : 0.03), radius: isHovered ? 4 : 2, y: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(isHovered ? Color.blue.opacity(0.4) : Color.primary.opacity(0.08), lineWidth: 1)
-            )
-            .scaleEffect(isHovered ? 1.02 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isHovered)
+            .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
+            .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { onHover($0) }
+        .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: isHovered)
+        .help("Move the front window: \(layout.rawValue)")
+        .accessibilityLabel("Tile front window: \(layout.rawValue)")
     }
 }

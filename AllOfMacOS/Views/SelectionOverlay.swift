@@ -57,6 +57,8 @@ final class SelectionOverlayController {
 
     func present() {
         Self.activeController = self
+        // The display query overlaps the user's drag instead of following it.
+        ScreenCaptureService.shared.prewarm()
         let screens = NSScreen.screens
         guard !screens.isEmpty else { finish(nil); return }
 

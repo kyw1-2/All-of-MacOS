@@ -68,6 +68,9 @@ final class ClipboardStore: ObservableObject {
     @Published private(set) var isLoading = true
     @Published private(set) var canUndoDeletion = false
     @Published private(set) var indexingImages = false
+    /// Set while the clipboard shelf is on screen: background results (image
+    /// OCR) wait instead of re-rendering the cards under the pointer.
+    var defersBackgroundUpdates = false
     private var deletionHistory: [[ClipboardEntry]] = []
     private var indexingTask: Task<Void, Never>?
     private var attemptedImages: Set<UUID> = []
@@ -567,7 +570,11 @@ final class ClipboardStore: ObservableObject {
         let before = entries.count
         if limits.retentionDays > 0 {
             let cutoff = now().addingTimeInterval(-Double(limits.retentionDays) * 86_400)
-            entries.removeAll { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }
+            // Mutating the published array re-renders an open panel, so only
+            // touch it when something actually expires.
+            if entries.contains(where: { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }) {
+                entries.removeAll { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }
+            }
         }
         // Retention limits cover history only. Pinboards are explicit durable
         // collections and are never silently evicted to make room for history.
@@ -579,7 +586,7 @@ final class ClipboardStore: ObservableObject {
             bytes -= oldest.byteCount
             removed.insert(oldest.id)
         }
-        entries.removeAll { removed.contains($0.id) }
+        if !removed.isEmpty { entries.removeAll { removed.contains($0.id) } }
         if entries.count != before { pruneDigests(); scheduleSave() }
     }
 
@@ -629,10 +636,17 @@ final class ClipboardStore: ObservableObject {
                 let digest: String = await onQueue { entry.payloadDigest }
                 let text = await TextRecognitionService.recognizeForIndexing(imageData: data)
                 let result: (String, String)? = text.map { ($0, digest) }
+                // Applying a result re-renders an open clipboard shelf; wait
+                // until it closes so browsing never stutters behind indexing.
+                while defersBackgroundUpdates, !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                }
                 guard let result, let index = entries.firstIndex(where: { $0.id == entry.id }),
                       entries[index].items == entry.items else { continue }
-                entries[index].recognizedText = result.0
-                entries[index].recognizedImageDigest = result.1
+                var updated = entries[index]
+                updated.recognizedText = result.0
+                updated.recognizedImageDigest = result.1
+                entries[index] = updated
                 scheduleSave()
             }
         }

@@ -103,13 +103,43 @@ final class ScreenCaptureService {
 
     // MARK: - Shareable content
 
+    private let contentLock = NSLock()
+    private var cachedContent: (content: SCShareableContent, fetchedAt: Date)?
+    private var screenObserver: NSObjectProtocol?
+
     private func shareableContent() async throws -> SCShareableContent {
         do {
             // On-screen windows only: an off-screen window has no meaningful
             // pixels to capture, and including them makes the picker noisy.
-            return try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            contentLock.withLock { cachedContent = (content, Date()) }
+            return content
         } catch {
             throw CaptureError.captureFailed(error.localizedDescription)
+        }
+    }
+
+    /// Display-only captures (area, text) don't need a fresh window list:
+    /// enumerating every window on the system costs tens to hundreds of ms.
+    /// A recent snapshot is reused until the display layout changes.
+    private func displayContent() async throws -> SCShareableContent {
+        let cached = contentLock.withLock { cachedContent }
+        if let cached, Date().timeIntervalSince(cached.fetchedAt) < 300 { return cached.content }
+        return try await shareableContent()
+    }
+
+    /// Starts the ScreenCaptureKit query while the user is still selecting,
+    /// so the capture itself can begin the moment the selection ends.
+    func prewarm() {
+        guard Self.hasPermission else { return }
+        if screenObserver == nil {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: nil) { [weak self] _ in
+                    self?.contentLock.withLock { self?.cachedContent = nil }
+                }
+        }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            _ = try? await self?.displayContent()
         }
     }
 
@@ -247,7 +277,7 @@ final class ScreenCaptureService {
                      excludingWindowIDs: Set<CGWindowID> = []) async throws -> CaptureResult {
         guard globalRect.width >= 1, globalRect.height >= 1 else { throw CaptureError.areaTooSmall }
         return try await Self.withDeadline(seconds: 20) { [self] in
-            let content = try await shareableContent()
+            let content = excludingWindowIDs.isEmpty ? try await displayContent() : try await shareableContent()
             let displays = content.displays.filter { !$0.frame.intersection(globalRect).isEmpty }
             guard !displays.isEmpty else { throw CaptureError.noDisplays }
             let scale = displays.map { backingScale(for: $0) }.max() ?? 1

@@ -45,6 +45,7 @@ final class TextCaptureSettings: ObservableObject {
         static let usesLanguageCorrection = "AOMTextCaptureLanguageCorrection"
         static let customWords = "AOMTextCaptureCustomWords"
         static let engine = "AOMTextCaptureEngine"
+        static let fastRecognition = "AOMTextCaptureFastRecognition"
     }
 
     let defaults: UserDefaults
@@ -157,6 +158,13 @@ final class TextCaptureSettings: ObservableObject {
     var engine: TextRecognitionEngineMode {
         get { TextRecognitionEngineMode(rawValue: defaults.string(forKey: Key.engine) ?? "") ?? .automatic }
         set { set(newValue.rawValue, Key.engine) }
+    }
+
+    /// Instant recognition: a single pass unless the text needs the
+    /// multi-script voting pipeline (on by default, like TextSniper).
+    var prefersFastRecognition: Bool {
+        get { bool(Key.fastRecognition, true) }
+        set { set(newValue, Key.fastRecognition) }
     }
 
     /// The full ordered language list for the recogniser.

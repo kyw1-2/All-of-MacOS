@@ -1,69 +1,71 @@
 import SwiftUI
 
+/// Insights: live gesture statistics plus an overview of what is configured,
+/// so the page is informative from the first launch, not a blank chart.
 struct StatisticsView: View {
     @ObservedObject var stats = GestureStatistics.shared
     @EnvironmentObject var appState: AppState
+    @State private var confirmingReset = false
+
+    private var triggers: [Trigger] { appState.currentPreset.triggers }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                overviewCards
-                gestureBreakdown
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                    AOMPageHeader("Insights",
+                                  subtitle: "Tracking since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))",
+                                  systemImage: "chart.xyaxis.line", tint: .green) {
+                        Button { confirmingReset = true } label: {
+                            Label("Reset", systemImage: "arrow.counterclockwise")
+                        }
+                        .disabled(stats.totalGestures == 0)
+                    }
+                    overviewCards(columns: geometry.size.width >= 820 ? 4 : 2)
+                    let wide = geometry.size.width >= 900
+                    if wide {
+                        HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
+                            gestureBreakdown.frame(maxWidth: .infinity)
+                            configurationSummary.frame(width: min(340, geometry.size.width * 0.34))
+                        }
+                        .frame(maxHeight: .infinity, alignment: .top)
+                    } else {
+                        gestureBreakdown
+                        configurationSummary
+                    }
+                }
+                .padding(AOMDesign.pagePadding)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
-            .padding(24)
+            .suppressScrollerReservation()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.background.opacity(0.22))
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Gesture Statistics")
-                    .font(.title.bold())
-                Text("Tracking since \(stats.sessionStart, style: .date)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            Button(action: { stats.reset() }) {
-                Label("Reset", systemImage: "arrow.counterclockwise")
-            }
-            .buttonStyle(.bordered)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .confirmationDialog("Reset gesture statistics?", isPresented: $confirmingReset) {
+            Button("Reset Statistics", role: .destructive) { stats.reset() }
+        } message: {
+            Text("Counts start again from zero. Your gestures and actions are not changed.")
         }
     }
 
     // MARK: - Overview Cards
 
-    private var overviewCards: some View {
-        HStack(spacing: 12) {
-            StatCard(
-                title: "Total Detected",
-                value: "\(stats.totalGestures)",
-                icon: "hand.raised.fingers.spread.fill",
-                color: .blue
-            )
-            StatCard(
-                title: "Triggers Fired",
-                value: "\(stats.totalFired)",
-                icon: "bolt.fill",
-                color: .green
-            )
-            StatCard(
-                title: "Unmatched",
-                value: "\(stats.unmatchedCount)",
-                icon: "xmark.circle",
-                color: .orange
-            )
-            StatCard(
-                title: "Unique Gestures",
-                value: "\(stats.uniqueGesturesCount)",
-                icon: "hand.draw.fill",
-                color: .purple
-            )
+    private var matchRate: String {
+        guard stats.totalGestures > 0 else { return "—" }
+        return (Double(stats.totalFired) / Double(stats.totalGestures)).formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    private func overviewCards(columns: Int) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMDesign.gridSpacing), count: columns),
+                  spacing: AOMDesign.gridSpacing) {
+            AOMMetricTile(title: "Gestures Detected", value: stats.totalGestures.formatted(),
+                          systemImage: "hand.raised.fingers.spread.fill", tint: .blue, detail: "Every recognized input")
+            AOMMetricTile(title: "Actions Triggered", value: stats.totalFired.formatted(),
+                          systemImage: "bolt.fill", tint: .green, detail: "Match rate \(matchRate)")
+            AOMMetricTile(title: "Unmatched", value: stats.unmatchedCount.formatted(),
+                          systemImage: "questionmark.circle", tint: .orange, detail: "Detected with no gesture assigned")
+            AOMMetricTile(title: "Distinct Gestures", value: stats.uniqueGesturesCount.formatted(),
+                          systemImage: "hand.draw.fill", tint: .purple, detail: "Different gestures used")
         }
     }
 
@@ -71,95 +73,117 @@ struct StatisticsView: View {
 
     private var gestureBreakdown: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Gesture Breakdown")
-                .font(.headline)
-
+            AOMSectionHeader("Most Used", systemImage: "list.number",
+                             caption: stats.sortedEntries.isEmpty ? nil : "\(stats.sortedEntries.count) gestures seen")
             if stats.sortedEntries.isEmpty {
-                Text("No gestures recorded yet. Start using trackpad gestures to see statistics.")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 40)
+                AOMEmptyState("No Gestures Recorded Yet", systemImage: "hand.tap",
+                              message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.")
+                    .frame(minHeight: 260)
+                    .aomSurface(padding: nil)
             } else {
-                let maxCount = stats.sortedEntries.first?.totalCount ?? 1
-
-                ForEach(stats.sortedEntries) { entry in
-                    GestureStatRow(entry: entry, maxCount: maxCount, accentColor: appState.accentColorChoice.color)
+                let maxCount = max(1, stats.sortedEntries.first?.totalCount ?? 1)
+                VStack(spacing: 0) {
+                    ForEach(Array(stats.sortedEntries.prefix(25).enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { Divider() }
+                        GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
+                                       accentColor: appState.accentColorChoice.color)
+                    }
                 }
+                .aomSurface(padding: 12)
             }
         }
-        .padding(16)
-        .background(.background.opacity(0.35))
-        .cornerRadius(10)
     }
-}
 
-// MARK: - Stat Card
+    // MARK: - Configuration summary
 
-private struct StatCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(color)
-            Text(value)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
+    private var configurationSummary: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Your Setup", systemImage: "slider.horizontal.3")
+            VStack(spacing: 0) {
+                ForEach(Array(TriggerCategory.inputCategories.enumerated()), id: \.element) { index, category in
+                    if index > 0 { Divider() }
+                    let all = triggers.filter { $0.input.category == category }
+                    HStack(spacing: 10) {
+                        Image(systemName: category.iconName).frame(width: 20).foregroundStyle(.secondary)
+                        Text(category.rawValue)
+                        Spacer()
+                        Text("\(all.filter(\.isEnabled).count) of \(all.count)")
+                            .monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    .padding(.vertical, 8)
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .aomSurface(padding: 12)
+            VStack(spacing: 0) {
+                summaryRow("Application profiles", "\(appState.currentPreset.appTargets.filter { !$0.isGlobal }.count)", "app.badge")
+                Divider()
+                summaryRow("Activation groups", "\(appState.currentPreset.activationGroups.count)", "square.stack.3d.up")
+                Divider()
+                summaryRow("Snap zones", "\(appState.effectiveSnapZones.filter(\.isEnabled).count)", "rectangle.split.2x2")
+                Divider()
+                summaryRow("Total actions", "\(triggers.reduce(0) { $0 + $1.actions.count })", "bolt")
+            }
+            .aomSurface(padding: 12)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(.background.opacity(0.35))
-        .cornerRadius(10)
+    }
+
+    private func summaryRow(_ title: String, _ value: String, _ symbol: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).frame(width: 20).foregroundStyle(.secondary)
+            Text(title)
+            Spacer()
+            Text(value).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .font(.callout)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - Gesture Row
 
 private struct GestureStatRow: View {
+    let rank: Int
     let entry: GestureStatEntry
     let maxCount: Int
     let accentColor: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(entry.gesture)
-                    .font(.system(.body, design: .rounded).weight(.medium))
-                Spacer()
-                if entry.firedCount > 0 {
-                    Text("\(entry.firedCount) fired")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.15))
-                        .cornerRadius(4)
+        HStack(spacing: 12) {
+            Text("\(rank)")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text(entry.gesture).font(.callout.weight(.medium)).lineLimit(1)
+                    Spacer()
+                    if entry.firedCount > 0 {
+                        Text("\(entry.firedCount) fired")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.green)
+                    }
+                    Text("\(entry.totalCount)")
+                        .font(.callout.monospacedDigit().weight(.semibold))
                 }
-                Text("\(entry.totalCount)")
-                    .font(.system(.body, design: .rounded).weight(.bold))
-                    .foregroundColor(.secondary)
-            }
-
-            GeometryReader { geo in
-                let fraction = maxCount > 0 ? CGFloat(entry.totalCount) / CGFloat(maxCount) : 0
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(accentColor.opacity(0.7))
-                    .frame(width: geo.size.width * fraction, height: 6)
-            }
-            .frame(height: 6)
-
-            if let last = entry.lastDetected {
-                Text("Last: \(last, style: .relative) ago")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                GeometryReader { geo in
+                    let fraction = CGFloat(entry.totalCount) / CGFloat(maxCount)
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.06))
+                        Capsule().fill(accentColor.gradient).frame(width: max(4, geo.size.width * fraction))
+                    }
+                }
+                .frame(height: 6)
+                if let last = entry.lastDetected {
+                    Text("Last used \(last, style: .relative) ago")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 }

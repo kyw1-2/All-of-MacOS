@@ -75,6 +75,11 @@ struct TextCaptureSettingsSection: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
+            AppleSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Instant Recognition",
+                             subtitle: "One fast pass like TextSniper; mixed scripts still get the full multi-pass read",
+                             showDivider: true) {
+                toggle(\.prefersFastRecognition, "Instant recognition")
+            }
             AppleSettingsRow(icon: "cpu", iconColor: .purple, title: "Engine",
                              subtitle: "Automatic reads each script separately and cross-checks with Live Text",
                              showDivider: true) {

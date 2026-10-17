@@ -68,6 +68,11 @@ enum ClipboardItemClassifier {
     }
 
     static func classify(text raw: String) -> ClipboardItemClass {
+        // Huge clips (logs, documents) are never a single field value; only
+        // look for an embedded private key instead of running every pattern.
+        if raw.utf8.count > 64_000 {
+            return raw.contains("PRIVATE KEY-----") ? .secret : .unclassified
+        }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return .unclassified }
         let whole = NSRange(text.startIndex..., in: text)
@@ -86,9 +91,14 @@ enum ClipboardItemClassifier {
     }
 
     /// NSDataDetector types, only when the match covers the whole text.
-    private static func detectorClass(_ text: String) -> ClipboardItemClass? {
+    /// Building an NSDataDetector costs milliseconds; matching is thread-safe.
+    private static let detector: NSDataDetector? = {
         let types: NSTextCheckingResult.CheckingType = [.link, .phoneNumber, .date, .address]
-        guard let detector = try? NSDataDetector(types: types.rawValue) else { return nil }
+        return try? NSDataDetector(types: types.rawValue)
+    }()
+
+    private static func detectorClass(_ text: String) -> ClipboardItemClass? {
+        guard let detector else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = detector.firstMatch(in: text, range: range),
               match.range.length >= range.length - 1 else { return nil }
@@ -147,12 +157,17 @@ enum ClipboardDestinationReader {
                                                 "com.apple.freeform", "com.adobe.Photoshop", "com.pixelmatorteam.pixelmator.x"]
 
     /// The focused element of `app`, classified from its AX role/subrole and
-    /// labels, falling back to the app's category.
-    @MainActor
+    /// labels, falling back to the app's category. Accessibility calls are
+    /// IPC with a timeout, so this runs off the main thread.
     static func read(app: NSRunningApplication?) -> ClipboardDestinationContext {
-        var context = ClipboardDestinationContext(bundleID: app?.bundleIdentifier, appName: app?.localizedName)
-        guard let app, !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return context }
-        let element = AXUIElementCreateApplication(app.processIdentifier)
+        read(pid: app?.processIdentifier, bundleID: app?.bundleIdentifier, appName: app?.localizedName,
+             isolated: PresetManager.isUIPreview || PresetManager.isRunningTests)
+    }
+
+    static func read(pid: pid_t?, bundleID: String?, appName: String?, isolated: Bool) -> ClipboardDestinationContext {
+        var context = ClipboardDestinationContext(bundleID: bundleID, appName: appName)
+        guard let pid, !isolated else { return context }
+        let element = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(element, 0.15)
         if let window: AXUIElement = attribute(element, kAXFocusedWindowAttribute) {
             context.windowTitle = attribute(window, kAXTitleAttribute)
@@ -279,7 +294,7 @@ enum ClipboardSuggestionRanker {
     }
 
     static func tokens(_ text: String) -> Set<String> {
-        Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.filter { $0.count >= 3 }.map(String.init).prefix(200))
+        Set(String(text.prefix(2_000)).lowercased().split { !$0.isLetter && !$0.isNumber }.filter { $0.count >= 3 }.map(String.init).prefix(200))
     }
 
     /// Up to three entry IDs, best first. Secrets are only ever suggested for
@@ -362,36 +377,90 @@ final class ClipboardIntelligence {
     }
 
     func itemClass(_ entry: ClipboardEntry) -> ClipboardItemClass {
-        let digest = (entry.text ?? entry.title).hashValue ^ entry.kind.hashValue
+        let digest = Self.digest(entry)
         if let cached = classCache[entry.id], cached.digest == digest { return cached.value }
         let value = ClipboardItemClassifier.classify(entry)
         classCache[entry.id] = (digest, value)
         return value
     }
 
-    /// Instant suggestions from Accessibility + history; `update` is called
-    /// again if the on-device model refines the destination kind.
+    /// Identity of an entry's classifiable content without hashing megabytes
+    /// of text on every panel open.
+    nonisolated static func digest(_ entry: ClipboardEntry) -> Int {
+        let text = entry.text ?? entry.title
+        var hasher = Hasher()
+        hasher.combine(entry.kind)
+        hasher.combine(text.utf8.count)
+        hasher.combine(text.prefix(512))
+        hasher.combine(text.suffix(256))
+        return hasher.finalize()
+    }
+
+    private var suggestionGeneration = 0
+    private var lastModelRefinement = Date.distantPast
+    private var modelAttempted = Set<UUID>()
+    private static let suggestionQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-suggestions", qos: .userInitiated)
+
+    /// Suggestions computed entirely off the main thread (Accessibility IPC,
+    /// classification, ranking). `update` runs on the main actor with the
+    /// result; a newer request supersedes an older one.
+    func suggestionsAsync(for destination: NSRunningApplication?, store: ClipboardStore,
+                          update: @escaping @MainActor ([UUID]) -> Void) {
+        suggestionGeneration &+= 1
+        let generation = suggestionGeneration
+        guard isEnabled else { lastContext = .init(); update([]); return }
+        let pid = destination?.processIdentifier, bundleID = destination?.bundleIdentifier
+        let appName = destination?.localizedName
+        let isolated = PresetManager.isUIPreview || PresetManager.isRunningTests
+        let entries = Array(store.entries.prefix(400))
+        let events = log(for: store).events
+        let cache = classCache
+        let wantsModel = readsDestinationScreen && Self.modelAvailable && ScreenCaptureService.hasPermission && !isolated
+        Self.suggestionQueue.async {
+            let context = ClipboardDestinationReader.read(pid: pid, bundleID: bundleID, appName: appName, isolated: isolated)
+            var fresh: [UUID: (digest: Int, value: ClipboardItemClass)] = [:]
+            let classes: (ClipboardEntry) -> ClipboardItemClass = { entry in
+                let digest = Self.digest(entry)
+                if let cached = cache[entry.id], cached.digest == digest { return cached.value }
+                let value = ClipboardItemClassifier.classify(entry)
+                fresh[entry.id] = (digest, value)
+                return value
+            }
+            let ids = ClipboardSuggestionRanker.rank(entries, context: context, events: events, classes: classes)
+            let computed = fresh
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self else { return }
+                    for (id, value) in computed { self.classCache[id] = value }
+                    guard generation == self.suggestionGeneration else { return }
+                    self.lastContext = context
+                    update(ids)
+                    if wantsModel, context.kind == .unknown || context.source == .appCategory {
+                        Task { @MainActor [weak self] in
+                            guard let self, let kind = await Self.modelDestinationKind(), kind != .unknown,
+                                  generation == self.suggestionGeneration else { return }
+                            var refined = context
+                            refined.kind = kind
+                            refined.source = .model
+                            self.lastContext = refined
+                            update(ClipboardSuggestionRanker.rank(store.entries, context: refined,
+                                                                  events: self.log(for: store).events, classes: self.itemClass))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Synchronous suggestions for the MCP tool (no model refinement). The
+    /// clipboard panel uses `suggestionsAsync` so it never blocks.
     func suggestions(for destination: NSRunningApplication?, store: ClipboardStore,
-                     update: @escaping @MainActor ([UUID]) -> Void) -> [UUID] {
+                     update: @escaping @MainActor ([UUID]) -> Void = { _ in }) -> [UUID] {
         guard isEnabled else { lastContext = .init(); return [] }
         let context = ClipboardDestinationReader.read(app: destination)
         lastContext = context
-        let entries = store.entries
-        let events = log(for: store).events
-        let initial = ClipboardSuggestionRanker.rank(entries, context: context, events: events, classes: itemClass)
-        if readsDestinationScreen, context.kind == .unknown || context.source == .appCategory,
-           Self.modelAvailable, ScreenCaptureService.hasPermission, !PresetManager.isUIPreview {
-            Task { @MainActor [weak self] in
-                guard let self, let kind = await Self.modelDestinationKind(), kind != .unknown else { return }
-                var refined = context
-                refined.kind = kind
-                refined.source = .model
-                self.lastContext = refined
-                update(ClipboardSuggestionRanker.rank(store.entries, context: refined,
-                                                      events: self.log(for: store).events, classes: self.itemClass))
-            }
-        }
-        return initial
+        return ClipboardSuggestionRanker.rank(store.entries, context: context,
+                                              events: log(for: store).events, classes: itemClass)
     }
 
     func recordPaste(entryIDs: [UUID], destination: NSRunningApplication?, store: ClipboardStore) {
@@ -451,8 +520,16 @@ final class ClipboardIntelligence {
         #if canImport(FoundationModels)
         guard isEnabled, Self.modelAvailable, !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
         if #available(macOS 26.0, *) {
-            let pending = entries.prefix(30).filter { itemClass($0) == .unclassified && ($0.text?.count ?? 0) < 600 }.prefix(6)
+            // The on-device model is shared system-wide (GPU/Neural Engine);
+            // never run it on every panel open, and never retry an item.
+            guard Date().timeIntervalSince(lastModelRefinement) > 600 else { return }
+            let pending = entries.prefix(30).filter {
+                !modelAttempted.contains($0.id) && ($0.text?.utf8.count ?? 0) < 1_800
+                    && classCache[$0.id]?.value == .unclassified
+            }.prefix(6)
             guard !pending.isEmpty else { return }
+            lastModelRefinement = Date()
+            for entry in pending { modelAttempted.insert(entry.id) }
             Task { @MainActor [weak self] in
                 let session = LanguageModelSession(instructions: """
                     Classify the kind of text a person copied to their clipboard. Answer with the single best category. \
@@ -462,8 +539,7 @@ final class ClipboardIntelligence {
                     guard let text = entry.text,
                           let answer = try? await session.respond(to: text, generating: ItemClassAnswer.self),
                           let value = ClipboardItemClass(rawValue: answer.content.category.rawValue) else { continue }
-                    let digest = text.hashValue ^ entry.kind.hashValue
-                    self?.classCache[entry.id] = (digest, value)
+                    self?.classCache[entry.id] = (Self.digest(entry), value)
                 }
             }
         }

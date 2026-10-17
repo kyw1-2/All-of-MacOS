@@ -39,6 +39,10 @@ struct TextRecognitionOptions: Equatable {
     /// Upscale small text and add an inverted pass for dark captures.
     var preprocesses = true
     var maximumScriptPasses = 4
+    /// TextSniper-style instant path: one accurate Vision pass with the
+    /// user's own languages. The multi-pass voting pipeline only runs when
+    /// that pass is empty, low-confidence or sees a script it cannot read.
+    var prefersSpeed = true
 
     static func fromSettings(_ settings: TextCaptureSettings = .shared, keepsLineBreaks: Bool? = nil) -> Self {
         var options = TextRecognitionOptions()
@@ -48,6 +52,7 @@ struct TextRecognitionOptions: Equatable {
         options.usesLanguageCorrection = settings.usesLanguageCorrection
         options.customWords = settings.customWords
         options.engine = settings.engine
+        options.prefersSpeed = settings.prefersFastRecognition
         return options
     }
 }
@@ -477,6 +482,11 @@ enum TextRecognitionEngine {
             ? TextCaptureLanguages.priorityList(selected: [], automatic: true)
             : TextCaptureLanguages.priorityList(selected: options.languages, automatic: false)
 
+        if options.prefersSpeed, options.engine != .liveText,
+           let fast = try await fastRecognize(image, priority: priority, options: options) {
+            return fast
+        }
+
         var working = image
         var scale: CGFloat = 1
         var passes: [OCRPass] = []
@@ -600,6 +610,115 @@ enum TextRecognitionEngine {
             text = TextPostProcessor.reflow(lines, joinsHyphenatedWords: options.joinsHyphenatedWords)
         }
         return TextPostProcessor.finalize(text)
+    }
+
+    // MARK: Fast path
+
+    /// The user's own languages (plus English) for the instant pass. Handing
+    /// Vision every supported language only adds model work; the first
+    /// language decides the script anyway.
+    static func fastLanguages(_ priority: [String], limit: Int = 3) -> [String] {
+        var head = Array(priority.prefix(limit))
+        if !head.contains("en-US"), TextCaptureLanguages.supported.contains("en-US") { head.append("en-US") }
+        return head
+    }
+
+    /// Whether one pass is trustworthy enough to skip voting: text was found,
+    /// confidence is reasonable, and every script it contains is one the
+    /// pass's lead language reads natively (Latin is read by every model).
+    static func fastPassIsAcceptable(_ pass: OCRPass, leadGroup: TextScriptGroup, priority: [String]) -> Bool {
+        let usable = pass.observations.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !usable.isEmpty else { return false }
+        let mean = usable.map(\.confidence).reduce(0, +) / Float(usable.count)
+        guard mean >= 0.4 else { return false }
+        let groups = TextScriptGroup.groups(forScripts: TextScriptClassifier.histogram(pass.text), priority: priority)
+        return groups.allSatisfy { $0 == leadGroup || $0 == .latin }
+    }
+
+    /// One accurate pass (two when the text is tiny). Returns nil when the
+    /// full multi-pass pipeline should decide instead.
+    static func fastRecognize(_ image: CGImage, priority: [String],
+                              options: TextRecognitionOptions) async throws -> TextRecognitionResult? {
+        let languages = fastLanguages(priority)
+        guard let lead = languages.first else { return nil }
+        var leadGroup = TextScriptGroup.group(forLanguage: lead)
+        var passLanguages = languages
+        var pass = try await visionPass(image, label: "fast", group: nil, languages: languages,
+                                        autoDetect: true, options: options)
+        // One non-Latin script that the lead language does not read (Korean
+        // text under an English-first system) gets a single re-read led by
+        // that script's language — still two passes, not a dozen.
+        if !fastPassIsAcceptable(pass, leadGroup: leadGroup, priority: priority) {
+            let scripts = TextScriptGroup.groups(forScripts: TextScriptClassifier.histogram(pass.text), priority: priority)
+                .filter { $0 != .latin }
+            // Only scripts with no Han ambiguity: a Japanese/Chinese guess can
+            // swallow Hangul, so those always get the voting pipeline.
+            let unambiguous: Set<TextScriptGroup> = [.hangul, .cyrillic, .thai, .arabic, .devanagari]
+            if scripts.count == 1, let group = scripts.first, group != leadGroup, unambiguous.contains(group) {
+                var relead = TextCaptureLanguages.passLanguages(for: group, priority: priority)
+                relead = Array(relead.prefix(3))
+                if !relead.contains("en-US"), TextCaptureLanguages.supported.contains("en-US") { relead.append("en-US") }
+                let reread = try await visionPass(image, label: "fast-\(group.rawValue)", group: group,
+                                                  languages: relead, autoDetect: true, options: options)
+                if fastPassIsAcceptable(reread, leadGroup: group, priority: priority) {
+                    pass = reread
+                    leadGroup = group
+                    passLanguages = relead
+                }
+            }
+        }
+        var passCount = pass.label == "fast" ? 1 : 2
+        var scale: CGFloat = 1
+        // Tiny UI text (1× displays, small fonts) gets one upscaled re-read.
+        let median = TextLayoutAssembler.median(pass.observations.map(\.box.height))
+        if options.preprocesses, !pass.observations.isEmpty, median < 14 {
+            let factor = min(3, max(2, (28 / max(median, 6)).rounded(.up)))
+            if let upscaled = TextCaptureImageTools.upscale(image, by: factor) {
+                let reread = try await visionPass(upscaled, label: "fast×\(Int(factor))", group: nil,
+                                                  languages: passLanguages, autoDetect: true, options: options)
+                passCount += 1
+                if fastPassIsAcceptable(reread, leadGroup: leadGroup, priority: priority) {
+                    pass = reread
+                    scale = factor
+                }
+            }
+        }
+        guard fastPassIsAcceptable(pass, leadGroup: leadGroup, priority: priority) else { return nil }
+        let lines = TextRecognitionFusion.fuse([pass]).map { line -> TextLayoutLine in
+            var l = line
+            l.box = CGRect(x: line.box.minX / scale, y: line.box.minY / scale,
+                           width: line.box.width / scale, height: line.box.height / scale)
+            return l
+        }
+        let layout = TextLayoutOptions(keepsLineBreaks: options.keepsLineBreaks,
+                                       joinsHyphenatedWords: options.joinsHyphenatedWords,
+                                       detectsColumns: options.detectsColumns)
+        let text = TextLayoutAssembler.assemble(lines, options: layout)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return TextRecognitionResult(text: text, lines: lines,
+                                     imageSize: CGSize(width: image.width, height: image.height),
+                                     detectedLanguage: dominantLanguage(text), passCount: passCount,
+                                     usedLiveText: false, upscale: scale, inverted: false,
+                                     liveTextTranscript: nil)
+    }
+
+    /// Loads Vision's accurate text model off the main thread so the first
+    /// Capture Text of a session is as quick as the rest.
+    static func prewarm() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = TextCaptureLanguages.supported
+            guard let context = CGContext(data: nil, width: 64, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 32))
+            guard let image = context.makeImage() else { return }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.revision = VNRecognizeTextRequest.currentRevision
+            request.recognitionLanguages = fastLanguages(TextCaptureLanguages.priorityList(selected: [], automatic: true))
+            try? VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        }
     }
 
     /// Upscale when the discovered text is small: Vision's accurate model is

@@ -304,7 +304,7 @@ struct MainWindow: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
             ModernSidebarView()
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
                 .tutorialAnchor(.sidebar)
         } detail: {
             HStack(spacing: 0) {
@@ -354,7 +354,6 @@ struct MainWindow: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 1000, minHeight: 620)
         .scrollIndicators(.hidden)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
             // Opt-in, single-value layout probe for diagnosing split view regressions.

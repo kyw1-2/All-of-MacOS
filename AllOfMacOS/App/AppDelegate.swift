@@ -13,6 +13,7 @@ enum AOMCaptureDeepLink: Equatable {
     case captureText(keepsLineBreaks: Bool)
     case openHistory, restoreRecentlyClosed, openSettings
     case pin, openAnnotate, openFromClipboard, addQuickAccessOverlay(URL)
+    case openClipboard
 
     static func parse(_ url: URL) -> Self? {
         guard url.scheme?.lowercased() == "aom",
@@ -52,6 +53,7 @@ enum AOMCaptureDeepLink: Equatable {
         case "pin" where exact(): return .pin
         case "open-annotate" where exact(): return .openAnnotate
         case "open-from-clipboard" where exact(): return .openFromClipboard
+        case "open-clipboard" where exact(): return .openClipboard
         case "add-quick-access-overlay" where exact(["filepath"]):
             guard let path = params["filepath"], path.hasPrefix("/"), !path.contains("\0"),
                   ["png", "jpg", "jpeg", "heic", "tif", "tiff", "webp", "mp4"].contains(
@@ -147,6 +149,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.servicesProvider = self
             NSUpdateDynamicServices()
             Task { @MainActor in ScreenRecordingService.shared.offerInterruptedRecordingRecovery() }
+            // Warm the OCR model and ScreenCaptureKit so the first Capture
+            // Text of a session is as instant as later ones.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                TextRecognitionEngine.prewarm()
+                ScreenCaptureService.shared.prewarm()
+            }
         }
         // Monitor start-up is owned by AppState (see AppState.init) — it runs
         // whether or not a window is ever shown, which is what an LSUIElement
@@ -206,6 +214,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .captureText(let keepsLineBreaks):
             CaptureCoordinator.shared.captureText(keepsLineBreaks: keepsLineBreaks)
         case .openHistory: CaptureHistoryWindowController.shared.present()
+        case .openClipboard: ClipboardPanelController.shared.toggle()
         case .restoreRecentlyClosed: CaptureCoordinator.shared.restoreRecentlyClosedOverlay()
         case .openSettings: openSettings()
         case .pin: CaptureActions.pinLastCapture()

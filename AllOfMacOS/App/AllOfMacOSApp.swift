@@ -559,7 +559,7 @@ struct AllOfMacOSApp: App {
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
-        .defaultSize(width: 1300, height: 700)
+        .defaultSize(width: 1320, height: 820)
         .commands {
             TriggerEditorCommands()
             WorkflowVariableCommands()
@@ -725,7 +725,7 @@ struct SettingsView: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .navigationTitle((selection ?? .general).rawValue)
         }
-        .frame(width: 820, height: 640)
+        .frame(minWidth: 760, idealWidth: 880, maxWidth: .infinity, minHeight: 560, idealHeight: 680, maxHeight: .infinity)
         .scrollIndicators(.hidden)
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
     }

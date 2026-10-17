@@ -11,8 +11,7 @@ struct CaptureStudioView: View {
     @State private var hoveredEntryID: UUID?
     @State private var showingSettingsSheet = false
     @State private var showingClearConfirmation = false
-    @State private var toastMessage: String?
-    @State private var toastTask: Task<Void, Never>?
+    @StateObject private var toast = AOMToastModel()
 
     enum CaptureFilter: String, CaseIterable, Identifiable {
         case all = "All"
@@ -26,41 +25,50 @@ struct CaptureStudioView: View {
     private var filteredEntries: [CaptureHistoryEntry] {
         history.entries.filter { entry in
             switch selectedFilter {
-            case .all:
-                return true
-            case .screenshots:
-                return entry.kind != .videoRecording
-            case .recordings:
-                return entry.kind == .videoRecording
-            case .pinned:
-                return entry.isPinned
+            case .all: return true
+            case .screenshots: return entry.kind != .videoRecording
+            case .recordings: return entry.kind == .videoRecording
+            case .pinned: return entry.isPinned
             }
         }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
+    private var subtitle: String {
+        guard let latest = history.entries.first else { return "Screenshots, recordings, annotation and text recognition" }
+        let count = history.entries.count
+        return "\(count) capture\(count == 1 ? "" : "s") in history · last \(AOMRelativeTime.string(latest.capturedAt))"
+    }
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                    AOMPageHeader("Capture Studio", subtitle: subtitle, systemImage: "camera.viewfinder", tint: .orange) {
+                        headerControls
+                    }
                     if recordingService.isRecording {
                         activeRecordingBanner
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
-
                     launchpadSection
                     gallerySection
+                        .frame(maxHeight: .infinity, alignment: .top)
                 }
-                .padding(20)
+                .padding(AOMDesign.pagePadding)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
             .suppressScrollerReservation()
         }
-        .toolbar { ToolbarItemGroup(placement: .automatic) { headerBar } }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background.opacity(0.18))
+        .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $showingSettingsSheet) {
-            CaptureSettingsView()
-                .frame(width: 580, height: 520)
+            VStack(spacing: 0) {
+                CaptureSettingsView()
+                Divider()
+                HStack { Spacer(); Button("Done") { showingSettingsSheet = false }.keyboardShortcut(.defaultAction) }
+                    .padding(12)
+            }
+            .frame(minWidth: 620, idealWidth: 680, minHeight: 540, idealHeight: 640)
         }
         .alert("Clear Capture History?", isPresented: $showingClearConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -69,185 +77,120 @@ struct CaptureStudioView: View {
                 showToast("Capture history cleared")
             }
         } message: {
-            Text("This will remove all recent capture entries from history. Saved screenshot files in Finder will not be deleted.")
+            Text("Recent captures are removed from history. Screenshot and video files saved in Finder are not deleted.")
         }
-        .overlay(alignment: .bottom) {
-            if let toastMessage {
-                Text(toastMessage)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black.opacity(0.82)))
-                    .shadow(radius: 6)
-                    .padding(.bottom, 24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+        .aomToast(toast.message)
     }
 
-    // MARK: - Header Bar
+    // MARK: - Header controls
 
-    private var headerBar: some View {
-        HStack(spacing: 12) {
-
-
-            HStack(spacing: 8) {
-                Button {
+    private var headerControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                AnnotationEditorController.shared.chooseImageOrProject()
+            } label: {
+                Label("Open Image…", systemImage: "pencil.tip.crop.circle")
+            }
+            .help("Open an image or annotation project in the editor")
+            Button {
+                CaptureHistoryWindowController.shared.present()
+            } label: {
+                Label("History", systemImage: "clock.arrow.circlepath")
+            }
+            .help("Open the full capture history overlay")
+            Menu {
+                Button("Toggle Desktop Icons") {
                     CaptureCoordinator.shared.toggleDesktopIcons()
                     showToast("Toggled desktop icons")
-                } label: {
-                    Label("Desktop Icons", systemImage: "macwindow.on.rectangle")
                 }
-                .help("Hide or show icons on the desktop")
-
-                Button {
-                    AnnotationEditorController.shared.chooseImageOrProject()
-                } label: {
-                    Label("Open Image…", systemImage: "pencil.tip.crop.circle")
+                if CaptureCoordinator.shared.canRestoreQuickAccess {
+                    Button("Restore Last Closed Overlay") { CaptureCoordinator.shared.restoreRecentlyClosedOverlay() }
                 }
-                .help("Open any image or project file in Annotation Editor")
-
-                Button {
-                    showingSettingsSheet = true
-                } label: {
-                    Label("Options", systemImage: "gearshape")
-                }
-                .help("Capture and overlay preferences")
+                Divider()
+                Button("Capture Settings…") { showingSettingsSheet = true }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
             }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More capture options")
         }
-        .labelStyle(.iconOnly)
+        .labelStyle(.titleAndIcon)
+        .controlSize(.regular)
     }
 
     // MARK: - Active Recording Banner
 
     private var activeRecordingBanner: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(recordingService.isPaused ? Color.yellow : Color.red)
-                    .frame(width: 12, height: 12)
-                    .opacity(recordingService.isPaused ? 0.7 : 1.0)
-
+            Circle()
+                .fill(recordingService.isPaused ? Color.yellow : Color.red)
+                .frame(width: 10, height: 10)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(recordingService.isPaused ? "Recording Paused" : "Recording Screen")
-                    .font(.system(size: 13, weight: .bold))
-
+                    .font(.headline)
                 Text(formatElapsed(recordingService.elapsedSeconds))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-
             Spacer()
-
-            HStack(spacing: 8) {
-                Button {
-                    recordingService.togglePause()
-                } label: {
-                    Label(recordingService.isPaused ? "Resume" : "Pause",
-                          systemImage: recordingService.isPaused ? "play.fill" : "pause.fill")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                Button {
-                    Task {
-                        _ = try? await recordingService.stopRecording()
-                        showToast("Recording saved")
-                    }
-                } label: {
-                    Label("Stop & Finish", systemImage: "stop.fill")
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .controlSize(.small)
-
-                Button("Cancel") {
-                    recordingService.cancelRecording()
-                    showToast("Recording cancelled")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            Button {
+                recordingService.togglePause()
+            } label: {
+                Label(recordingService.isPaused ? "Resume" : "Pause",
+                      systemImage: recordingService.isPaused ? "play.fill" : "pause.fill")
             }
+            Button("Cancel") {
+                recordingService.cancelRecording()
+                showToast("Recording cancelled")
+            }
+            Button {
+                Task {
+                    _ = try? await recordingService.stopRecording()
+                    showToast("Recording saved")
+                }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
         }
+        .controlSize(.small)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.red.opacity(0.12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.red.opacity(0.3), lineWidth: 1)
-        )
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
+            .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5))
     }
 
     // MARK: - Launchpad Section
 
     private var launchpadSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Capture", systemImage: "sparkles")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if CaptureCoordinator.shared.canRestoreQuickAccess {
-                    Button("Restore Last Closed") {
-                        CaptureCoordinator.shared.restoreRecentlyClosedOverlay()
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                }
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 12)], spacing: 12) {
-                LaunchpadCard(
-                    title: "Area",
-                    icon: "viewfinder",
-                    accentColor: .blue
-                ) {
-                    CaptureCoordinator.shared.captureArea()
-                }
-
-                LaunchpadCard(
-                    title: "Window",
-                    icon: "macwindow",
-                    accentColor: .indigo
-                ) {
-                    CaptureCoordinator.shared.captureWindowInteractive()
-                }
-
-                LaunchpadCard(
-                    title: "Fullscreen",
-                    icon: "display",
-                    accentColor: .purple
-                ) {
-                    CaptureCoordinator.shared.captureFullscreen()
-                }
-
-                LaunchpadCard(
-                    title: "Scrolling",
-                    icon: "arrow.up.and.down.text.horizontal",
-                    accentColor: .teal
-                ) {
-                    CaptureCoordinator.shared.captureScrolling()
-                }
-
-                LaunchpadCard(
-                    title: "Record Video",
-                    icon: "video.fill",
-                    accentColor: .red
-                ) {
-                    recordingService.promptAndStartRecording()
-                }
-
-                LaunchpadCard(
-                    title: "OCR Text",
-                    icon: "text.viewfinder",
-                    accentColor: .orange
-                ) {
-                    CaptureCoordinator.shared.captureText()
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Capture", systemImage: "sparkles", caption: "Start any capture; results open in Quick Access")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 196), spacing: AOMDesign.gridSpacing)],
+                      spacing: AOMDesign.gridSpacing) {
+                AOMActionTile(title: "All-In-One", systemImage: "rectangle.dashed.badge.record", tint: .orange,
+                              subtitle: "Area, window, screen or video") { CaptureCoordinator.shared.captureAllInOne() }
+                AOMActionTile(title: "Area", systemImage: "viewfinder", tint: .blue,
+                              subtitle: "Drag to select a region") { CaptureCoordinator.shared.captureArea() }
+                AOMActionTile(title: "Window", systemImage: "macwindow", tint: .indigo,
+                              subtitle: "Pick a window with shadow") { CaptureCoordinator.shared.captureWindowInteractive() }
+                AOMActionTile(title: "Fullscreen", systemImage: "display", tint: .purple,
+                              subtitle: "Every pixel of a display") { CaptureCoordinator.shared.captureFullscreen() }
+                AOMActionTile(title: "Scrolling", systemImage: "arrow.up.and.down.text.horizontal", tint: .teal,
+                              subtitle: "Stitch long pages") { CaptureCoordinator.shared.captureScrolling() }
+                AOMActionTile(title: "Record Screen", systemImage: "record.circle", tint: .red,
+                              subtitle: "MP4 or GIF with audio") { recordingService.promptAndStartRecording() }
+                AOMActionTile(title: "Capture Text", systemImage: "text.viewfinder", tint: .green,
+                              subtitle: "Instant OCR to clipboard") { CaptureCoordinator.shared.captureText() }
+                AOMActionTile(title: "Previous Area", systemImage: "arrow.uturn.backward.square", tint: .gray,
+                              subtitle: "Repeat the last region") { CaptureCoordinator.shared.capturePreviousArea() }
+                AOMActionTile(title: "Self-Timer", systemImage: "timer", tint: .pink,
+                              subtitle: "Countdown, then capture") { CaptureCoordinator.shared.captureWithSelfTimer() }
+                AOMActionTile(title: "QR / Barcode", systemImage: "qrcode.viewfinder", tint: .brown,
+                              subtitle: "Read codes in a region") { CaptureCoordinator.shared.captureQRCode() }
             }
         }
     }
@@ -256,54 +199,35 @@ struct CaptureStudioView: View {
 
     private var gallerySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Recent Captures", systemImage: "photo.stack")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                // Filter pills
-                HStack(spacing: 4) {
-                    ForEach(CaptureFilter.allCases) { filter in
-                        let isSelected = selectedFilter == filter
-                        Button {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                selectedFilter = filter
-                            }
-                        } label: {
-                            Text(filter.rawValue)
-                                .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    Capsule().fill(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
-                                )
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
+            AOMSectionHeader("Recent Captures", systemImage: "photo.stack") {
+                Picker("Filter", selection: $selectedFilter) {
+                    ForEach(CaptureFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
                 }
-                .padding(2)
-                .background(Capsule().fill(Color.primary.opacity(0.05)))
-
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
                 if !history.entries.isEmpty {
                     Button(role: .destructive) {
                         showingClearConfirmation = true
                     } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
+                        Label("Clear", systemImage: "trash")
                     }
-                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("Clear capture history")
                 }
             }
 
             if filteredEntries.isEmpty {
-                emptyGalleryView
+                AOMEmptyState(selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
+                              systemImage: "camera.badge.ellipsis",
+                              message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
+                    Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(minHeight: 240)
+                .aomSurface(padding: nil)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 14)], spacing: 14) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 14)], spacing: 14) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,
@@ -311,56 +235,24 @@ struct CaptureStudioView: View {
                             onAnnotate: {
                                 AnnotationEditorController.shared.open(capture: entry, url: entry.fileURL)
                             },
-                            onCopy: {
-                                copyToPasteboard(entry)
-                            },
+                            onCopy: { copyToPasteboard(entry) },
                             onPin: {
                                 PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL)
                                 showToast("Pinned to screen")
                             },
-                            onRestoreOverlay: {
-                                CaptureCoordinator.shared.restoreToQuickAccess(entry)
-                            },
+                            onRestoreOverlay: { CaptureCoordinator.shared.restoreToQuickAccess(entry) },
                             onDelete: {
-                                withAnimation {
-                                    history.remove(entry)
-                                    showToast("Removed from history")
-                                }
+                                withAnimation(AOMDesign.animation()) { history.remove(entry) }
+                                showToast("Removed from history")
                             }
                         )
                         .onHover { isHovering in
-                            hoveredEntryID = isHovering ? entry.id : nil
+                            if isHovering { hoveredEntryID = entry.id } else if hoveredEntryID == entry.id { hoveredEntryID = nil }
                         }
                     }
                 }
             }
         }
-    }
-
-    private var emptyGalleryView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "camera.badge.ellipsis")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary.opacity(0.6))
-            Text("No Captures in History")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text("Screenshots and screen recordings you capture will appear here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.primary.opacity(0.02))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                .foregroundStyle(Color.secondary.opacity(0.2))
-        )
     }
 
     // MARK: - Helpers
@@ -378,16 +270,7 @@ struct CaptureStudioView: View {
         showToast("Copied capture to clipboard")
     }
 
-    private func showToast(_ message: String) {
-        toastTask?.cancel()
-        toastMessage = message
-        toastTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(.easeOut(duration: 0.3)) {
-                toastMessage = nil
-            }
-        }
-    }
+    private func showToast(_ message: String) { toast.show(message) }
 
     private func formatElapsed(_ seconds: Int) -> String {
         let m = seconds / 60
@@ -397,24 +280,6 @@ struct CaptureStudioView: View {
 }
 
 // MARK: - Subviews
-
-private struct LaunchpadCard: View {
-    let title: String
-    let icon: String
-    let accentColor: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-    }
-}
 
 private struct CaptureCard: View {
     let entry: CaptureHistoryEntry
@@ -427,151 +292,96 @@ private struct CaptureCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Preview Image Container
-            ZStack(alignment: .topTrailing) {
+            ZStack {
                 Color(nsColor: .underPageBackgroundColor)
-                    .frame(height: 140)
-
                 Image(nsImage: entry.thumbnail)
                     .resizable()
+                    .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .frame(height: 140)
-                    .clipped()
-
-                // Corner indicators
+                    .padding(6)
+            }
+            .aspectRatio(16 / 10, contentMode: .fit)
+            .overlay(alignment: .topLeading) {
                 HStack(spacing: 4) {
-                    if entry.isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.white)
-                            .padding(4)
-                            .background(Circle().fill(Color.orange))
-                    }
-                    if entry.kind == .videoRecording {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white)
-                            .padding(4)
-                            .background(Circle().fill(Color.red))
-                    }
+                    if entry.kind == .videoRecording { badge("Video", "play.fill", .red) }
+                    if entry.isPinned { badge("Pinned", "pin.fill", .orange) }
                 }
-                .padding(6)
-
-                // Hover Actions Curtain
+                .padding(8)
+            }
+            .overlay(alignment: .bottom) {
                 if isHovered {
-                    Color.black.opacity(0.35)
-                        .transition(.opacity)
-
-                    VStack {
-                        Spacer()
-                        HStack(spacing: 6) {
-                            Button(action: onAnnotate) {
-                                Image(systemName: "pencil")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .padding(6)
-                                    .background(Circle().fill(Color.white))
-                                    .foregroundStyle(.black)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Annotate in editor")
-
-                            Button(action: onCopy) {
-                                Image(systemName: "doc.on.clipboard")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .padding(6)
-                                    .background(Circle().fill(Color.white))
-                                    .foregroundStyle(.black)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Copy to clipboard")
-
-                            Button(action: onPin) {
-                                Image(systemName: "pin")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .padding(6)
-                                    .background(Circle().fill(Color.white))
-                                    .foregroundStyle(.black)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Pin to screen")
-
-                            Button(action: onRestoreOverlay) {
-                                Image(systemName: "arrow.up.forward.app")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .padding(6)
-                                    .background(Circle().fill(Color.white))
-                                    .foregroundStyle(.black)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Reopen Quick Access overlay")
-
-                            Spacer()
-
-                            Button(action: onDelete) {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .padding(6)
-                                    .background(Circle().fill(Color.red))
-                                    .foregroundStyle(.white)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Delete from history")
-                        }
-                        .padding(8)
+                    HStack(spacing: 6) {
+                        hoverButton("pencil", "Annotate", action: onAnnotate)
+                        hoverButton("doc.on.doc", "Copy", action: onCopy)
+                        hoverButton("pin", "Pin to Screen", action: onPin)
+                        hoverButton("arrow.up.forward.app", "Reopen in Quick Access", action: onRestoreOverlay)
+                        Spacer(minLength: 0)
+                        hoverButton("trash", "Remove from History", role: .destructive, action: onDelete)
                     }
+                    .padding(8)
                     .transition(.opacity)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMDesign.tileRadius, topTrailingRadius: AOMDesign.tileRadius,
+                                              style: .continuous))
+            .onTapGesture(count: 2, perform: onAnnotate)
 
-            // Info Strip
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.displayName)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .lineLimit(1)
-
                 HStack(spacing: 6) {
                     Text(entry.kind.displayName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    Text("•")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-
-                    Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Text(timeAgo(entry.capturedAt))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                    Text("·")
+                    Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))").monospacedDigit()
+                    Spacer(minLength: 4)
+                    Text(AOMRelativeTime.string(entry.capturedAt))
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
+        .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: isHovered)
+        .contextMenu {
+            Button("Annotate", action: onAnnotate)
+            Button("Copy", action: onCopy)
+            Button("Pin to Screen", action: onPin)
+            Button("Reopen in Quick Access", action: onRestoreOverlay)
+            if let url = entry.fileURL {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            Divider()
+            Button("Remove from History", role: .destructive, action: onDelete)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(entry.displayName), \(entry.kind.displayName)")
     }
 
-    private func timeAgo(_ date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "Just now" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m ago" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h ago" }
-        let days = hours / 24
-        return "\(days)d ago"
+    private func badge(_ title: String, _ symbol: String, _ tint: Color) -> some View {
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(tint, in: Circle())
+            .help(title)
+    }
+
+    private func hoverButton(_ symbol: String, _ help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(role == .destructive ? Color.red : Color.primary)
+                .frame(width: 28, height: 28)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }

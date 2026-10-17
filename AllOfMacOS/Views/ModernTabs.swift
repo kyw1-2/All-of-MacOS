@@ -110,38 +110,80 @@ extension View {
 /// App-owned scroll views keep their native scrolling behavior without tracks.
 /// Observe AppKit's resets as SwiftUI updates Lists, Forms and text editors.
 /// No global preferences, method swizzling or wheel event interception.
+///
+/// Performance: `NSWindow.didUpdateNotification` fires after *every* event
+/// (mouse move, hover, scroll, key). Walking whole view trees on each one made
+/// hover and scrolling in floating panels stall, so a refresh now covers only
+/// the window that posted, at most a few times per second, and skips
+/// non-activating panels — those own their scroll chrome via
+/// `NativeScrollChrome` already.
 @MainActor
 final class AOMScrollChromePolicy {
     static let shared = AOMScrollChromePolicy()
     private var notificationTokens: [NSObjectProtocol] = []
     private let surfaces = NSMapTable<NSScrollView, Surface>(keyOptions: .weakMemory, valueOptions: .strongMemory)
-    private var pending = false
+    private var pendingWindows: [ObjectIdentifier: (window: NSWindow, due: CFTimeInterval)] = [:]
+    private var lastRefresh: [ObjectIdentifier: CFTimeInterval] = [:]
+    private var flushScheduled = false
+    static let minimumInterval: CFTimeInterval = 0.35
 
     func start() {
         guard notificationTokens.isEmpty else { return }
-        for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification] {
-            notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scheduleRefresh() }
+        for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
+            notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let window = note.object as? NSWindow
+                MainActor.assumeIsolated { if let window { self?.scheduleRefresh(window) } }
             })
         }
-        refresh()
+        for window in NSApp.windows where Self.isManaged(window) { refresh(window) }
     }
 
-    private func scheduleRefresh() {
-        guard !pending else { return }
-        pending = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pending = false
-            self.refresh()
+    /// Titled app windows only. Floating, non-activating panels (clipboard
+    /// shelf, Quick Access, HUDs) and system file dialogs keep their own setup.
+    static func isManaged(_ window: NSWindow) -> Bool {
+        guard window.isVisible, !(window is NSSavePanel) else { return false }
+        if window.styleMask.contains(.nonactivatingPanel) { return false }
+        return window.styleMask.contains(.titled)
+    }
+
+    private func scheduleRefresh(_ window: NSWindow) {
+        guard Self.isManaged(window) else { return }
+        let key = ObjectIdentifier(window)
+        guard pendingWindows[key] == nil else { return }
+        let now = CACurrentMediaTime()
+        let due = max(now, (lastRefresh[key] ?? 0) + Self.minimumInterval)
+        pendingWindows[key] = (window, due)
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, due - now)) { [weak self] in
+            MainActor.assumeIsolated { self?.flush() }
         }
     }
 
-    private func refresh() {
-        // Native file dialogs retain their system behavior.
-        for window in NSApp.windows where window.isVisible && !(window is NSSavePanel) {
-            if let content = window.contentView { attach(in: content) }
+    private func flush() {
+        flushScheduled = false
+        let now = CACurrentMediaTime()
+        var nextDue: CFTimeInterval?
+        for (key, item) in pendingWindows {
+            if item.due <= now + 0.005 {
+                pendingWindows[key] = nil
+                lastRefresh[key] = now
+                refresh(item.window)
+            } else {
+                nextDue = min(nextDue ?? item.due, item.due)
+            }
         }
+        if let nextDue {
+            flushScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, nextDue - now)) { [weak self] in
+                MainActor.assumeIsolated { self?.flush() }
+            }
+        }
+    }
+
+    private func refresh(_ window: NSWindow) {
+        guard Self.isManaged(window), let content = window.contentView else { return }
+        attach(in: content)
     }
 
     func attach(in view: NSView) {

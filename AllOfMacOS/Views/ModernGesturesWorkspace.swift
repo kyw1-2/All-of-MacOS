@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// Modern Apple-Native Gestures & Automations Studio.
-/// Completely replaces the legacy BTT/GTT multi-pane spreadsheet layout with an
-/// Apple Shortcuts-style Master-Detail visual macro builder.
+/// Gestures & Automations: a native source list of triggers beside a
+/// Shortcuts-style workflow canvas. On wide windows the canvas splits into
+/// the action sequence and a trigger inspector so the space is used, not
+/// stretched; narrow windows stack the two.
 struct ModernGesturesWorkspace: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedDeviceCategory: TriggerCategory = .all
@@ -11,72 +12,107 @@ struct ModernGesturesWorkspace: View {
     @State private var testingTriggerID: UUID?
     @State private var testResult: String?
     @State private var expandedActionIDs: Set<UUID> = []
-    @State private var showTriggerOptions = false
+    @State private var showTriggerOptions = true
     @State private var parentID: UUID?
     @State private var toElse = false
     @State private var replaceActionID: UUID?
+    @State private var addCategory: TriggerCategory = .trackpad
+    @State private var pendingDeletion: Trigger?
+
+    // MARK: Data
+
+    /// Triggers in the current scope (global, one app, or one group).
+    private var scopedTriggers: [Trigger] {
+        appState.currentPreset.triggers.filter { trigger in
+            if let targetGroupID = appState.selectedActivationGroupID {
+                return trigger.activationGroupID == targetGroupID
+            }
+            if appState.selectedAppTarget.isGlobal {
+                return trigger.activationGroupID == nil && (trigger.appBundleID?.isEmpty ?? true)
+            }
+            return trigger.activationGroupID == nil && trigger.appBundleID == appState.selectedAppTarget.bundleID
+        }
+    }
 
     private var filteredTriggers: [Trigger] {
-        var triggers = appState.currentPreset.triggers.filter { trigger in
-            // Filter by selected app target
-            if let targetGroupID = appState.selectedActivationGroupID {
-                if trigger.activationGroupID != targetGroupID { return false }
-            } else if appState.selectedAppTarget.isGlobal {
-                if trigger.activationGroupID != nil || (trigger.appBundleID != nil && !trigger.appBundleID!.isEmpty) {
-                    return false
-                }
-            } else {
-                if trigger.activationGroupID != nil || trigger.appBundleID != appState.selectedAppTarget.bundleID {
-                    return false
-                }
-            }
-
-            // Filter by device category
-            if selectedDeviceCategory != .all && trigger.input.category != selectedDeviceCategory {
-                return false
-            }
-
-            // Filter by search query
-            if !searchQuery.isEmpty {
-                let q = searchQuery.lowercased()
-                let matchesName = trigger.displayName.lowercased().contains(q)
-                let matchesAction = trigger.actions.contains { $0.displayName.lowercased().contains(q) }
-                if !matchesName && !matchesAction { return false }
-            }
-
-            return true
+        let query = searchQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        var triggers = scopedTriggers.filter { trigger in
+            if selectedDeviceCategory != .all && trigger.input.category != selectedDeviceCategory { return false }
+            guard !query.isEmpty else { return true }
+            return trigger.displayName.lowercased().contains(query)
+                || trigger.input.displayName.lowercased().contains(query)
+                || trigger.actions.contains { $0.displayName.lowercased().contains(query) }
         }
-
-        // Keep favorites on top
+        // Favorites first; otherwise keep the user's manual order.
         triggers.sort { ($0.isFavorite ? 0 : 1) < ($1.isFavorite ? 0 : 1) }
         return triggers
     }
 
-    var body: some View {
-        HSplitView {
-            // Left Master: Gesture Cards Stream
-            gestureCardStream
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+    private func count(_ category: TriggerCategory) -> Int {
+        category == .all ? scopedTriggers.count : scopedTriggers.filter { $0.input.category == category }.count
+    }
 
-            // Right Detail: Visual Shortcuts Action Canvas
-            visualWorkflowCanvas
-                .frame(minWidth: 420, maxWidth: .infinity)
+    private var scopeTitle: String {
+        if let id = appState.selectedActivationGroupID,
+           let group = appState.currentPreset.activationGroups.first(where: { $0.id == id }) { return group.name }
+        return appState.selectedAppTarget.isGlobal ? "All Applications" : appState.selectedAppTarget.name
+    }
+
+    // MARK: Body
+
+    var body: some View {
+        Group {
+            if scopedTriggers.isEmpty {
+                onboardingView
+            } else {
+                HSplitView {
+                    gestureList
+                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
+                    workflowCanvas
+                        .frame(minWidth: 460, maxWidth: .infinity)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background.opacity(0.18))
+        .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search Gestures")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { presentAddTrigger(selectedDeviceCategory) } label: {
+                    Label("New Gesture", systemImage: "plus")
+                }
+                .help("Create a gesture, shortcut or trigger (⌘N)")
+            }
+        }
         .sheet(isPresented: $appState.showingAddTrigger) {
-            AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: selectedDeviceCategory == .all ? .trackpad : selectedDeviceCategory)
+            AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
         }
         .sheet(isPresented: $appState.showingAddAction) {
             AddActionSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
+        }
+        .confirmationDialog("Delete “\(pendingDeletion?.displayName ?? "")”?",
+                            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
+            Button("Delete Gesture", role: .destructive) {
+                if let trigger = pendingDeletion {
+                    if appState.selectedTrigger?.id == trigger.id { appState.selectedTrigger = nil }
+                    appState.removeTrigger(trigger)
+                }
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("The gesture and its actions are removed from this preset.")
         }
         .onAppear { reconcileSelection() }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
             expandedActionIDs.removeAll()
             testResult = nil
-            showTriggerOptions = false
         }
+    }
+
+    private func presentAddTrigger(_ category: TriggerCategory) {
+        addCategory = category == .all ? .trackpad : category
+        appState.showingAddTrigger = true
     }
 
     private func reconcileSelection() {
@@ -86,15 +122,15 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    // MARK: - Left Master: Gesture Cards Stream & Header
+    // MARK: - Source list
 
-    private var gestureCardStream: some View {
+    private var gestureList: some View {
         VStack(spacing: 0) {
             listHeader
-            Divider().opacity(0.4)
-
+            Divider()
             if filteredTriggers.isEmpty {
-                emptyTriggersView
+                ContentUnavailableView.search(text: searchQuery)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: Binding<UUID?>(
                     get: { appState.selectedTrigger?.id },
@@ -104,286 +140,305 @@ struct ModernGesturesWorkspace: View {
                     }
                 )) {
                     ForEach(filteredTriggers) { trigger in
-                        GestureSummaryRow(trigger: trigger)
+                        GestureSummaryRow(trigger: trigger,
+                                          onToggle: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
                             .tag(trigger.id)
-                            .contextMenu {
-                                Button("Duplicate") { appState.addTrigger(TriggerClipboard.duplicate(trigger)) }
-                                Button(trigger.isEnabled ? "Disable" : "Enable") { appState.toggleTrigger(trigger) }
-                                Divider()
-                                Button("Delete", role: .destructive) {
-                                    if appState.selectedTrigger?.id == trigger.id { appState.selectedTrigger = nil }
-                                    appState.removeTrigger(trigger)
-                                }
-                            }
+                            .contextMenu { triggerMenu(trigger) }
                     }
                 }
                 .listStyle(.inset)
+                .alternatingRowBackgrounds(.disabled)
                 .scrollIndicators(.hidden)
                 .accessibilityLabel("Gestures")
             }
+            listFooter
         }
-        .background(.background.opacity(0.2))
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder private func triggerMenu(_ trigger: Trigger) -> some View {
+        Button(trigger.isFavorite ? "Unpin from Top" : "Pin to Top") { appState.toggleFavorite(trigger) }
+        Button("Duplicate") { appState.addTrigger(TriggerClipboard.duplicate(trigger)) }
+        Button(trigger.isEnabled ? "Disable" : "Enable") { appState.toggleTrigger(trigger) }
+        Divider()
+        Button("Delete…", role: .destructive) { pendingDeletion = trigger }
     }
 
     private var listHeader: some View {
-        VStack(spacing: 8) {
-            // Scope & Add Action
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Menu {
-                    Button {
-                        appState.selectedActivationGroupID = nil
-                        appState.selectedAppTarget = .allApps
-                    } label: {
-                        Label("Global Gestures", systemImage: "globe")
-                    }
-                    if !appState.currentPreset.appTargets.isEmpty {
-                        Divider()
-                        ForEach(appState.currentPreset.appTargets) { target in
-                            Button {
-                                appState.selectedActivationGroupID = nil
-                                appState.selectedAppTarget = target
-                            } label: {
-                                Text(target.name)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        if let icon = appState.selectedAppTarget.icon {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: appState.selectedAppTarget.isGlobal ? "globe" : "app.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Color.accentColor)
-                        }
-
-                        Text(appState.selectedAppTarget.isGlobal ? "Global Gestures" : appState.selectedAppTarget.name)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.secondary.opacity(0.8))
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .tint(.primary)
-                .fixedSize()
-
-                Spacer()
-
-                Button {
-                    appState.showingAddTrigger = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("New")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .help("Create a new gesture or shortcut")
-            }
-
-            // Compact Search Field
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10, weight: .medium))
+                scopeMenu
+                Spacer(minLength: 4)
+                Text("\(filteredTriggers.count)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary)
-
-                TextField("Search gestures…", text: $searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-
-                if !searchQuery.isEmpty {
-                    Button { searchQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityLabel("\(filteredTriggers.count) gestures shown")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-            )
-
             Picker("Device", selection: $selectedDeviceCategory) {
-                Text("All").tag(TriggerCategory.all)
-                Text("Trackpad").tag(TriggerCategory.trackpad)
-                Text("Keys").tag(TriggerCategory.keyboard)
-                Text("Mouse").tag(TriggerCategory.normalMouse)
+                ForEach(TriggerCategory.allCases) { category in
+                    Image(systemName: category.iconName)
+                        .help("\(category == .all ? "All" : category.rawValue) (\(count(category)))")
+                        .accessibilityLabel(category == .all ? "All" : category.rawValue)
+                        .tag(category)
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .controlSize(.regular)
+            Text(selectedDeviceCategory == .all ? "All triggers" : "\(selectedDeviceCategory.rawValue) · \(count(selectedDeviceCategory))")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var scopeMenu: some View {
+        Menu {
+            Button {
+                appState.selectedActivationGroupID = nil
+                appState.selectedAppTarget = .allApps
+            } label: { Label("All Applications", systemImage: "globe") }
+            let apps = appState.currentPreset.appTargets.filter { !$0.isGlobal }
+            if !apps.isEmpty {
+                Section("Applications") {
+                    ForEach(apps) { target in
+                        Button(target.name) {
+                            appState.selectedActivationGroupID = nil
+                            appState.selectedAppTarget = target
+                        }
+                    }
+                }
+            }
+            if !appState.currentPreset.activationGroups.isEmpty {
+                Section("Activation Groups") {
+                    ForEach(appState.currentPreset.activationGroups) { group in
+                        Button(group.name) { appState.selectedActivationGroupID = group.id }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if appState.selectedActivationGroupID == nil, let icon = appState.selectedAppTarget.icon {
+                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: appState.selectedActivationGroupID != nil ? "square.stack.3d.up.fill"
+                          : appState.selectedAppTarget.isGlobal ? "globe" : "app.fill")
+                        .foregroundStyle(.tint)
+                }
+                Text(scopeTitle).font(.headline).lineLimit(1)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Choose which app or group these gestures apply to")
+    }
+
+    private var listFooter: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(TriggerCategory.inputCategories) { category in
+                    Button { presentAddTrigger(category) } label: {
+                        Label(category.rawValue, systemImage: category.iconName)
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+            } primaryAction: {
+                presentAddTrigger(selectedDeviceCategory)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Add a trigger")
+            Button {
+                if let trigger = appState.selectedTrigger { pendingDeletion = trigger }
+            } label: { Image(systemName: "minus") }
+            .buttonStyle(.borderless)
+            .disabled(appState.selectedTrigger == nil)
+            .help("Delete the selected gesture")
+            Spacer()
+            let disabled = scopedTriggers.filter { !$0.isEnabled }.count
+            Text(disabled == 0 ? "All enabled" : "\(disabled) disabled")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 10)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-        .background(.background.opacity(0.25))
+        .frame(height: 30)
+        .overlay(alignment: .top) { Divider() }
     }
 
-    private var emptyTriggersView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "hand.tap")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary.opacity(0.5))
+    // MARK: - Onboarding (no triggers in this scope)
 
-            Text("No Gestures Found")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Text("Click + New Gesture to assign actions to a trackpad, keyboard, or mouse gesture.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 220)
-
-            Button("Add Gesture") {
-                appState.showingAddTrigger = true
+    private var onboardingView: some View {
+        GeometryReader { geometry in
+        ScrollView {
+            VStack(spacing: AOMDesign.sectionSpacing) {
+                VStack(spacing: 10) {
+                    AOMIconTile(systemImage: "hand.tap.fill", tint: .cyan, size: 56)
+                    Text("Create your first gesture for \(scopeTitle)")
+                        .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                    Text("Pick what starts it — a trackpad gesture, a keyboard shortcut, a mouse button, a drawing, or a system event — then chain the actions it runs.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 520)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: AOMDesign.gridSpacing)],
+                          spacing: AOMDesign.gridSpacing) {
+                    AOMActionTile(title: "Trackpad Gesture", systemImage: "hand.point.up", tint: .cyan,
+                                  subtitle: "Swipes, taps, pinches, TipTap") { presentAddTrigger(.trackpad) }
+                    AOMActionTile(title: "Keyboard Shortcut", systemImage: "keyboard", tint: .orange,
+                                  subtitle: "Shortcuts, key sequences, typed words") { presentAddTrigger(.keyboard) }
+                    AOMActionTile(title: "Mouse Button", systemImage: "computermouse.fill", tint: .indigo,
+                                  subtitle: "Extra buttons, clicks with modifiers") { presentAddTrigger(.normalMouse) }
+                    AOMActionTile(title: "Drawing", systemImage: "hand.draw", tint: .pink,
+                                  subtitle: "Draw a shape to run actions") { presentAddTrigger(.drawings) }
+                    AOMActionTile(title: "Other Trigger", systemImage: "ellipsis.circle", tint: .gray,
+                                  subtitle: "App launch, Wi-Fi, battery, timers") { presentAddTrigger(.otherTriggers) }
+                }
+                .frame(maxWidth: 760)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .padding(.top, 4)
+            .padding(AOMDesign.pagePadding)
+            .frame(maxWidth: .infinity, minHeight: geometry.size.height)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .scrollIndicators(.hidden)
+        }
     }
 
-    // MARK: - Right Detail: Visual Shortcuts Action Canvas
+    // MARK: - Workflow canvas
 
-    private var visualWorkflowCanvas: some View {
-        VStack(spacing: 0) {
+    private var workflowCanvas: some View {
+        Group {
             if let trigger = appState.selectedTrigger {
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        // 1. Trigger Info Card
-                        triggerHeaderCard(trigger)
-
-                        // 2. Connected Action Sequence (Shortcuts Style)
-                        actionSequenceSection(trigger)
+                GeometryReader { geometry in
+                    let wide = geometry.size.width >= 860
+                    ScrollView {
+                        Group {
+                            if wide {
+                                HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
+                                    VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                                        triggerSummaryCard(trigger)
+                                        actionSequenceSection(trigger)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    triggerInspector(trigger)
+                                        .frame(width: min(340, geometry.size.width * 0.34))
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                                    triggerSummaryCard(trigger)
+                                    actionSequenceSection(trigger)
+                                    triggerInspector(trigger)
+                                }
+                            }
+                        }
+                        .padding(AOMDesign.pagePadding)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .padding(24)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .suppressScrollerReservation()
                 }
-                .suppressScrollerReservation()
             } else {
-                emptyCanvasView
+                AOMEmptyState("Select a Gesture", systemImage: "cursorarrow.click.2",
+                              message: "Choose a gesture on the left to edit what it does.")
             }
         }
-        .background(.background.opacity(0.12))
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func triggerHeaderCard(_ trigger: Trigger) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: trigger.input.category.iconName)
-                    .font(.system(size: 22, weight: .regular))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 36)
+    private func categoryColor(_ category: TriggerCategory) -> Color {
+        switch category {
+        case .trackpad: return .cyan
+        case .keyboard: return .orange
+        case .normalMouse: return .indigo
+        case .drawings: return .pink
+        case .otherTriggers: return .gray
+        case .all: return .blue
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(trigger.input.displayName)
-                            .font(.system(size: 15, weight: .bold))
+    private func scopeDescription(_ trigger: Trigger) -> String {
+        if let id = trigger.activationGroupID,
+           let name = appState.currentPreset.activationGroups.first(where: { $0.id == id })?.name { return "Group · \(name)" }
+        if let bundle = trigger.appBundleID, !bundle.isEmpty {
+            return appState.currentPreset.appTargets.first { $0.bundleID == bundle }?.name ?? bundle
+        }
+        return "All Applications"
+    }
 
-                        if trigger.requiredModifiers != nil {
-                            Text(trigger.modifierLabel)
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                        }
-
-                        if trigger.isFavorite {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.orange)
-                        }
+    private func triggerSummaryCard(_ trigger: Trigger) -> some View {
+        HStack(spacing: 14) {
+            AOMIconTile(systemImage: trigger.input.category.iconName,
+                        tint: categoryColor(trigger.input.category), size: 44)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(trigger.input.displayName).font(.title3.weight(.semibold)).lineLimit(1)
+                    if trigger.requiredModifiers != nil {
+                        Text(trigger.modifierLabel)
+                            .font(.caption.monospaced().weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.12), in: Capsule())
                     }
-
-                    Text(trigger.activationGroupID.flatMap { id in
-                        appState.currentPreset.activationGroups.first { $0.id == id }?.name
-                    }.map { "Group: " + $0 } ?? (trigger.appBundleID ?? "Global (All Applications)"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    if trigger.isFavorite {
+                        Image(systemName: "pin.fill").font(.caption).foregroundStyle(.orange)
+                            .accessibilityLabel("Pinned")
+                    }
                 }
-
-                Spacer()
-
-                Toggle("Enabled", isOn: Binding(
-                    get: { trigger.isEnabled },
-                    set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
+                Text("\(scopeDescription(trigger)) · \(trigger.actions.count) action\(trigger.actions.count == 1 ? "" : "s")")
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
+            Spacer(minLength: 8)
+            Toggle("Enabled", isOn: Binding(
+                get: { trigger.isEnabled },
+                set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .help(trigger.isEnabled ? "Disable this gesture" : "Enable this gesture")
+        }
+        .aomSurface(padding: 16)
+    }
 
-            // Custom Workflow Name Field
-            HStack(spacing: 8) {
-                Text("Name")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                TextField("Workflow name", text: Binding(
-                    get: { trigger.name },
-                    set: { newName in
-                        var updated = trigger
-                        updated.name = newName
-                        appState.updateTrigger(updated)
-                    }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
+    private func triggerInspector(_ trigger: Trigger) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AOMSectionHeader("Details", systemImage: "info.circle")
+            VStack(alignment: .leading, spacing: 10) {
+                LabeledContent("Trigger", value: trigger.input.category == .all ? "Any" : trigger.input.category.rawValue)
+                LabeledContent("Applies to", value: scopeDescription(trigger))
+                LabeledContent("Status", value: trigger.isEnabled ? "Enabled" : "Disabled")
             }
+            .font(.callout)
+            .aomSurface()
 
-            // Sensitivity Options Disclosure
             DisclosureGroup(isExpanded: $showTriggerOptions) {
                 TriggerConfigView(trigger: trigger)
                     .padding(.top, 8)
             } label: {
-                Label("Trigger Sensitivity & Timing", systemImage: "slider.horizontal.3")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                Label("Sensitivity & Timing", systemImage: "slider.horizontal.3")
+                    .font(.callout.weight(.medium))
             }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+            .aomSurface()
 
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-        )
+            HStack(spacing: 8) {
+                Button { appState.toggleFavorite(trigger) } label: {
+                    Label(trigger.isFavorite ? "Unpin" : "Pin to Top", systemImage: trigger.isFavorite ? "pin.slash" : "pin")
+                }
+                Button { appState.addTrigger(TriggerClipboard.duplicate(trigger)) } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
+                Spacer(minLength: 0)
+                Button(role: .destructive) { pendingDeletion = trigger } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+            .controlSize(.small)
+            .buttonStyle(.bordered)
+        }
     }
 
     private func actionSequenceSection(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Actions · \(trigger.actions.count)", systemImage: "bolt")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
+            AOMSectionHeader("Actions", systemImage: "bolt.fill",
+                             caption: "Run in order when the gesture is recognized") {
                 if !trigger.actions.isEmpty {
                     let isTesting = testingTriggerID == trigger.id
                     Button {
@@ -391,38 +446,51 @@ struct ModernGesturesWorkspace: View {
                         testResult = nil
                         ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad, triggerID: trigger.id) { ok in
                             testingTriggerID = nil
-                            testResult = ok ? "Sequence executed successfully" : "Execution failed or stopped"
+                            testResult = ok ? "Workflow ran successfully" : "Workflow failed or was stopped"
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: isTesting ? "hourglass" : "play.fill")
-                                .font(.system(size: 10))
-                            Text(isTesting ? "Running…" : "Test Workflow")
-                                .font(.caption.weight(.semibold))
-                        }
+                        Label(isTesting ? "Running…" : "Test", systemImage: isTesting ? "hourglass" : "play.fill")
                     }
-                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(isTesting || ActionTree.problem(trigger.actions) != nil)
+                    .help("Run this workflow now")
                 }
+                Button { addAction() } label: { Label("Add Action", systemImage: "plus") }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
             }
 
             let rows = ActionTree.rows(trigger.actions)
             if rows.isEmpty {
-                emptyActionsCard(trigger)
+                Button { addAction() } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill").font(.system(size: 26)).foregroundStyle(.tint)
+                        Text("Add the first action").font(.headline)
+                        Text("Shortcuts, window moves, app launches, scripts, captures and more.")
+                            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .background(Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
+                            .foregroundStyle(Color.accentColor.opacity(0.4))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         if index > 0 {
-                            HStack {
-                                Rectangle()
-                                    .fill(Color(nsColor: .separatorColor))
-                                    .frame(width: 2, height: 14)
-                                    .padding(.leading, 24)
-                                Spacer()
-                            }
+                            Rectangle()
+                                .fill(Color(nsColor: .separatorColor))
+                                .frame(width: 2, height: 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.leading, 22 + CGFloat(row.depth) * 16)
+                                .accessibilityHidden(true)
                         }
-
                         ActionCardView(
                             action: row.action,
                             index: index + 1,
@@ -432,28 +500,19 @@ struct ModernGesturesWorkspace: View {
                             trigger: trigger,
                             keyboardMonitor: appState.keyboardMonitor,
                             onToggleExpand: {
-                                if expandedActionIDs.contains(row.id) {
-                                    expandedActionIDs.remove(row.id)
-                                } else {
-                                    expandedActionIDs.insert(row.id)
-                                }
+                                if expandedActionIDs.contains(row.id) { expandedActionIDs.remove(row.id) }
+                                else { expandedActionIDs.insert(row.id) }
                             },
                             onChangeAction: {
                                 replaceActionID = row.action.id
+                                parentID = nil
+                                toElse = false
                                 appState.showingAddAction = true
                             },
-                            onMoveUp: {
-                                appState.moveAction(in: trigger, action: row.action, offset: -1)
-                            },
-                            onMoveDown: {
-                                appState.moveAction(in: trigger, action: row.action, offset: 1)
-                            },
-                            onDuplicate: {
-                                appState.duplicateAction(in: trigger, action: row.action)
-                            },
-                            onDelete: {
-                                appState.removeAction(from: trigger, action: row.action)
-                            },
+                            onMoveUp: { appState.moveAction(in: trigger, action: row.action, offset: -1) },
+                            onMoveDown: { appState.moveAction(in: trigger, action: row.action, offset: 1) },
+                            onDuplicate: { appState.duplicateAction(in: trigger, action: row.action) },
+                            onDelete: { appState.removeAction(from: trigger, action: row.action) },
                             onToggleEnable: {
                                 var updated = row.action
                                 updated.isEnabled.toggle()
@@ -474,141 +533,88 @@ struct ModernGesturesWorkspace: View {
                             }
                         )
                     }
-
-                    Button {
-                        parentID = nil
-                        toElse = false
-                        replaceActionID = nil
-                        appState.showingAddAction = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 13))
-                            Text("Add Action")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
+                    Button { addAction() } label: {
+                        Label("Add Action", systemImage: "plus.circle")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .background(Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
                     .padding(.top, 12)
                 }
             }
 
             if let testResult {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text(testResult)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
+                Label(testResult, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func emptyActionsCard(_ trigger: Trigger) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "plus.square.dashed")
-                .font(.system(size: 32))
-                .foregroundStyle(.secondary)
-
-            Text("No Actions Attached Yet")
-                .font(.headline)
-
-            Text("Choose what happens when this gesture is recognized.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Button {
-                parentID = nil
-                toElse = false
-                replaceActionID = nil
-                appState.showingAddAction = true
-            } label: {
-                Label("Attach Action Step", systemImage: "plus")
-                    .font(.subheadline.weight(.semibold))
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .padding(.top, 4)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4]))
-                .foregroundStyle(Color.secondary.opacity(0.3))
-        )
-    }
-
-    private var emptyCanvasView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary.opacity(0.4))
-
-            Text("Select a Gesture to Configure Workflow")
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.secondary)
-
-            Text("Choose any gesture from the left list to view and customize its action sequence, or click + New Gesture to create one.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
-
-            Button("Create New Gesture") {
-                appState.showingAddTrigger = true
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-
-    private func categoryColor(_ category: TriggerCategory) -> Color {
-        switch category {
-        case .trackpad: return .cyan
-        case .keyboard: return .orange
-        case .normalMouse: return .indigo
-        default: return .blue
-        }
+    private func addAction() {
+        parentID = nil
+        toElse = false
+        replaceActionID = nil
+        appState.showingAddAction = true
     }
 }
 
-// MARK: - Native list content
+// MARK: - Native list row
 
 private struct GestureSummaryRow: View {
     let trigger: Trigger
+    let onToggle: (Bool) -> Void
+    @State private var isFlashing = false
+
+    private var tint: Color {
+        switch trigger.input.category {
+        case .trackpad: return .cyan
+        case .keyboard: return .orange
+        case .normalMouse: return .indigo
+        case .drawings: return .pink
+        case .otherTriggers: return .gray
+        case .all: return .blue
+        }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: trigger.input.category.iconName)
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 3) {
+            AOMIconTile(systemImage: trigger.input.category.iconName, tint: tint, size: 26)
+                .opacity(trigger.isEnabled ? 1 : 0.45)
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(trigger.displayName).font(.body.weight(.medium)).lineLimit(1)
-                    if trigger.isFavorite { Image(systemName: "pin.fill").font(.caption2) }
+                    if trigger.isFavorite {
+                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange)
+                            .accessibilityLabel("Pinned")
+                    }
                 }
                 Text(trigger.actions.first.map {
-                    $0.displayName + (trigger.actions.count > 1 ? " · \(trigger.actions.count) actions" : "")
-                } ?? "No actions")
+                    $0.displayName + (trigger.actions.count > 1 ? " · +\(trigger.actions.count - 1)" : "")
+                } ?? "No actions yet")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
-            if !trigger.isEnabled {
-                Image(systemName: "pause.circle").foregroundStyle(.secondary)
-                    .accessibilityLabel("Disabled")
-            }
+            Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled }, set: onToggle))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .accessibilityLabel("\(trigger.displayName) enabled")
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.green.opacity(isFlashing ? 0.18 : 0))
+                .padding(-4)
+        )
+        .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
+            let flashing = id == trigger.id
+            if isFlashing != flashing { isFlashing = flashing }
+        }
+        .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: isFlashing)
         .accessibilityElement(children: .combine)
     }
 }
