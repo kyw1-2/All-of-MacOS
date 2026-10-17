@@ -55,6 +55,7 @@ struct CaptureStudioView: View {
                 }
                 .padding(20)
             }
+            .scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.opacity(0.18))
@@ -224,7 +225,6 @@ struct CaptureStudioView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 180), spacing: 12)], spacing: 12) {
                 LaunchpadCard(
                     title: "Area",
-                    shortcut: "⇧⌘4",
                     icon: "viewfinder",
                     accentColor: .blue
                 ) {
@@ -233,7 +233,6 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "Window",
-                    shortcut: "⇧⌘5",
                     icon: "macwindow",
                     accentColor: .indigo
                 ) {
@@ -242,7 +241,6 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "Fullscreen",
-                    shortcut: "⇧⌘3",
                     icon: "display",
                     accentColor: .purple
                 ) {
@@ -251,7 +249,6 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "Scrolling",
-                    shortcut: "⌥⇧⌘S",
                     icon: "arrow.up.and.down.text.horizontal",
                     accentColor: .teal
                 ) {
@@ -260,7 +257,6 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "Record Video",
-                    shortcut: "⇧⌘6",
                     icon: "video.fill",
                     accentColor: .red
                 ) {
@@ -269,7 +265,6 @@ struct CaptureStudioView: View {
 
                 LaunchpadCard(
                     title: "OCR Text",
-                    shortcut: "⇧⌘7",
                     icon: "character.text.viewfinder",
                     accentColor: .orange
                 ) {
@@ -427,7 +422,6 @@ struct CaptureStudioView: View {
 
 private struct LaunchpadCard: View {
     let title: String
-    let shortcut: String
     let icon: String
     let accentColor: Color
     let action: () -> Void
@@ -436,30 +430,23 @@ private struct LaunchpadCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(accentColor.opacity(0.12))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
 
                     Image(systemName: icon)
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(accentColor)
                 }
 
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.primary)
-
-                Text(shortcut)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
+            .padding(.vertical, 16)
             .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)

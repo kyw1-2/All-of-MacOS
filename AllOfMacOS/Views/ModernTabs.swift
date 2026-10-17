@@ -3,6 +3,7 @@ import SwiftUI
 /// Top-level navigation hubs for All of MacOS.
 enum AOMMainTab: String, CaseIterable, Identifiable {
     case gestures = "Gestures & Automation"
+    case snapping = "Window Snapping"
     case capture = "Capture & Studio"
     case clipboard = "Clipboard Memory"
     case insights = "Statistics"
@@ -12,6 +13,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .gestures: return "Gestures"
+        case .snapping: return "Window Tiling"
         case .capture: return "Capture Studio"
         case .clipboard: return "Clipboard"
         case .insights: return "Insights"
@@ -20,7 +22,8 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .gestures: return "Trackpad, keyboard, mouse & window management"
+        case .gestures: return "Trackpad, keyboard, mouse & workflow automation"
+        case .snapping: return "Screen split, tile zones & display layouts"
         case .capture: return "Screenshots, recording, annotation & OCR"
         case .clipboard: return "Encrypted pasteboard history, pinboards & search"
         case .insights: return "Gesture frequency and automation analytics"
@@ -30,6 +33,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     var iconName: String {
         switch self {
         case .gestures: return "hand.tap.fill"
+        case .snapping: return "macwindow.on.rectangle"
         case .capture: return "camera.viewfinder"
         case .clipboard: return "doc.on.clipboard.fill"
         case .insights: return "chart.xyaxis.line"
@@ -39,6 +43,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     var accentColor: Color {
         switch self {
         case .gestures: return .cyan
+        case .snapping: return .blue
         case .capture: return .orange
         case .clipboard: return .indigo
         case .insights: return .green

@@ -699,9 +699,6 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             GestureSettingsView()
                 .tabItem { Label("Gestures", systemImage: "hand.draw") }
-            AppearanceSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             PermissionsSettingsView()
                 .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
             CaptureSettingsView()
@@ -725,6 +722,7 @@ struct GeneralSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
+    @AppStorage("AOMAppearance") private var appearance: String = "dark"
     @AppStorage("AOMHUDEnabled") private var hudEnabled = true
     @AppStorage("AOMHUDBackgroundOpacity") private var hudOpacity = 0.06
 
@@ -769,6 +767,51 @@ struct GeneralSettingsView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                             .controlSize(.small)
+                    }
+                }
+
+                // Appearance: Theme & Accent Color
+                AppleSettingsGroup("Appearance") {
+                    AppleSettingsRow(
+                        icon: "circle.lefthalf.filled",
+                        iconColor: .indigo,
+                        title: "Interface Style",
+                        subtitle: "Choose between Dark and Light mode appearance",
+                        showDivider: true
+                    ) {
+                        Picker("", selection: $appearance) {
+                            Text("Dark").tag("dark")
+                            Text("Light").tag("light")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 140)
+                    }
+
+                    AppleSettingsRow(
+                        icon: "paintpalette.fill",
+                        iconColor: .pink,
+                        title: "Highlight Color",
+                        subtitle: "Personalize controls and active elements",
+                        showDivider: false
+                    ) {
+                        HStack(spacing: 8) {
+                            ForEach(AccentColorChoice.allCases) { choice in
+                                Circle()
+                                    .fill(choice.color)
+                                    .frame(width: 20, height: 20)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white, lineWidth: appState.accentColorChoice == choice ? 2.5 : 0)
+                                    )
+                                    .shadow(color: appState.accentColorChoice == choice ? choice.color.opacity(0.5) : .clear, radius: 3)
+                                    .onTapGesture {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            appState.accentColorChoice = choice
+                                            UserDefaults.standard.set(choice.rawValue, forKey: "AOMAccentColor")
+                                        }
+                                    }
+                            }
+                        }
                     }
                 }
 
@@ -891,64 +934,6 @@ struct GeneralSettingsView: View {
             for key in keys {
                 UserDefaults.standard.removeObject(forKey: key)
             }
-        }
-    }
-}
-
-struct AppearanceSettingsView: View {
-    @EnvironmentObject var appState: AppState
-    @AppStorage("AOMAppearance") private var appearance: String = "dark"
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                AppleSettingsGroup("Theme") {
-                    AppleSettingsRow(
-                        icon: "circle.lefthalf.filled",
-                        iconColor: .indigo,
-                        title: "Interface Style",
-                        subtitle: "Choose between Dark and Light mode appearance",
-                        showDivider: false
-                    ) {
-                        Picker("", selection: $appearance) {
-                            Text("Dark").tag("dark")
-                            Text("Light").tag("light")
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                    }
-                }
-
-                AppleSettingsGroup("Accent Color") {
-                    AppleSettingsRow(
-                        icon: "paintpalette.fill",
-                        iconColor: .pink,
-                        title: "Highlight Color",
-                        subtitle: "Personalize controls and active elements",
-                        showDivider: false
-                    ) {
-                        HStack(spacing: 8) {
-                            ForEach(AccentColorChoice.allCases) { choice in
-                                Circle()
-                                    .fill(choice.color)
-                                    .frame(width: 20, height: 20)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: appState.accentColorChoice == choice ? 2.5 : 0)
-                                    )
-                                    .shadow(color: appState.accentColorChoice == choice ? choice.color.opacity(0.5) : .clear, radius: 3)
-                                    .onTapGesture {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            appState.accentColorChoice = choice
-                                            UserDefaults.standard.set(choice.rawValue, forKey: "AOMAccentColor")
-                                        }
-                                    }
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(20)
         }
     }
 }

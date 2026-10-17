@@ -301,60 +301,47 @@ struct MainWindow: View {
     private var isDark: Bool { appearance == "dark" }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if appState.selectedMainTab == .gestures {
-                TopDeviceBar()
-                    .frame(height: 44)
-                Divider()
-            }
+        HStack(spacing: 0) {
+            // Modern Apple Sidebar (Un-cluttered Super-App Hubs & App Profiles)
+            ModernSidebarView(
+                showLog: $showLog,
+                showTouchVisualizer: $showTouchVisualizer,
+                showingCommandPalette: $showingCommandPalette
+            )
+            .tutorialAnchor(.sidebar)
 
-            GeometryReader { available in
-                HStack(spacing: 0) {
-                    switch appState.selectedMainTab {
-                    case .gestures:
-                        AppSidebar()
-                            .frame(width: 210, height: available.size.height, alignment: .topLeading)
-                            .tutorialAnchor(.sidebar)
+            Divider()
 
-                        Divider()
+            // Dynamic Detail Canvas (CleanShot X, Paste, Shortcuts, and Window Tiling)
+            Group {
+                switch appState.selectedMainTab {
+                case .gestures:
+                    ModernGesturesWorkspace()
+                        .tutorialAnchor(.triggers)
+                        .tutorialAnchor(.actions)
 
-                        HSplitView {
-                            TriggerListPanel()
-                                .frame(minWidth: 280, idealWidth: 320, maxWidth: 440, maxHeight: .infinity)
-                                .background(GeometryReader { pane in
-                                    Color.clear.preference(key: AOMTriggerPaneHeightKey.self, value: pane.size.height)
-                                })
-                                .tutorialAnchor(.triggers)
+                case .snapping:
+                    ModernWindowSnappingView()
 
-                            ActionInspectorPanel()
-                                .frame(minWidth: 360, idealWidth: 460, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .tutorialAnchor(.actions)
-                                .tutorialAnchor(.config)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: available.size.height)
+                case .capture:
+                    CaptureStudioView()
 
-                    case .capture:
-                        CaptureStudioView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .clipboard:
+                    ClipboardStudioView()
 
-                    case .clipboard:
-                        ClipboardStudioView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    case .insights:
-                        StatisticsView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-
-                    if showLog || showTouchVisualizer {
-                        DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
-                            .transition(.move(edge: .trailing))
-                    }
+                case .insights:
+                    StatisticsView()
                 }
-                .frame(width: available.size.width, height: available.size.height, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Detachable Diagnostic Drawer
+            if showLog || showTouchVisualizer {
+                DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                    .transition(.move(edge: .trailing))
             }
         }
+        .frame(minWidth: 880, minHeight: 560)
         // The window is the material; panes on top of it are translucent fills.
         .translucentPane(.sidebar)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
@@ -385,68 +372,6 @@ struct MainWindow: View {
             }
         }
         .navigationTitle("")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 8) {
-                    Text("All of MacOS")
-                        .font(.headline)
-                    UpdateBadgeView(updateChecker: appState.updateChecker)
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            appState.toggleGlobalEnabled()
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(appState.globalEnabled ? Color.green : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(appState.globalEnabled ? "ON" : "OFF")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundStyle(appState.globalEnabled ? .green : .red)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill((appState.globalEnabled ? Color.green : Color.red).opacity(0.12))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help(appState.globalEnabled ? "Disable all gestures" : "Enable all gestures")
-                }
-            }
-            ToolbarItem(placement: .principal) {
-                ModernMainTabBar(selectedTab: $appState.selectedMainTab)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                        showingCommandPalette.toggle()
-                    }
-                } label: {
-                    Label("Command Palette", systemImage: "command")
-                }
-                .keyboardShortcut("k", modifiers: .command)
-                .help("Universal Command Palette (⌘K)")
-
-                TouchVizToolbarButton(isActive: showTouchVisualizer) {
-                    withAnimation { showTouchVisualizer.toggle() }
-                }
-
-                ConsoleToolbarButton(isActive: showLog) {
-                    withAnimation { showLog.toggle() }
-                }
-
-                AppearanceToolbarButton(isDark: isDark) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        appearance = isDark ? "light" : "dark"
-                    }
-                }
-
-                SettingsToolbarButton { openSettings() }
-                    .help("App Settings")
-            }
-        }
         .preferredColorScheme(appearance == "system" ? nil : (isDark ? .dark : .light))
     }
 

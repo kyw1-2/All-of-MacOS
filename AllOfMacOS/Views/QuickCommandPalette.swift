@@ -82,7 +82,7 @@ struct QuickCommandPalette: View {
             icon: "character.text.viewfinder",
             iconColor: .orange,
             category: "Capture Studio",
-            shortcutHint: "⇧⌘7",
+            shortcutHint: "⇧⌘2",
             action: {
                 isPresented = false
                 CaptureCoordinator.shared.captureText()
