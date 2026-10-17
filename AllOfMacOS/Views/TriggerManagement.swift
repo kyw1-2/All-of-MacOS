@@ -50,6 +50,8 @@ struct GestureSettingsView: View {
     @AppStorage("AOMKeyboardQuickReleaseMaxMs") private var quickRelease = 250
     @AppStorage("AOMMouseLongPressMs") private var mouseLongPress = 500
     @AppStorage("AOMMouseDragThresholdPx") private var mouseDrag = 40
+    @AppStorage("AOMForcePressEnabled") private var forcePressEnabled = false
+    @AppStorage("AOMForcePressThreshold") private var forcePressThreshold = 0.95
 
     var body: some View {
         Form {
@@ -62,6 +64,15 @@ struct GestureSettingsView: View {
                 Slider(value: $tipTap, in: 0.05...0.5, step: 0.01)
                 LabeledContent("Press-drag distance", value: "\(Int(drag)) pt")
                 Slider(value: $drag, in: 50...1000, step: 25)
+            }
+            Section("Force Click") {
+                Toggle("Recognize Force Click triggers", isOn: $forcePressEnabled)
+                if forcePressEnabled {
+                    LabeledContent("Pressure threshold", value: forcePressThreshold.formatted(.number.precision(.fractionLength(2))))
+                    Slider(value: $forcePressThreshold, in: 0.5...1.5, step: 0.05)
+                }
+                Text("Off by default so ordinary clicks never count as force clicks. Turn it on when you assign a Force Click trigger.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Keyboard & Mouse") {
                 Stepper("Keyboard long press: \(longPress) ms", value: $longPress, in: 100...5000, step: 50)

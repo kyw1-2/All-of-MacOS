@@ -357,11 +357,17 @@ final class ClipboardIntelligence {
         set { UserDefaults.standard.set(newValue, forKey: Self.readsScreenKey) }
     }
 
+    /// Asking FoundationModels for availability costs milliseconds of IPC on
+    /// the main thread; it changes rarely, so the answer is reused for 5 min.
+    private static var modelAvailability: (value: Bool, checkedAt: Date)?
     static var modelAvailable: Bool {
+        if let cached = modelAvailability, Date().timeIntervalSince(cached.checkedAt) < 300 { return cached.value }
+        var value = false
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) { return SystemLanguageModel.default.isAvailable }
+        if #available(macOS 26.0, *) { value = SystemLanguageModel.default.isAvailable }
         #endif
-        return false
+        modelAvailability = (value, Date())
+        return value
     }
 
     private var classCache: [UUID: (digest: Int, value: ClipboardItemClass)] = [:]
@@ -465,15 +471,32 @@ final class ClipboardIntelligence {
 
     func recordPaste(entryIDs: [UUID], destination: NSRunningApplication?, store: ClipboardStore) {
         guard isEnabled, let destination, !PresetManager.isUIPreview else { return }
-        let log = log(for: store)
-        for id in entryIDs.prefix(20) {
-            guard let entry = store.entries.first(where: { $0.id == id }) else { continue }
-            let cls = itemClass(entry)
-            guard cls != .secret else { continue }  // never log where secrets go
-            log.record(.init(entryID: id, itemClass: cls, sourceBundleID: entry.sourceBundleID,
-                             destinationBundleID: destination.bundleIdentifier,
-                             destinationKind: lastContext.bundleID == destination.bundleIdentifier ? lastContext.kind : .unknown,
-                             date: Date()))
+        let entries = entryIDs.prefix(20).compactMap { id in store.entries.first { $0.id == id } }
+        guard !entries.isEmpty else { return }
+        let destinationBundleID = destination.bundleIdentifier
+        let destinationKind = lastContext.bundleID == destinationBundleID ? lastContext.kind : .unknown
+        let cache = classCache
+        // Classification (regexes, data detectors, NLTagger) runs off the main
+        // thread so the paste and the shelf animation never wait for it.
+        Self.suggestionQueue.async {
+            let classified: [(ClipboardEntry, Int, ClipboardItemClass)] = entries.map { entry in
+                let digest = Self.digest(entry)
+                if let cached = cache[entry.id], cached.digest == digest { return (entry, digest, cached.value) }
+                return (entry, digest, ClipboardItemClassifier.classify(entry))
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in
+                    guard let self else { return }
+                    let log = self.log(for: store)
+                    for (entry, digest, cls) in classified {
+                        self.classCache[entry.id] = (digest, cls)
+                        guard cls != .secret else { continue }  // never log where secrets go
+                        log.record(.init(entryID: entry.id, itemClass: cls, sourceBundleID: entry.sourceBundleID,
+                                         destinationBundleID: destinationBundleID, destinationKind: destinationKind,
+                                         date: Date()))
+                    }
+                }
+            }
         }
     }
 
@@ -518,7 +541,8 @@ final class ClipboardIntelligence {
     /// background, a few recent items at a time.
     func refineClassesWithModel(_ entries: [ClipboardEntry]) {
         #if canImport(FoundationModels)
-        guard isEnabled, Self.modelAvailable, !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
+        guard isEnabled, !PresetManager.isUIPreview, !PresetManager.isRunningTests,
+              Date().timeIntervalSince(lastModelRefinement) > 600, Self.modelAvailable else { return }
         if #available(macOS 26.0, *) {
             // The on-device model is shared system-wide (GPU/Neural Engine);
             // never run it on every panel open, and never retry an item.

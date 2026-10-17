@@ -478,7 +478,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(NSMenuItem.separator())
 
         // Restart
-        let restartItem = NSMenuItem(title: "Restart", action: #selector(restartApp), keyEquivalent: "r")
+        let restartItem = NSMenuItem(title: "Restart", action: #selector(restartApp), keyEquivalent: "")
         restartItem.target = self
         restartItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         menu.addItem(restartItem)

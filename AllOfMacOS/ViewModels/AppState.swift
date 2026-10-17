@@ -33,7 +33,9 @@ class AppState: ObservableObject {
     @Published var showingAddTrigger: Bool = false
     @Published var showingAddAction: Bool = false
     @Published var showingAddApp: Bool = false
-    @Published var selectedMainTab: AOMMainTab = .gestures {
+    /// Gesture open in the gallery editor (nil shows the gallery).
+    @Published var gestureEditorTriggerID: UUID?
+    @Published var selectedMainTab: AOMMainTab = .home {
         didSet {
             if selectedMainTab == .insights && !showStatistics {
                 showStatistics = true

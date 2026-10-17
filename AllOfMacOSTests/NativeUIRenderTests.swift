@@ -18,7 +18,9 @@ final class NativeUIRenderTests: XCTestCase {
         state.selectedAppTarget = .allApps
         let names = ["Arrange workspace", "Move to next display", "Capture a region", "Open clipboard", "Focus current window", "Show desktop", "Adjust volume", "Switch workspace", "Quick note", "Media controls", "Toggle mute", "Capture text", "Open search", "Window center", "Next tab", "Previous tab", "Quick capture", "Paste plain text"]
         state.currentPreset.triggers = names.enumerated().map { index, name in
-            var trigger = Trigger(name: name, input: .trackpadGesture(.twoFingerSwipeUp))
+            var trigger = Trigger(name: name, input: index % 3 == 1 ? .keyboardShortcut(KeyboardShortcut(keyCode: UInt16(index), modifiers: [.command, .option]))
+                                  : .trackpadGesture(.twoFingerSwipeUp))
+            trigger.isEnabled = index % 5 != 4
             trigger.actions = [TriggerAction(actionType: .snapWindowLeft)]
             return trigger
         }
@@ -34,6 +36,20 @@ final class NativeUIRenderTests: XCTestCase {
             try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
                        appearance: .aqua, url: output.appendingPathComponent("main-\(tab.title.replacingOccurrences(of: " ", with: "-").lowercased()).png"))
         }
+        state.selectedMainTab = .gestures
+        UserDefaults.standard.set("list", forKey: "AOMGesturesLayout")
+        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
+                   appearance: .aqua, url: output.appendingPathComponent("main-gestures-list.png"))
+        UserDefaults.standard.set("gallery", forKey: "AOMGesturesLayout")
+        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
+                   appearance: .darkAqua, url: output.appendingPathComponent("main-gestures-dark.png"))
+        state.gestureEditorTriggerID = state.currentPreset.triggers.first?.id
+        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
+                   appearance: .aqua, url: output.appendingPathComponent("main-gesture-editor.png"))
+        state.gestureEditorTriggerID = nil
+        state.selectedMainTab = .home
+        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
+                   appearance: .darkAqua, url: output.appendingPathComponent("main-home-dark.png"))
         state.selectedMainTab = .gestures
         let empty = AppState()
         empty.currentPreset = Preset(name: "Empty Review")

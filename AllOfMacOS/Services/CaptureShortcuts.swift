@@ -182,6 +182,9 @@ final class CaptureShortcuts: ObservableObject {
             return actionHandler == nil && self === CaptureShortcuts.shared
                 && TextCaptureShortcuts.shared.handleKeyEvent(keyCode: keyCode, modifiers: modifiers)
         }
+        // Pause/Resume Recording only owns its key while a recording runs;
+        // otherwise the key combination belongs to the frontmost app.
+        if action == .pauseRecording, actionHandler == nil, !ScreenRecordingService.shared.isRecording { return false }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let actionHandler = self.actionHandler {

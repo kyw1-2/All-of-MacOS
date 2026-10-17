@@ -21,6 +21,7 @@ struct ModernSidebarView: View {
     private var selection: Binding<Destination?> {
         Binding(get: {
             guard appState.selectedMainTab == .gestures else { return .hub(appState.selectedMainTab) }
+            // Scope rows highlight only while a specific scope is chosen.
             if let id = appState.selectedActivationGroupID { return .group(id) }
             if !appState.selectedAppTarget.isGlobal { return .profile(appState.selectedAppTarget.id) }
             return .hub(.gestures)
@@ -57,26 +58,50 @@ struct ModernSidebarView: View {
         }.count
     }
 
+    @AppStorage("AOMSidebarAppsExpanded") private var appsExpanded = true
+    @AppStorage("AOMSidebarGroupsExpanded") private var groupsExpanded = true
+
+    private func hubRow(_ tab: AOMMainTab, badge: Int? = nil) -> some View {
+        Label {
+            Text(tab.title)
+        } icon: {
+            AOMIconTile(systemImage: tab.iconName, tint: tab.accentColor, size: 22)
+        }
+        .badge(badge ?? 0)
+        .tag(Destination.hub(tab))
+        .help("\(tab.subtitle) (⌘\((AOMMainTab.allCases.firstIndex(of: tab) ?? 0) + 1))")
+    }
+
     var body: some View {
         List(selection: selection) {
-            Section("Library") {
-                ForEach(AOMMainTab.allCases) { tab in
-                    Label(tab.title, systemImage: tab.iconName)
-                        .tag(Destination.hub(tab))
-                }
+            Section {
+                hubRow(.home)
+                hubRow(.insights)
             }
-            Section("Applications") {
-                Label("All Applications", systemImage: "globe")
-                    .badge(triggerCount())
-                    .tag(Destination.allApps)
+            Section("Automation") {
+                hubRow(.gestures, badge: appState.currentPreset.triggers.filter(\.isEnabled).count)
+                hubRow(.snapping)
+            }
+            Section("Media") {
+                hubRow(.capture)
+                hubRow(.clipboard)
+            }
+            Section("Applications", isExpanded: $appsExpanded) {
+                Label {
+                    Text("All Applications")
+                } icon: {
+                    AOMIconTile(systemImage: "globe", tint: .gray, size: 22)
+                }
+                .badge(triggerCount())
+                .tag(Destination.allApps)
                 ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { app in
                     Label {
                         Text(app.name).lineLimit(1)
                     } icon: {
                         if let icon = app.icon {
-                            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                            Image(nsImage: icon).resizable().frame(width: 22, height: 22)
                         } else {
-                            Image(systemName: "app")
+                            AOMIconTile(systemImage: "app", tint: .gray, size: 22)
                         }
                     }
                     .badge(triggerCount(app: app))
@@ -93,13 +118,14 @@ struct ModernSidebarView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
             }
-            Section("Activation Groups") {
+            Section("Activation Groups", isExpanded: $groupsExpanded) {
                 ForEach(appState.currentPreset.activationGroups) { group in
                     Label {
                         Text(group.name).lineLimit(1)
                             .foregroundStyle(group.isEnabled ? .primary : .secondary)
                     } icon: {
-                        Image(systemName: group.isEnabled ? "square.stack.3d.up.fill" : "pause.circle")
+                        AOMIconTile(systemImage: group.isEnabled ? "square.stack.3d.up.fill" : "pause.fill",
+                                    tint: group.isEnabled ? .teal : .gray, size: 22)
                     }
                     .badge(triggerCount(group: group.id))
                     .tag(Destination.group(group.id))
@@ -122,6 +148,7 @@ struct ModernSidebarView: View {
                 .help("Share one set of gestures across several apps")
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { identity }
         .listStyle(.sidebar)
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
@@ -155,6 +182,23 @@ struct ModernSidebarView: View {
         } message: {
             Text("Global and app-specific gestures are not affected.")
         }
+    }
+
+    private var identity: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable().frame(width: 34, height: 34)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("All of MacOS").font(.headline)
+                Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–")")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
     }
 
     private var footer: some View {

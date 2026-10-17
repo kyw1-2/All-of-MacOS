@@ -324,8 +324,15 @@ class ActionExecutor {
             return
         }
         if action.actionType == .openURL {
-            guard let text = action.parameters.url, let url = URL(string: text), url.scheme != nil else { completion(false); return }
+            // "apple.com" is a web address too; only a missing value fails.
+            let raw = (action.parameters.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = raw.contains("://") || raw.hasPrefix("mailto:") || raw.isEmpty ? raw : "https://" + raw
+            guard let url = URL(string: text), url.scheme != nil else { completion(false); return }
             completion(NSWorkspace.shared.open(url)); return
+        }
+        if [.quitApplication, .hideApplication, .toggleApplication].contains(action.actionType) {
+            controlApplication(action.actionType, identifier: action.parameters.applicationName, completion: completion)
+            return
         }
         if [.runShellScript, .runAppleScript].contains(action.actionType) {
             ScriptRunnerClient.shared.run(kind: action.actionType == .runShellScript ? "shell" : "applescript",
@@ -449,12 +456,9 @@ class ActionExecutor {
             _ = SyntheticInput.key(12, flags: [.maskControl, .maskCommand])
         case .toggleDarkMode:
             let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
-            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { code, _, _ in
-                if code == 0 {
-                    let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                    NSApp.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)
-                }
-            }
+            // The system change propagates to AOM by itself; forcing
+            // NSApp.appearance here pinned AOM and ignored "Follow System".
+            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { _, _, _ in }
         case .toggleDoNotDisturb:
             break
         case .volumeUp, .volumeDown:
@@ -545,6 +549,35 @@ class ActionExecutor {
         }
     }
 
+    /// Quit / Hide / Toggle / Force Quit by bundle identifier, app name or
+    /// path — the parameter used to be matched as a bundle ID only, so
+    /// "Safari" silently did nothing.
+    private static func controlApplication(_ type: ActionType, identifier: String?, completion: @escaping (Bool) -> Void) {
+        DispatchQueue.main.async {
+            guard let raw = identifier?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { completion(false); return }
+            let name = (raw as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+            let apps = NSWorkspace.shared.runningApplications.filter {
+                $0.bundleIdentifier == raw || $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame
+                    || $0.bundleURL?.path == raw
+            }
+            switch type {
+            case .quitApplication: apps.forEach { $0.terminate() }; completion(!apps.isEmpty)
+            case .hideApplication: apps.forEach { $0.hide() }; completion(!apps.isEmpty)
+            default:
+                if let app = apps.first {
+                    if app.isHidden || !app.isActive { app.unhide(); app.activate() } else { app.hide() }
+                    completion(true)
+                } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: raw)
+                            ?? (raw.hasPrefix("/") ? URL(fileURLWithPath: raw) : nil)
+                            ?? NSWorkspace.shared.urlsForApplications(toOpen: URL(fileURLWithPath: "/")).first(where: { $0.deletingPathExtension().lastPathComponent == name }) {
+                    NSWorkspace.shared.openApplication(at: url, configuration: .init()) { app, _ in completion(app != nil) }
+                } else {
+                    completion(false)
+                }
+            }
+        }
+    }
+
     /// Runs `work` on the main actor from whatever thread the executor is on.
     ///
     /// The capture path is main-actor isolated, but actions can be dispatched
@@ -585,10 +618,14 @@ class ActionExecutor {
             let up = CGEvent(mouseEventSource: source, mouseType: button == .right ? .rightMouseUp : (button == .center ? .otherMouseUp : .leftMouseUp),
                              mouseCursorPosition: point, mouseButton: button)
             if !flags.isEmpty { down?.flags = flags; up?.flags = flags }
-            down?.setIntegerValueField(.mouseEventClickState, value: count)
-            up?.setIntegerValueField(.mouseEventClickState, value: count)
-            let ok = post(down) && post(up)
-            if count > 1 { post(down); post(up) }
+            // Each press carries its own click number (1, then 2…), the way
+            // real hardware reports a double click.
+            var ok = true
+            for number in 1...max(1, count) where count > 1 || number == 1 {
+                down?.setIntegerValueField(.mouseEventClickState, value: number)
+                up?.setIntegerValueField(.mouseEventClickState, value: number)
+                ok = post(down) && post(up) && ok
+            }
             completion(ok)
         }
 

@@ -899,7 +899,7 @@ private struct AnnotationEditorView: View {
         ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 12) {
             Color.clear.frame(width: 68, height: 32)
-            capsuleButton("crop", help: "Crop", active: true) { }
+            capsuleButton("crop", help: "Exit Crop", active: true) { cropMode = false }
             Picker("Aspect Ratio", selection: $cropAspect) {
                 Text("Freeform").tag(CGFloat(0))
                 Text("Square").tag(CGFloat(1))

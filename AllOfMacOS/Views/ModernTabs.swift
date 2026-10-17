@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Top-level navigation hubs for All of MacOS.
 enum AOMMainTab: String, CaseIterable, Identifiable {
+    case home = "Home"
     case gestures = "Gestures & Automation"
     case snapping = "Window Snapping"
     case capture = "Capture & Studio"
@@ -13,6 +14,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .home: return "Home"
         case .gestures: return "Gestures"
         case .snapping: return "Window Tiling"
         case .capture: return "Capture Studio"
@@ -23,6 +25,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .home: return "Everything at a glance"
         case .gestures: return "Trackpad, keyboard, mouse & workflow automation"
         case .snapping: return "Screen split, tile zones & display layouts"
         case .capture: return "Screenshots, recording, annotation & OCR"
@@ -33,69 +36,30 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var iconName: String {
         switch self {
+        case .home: return "house.fill"
         case .gestures: return "hand.tap.fill"
-        case .snapping: return "macwindow.on.rectangle"
+        case .snapping: return "rectangle.split.2x2.fill"
         case .capture: return "camera.viewfinder"
         case .clipboard: return "doc.on.clipboard.fill"
         case .insights: return "chart.xyaxis.line"
         }
     }
 
+    /// System Settings–style tile colour for the sidebar and page heroes.
     var accentColor: Color {
         switch self {
+        case .home: return .blue
         case .gestures: return .cyan
-        case .snapping: return .blue
+        case .snapping: return .indigo
         case .capture: return .orange
-        case .clipboard: return .indigo
+        case .clipboard: return .purple
         case .insights: return .green
         }
     }
-}
 
-/// A sleek Apple-style segmented navigation bar for the top tabs.
-struct ModernMainTabBar: View {
-    @Binding var selectedTab: AOMMainTab
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(AOMMainTab.allCases) { tab in
-                let isSelected = selectedTab == tab
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: tab.iconName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(isSelected ? tab.accentColor : .secondary)
-
-                        Text(tab.title)
-                            .font(.system(size: 12, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? .primary : .secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(isSelected
-                                  ? (colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.08))
-                                  : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(isSelected ? tab.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(0.04))
-        )
+    /// ⌘1…⌘6 in the View menu and sidebar.
+    var shortcutKey: KeyEquivalent {
+        KeyEquivalent(Character(String((AOMMainTab.allCases.firstIndex(of: self) ?? 0) + 1)))
     }
 }
 

@@ -51,7 +51,7 @@ enum AOMPermission: String, CaseIterable, Identifiable {
     var essential: Bool {
         switch self {
         case .accessibility, .inputMonitoring, .screenRecording: true
-        case .microphone: CaptureSettings.recordingAudioSource == .microphone
+        case .microphone: [.microphone, .computerAndMicrophone].contains(CaptureSettings.recordingAudioSource)
         default: false
         }
     }

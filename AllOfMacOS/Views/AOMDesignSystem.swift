@@ -131,15 +131,23 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 14) {
-            AOMIconTile(systemImage: systemImage, tint: tint, size: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.title3.weight(.semibold)).lineLimit(1)
+        HStack(spacing: 16) {
+            AOMIconTile(systemImage: systemImage, tint: tint, size: 52)
+                .shadow(color: tint.opacity(0.35), radius: 8, y: 3)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 24, weight: .bold)).lineLimit(1)
                 Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 12)
             trailing
         }
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.04)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
         .accessibilityElement(children: .contain)
     }
 }
@@ -294,5 +302,13 @@ enum AOMRelativeTime {
     static func string(_ date: Date, now: Date = Date()) -> String {
         if now.timeIntervalSince(date) < 60 { return String(localized: "Just now") }
         return formatter.localizedString(for: min(date, now), relativeTo: now)
+    }
+}
+
+extension Color {
+    /// A darker shade for gradients (macOS 14 has no `Color.mix`).
+    func aomDarker(_ amount: CGFloat) -> Color {
+        let base = NSColor(self).usingColorSpace(.deviceRGB) ?? .gray
+        return Color(nsColor: base.blended(withFraction: amount, of: .black) ?? base)
     }
 }

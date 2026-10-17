@@ -109,8 +109,9 @@ enum TriggerMenu {
     }
 
     private static func overflowItem(_ remaining: Int) -> NSMenuItem {
-        let item = NSMenuItem(title: "…and \(remaining) more", action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        let item = NSMenuItem(title: "…and \(remaining) more", action: #selector(AppDelegate.showMainWindow), keyEquivalent: "")
+        item.target = NSApp.delegate
+        item.toolTip = "Open All of MacOS to see every gesture"
         return item
     }
 

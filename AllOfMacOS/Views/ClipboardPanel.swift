@@ -9,6 +9,20 @@ import QuickLookUI
 private final class ClipboardHistoryPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    /// `makeFirstResponder(nil)` would hand focus back to the window and make
+    /// AppKit search SwiftUI's focus graph on the next activation; park it on
+    /// the lightweight container instead.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        if responder == nil, let container = contentView as? ClipboardPanelContainerView {
+            return super.makeFirstResponder(container)
+        }
+        return super.makeFirstResponder(responder)
+    }
+}
+
+/// Key-capable but otherwise inert root view of the shelf.
+private final class ClipboardPanelContainerView: NSView {
+    override var acceptsFirstResponder: Bool { true }
 }
 
 @MainActor
@@ -137,10 +151,10 @@ final class ClipboardPanelState: ObservableObject {
     }
 
     func clearSelection() {
-        preview = nil
-        selected.removeAll()
-        focusedID = nil
-        keyboardScrollTarget = nil
+        if preview != nil { preview = nil }
+        if !selected.isEmpty { selected.removeAll() }
+        if focusedID != nil { focusedID = nil }
+        if keyboardScrollTarget != nil { keyboardScrollTarget = nil }
         selectionAnchor = nil
     }
 
@@ -156,8 +170,15 @@ final class ClipboardPanelState: ObservableObject {
             selected = [id]
             selectionAnchor = id
         }
-        focusedID = selected.contains(id) ? id : entries.first(where: { selected.contains($0.id) })?.id
-        searchFieldActive = false
+        let focus = selected.contains(id) ? id : entries.first(where: { selected.contains($0.id) })?.id
+        if focusedID != focus { focusedID = focus }
+        if searchFieldActive { searchFieldActive = false }
+    }
+
+    func selectAll(in entries: [ClipboardEntry]) {
+        selected = Set(entries.map(\.id))
+        selectionAnchor = entries.first?.id
+        focusedID = entries.first?.id
     }
 
     func showIn(_ board: UUID?, entryID: UUID) {
@@ -353,12 +374,13 @@ final class ClipboardPanelController {
     func isHistoryWindow(_ window: NSWindow?) -> Bool { window != nil && window === panel }
 
     func selectCard(_ id: UUID, modifiers: NSEvent.ModifierFlags) {
-        guard state.editor == nil, state.editingTitleID == nil, state.preview == nil else { return }
+        guard isVisible, !slidingOut,
+              state.editor == nil, state.editingTitleID == nil, state.preview == nil else { return }
         state.select(id, in: state.results(in: store),
                      extend: modifiers.contains(.shift), toggle: modifiers.contains(.command))
         // Clear the native field editor too, so arrows/Space act on this card
         // immediately after the user leaves the search field.
-        panel?.makeFirstResponder(nil)
+        if panel?.firstResponder is NSTextView { panel?.makeFirstResponder(nil) }
     }
 
     func openPreview(_ entry: ClipboardEntry) {
@@ -414,10 +436,29 @@ final class ClipboardPanelController {
             window.hidesOnDeactivate = false
             window.isReleasedWhenClosed = false
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            window.contentView = NSHostingView(rootView: ClipboardPanelView(store: store, state: state, controller: self))
+            // A plain container is the window's initial first responder, so
+            // ordering the shelf front never asks SwiftUI to walk its whole
+            // focus graph for a "first key view" (≈200 ms per ⇧⌘V).
+            let container = ClipboardPanelContainerView()
+            let hosting = NSHostingView(rootView: ClipboardPanelView(store: store, state: state, controller: self))
+            hosting.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(hosting)
+            NSLayoutConstraint.activate([
+                hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                hosting.topAnchor.constraint(equalTo: container.topAnchor),
+                hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
+            window.contentView = container
+            window.initialFirstResponder = container
+            window.autorecalculatesKeyViewLoop = false
             panel = window
         }
         guard let panel else { return }
+        if let container = panel.contentView as? ClipboardPanelContainerView, panel.firstResponder !== container,
+           !((panel.firstResponder as? NSTextView)?.isEditable ?? false) {
+            panel.makeFirstResponder(container)
+        }
         // A new presentation may interrupt a previous slide-out animation.
         panel.alphaValue = 1
         let wasVisible = panel.isVisible
@@ -485,7 +526,12 @@ final class ClipboardPanelController {
     }
 
     private func clearPanelInteractionState() {
-        store.defersBackgroundUpdates = false
+        removeInteractionMonitors()
+        resetPanelState()
+    }
+
+    /// Immediate part of dismissal: stop reacting to input.
+    private func removeInteractionMonitors() {
         previewNavigationGeneration += 1
         for token in [keyMonitor, outsideMonitor, localClickMonitor].compactMap({ $0 }) {
             NSEvent.removeMonitor(token)
@@ -493,13 +539,20 @@ final class ClipboardPanelController {
         keyMonitor = nil
         outsideMonitor = nil
         localClickMonitor = nil
-        state.editor = nil
-        state.preview = nil
-        state.editingTitleID = nil
+    }
+
+    /// Deferred part: everything that re-renders the cards runs once the
+    /// shelf is off screen, never during its slide-out animation.
+    private func resetPanelState() {
+        if state.editor != nil { state.editor = nil }
+        if state.preview != nil { state.preview = nil }
+        if state.editingTitleID != nil { state.editingTitleID = nil }
         state.clearSelection()
         state.setCommandHeld(false)
         state.visibleCardIDs = []
-        state.suggestedIDs = []
+        if !state.suggestedIDs.isEmpty { state.suggestedIDs = [] }
+        // Releases deferred work: copy-time reordering and image OCR results.
+        store.defersBackgroundUpdates = false
     }
 
     /// Copy the chosen rich clipboard item without sending Cmd-V to any app.
@@ -534,7 +587,7 @@ final class ClipboardPanelController {
         dismissalGeneration += 1
         let generation = dismissalGeneration
         slidingOut = true
-        clearPanelInteractionState()
+        removeInteractionMonitors()
 
         // Paste sits just above the bottom screen edge; exit beneath that edge.
         guard Self.animatesPanel else { hideImmediately(); completion(); return }
@@ -551,6 +604,7 @@ final class ClipboardPanelController {
                 panel.orderOut(nil)
                 panel.alphaValue = 1
                 self.slidingOut = false
+                self.resetPanelState()
                 completion()
             }
         }
@@ -873,7 +927,7 @@ final class ClipboardPanelController {
             state.keyboardScrollTarget = target.id
             return true
         }
-        if !editingText && command && event.keyCode == 0 { state.selected = Set(entries.map(\.id)); return true }
+        if !editingText && command && event.keyCode == 0 { state.selectAll(in: entries); return true }
         if !editingText && (event.keyCode == 51 || event.keyCode == 117),
            event.modifierFlags.intersection([.option, .control]).isEmpty {
             let selectedIDs = state.selectedIDs(in: store)
@@ -1658,10 +1712,25 @@ private struct ClipboardCardView: View, Equatable {
 
     static let radius: CGFloat = 16
 
+    /// What the card actually draws. Copying another item (which reorders
+    /// history and bumps the store revision) no longer re-renders every card.
+    nonisolated private var contentKey: Int {
+        var hasher = Hasher()
+        hasher.combine(entry.title)
+        hasher.combine(entry.lastCopiedAt)
+        hasher.combine(entry.pinboardIDs)
+        hasher.combine(entry.kind)
+        hasher.combine(entry.text?.utf16.count ?? -1)
+        hasher.combine(entry.recognizedText?.utf16.count ?? -1)
+        hasher.combine(entry.items.count)
+        hasher.combine(entry.sourceBundleID)
+        return hasher.finalize()
+    }
+
     /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
     /// cards alone instead of re-running every visible card body.
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.entry.id == rhs.entry.id && lhs.revision == rhs.revision && lhs.number == rhs.number
+        lhs.entry.id == rhs.entry.id && lhs.contentKey == rhs.contentKey && lhs.number == rhs.number
             && lhs.compact == rhs.compact && lhs.side == rhs.side && lhs.isSelected == rhs.isSelected
             && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
             && lhs.searchActive == rhs.searchActive && lhs.isPreviewing == rhs.isPreviewing
@@ -1717,7 +1786,7 @@ private struct ClipboardCardView: View, Equatable {
                         }
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                    TimelineView(.everyMinute) { context in
                         Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date))
                             .font(.system(size: compact ? 10 : 12)).opacity(0.85).lineLimit(1)
                     }
@@ -1815,8 +1884,12 @@ private struct ClipboardCardView: View, Equatable {
         // double-click interval (~0.5 s) before selecting; both recognisers
         // now run side by side, so the first click selects at once and the
         // second click of a double-click pastes.
-        .simultaneousGesture(TapGesture(count: 1).onEnded { selectCard() })
-        .simultaneousGesture(TapGesture(count: 2).onEnded { pasteByDoubleClick() })
+        // One recognizer: the second click of a double-click pastes, every
+        // other click selects. Two competing tap recognizers re-selected the
+        // card on the pasting click (and toggled ⌘/extended ⇧ selections).
+        .onTapGesture {
+            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { pasteByDoubleClick() } else { selectCard() }
+        }
         .onHover { isHovered = $0 }
         .task(id: entry.id) {
             guard let data = entry.imageData else { imagePreview = nil; return }
@@ -1826,7 +1899,7 @@ private struct ClipboardCardView: View, Equatable {
         }
         .popover(isPresented: Binding(
             get: { isPreviewing },
-            set: { if !$0 && state.preview?.id == entry.id { state.preview = nil } }
+            set: { if !$0 && state.preview?.id == entry.id { controller.closePreview() } }
         ), attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
             ClipboardPreviewSheet(entry: entry, store: store, state: state, controller: controller)
         }
@@ -1993,9 +2066,12 @@ private struct ClipboardCardView: View, Equatable {
     /// AOM-only commands follow in their own section. With several cards
     /// selected, the paste/copy/pin/delete commands act on the whole selection.
     @ViewBuilder private func entryMenu(_ entry: ClipboardEntry) -> some View {
-        let targets = controller.actionTargets(for: entry)
-        let many = targets.count > 1
-        let suffix = many ? " \(targets.count) Items" : ""
+        // The menu is built with the card body; keep it O(1) and resolve the
+        // exact targets only when a command actually runs.
+        let selectionCount = state.selected.contains(entry.id) ? state.selected.count : 1
+        let many = selectionCount > 1
+        let suffix = many ? " \(selectionCount) Items" : ""
+        var targets: [UUID] { controller.actionTargets(for: entry) }
         Button("\(controller.pasteActionTitle)\(suffix)") {
             controller.paste(ids: targets, dismissAfterCopy: true)
         }.keyboardShortcut(.return, modifiers: [])
@@ -2018,12 +2094,14 @@ private struct ClipboardCardView: View, Equatable {
             if many { state.pendingDeletion = targets } else { controller.delete(targets) }
         }.keyboardShortcut(.delete, modifiers: [])
         Divider()
-        Menu(many ? "Pin \(targets.count) Items" : (entry.pinboardIDs.isEmpty ? "Pin" : "Pinboards")) {
+        Menu(many ? "Pin \(selectionCount) Items" : (entry.pinboardIDs.isEmpty ? "Pin" : "Pinboards")) {
             ForEach(boards) { board in
-                let pinned = targets.allSatisfy { id in store.entries.first { $0.id == id }?.pinboardIDs.contains(board.id) == true }
+                let pinned = !many && entry.pinboardIDs.contains(board.id)
                 Button {
-                    for id in targets {
-                        if pinned { store.unpin(entryID: id, boardID: board.id) } else { store.pin(entryID: id, boardID: board.id) }
+                    let ids = targets
+                    let allPinned = ids.allSatisfy { id in store.entries.first { $0.id == id }?.pinboardIDs.contains(board.id) == true }
+                    for id in ids {
+                        if allPinned { store.unpin(entryID: id, boardID: board.id) } else { store.pin(entryID: id, boardID: board.id) }
                     }
                 } label: {
                     Label { Text(pinned ? "Unpin from \(board.name)" : board.name) } icon: {
@@ -2047,7 +2125,7 @@ private struct ClipboardCardView: View, Equatable {
             ShareLink(item: shareItem(entry)) { Text("Share…") }
             Divider()
         }
-        Button(many ? "Add \(targets.count) Items to Paste Stack" : "Add to Paste Stack") {
+        Button(many ? "Add \(selectionCount) Items to Paste Stack" : "Add to Paste Stack") {
             for id in targets where !state.stack.contains(id) { state.stack.append(id) }
             controller.showStack()
         }
@@ -2062,6 +2140,16 @@ private struct ClipboardCardView: View, Equatable {
         }
     }
 
+    private static func imageRepresentation(_ entry: ClipboardEntry) -> (String, Data)? {
+        for item in entry.items {
+            for type in [NSPasteboard.PasteboardType.png.rawValue, "public.jpeg", "public.heic",
+                         NSPasteboard.PasteboardType.tiff.rawValue] {
+                if let data = item[type] { return (type, data) }
+            }
+        }
+        return nil
+    }
+
     private func shareItem(_ entry: ClipboardEntry) -> String {
         if let url = entry.fileURLs.first { return url.absoluteString }
         return entry.text ?? entry.title
@@ -2071,8 +2159,10 @@ private struct ClipboardCardView: View, Equatable {
         let provider: NSItemProvider
         if let url = entry.fileURLs.first {
             provider = NSItemProvider(object: url as NSURL)
-        } else if let data = entry.imageData, let image = NSImage(data: data) {
-            provider = NSItemProvider(object: image)
+        } else if let (type, data) = Self.imageRepresentation(entry) {
+            // Hand over the stored bytes; decoding a large image with NSImage
+            // on the main thread stalled the start of every drag.
+            provider = NSItemProvider(item: data as NSData, typeIdentifier: type)
         } else {
             provider = NSItemProvider(object: (entry.text ?? entry.previewText) as NSString)
         }

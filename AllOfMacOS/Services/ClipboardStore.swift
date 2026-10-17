@@ -70,7 +70,23 @@ final class ClipboardStore: ObservableObject {
     @Published private(set) var indexingImages = false
     /// Set while the clipboard shelf is on screen: background results (image
     /// OCR) wait instead of re-rendering the cards under the pointer.
-    var defersBackgroundUpdates = false
+    var defersBackgroundUpdates = false {
+        didSet { if !defersBackgroundUpdates { applyPendingTouches() } }
+    }
+    /// "Copied again" timestamps recorded while the shelf is open. Applying
+    /// them reorders the history, so it waits until the shelf has closed.
+    private var pendingTouches: [UUID: Date] = [:]
+
+    private func applyPendingTouches() {
+        guard !pendingTouches.isEmpty else { return }
+        let touches = pendingTouches
+        pendingTouches.removeAll()
+        var updated = entries
+        for index in updated.indices { if let date = touches[updated[index].id] { updated[index].lastCopiedAt = date } }
+        updated.sort { $0.lastCopiedAt > $1.lastCopiedAt }
+        entries = updated
+        scheduleSave()
+    }
     private var deletionHistory: [[ClipboardEntry]] = []
     private var indexingTask: Task<Void, Never>?
     private var attemptedImages: Set<UUID> = []
@@ -546,9 +562,16 @@ final class ClipboardStore: ObservableObject {
         lastChangeCount = pasteboard.changeCount
         guard result else { throw StoreError.cannotWrite }
         let copiedAt = now()
-        for index in entries.indices where seen.contains(entries[index].id) { entries[index].lastCopiedAt = copiedAt }
-        entries.sort { $0.lastCopiedAt > $1.lastCopiedAt }
-        scheduleSave()
+        if defersBackgroundUpdates {
+            for id in seen { pendingTouches[id] = copiedAt }
+        } else {
+            // One published mutation instead of one per item plus a sort.
+            var updated = entries
+            for index in updated.indices where seen.contains(updated[index].id) { updated[index].lastCopiedAt = copiedAt }
+            updated.sort { $0.lastCopiedAt > $1.lastCopiedAt }
+            entries = updated
+            scheduleSave()
+        }
         if playSound { ClipboardAudioFeedback.copy() }
         return true
     }
@@ -757,9 +780,9 @@ enum ClipboardAudioFeedback {
     static func copy() { play("Tink", volume: 0.22) }
     static func paste() { play("Pop", volume: 0.30) }
     private static func play(_ name: String, volume: Float) {
-        guard !PresetManager.isRunningTests, !PresetManager.isUIPreview,
-              let sound = NSSound(named: NSSound.Name(name)) else { return }
-        sound.volume = volume
-        sound.play()
+        guard !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
+        // Off the main thread: NSSound's first play waited for the audio
+        // device and froze the shelf mid-animation.
+        AOMSystemSound.play(name, volume: volume)
     }
 }

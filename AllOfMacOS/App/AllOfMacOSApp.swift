@@ -564,6 +564,16 @@ struct AllOfMacOSApp: App {
         // this every link (Raycast, Shortcuts, Alfred) opened another window.
         .handlesExternalEvents(matching: [])
         .commands {
+            CommandGroup(before: .sidebar) {
+                ForEach(AOMMainTab.allCases) { tab in
+                    Button(tab.title) {
+                        appState.selectedMainTab = tab
+                        appDelegate.showMainWindow()
+                    }
+                    .keyboardShortcut(tab.shortcutKey, modifiers: .command)
+                }
+                Divider()
+            }
             TriggerEditorCommands()
             WorkflowVariableCommands()
             CommandGroup(after: .newItem) {
@@ -1087,7 +1097,8 @@ struct BackupSettingsView: View {
 
 struct AboutSettingsView: View {
     private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.25.0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")
+            + " (" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?") + ")"
     }
 
     var body: some View {
