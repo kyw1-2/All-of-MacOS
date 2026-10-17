@@ -87,7 +87,11 @@ struct ClipboardSettingsView: View {
                         Text("Excluded application bundle IDs, one per line").font(.caption.weight(.semibold))
                         TextEditor(text: Binding(
                             get: { store.settings.ignoredApps.joined(separator: "\n") },
-                            set: { store.settings.ignoredApps = $0.components(separatedBy: .newlines) }
+                            set: {
+                                store.settings.ignoredApps = $0.components(separatedBy: .newlines)
+                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                    .filter { !$0.isEmpty }
+                            }
                         )).font(.system(.body, design: .monospaced)).frame(height: 90)
                             .padding(5).overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.3)))
                         Text("Example: com.example.passwordmanager").font(.caption).foregroundStyle(.secondary)

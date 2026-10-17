@@ -552,7 +552,7 @@ struct AllOfMacOSApp: App {
                 .environmentObject(appState)
                 .accentColor(appState.accentColorChoice.color)
                 .tint(appState.accentColorChoice.color)
-                .frame(minWidth: 1300, minHeight: 650)
+                .frame(minWidth: 1040, minHeight: 650)
                 .task {
                     appDelegate.appState = appState
                 }

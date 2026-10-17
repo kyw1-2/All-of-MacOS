@@ -168,6 +168,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Task { @MainActor in self.openLocalDocument(link) }
                 continue
             }
+            if link.scheme?.lowercased() == "aom",
+               let host = link.host?.lowercased(),
+               host == "trigger" || host == "trigger_named",
+               let components = URLComponents(url: link, resolvingAgainstBaseURL: false),
+               let name = components.queryItems?.first(where: { $0.name == "name" || $0.name == "trigger_name" })?.value {
+                ActionExecutor.executeNamedTrigger(name)
+                continue
+            }
             guard let command = AOMCaptureDeepLink.parse(link) else { continue }
             Task { @MainActor [weak self] in
                 self?.handleCaptureDeepLink(command)

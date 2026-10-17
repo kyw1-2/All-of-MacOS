@@ -637,9 +637,23 @@ private struct AnnotationEditorView: View {
                 propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
                                label: "\(Int(style.cornerRadius)) pt")
             }
-            if kind == .spotlight || kind == .highlighter {
-                Text(kind == .spotlight ? "Dims everything outside the shape" : "Rectangular marker")
-                    .foregroundStyle(.secondary)
+            if kind == .spotlight {
+                Picker("Shape", selection: Binding(
+                    get: { style.spotlightShape ?? .rectangle },
+                    set: { style.spotlightShape = $0; applyStyleToSelection() }
+                )) {
+                    Label("Rectangle", systemImage: "rectangle").tag(SpotlightShape.rectangle)
+                    Label("Ellipse", systemImage: "circle").tag(SpotlightShape.ellipse)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 140)
+                .help("Spotlight shape")
+
+                propertySlider("Dim Opacity", value: Binding(
+                    get: { CGFloat(style.spotlightOpacity ?? 0.55) },
+                    set: { style.spotlightOpacity = Double($0); applyStyleToSelection() }
+                ), range: 0.2...0.95, width: 90, label: "\(Int((style.spotlightOpacity ?? 0.55) * 100))%")
+            } else if kind == .highlighter {
+                Text("Rectangular marker").foregroundStyle(.secondary)
             }
         case .filledRectangle:
             propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
@@ -666,9 +680,18 @@ private struct AnnotationEditorView: View {
                 .accessibilityLabel("Text content")
             }
         case .counter:
-            Text("Next number").foregroundStyle(.secondary)
+            Picker("Counter Style", selection: Binding(
+                get: { style.counterStyle ?? .numbers },
+                set: { style.counterStyle = $0; applyStyleToSelection() }
+            )) {
+                ForEach(CounterStyle.allCases) { Text($0.displayName).tag($0) }
+            }
+            .labelsHidden().frame(width: 110)
+            .help("Counter sequence style")
+
+            Text("Next").foregroundStyle(.secondary)
             Stepper(value: $counterValue, in: 1...9999) {
-                Text("\(counterValue)").monospacedDigit().frame(minWidth: 28)
+                Text((style.counterStyle ?? .numbers).format(counterValue)).monospacedDigit().frame(minWidth: 28)
             }
             .help("Starting number")
             Button("Reset") { counterValue = 1 }.help("Restart numbering at 1")
@@ -1197,7 +1220,7 @@ private struct AnnotationEditorView: View {
         } else {
             var object = AnnotationObject(kind: .counter,
                                           rect: CGRect(x: point.x - 14, y: point.y - 14, width: 28, height: 28),
-                                          style: style, text: "\(counterValue)")
+                                          style: style, text: (style.counterStyle ?? .numbers).format(counterValue))
             object.style.color = style.color
             document.add(object)
             counterValue = min(9999, counterValue + 1)
@@ -1377,6 +1400,9 @@ private struct AnnotationEditorView: View {
         guard object.style != style else { return }
         document.beginChange()
         object.style = style
+        if object.kind == .counter, let val = Int(object.text) {
+            object.text = (style.counterStyle ?? .numbers).format(val)
+        }
         document.update(object)
     }
 
@@ -1833,7 +1859,11 @@ private struct DraftOverlay: View {
                 Rectangle().path(in: rect).fill(Color.black.opacity(0.35))
                     .overlay(Rectangle().path(in: rect).stroke(Color.white.opacity(0.6), lineWidth: 1))
             case .spotlight:
-                Rectangle().path(in: rect).stroke(Color.white, lineWidth: 1)
+                if object.style.spotlightShape == .ellipse {
+                    Ellipse().path(in: rect).stroke(Color.white, lineWidth: 1)
+                } else {
+                    Rectangle().path(in: rect).stroke(Color.white, lineWidth: 1)
+                }
             case .draw, .drawHighlight:
                 Path { path in
                     let points = object.points.map { $0.scaled(by: fit) }

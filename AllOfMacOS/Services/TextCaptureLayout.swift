@@ -72,7 +72,12 @@ enum TextScriptClassifier {
 
     /// The script with the most letters, or nil for an empty/punctuation-only string.
     static func dominantScript(_ text: String) -> TextScript? {
-        histogram(text).filter { $0.key != .cjkPunctuation }.max { $0.value < $1.value }?.key
+        let counts = histogram(text).filter { $0.key != .cjkPunctuation }
+        guard let maxCount = counts.values.max() else { return nil }
+        let top = counts.filter { $0.value == maxCount }
+        if top.count == 1 { return top.first?.key }
+        let priorityOrder: [TextScript] = [.hangul, .han, .kana, .cyrillic, .greek, .arabic, .hebrew, .thai, .devanagari, .latin, .other, .common]
+        return priorityOrder.first { top.keys.contains($0) } ?? top.first?.key
     }
 }
 

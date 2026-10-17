@@ -311,6 +311,67 @@ enum AnnotationRedactionStyle: CaseIterable, Identifiable {
     }
 }
 
+/// Spotlight tool cutout shapes.
+enum SpotlightShape: String, CaseIterable, Identifiable, Codable {
+    case rectangle, ellipse
+    var id: Self { self }
+    var displayName: String { rawValue.capitalized }
+}
+
+/// Counter sequence formatting styles.
+enum CounterStyle: String, CaseIterable, Identifiable, Codable {
+    case numbers, upperAlpha, lowerAlpha, roman
+    var id: Self { self }
+    var displayName: String {
+        switch self {
+        case .numbers: return "1, 2, 3"
+        case .upperAlpha: return "A, B, C"
+        case .lowerAlpha: return "a, b, c"
+        case .roman: return "I, II, III"
+        }
+    }
+    func format(_ value: Int) -> String {
+        switch self {
+        case .numbers: return "\(value)"
+        case .upperAlpha:
+            let clamped = max(1, min(702, value))
+            return Self.toAlpha(clamped, uppercase: true)
+        case .lowerAlpha:
+            let clamped = max(1, min(702, value))
+            return Self.toAlpha(clamped, uppercase: false)
+        case .roman:
+            return Self.toRoman(max(1, min(3999, value)))
+        }
+    }
+    private static func toAlpha(_ num: Int, uppercase: Bool) -> String {
+        var n = num
+        var s = ""
+        while n > 0 {
+            n -= 1
+            let char = Character(UnicodeScalar((uppercase ? 65 : 97) + (n % 26))!)
+            s = String(char) + s
+            n /= 26
+        }
+        return s
+    }
+    private static func toRoman(_ num: Int) -> String {
+        let mapping: [(Int, String)] = [
+            (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+            (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+            (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")
+        ]
+        var n = num
+        var result = ""
+        for (value, numeral) in mapping {
+            while n >= value {
+                result += numeral
+                n -= value
+            }
+        }
+        return result
+    }
+}
+
 /// How an object is painted.
 struct AnnotationStyle: Equatable, Codable {
     var color: AnnotationColor = .red
@@ -325,6 +386,12 @@ struct AnnotationStyle: Equatable, Codable {
     var blurRadius: CGFloat = 8
     /// Corner radius for the rounded-rectangle tools.
     var cornerRadius: CGFloat = 0
+    /// Shape for `.spotlight`.
+    var spotlightShape: SpotlightShape?
+    /// Outer dimming opacity for `.spotlight`.
+    var spotlightOpacity: Double?
+    /// Sequence formatting for `.counter`.
+    var counterStyle: CounterStyle?
 
     var customColorHex: String?
     var fontName: String?
@@ -910,13 +977,18 @@ struct AnnotationDocument {
             drawPixelate(in: context, rect: rect, scale: scale, baseImage: baseImage, imageRect: imageRect,
                          blockSize: object.style.pixelBlockSize)
         case .spotlight:
-            // Dim everything except the rect: an even-odd fill of the whole image
+            // Dim everything except the shape: an even-odd fill of the whole image
             // minus the selection.
             let outer = CGRect(x: imageRect.minX, y: imageRect.minY, width: imageRect.width, height: imageRect.height)
-            context.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor)
+            let opacity = object.style.spotlightOpacity ?? 0.55
+            context.setFillColor(NSColor.black.withAlphaComponent(opacity).cgColor)
             let path = CGMutablePath()
             path.addRect(outer)
-            path.addRect(rect)
+            if object.style.spotlightShape == .ellipse {
+                path.addEllipse(in: rect)
+            } else {
+                path.addRect(rect)
+            }
             context.addPath(path)
             context.fillPath(using: .evenOdd)
         case .cursor:

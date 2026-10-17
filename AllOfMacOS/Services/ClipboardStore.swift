@@ -81,6 +81,37 @@ final class ClipboardStore: ObservableObject {
             lastChangeCount = pasteboard.changeCount
         }
     }
+    @Published var pauseRemainingSeconds: Int = 0
+    private var pauseTimer: Timer?
+
+    func pause(for durationSeconds: Int = 0) {
+        paused = true
+        pauseTimer?.invalidate()
+        if durationSeconds > 0 {
+            pauseRemainingSeconds = durationSeconds
+            pauseTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                DispatchQueue.main.async {
+                    guard let self else { timer.invalidate(); return }
+                    if self.pauseRemainingSeconds > 1 {
+                        self.pauseRemainingSeconds -= 1
+                    } else {
+                        self.resume()
+                        timer.invalidate()
+                    }
+                }
+            }
+        } else {
+            pauseRemainingSeconds = 0
+            pauseTimer = nil
+        }
+    }
+
+    func resume() {
+        paused = false
+        pauseRemainingSeconds = 0
+        pauseTimer?.invalidate()
+        pauseTimer = nil
+    }
     @Published var settings: Settings {
         didSet {
             guard settings != oldValue else { return }

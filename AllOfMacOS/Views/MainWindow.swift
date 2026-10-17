@@ -290,8 +290,8 @@ private struct AOMTriggerPaneHeightKey: PreferenceKey {
 struct MainWindow: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var gestureLog = GestureLog.shared
-    @State private var showLog = true
-    @State private var showTouchVisualizer = true
+    @AppStorage("AOMShowLog") private var showLog = true
+    @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = true
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "dark"

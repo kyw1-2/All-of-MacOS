@@ -106,6 +106,18 @@ class ActionExecutor {
         let id = triggerID ?? UUID()
         execute(actions, fromTrackpad: fromTrackpad, triggerID: id, context: ExecutionContext(), path: [id], completion: completion)
     }
+    static func executeNamedTrigger(_ name: String, completion: ((Bool) -> Void)? = nil) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { completion?(false); return }
+        let candidates = TriggerResolver.resolve(registeredTriggers, payload: trimmed, frontBundleID: externalBundleID,
+            payloadOf: { if case .namedTrigger(let n) = $0.input { return n.trimmingCharacters(in: .whitespacesAndNewlines) }; return nil },
+            appBundleIDOf: { $0.appBundleID }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+        guard candidates.count == 1, let named = candidates.first else {
+            GestureLog.shared.logFromAnyThread("Named Trigger '\(trimmed)' missing or ambiguous", level: .error)
+            completion?(false); return
+        }
+        executeActions(named.actions, triggerID: named.id, completion: completion)
+    }
     private static func execute(_ actions: [TriggerAction], fromTrackpad: Bool, triggerID: UUID,
                                 context: ExecutionContext, path: [UUID], completion: ((Bool) -> Void)?) {
         guard !context.cancelled, context.remainingCalls > 0, path.count <= 16 else { completion?(false); return }
@@ -305,8 +317,11 @@ class ActionExecutor {
             completion(false); return
         }
         if action.actionType == .toggleDoNotDisturb {
-            GestureLog.shared.logFromAnyThread("Do Not Disturb is not implemented; use a configured shortcut or script", level: .error)
-            completion(false); return
+            let script = "/usr/bin/shortcuts run \"Toggle Focus\" 2>/dev/null || /usr/bin/shortcuts run \"방해금지 모드 켜기/끄기\" 2>/dev/null"
+            ScriptRunnerClient.shared.run(kind: "shell", source: script, timeout: 5) { code, _, _ in
+                completion(code == 0)
+            }
+            return
         }
         if action.actionType == .openURL {
             guard let text = action.parameters.url, let url = URL(string: text), url.scheme != nil else { completion(false); return }
@@ -423,17 +438,23 @@ class ActionExecutor {
             task.arguments = ["sleepnow"]
             try? task.run()
         case .lockScreen:
-            let task = Process()
-            task.launchPath = "/usr/bin/open"
-            task.arguments = ["-a", "/System/Library/CoreServices/ScreenSaverEngine.app"]
-            try? task.run()
+            if let lib = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY) {
+                typealias LockFn = @convention(c) () -> Void
+                if let sym = dlsym(lib, "SACLockScreenImmediate") {
+                    let lock = unsafeBitCast(sym, to: LockFn.self)
+                    lock()
+                    return
+                }
+            }
+            _ = SyntheticInput.key(12, flags: [.maskControl, .maskCommand])
         case .toggleDarkMode:
-            // Toggled through Appearance directly rather than via AppleScript's
-            // System Events: driving another app over Apple Events needs the
-            // Automation grant, which macOS prompts for and which a rebuild
-            // invalidates.
-            let wasDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            NSApp.appearance = NSAppearance(named: wasDark ? .aqua : .darkAqua)
+            let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
+            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { code, _, _ in
+                if code == 0 {
+                    let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    NSApp.appearance = NSAppearance(named: isDark ? .aqua : .darkAqua)
+                }
+            }
         case .toggleDoNotDisturb:
             break
         case .volumeUp, .volumeDown:
