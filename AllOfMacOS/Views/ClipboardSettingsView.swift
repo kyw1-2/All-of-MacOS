@@ -55,6 +55,12 @@ struct ClipboardSettingsView: View {
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 ClipboardIntelligenceSettingsView(store: store)
+                if let conflict = ShortcutConflicts.clipboardHistoryConflict(shortcut: shortcuts.shortcut(for: .history)) {
+                    Label("\(conflict.appName) also uses \(conflict.shortcut.displayString). macOS sends it to \(conflict.appName), so choose another Clipboard History shortcut or quit \(conflict.appName).",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
                 GroupBox("Keyboard Shortcuts") {
                     VStack(spacing: 12) {
                         ForEach(ClipboardShortcuts.Command.allCases) { command in

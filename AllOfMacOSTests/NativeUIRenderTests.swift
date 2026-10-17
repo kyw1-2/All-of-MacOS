@@ -37,16 +37,8 @@ final class NativeUIRenderTests: XCTestCase {
                        appearance: .aqua, url: output.appendingPathComponent("main-\(tab.title.replacingOccurrences(of: " ", with: "-").lowercased()).png"))
         }
         state.selectedMainTab = .gestures
-        UserDefaults.standard.set("list", forKey: "AOMGesturesLayout")
-        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
-                   appearance: .aqua, url: output.appendingPathComponent("main-gestures-list.png"))
-        UserDefaults.standard.set("gallery", forKey: "AOMGesturesLayout")
         try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
                    appearance: .darkAqua, url: output.appendingPathComponent("main-gestures-dark.png"))
-        state.gestureEditorTriggerID = state.currentPreset.triggers.first?.id
-        try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
-                   appearance: .aqua, url: output.appendingPathComponent("main-gesture-editor.png"))
-        state.gestureEditorTriggerID = nil
         state.selectedMainTab = .home
         try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
                    appearance: .darkAqua, url: output.appendingPathComponent("main-home-dark.png"))

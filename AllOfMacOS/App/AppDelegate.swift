@@ -149,12 +149,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.servicesProvider = self
             NSUpdateDynamicServices()
             Task { @MainActor in ScreenRecordingService.shared.offerInterruptedRecordingRecovery() }
+            // A clipboard manager launched later can take the shelf shortcut.
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification,
+                                                              object: nil, queue: .main) { note in
+                guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                      app.bundleIdentifier?.hasPrefix("com.wiheads.paste") == true else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { ShortcutConflicts.resolveIfNeeded() } }
+            }
             // Warm the OCR model and ScreenCaptureKit so the first Capture
             // Text of a session is as instant as later ones.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 TextRecognitionEngine.prewarm()
                 ScreenCaptureService.shared.prewarm()
                 AOMSystemSound.prewarm()
+                ShortcutConflicts.resolveIfNeeded()
                 DispatchQueue.global(qos: .utility).async { _ = TextPostProcessor.linkDetector }
                 TextCaptureHUDController.shared.prewarm()
             }

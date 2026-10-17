@@ -1,10 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Gestures & Automations: a native source list of triggers beside a
-/// Shortcuts-style workflow canvas. On wide windows the canvas splits into
-/// the action sequence and a trigger inspector so the space is used, not
-/// stretched; narrow windows stack the two.
+/// Gestures: a dense, sortable native table (like Mail rules or Finder) with
+/// the selected gesture's workflow in a trailing inspector. Category filter,
+/// search, scope and "New" live in the toolbar; the table owns the content.
 struct ModernGesturesWorkspace: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedDeviceCategory: TriggerCategory = .all
@@ -13,13 +12,12 @@ struct ModernGesturesWorkspace: View {
     @State private var testResult: String?
     @State private var expandedActionIDs: Set<UUID> = []
     @State private var showTriggerOptions = false
+    @State private var sortOrder: [KeyPathComparator<Trigger>] = []
     @State private var parentID: UUID?
     @State private var toElse = false
     @State private var replaceActionID: UUID?
     @State private var addCategory: TriggerCategory = .trackpad
     @State private var pendingDeletion: Trigger?
-    /// Gallery (Shortcuts-style tiles → editor) or the classic list + canvas.
-    @AppStorage("AOMGesturesLayout") private var layout = "gallery"
     @AppStorage("AOMGesturesInspectorShown") private var showsInspector = true
 
     // MARK: Data
@@ -63,52 +61,64 @@ struct ModernGesturesWorkspace: View {
 
     // MARK: Body
 
-    private var editingTrigger: Trigger? {
-        appState.gestureEditorTriggerID.flatMap { id in appState.currentPreset.triggers.first { $0.id == id } }
+    private var rows: [Trigger] {
+        let base = filteredTriggers
+        return sortOrder.isEmpty ? base : base.sorted(using: sortOrder)
+    }
+
+    private var selection: Binding<UUID?> {
+        Binding(get: { appState.selectedTrigger?.id }, set: { id in
+            appState.selectedTrigger = id.flatMap { id in appState.currentPreset.triggers.first { $0.id == id } }
+            appState.selectedAction = nil
+            if id != nil, !showsInspector { showsInspector = true }
+        })
     }
 
     var body: some View {
         Group {
             if scopedTriggers.isEmpty {
                 onboardingView
-            } else if layout == "list" {
-                HSplitView {
-                    gestureList
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 420)
-                    workflowCanvas
-                        .frame(minWidth: 460, maxWidth: .infinity)
-                }
-            } else if let trigger = editingTrigger {
-                galleryEditor(trigger)
+            } else if rows.isEmpty {
+                ContentUnavailableView.search(text: searchQuery)
             } else {
-                gallery
+                table
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .inspector(isPresented: $showsInspector) {
+            inspectorContent
+                .inspectorColumnWidth(min: 340, ideal: 420, max: 620)
+        }
         .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search Gestures")
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                if layout == "gallery", editingTrigger != nil {
-                    Button { withAnimation(AOMDesign.animation()) { showsInspector.toggle() } } label: {
-                        Label("Inspector", systemImage: "sidebar.trailing")
+            ToolbarItemGroup(placement: .automatic) {
+                scopeMenu
+                Picker("Type", selection: $selectedDeviceCategory) {
+                    ForEach(TriggerCategory.allCases) { category in
+                        Label(category == .all ? "All" : category.rawValue, systemImage: category.iconName)
+                            .labelStyle(.iconOnly)
+                            .help("\(category == .all ? "All types" : category.rawValue) (\(count(category)))")
+                            .tag(category)
                     }
-                    .help(showsInspector ? "Hide Inspector" : "Show Inspector")
-                }
-                Picker("Layout", selection: $layout) {
-                    Label("Gallery", systemImage: "square.grid.2x2").tag("gallery")
-                    Label("List", systemImage: "list.bullet").tag("list")
                 }
                 .pickerStyle(.segmented)
-                .help("Gallery or list layout")
-                Button { presentAddTrigger(selectedDeviceCategory) } label: {
+                .help("Filter by trigger type")
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                Menu {
+                    ForEach(TriggerCategory.inputCategories) { category in
+                        Button { presentAddTrigger(category) } label: { Label(category.rawValue, systemImage: category.iconName) }
+                    }
+                } label: {
                     Label("New Gesture", systemImage: "plus")
+                } primaryAction: {
+                    presentAddTrigger(selectedDeviceCategory)
                 }
-                .help("Create a gesture, shortcut or trigger (⌘N)")
+                .help("New gesture (⌘N); hold for a trigger type")
+                Button { showsInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.trailing") }
+                    .help(showsInspector ? "Hide Inspector" : "Show Inspector")
             }
         }
-        .onChange(of: layout) { _, _ in appState.gestureEditorTriggerID = nil }
-        .onChange(of: appState.selectedAppTarget.id) { _, _ in appState.gestureEditorTriggerID = nil }
-        .onChange(of: appState.selectedActivationGroupID) { _, _ in appState.gestureEditorTriggerID = nil }
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
         }
@@ -119,7 +129,6 @@ struct ModernGesturesWorkspace: View {
                             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
             Button("Delete Gesture", role: .destructive) {
                 if let trigger = pendingDeletion {
-                    if appState.gestureEditorTriggerID == trigger.id { appState.gestureEditorTriggerID = nil }
                     if appState.selectedTrigger?.id == trigger.id { appState.selectedTrigger = nil }
                     appState.removeTrigger(trigger)
                 }
@@ -135,6 +144,7 @@ struct ModernGesturesWorkspace: View {
             expandedActionIDs.removeAll()
             testResult = nil
         }
+        .onDeleteCommand { if let trigger = appState.selectedTrigger { pendingDeletion = trigger } }
     }
 
     private func presentAddTrigger(_ category: TriggerCategory) {
@@ -149,38 +159,97 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    // MARK: - Source list
+    // MARK: - Table
 
-    private var gestureList: some View {
-        VStack(spacing: 0) {
-            listHeader
-            Divider()
-            if filteredTriggers.isEmpty {
-                ContentUnavailableView.search(text: searchQuery)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(selection: Binding<UUID?>(
-                    get: { appState.selectedTrigger?.id },
-                    set: { id in
-                        appState.selectedTrigger = filteredTriggers.first { $0.id == id }
-                        appState.selectedAction = nil
-                    }
-                )) {
-                    ForEach(filteredTriggers) { trigger in
-                        GestureSummaryRow(trigger: trigger,
-                                          onToggle: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
-                            .tag(trigger.id)
-                            .contextMenu { triggerMenu(trigger) }
+    private var table: some View {
+        Table(rows, selection: selection, sortOrder: $sortOrder) {
+            TableColumn("On") { trigger in
+                Toggle(trigger.displayName, isOn: Binding(get: { trigger.isEnabled },
+                                                          set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
+                    .labelsHidden()
+                    .toggleStyle(.checkbox)
+                    .help(trigger.isEnabled ? "Turn off" : "Turn on")
+            }
+            .width(30)
+            TableColumn("Name", value: \.displayName) { trigger in
+                HStack(spacing: 8) {
+                    Image(systemName: trigger.input.category.iconName)
+                        .foregroundStyle(trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .secondary)
+                        .frame(width: 18)
+                    Text(trigger.displayName).foregroundStyle(trigger.isEnabled ? .primary : .secondary)
+                    if trigger.isFavorite {
+                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange).accessibilityLabel("Pinned")
                     }
                 }
-                .listStyle(.inset)
-                .alternatingRowBackgrounds(.disabled)
-                .scrollIndicators(.hidden)
-                .accessibilityLabel("Gestures")
+                .modifier(FiredFlash(triggerID: trigger.id))
             }
-            listFooter
+            .width(min: 160, ideal: 240)
+            TableColumn("Trigger", value: \.input.displayName) { trigger in
+                Text(trigger.requiredModifiers != nil ? "\(trigger.modifierLabel) \(trigger.input.displayName)" : trigger.input.displayName)
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 120, ideal: 190)
+            TableColumn("Actions", value: \.actionSummary) { trigger in
+                Text(trigger.actionSummary).foregroundStyle(.secondary)
+            }
+            .width(min: 140, ideal: 260)
+            TableColumn("Type", value: \.input.category.rawValue) { trigger in
+                Text(trigger.input.category.rawValue).foregroundStyle(.secondary)
+            }
+            .width(min: 70, ideal: 100)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if let id = ids.first, let trigger = appState.currentPreset.triggers.first(where: { $0.id == id }) {
+                triggerMenu(trigger)
+            }
+        } primaryAction: { ids in
+            if ids.first != nil { showsInspector = true }
+        }
+        .accessibilityLabel("Gestures")
+    }
+
+    // MARK: - Inspector
+
+    @ViewBuilder private var inspectorContent: some View {
+        if let trigger = appState.selectedTrigger,
+           let current = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    inspectorHeader(current)
+                    actionSequenceSection(current)
+                    Divider()
+                    triggerInspector(current)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+        } else {
+            ContentUnavailableView("No Gesture Selected", systemImage: "sidebar.trailing",
+                                   description: Text("Select a gesture to edit its actions."))
+        }
+    }
+
+    private func inspectorHeader(_ trigger: Trigger) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                AOMIconTile(systemImage: trigger.input.category.iconName,
+                            tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(trigger.input.displayName).font(.headline).lineLimit(2)
+                    Text(scopeDescription(trigger)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
+                                                set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
+                    .labelsHidden().toggleStyle(.switch)
+            }
+            TextField("Name (optional)", text: Binding(
+                get: { trigger.name },
+                set: { value in var updated = trigger; updated.name = value; appState.updateTrigger(updated) }))
+                .textFieldStyle(.roundedBorder)
+        }
     }
 
     @ViewBuilder private func triggerMenu(_ trigger: Trigger) -> some View {
@@ -189,35 +258,6 @@ struct ModernGesturesWorkspace: View {
         Button(trigger.isEnabled ? "Disable" : "Enable") { appState.toggleTrigger(trigger) }
         Divider()
         Button("Delete…", role: .destructive) { pendingDeletion = trigger }
-    }
-
-    private var listHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                scopeMenu
-                Spacer(minLength: 4)
-                Text("\(filteredTriggers.count)")
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(.quaternary, in: Capsule())
-                    .accessibilityLabel("\(filteredTriggers.count) gestures shown")
-            }
-            Picker("Device", selection: $selectedDeviceCategory) {
-                ForEach(TriggerCategory.allCases) { category in
-                    Image(systemName: category.iconName)
-                        .help("\(category == .all ? "All" : category.rawValue) (\(count(category)))")
-                        .accessibilityLabel(category == .all ? "All" : category.rawValue)
-                        .tag(category)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            Text(selectedDeviceCategory == .all ? "All triggers" : "\(selectedDeviceCategory.rawValue) · \(count(selectedDeviceCategory))")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private var scopeMenu: some View {
@@ -261,187 +301,6 @@ struct ModernGesturesWorkspace: View {
         .help("Choose which app or group these gestures apply to")
     }
 
-    private var listFooter: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(TriggerCategory.inputCategories) { category in
-                    Button { presentAddTrigger(category) } label: {
-                        Label(category.rawValue, systemImage: category.iconName)
-                    }
-                }
-            } label: {
-                Image(systemName: "plus")
-            } primaryAction: {
-                presentAddTrigger(selectedDeviceCategory)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Add a trigger")
-            Button {
-                if let trigger = appState.selectedTrigger { pendingDeletion = trigger }
-            } label: { Image(systemName: "minus") }
-            .buttonStyle(.borderless)
-            .disabled(appState.selectedTrigger == nil)
-            .help("Delete the selected gesture")
-            Spacer()
-            let disabled = scopedTriggers.filter { !$0.isEnabled }.count
-            Text(disabled == 0 ? "All enabled" : "\(disabled) disabled")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .overlay(alignment: .top) { Divider() }
-    }
-
-    // MARK: - Gallery (Shortcuts-style)
-
-    private var categoryChips: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                ForEach(TriggerCategory.allCases) { category in
-                    let selected = selectedDeviceCategory == category
-                    let total = count(category)
-                    if category == .all || total > 0 {
-                        Button { withAnimation(AOMDesign.animation()) { selectedDeviceCategory = category } } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: category.iconName)
-                                Text(category == .all ? "All" : category.rawValue)
-                                Text("\(total)").monospacedDigit().foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary)
-                            }
-                            .font(.callout.weight(selected ? .semibold : .regular))
-                            .foregroundStyle(selected ? Color.white : Color.primary)
-                            .padding(.horizontal, 12).frame(height: 30)
-                            .background(selected ? AnyShapeStyle(GestureVisual.tint(category).gradient) : AnyShapeStyle(Color.primary.opacity(0.06)),
-                                        in: Capsule())
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
-                }
-            }
-        }
-        .scrollIndicators(.hidden)
-    }
-
-    private var galleryHeader: some View {
-        HStack(alignment: .center, spacing: 14) {
-            AOMIconTile(systemImage: appState.selectedActivationGroupID != nil ? "square.stack.3d.up.fill"
-                        : appState.selectedAppTarget.isGlobal ? "globe" : "app.fill",
-                        tint: .cyan, size: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(scopeTitle).font(.title2.weight(.bold))
-                let disabled = scopedTriggers.filter { !$0.isEnabled }.count
-                Text("\(scopedTriggers.count) gestures\(disabled > 0 ? " · \(disabled) off" : "") · click a tile to edit its actions")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 12)
-            scopeMenu
-        }
-    }
-
-    private func grouped(_ triggers: [Trigger]) -> [(TriggerCategory, [Trigger])] {
-        TriggerCategory.inputCategories.compactMap { category in
-            let items = triggers.filter { $0.input.category == category }
-            return items.isEmpty ? nil : (category, items)
-        }
-    }
-
-    private var gallery: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                galleryHeader
-                categoryChips
-                if filteredTriggers.isEmpty {
-                    ContentUnavailableView.search(text: searchQuery).frame(minHeight: 260)
-                } else if selectedDeviceCategory == .all && searchQuery.isEmpty {
-                    let groups = grouped(filteredTriggers)
-                    ForEach(groups, id: \.0) { category, items in
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(spacing: 6) {
-                                Image(systemName: category.iconName).foregroundStyle(GestureVisual.tint(category))
-                                Text(category.rawValue).font(.headline)
-                                Text("\(items.count)").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-                            }
-                            tileGrid(items, includesAdd: category == groups.last?.0)
-                        }
-                    }
-                } else {
-                    tileGrid(filteredTriggers)
-                }
-            }
-            .padding(AOMDesign.pagePadding)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .suppressScrollerReservation()
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func tileGrid(_ items: [Trigger], includesAdd: Bool = true) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 14)], spacing: 14) {
-            ForEach(items) { trigger in
-                GestureTile(trigger: trigger,
-                            onOpen: {
-                                appState.selectedTrigger = trigger
-                                appState.selectedAction = nil
-                                withAnimation(AOMDesign.animation()) { appState.gestureEditorTriggerID = trigger.id }
-                            },
-                            onToggle: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
-                    .contextMenu { triggerMenu(trigger) }
-            }
-            if includesAdd {
-            Button { presentAddTrigger(selectedDeviceCategory) } label: {
-                VStack(spacing: 8) {
-                    Image(systemName: "plus").font(.system(size: 24, weight: .semibold))
-                    Text("New Gesture").font(.callout.weight(.medium))
-                }
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 128)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6])).foregroundStyle(.tertiary))
-                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("Create a gesture, shortcut or trigger")
-            }
-        }
-    }
-
-    private func galleryEditor(_ trigger: Trigger) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                Button { withAnimation(AOMDesign.animation()) { appState.gestureEditorTriggerID = nil } } label: {
-                    Label("All Gestures", systemImage: "chevron.left").font(.callout.weight(.medium))
-                }
-                .buttonStyle(.borderless)
-                .keyboardShortcut("[", modifiers: .command)
-                .help("Back to the gallery (⌘[)")
-                GestureEditorHero(trigger: trigger,
-                                  scope: scopeDescription(trigger),
-                                  onToggle: { appState.setTriggerEnabled($0, triggerID: trigger.id) },
-                                  onRename: { name in
-                                      var updated = trigger
-                                      updated.name = name
-                                      appState.updateTrigger(updated)
-                                  })
-                actionSequenceSection(trigger)
-            }
-            .padding(AOMDesign.pagePadding)
-            .frame(maxWidth: 880, alignment: .topLeading)
-            .frame(maxWidth: .infinity)
-        }
-        .suppressScrollerReservation()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .inspector(isPresented: $showsInspector) {
-            ScrollView {
-                triggerInspector(trigger).padding(16)
-            }
-            .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
-        }
-        .onExitCommand { withAnimation(AOMDesign.animation()) { appState.gestureEditorTriggerID = nil } }
-    }
-
     // MARK: - Onboarding (no triggers in this scope)
 
     private var onboardingView: some View {
@@ -480,57 +339,6 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    // MARK: - Workflow canvas
-
-    private var workflowCanvas: some View {
-        Group {
-            if let trigger = appState.selectedTrigger {
-                GeometryReader { geometry in
-                    let wide = geometry.size.width >= 860
-                    ScrollView {
-                        Group {
-                            if wide {
-                                HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
-                                    VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                                        triggerSummaryCard(trigger)
-                                        actionSequenceSection(trigger)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    triggerInspector(trigger)
-                                        .frame(width: min(340, geometry.size.width * 0.34))
-                                }
-                            } else {
-                                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                                    triggerSummaryCard(trigger)
-                                    actionSequenceSection(trigger)
-                                    triggerInspector(trigger)
-                                }
-                            }
-                        }
-                        .padding(AOMDesign.pagePadding)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                    .suppressScrollerReservation()
-                }
-            } else {
-                AOMEmptyState("Select a Gesture", systemImage: "cursorarrow.click.2",
-                              message: "Choose a gesture on the left to edit what it does.")
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func categoryColor(_ category: TriggerCategory) -> Color {
-        switch category {
-        case .trackpad: return .cyan
-        case .keyboard: return .orange
-        case .normalMouse: return .indigo
-        case .drawings: return .pink
-        case .otherTriggers: return .gray
-        case .all: return .blue
-        }
-    }
-
     private func scopeDescription(_ trigger: Trigger) -> String {
         if let id = trigger.activationGroupID,
            let name = appState.currentPreset.activationGroups.first(where: { $0.id == id })?.name { return "Group · \(name)" }
@@ -538,40 +346,6 @@ struct ModernGesturesWorkspace: View {
             return appState.currentPreset.appTargets.first { $0.bundleID == bundle }?.name ?? bundle
         }
         return "All Applications"
-    }
-
-    private func triggerSummaryCard(_ trigger: Trigger) -> some View {
-        HStack(spacing: 14) {
-            AOMIconTile(systemImage: trigger.input.category.iconName,
-                        tint: categoryColor(trigger.input.category), size: 44)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(trigger.input.displayName).font(.title3.weight(.semibold)).lineLimit(1)
-                    if trigger.requiredModifiers != nil {
-                        Text(trigger.modifierLabel)
-                            .font(.caption.monospaced().weight(.semibold))
-                            .foregroundStyle(.tint)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                    }
-                    if trigger.isFavorite {
-                        Image(systemName: "pin.fill").font(.caption).foregroundStyle(.orange)
-                            .accessibilityLabel("Pinned")
-                    }
-                }
-                Text("\(scopeDescription(trigger)) · \(trigger.actions.count) action\(trigger.actions.count == 1 ? "" : "s")")
-                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Toggle("Enabled", isOn: Binding(
-                get: { trigger.isEnabled },
-                set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .help(trigger.isEnabled ? "Disable this gesture" : "Enable this gesture")
-        }
-        .aomSurface(padding: 16)
     }
 
     private func triggerInspector(_ trigger: Trigger) -> some View {
@@ -744,181 +518,27 @@ struct ModernGesturesWorkspace: View {
     }
 }
 
-// MARK: - Native list row
+// MARK: - Table helpers
 
-private struct GestureSummaryRow: View {
-    let trigger: Trigger
-    let onToggle: (Bool) -> Void
-    @State private var isFlashing = false
-
-    private var tint: Color {
-        switch trigger.input.category {
-        case .trackpad: return .cyan
-        case .keyboard: return .orange
-        case .normalMouse: return .indigo
-        case .drawings: return .pink
-        case .otherTriggers: return .gray
-        case .all: return .blue
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            AOMIconTile(systemImage: trigger.input.category.iconName, tint: tint, size: 26)
-                .opacity(trigger.isEnabled ? 1 : 0.45)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(trigger.displayName).font(.body.weight(.medium)).lineLimit(1)
-                    if trigger.isFavorite {
-                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange)
-                            .accessibilityLabel("Pinned")
-                    }
-                }
-                Text(trigger.actions.first.map {
-                    $0.displayName + (trigger.actions.count > 1 ? " · +\(trigger.actions.count - 1)" : "")
-                } ?? "No actions yet")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled }, set: onToggle))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .accessibilityLabel("\(trigger.displayName) enabled")
-        }
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.green.opacity(isFlashing ? 0.18 : 0))
-                .padding(-4)
-        )
-        .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
-            let flashing = id == trigger.id
-            if isFlashing != flashing { isFlashing = flashing }
-        }
-        .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: isFlashing)
-        .accessibilityElement(children: .combine)
+private extension Trigger {
+    var actionSummary: String {
+        guard let first = actions.first?.displayName else { return "No actions" }
+        return actions.count > 1 ? "\(first) +\(actions.count - 1)" : first
     }
 }
 
-
-// MARK: - Gallery tile
-
-/// A Shortcuts-style tile: category gradient, glyph, name, first action,
-/// and an enable switch. Click opens the editor; the context menu has the
-/// rest. Disabled gestures turn grey; a fired gesture flashes its outline.
-private struct GestureTile: View {
-    let trigger: Trigger
-    let onOpen: () -> Void
-    let onToggle: (Bool) -> Void
-    @State private var hovering = false
+/// Briefly highlights a row when its gesture fires.
+private struct FiredFlash: ViewModifier {
+    let triggerID: UUID
     @State private var flashing = false
-
-    private var tint: Color { trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                Image(systemName: trigger.input.category.iconName)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(.white.opacity(0.22), in: Circle())
-                Spacer()
-                if trigger.isFavorite {
-                    Image(systemName: "pin.fill").font(.caption).foregroundStyle(.white.opacity(0.9))
-                        .padding(.top, 4).accessibilityLabel("Pinned")
-                }
-                Toggle(trigger.displayName, isOn: Binding(get: { trigger.isEnabled }, set: onToggle))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini).tint(.white.opacity(0.9))
-                    .help(trigger.isEnabled ? "Turn off" : "Turn on")
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 4)
+            .background(Color.green.opacity(flashing ? 0.25 : 0), in: RoundedRectangle(cornerRadius: 4))
+            .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
+                let value = id == triggerID
+                if flashing != value { flashing = value }
             }
-            Spacer(minLength: 10)
-            Text(trigger.displayName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-            Text(trigger.actions.first.map { $0.displayName + (trigger.actions.count > 1 ? "  +\(trigger.actions.count - 1)" : "") } ?? "No actions yet")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.82))
-                .lineLimit(1)
-                .padding(.top, 2)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 128, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(LinearGradient(colors: [tint.opacity(0.95), tint.aomDarker(0.28)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(flashing ? Color.green : Color.white.opacity(hovering ? 0.45 : 0.12), lineWidth: flashing ? 3 : 1)
-        }
-        .shadow(color: tint.opacity(hovering ? 0.45 : 0.18), radius: hovering ? 12 : 5, y: hovering ? 6 : 2)
-        .scaleEffect(hovering && !AOMDesign.reduceMotion ? 1.015 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture(perform: onOpen)
-        .onHover { hovering = $0 }
-        .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: hovering)
-        .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
-            let value = id == trigger.id
-            if flashing != value { flashing = value }
-        }
-        .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: flashing)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(trigger.displayName), \(trigger.input.displayName)\(trigger.isEnabled ? "" : ", off")")
-        .accessibilityAction(named: "Edit", onOpen)
-    }
-}
-
-/// Header of the gallery editor: big tile glyph, editable name, trigger and
-/// scope, enable switch.
-private struct GestureEditorHero: View {
-    let trigger: Trigger
-    let scope: String
-    let onToggle: (Bool) -> Void
-    let onRename: (String) -> Void
-    @State private var name = ""
-
-    var body: some View {
-        let tint = GestureVisual.tint(trigger.input.category)
-        HStack(spacing: 16) {
-            Image(systemName: trigger.input.category.iconName)
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 64, height: 64)
-                .background(LinearGradient(colors: [tint, tint.aomDarker(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .shadow(color: tint.opacity(0.35), radius: 8, y: 3)
-            VStack(alignment: .leading, spacing: 4) {
-                TextField(trigger.input.displayName, text: $name)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 24, weight: .bold))
-                    .onSubmit { onRename(name) }
-                    .onChange(of: name) { _, value in if value != trigger.name { onRename(value) } }
-                    .help("Rename this gesture")
-                HStack(spacing: 6) {
-                    Text(trigger.input.displayName)
-                    if trigger.requiredModifiers != nil {
-                        Text(trigger.modifierLabel).font(.callout.monospaced().weight(.semibold)).foregroundStyle(.tint)
-                    }
-                    Text("·")
-                    Text(scope)
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled }, set: onToggle))
-                .labelsHidden().toggleStyle(.switch)
-        }
-        .padding(18)
-        .background(LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.5))
-        .onAppear { name = trigger.name }
-        .onChange(of: trigger.id) { _, _ in name = trigger.name }
+            .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: flashing)
     }
 }

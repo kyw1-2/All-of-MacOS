@@ -148,7 +148,6 @@ struct ModernSidebarView: View {
                 .help("Share one set of gestures across several apps")
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { identity }
         .listStyle(.sidebar)
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }

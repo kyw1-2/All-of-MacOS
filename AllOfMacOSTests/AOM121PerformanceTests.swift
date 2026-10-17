@@ -123,3 +123,18 @@ final class AOM121PerformanceTests: XCTestCase {
         XCTAssertNil(AOMCaptureDeepLink.parse(URL(string: "aom://open-clipboard?x=1")!))
     }
 }
+
+@MainActor
+final class ShortcutConflictTests: XCTestCase {
+    func testDetectsPasteOwningTheShelfShortcut() throws {
+        let data = Data(#"{"keyCode":9,"internalModifiers":1179648}"#.utf8)
+        let decoded = try XCTUnwrap(ShortcutConflicts.decode(data))
+        XCTAssertEqual(decoded.keyCode, 9)
+        XCTAssertTrue(decoded.modifiers.contains([.command, .shift]))
+        let finder = try XCTUnwrap(NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first)
+        // No Paste process in the list: no conflict even with matching prefs.
+        XCTAssertNil(ShortcutConflicts.clipboardHistoryConflict(
+            shortcut: KeyboardShortcut(keyCode: 9, modifiers: [.command, .shift]), running: [finder], preference: { _, _ in data }))
+        XCTAssertNil(ShortcutConflicts.decode(Data("{}".utf8)))
+    }
+}

@@ -591,7 +591,10 @@ struct AllOfMacOSApp: App {
         Window("Workflow Variables", id: "workflow-variables") {
             WorkflowVariablesView()
                 .scrollIndicators(.hidden)
-        }.defaultSize(width: 620, height: 440)
+        }
+        .defaultSize(width: 620, height: 440)
+        // aom:// links must not open this window (AppDelegate handles them).
+        .handlesExternalEvents(matching: [])
 
         Settings {
             SettingsView()

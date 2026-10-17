@@ -111,9 +111,9 @@ struct AOMSectionHeader<Accessory: View>: View {
 
 // MARK: - Page header
 
-/// The strip at the top of a page: an icon tile, a title with live status,
-/// and the page's primary controls. It turns the top of each page into
-/// useful information instead of empty chrome.
+/// The top line of a page. The page title is the window title (toolbar),
+/// so this only carries live status and the page's own controls — no
+/// banner, icon or box, matching Apple's apps.
 struct AOMPageHeader<Trailing: View>: View {
     let title: String
     let subtitle: String
@@ -131,24 +131,17 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 16) {
-            AOMIconTile(systemImage: systemImage, tint: tint, size: 52)
-                .shadow(color: tint.opacity(0.35), radius: 8, y: 3)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 24, weight: .bold)).lineLimit(1)
-                Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
-            }
+        HStack(alignment: .center, spacing: 12) {
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
             Spacer(minLength: 12)
-            trailing
+            trailing.controlSize(.regular)
         }
-        .padding(18)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.04)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-        }
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
+        .frame(minHeight: 28)
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
     }
 }
 
@@ -227,12 +220,8 @@ struct AOMActionTile: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering ? Color.primary.opacity(0.06) : Color(nsColor: .controlBackgroundColor),
+            .background(hovering ? Color.primary.opacity(0.08) : Color.primary.opacity(0.035),
                         in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 0.5)
-            }
             .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
         }
         .buttonStyle(.plain)

@@ -4,7 +4,7 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 
 ## Version 1.2.2
 
-New Home dashboard, Shortcuts-style gesture gallery with inspector, lag-free clipboard double-click, and an audit of small functional bugs. See [release notes](docs/1.2.2-release-notes.md).
+Native main window (grouped Home, sortable gesture table with inspector), clean ⇧⌘V shelf with shortcut-conflict detection, and a sweep of functional fixes. See [release notes](docs/1.2.2-release-notes.md).
 
 ## Version 1.2.1
 

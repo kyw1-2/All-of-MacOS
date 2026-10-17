@@ -436,6 +436,8 @@ final class ClipboardPanelController {
             window.hidesOnDeactivate = false
             window.isReleasedWhenClosed = false
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            // No system zoom-in when ordered front: AOM fades the shelf itself.
+            window.animationBehavior = .none
             // A plain container is the window's initial first responder, so
             // ordering the shelf front never asks SwiftUI to walk its whole
             // focus graph for a "first key view" (≈200 ms per ⇧⌘V).
@@ -489,15 +491,18 @@ final class ClipboardPanelController {
             panel.setFrame(target, display: true)
             panel.makeKeyAndOrderFront(nil)
         } else {
-            // Paste slides the shelf up from beneath the screen edge in 0.15 s.
-            var start = target
-            start.origin.y = target.minY - target.height - 8
-            panel.setFrame(start, display: false)
+            // Fade in place, like Spotlight. The old slide animated the window
+            // frame from beneath the screen edge: that briefly drew the shelf
+            // on a display arranged below this one, and frame animations are
+            // driven by the main thread, so any work made them stutter.
+            // Window alpha is composited by the WindowServer instead.
+            panel.alphaValue = 0
+            panel.setFrame(target, display: true)
             panel.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.15
+                context.duration = 0.12
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrame(target, display: true)
+                panel.animator().alphaValue = 1
             }
         }
         store.defersBackgroundUpdates = true
@@ -591,23 +596,25 @@ final class ClipboardPanelController {
 
         // Paste sits just above the bottom screen edge; exit beneath that edge.
         guard Self.animatesPanel else { hideImmediately(); completion(); return }
-        let bottomEdge = (panel.screen ?? NSScreen.main)?.visibleFrame.minY ?? panel.frame.minY
-        var offscreenFrame = panel.frame
-        offscreenFrame.origin.y = bottomEdge - offscreenFrame.height - 8
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.10
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().setFrame(offscreenFrame, display: true)
-        } completionHandler: { [weak self, weak panel] in
-            Task { @MainActor in
-                guard let self, let panel, self.dismissalGeneration == generation else { return }
-                panel.orderOut(nil)
-                panel.alphaValue = 1
-                self.slidingOut = false
-                self.resetPanelState()
-                completion()
-            }
+        var finished = false
+        let finish: () -> Void = { [weak self, weak panel] in
+            guard !finished, let self, let panel, self.dismissalGeneration == generation else { return }
+            finished = true
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            self.slidingOut = false
+            self.resetPanelState()
+            completion()
         }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: {
+            Task { @MainActor in finish() }
+        }
+        // The shelf must never linger half-faded if the completion is late.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { finish() } }
     }
 
     func pasteSelected(plainText: Bool = false) {
