@@ -93,6 +93,11 @@ class PresetManager {
         (isolatedDirectory ?? defaultDirectory).appendingPathComponent("master_preset.json").path
     }
 
+    private let persistenceQueue = DispatchQueue(label: "com.kyw.allofmacos.preset-io", qos: .utility)
+    private let pendingLock = NSLock()
+    private var pendingSave: (preset: Preset, backup: Bool)?
+    private var saveGeneration = 0
+
     private let presetsDirectory: URL
     private lazy var trackpadStore: TrackpadPresetStore? = {
         do { return try TrackpadPresetStore(url: presetsDirectory.appendingPathComponent("trackpad-v1.sqlite")) }
@@ -225,6 +230,11 @@ class PresetManager {
     }
 
     func loadPreset() -> Preset? {
+        flushPendingWrites()
+        return persistenceQueue.sync { readPreset() }
+    }
+
+    private func readPreset() -> Preset? {
         if let data = try? Data(contentsOf: masterPresetURL), let preset = try? PresetCodec.decode(data) {
             trackpadStore?.saveAsync(preset)
             return preset
@@ -242,11 +252,44 @@ class PresetManager {
         return Self.loadLatestBackup()
     }
 
-    func flushPendingWrites() { trackpadStore?.flushPendingWrites() }
+    func flushPendingWrites() {
+        pendingLock.lock()
+        let pending = pendingSave
+        pendingSave = nil
+        saveGeneration += 1
+        pendingLock.unlock()
+        persistenceQueue.sync {
+            if let pending { persist(pending.preset, createBackup: pending.backup) }
+            trackpadStore?.flushPendingWrites()
+        }
+    }
+
+    /// Text editors and sliders update runtime bindings immediately, but disk
+    /// encoding, SQLite and rolling backups are coalesced on a serial worker.
+    func scheduleSave(_ preset: Preset) {
+        let backup = Self.backupsEnabled
+        pendingLock.lock()
+        saveGeneration += 1
+        let generation = saveGeneration
+        pendingSave = (preset, backup)
+        pendingLock.unlock()
+        persistenceQueue.asyncAfter(deadline: .now() + 0.25) { [self] in
+            pendingLock.lock()
+            let pending = generation == saveGeneration ? pendingSave : nil
+            if pending != nil { pendingSave = nil }
+            pendingLock.unlock()
+            if let pending { persist(pending.preset, createBackup: pending.backup) }
+        }
+    }
 
     // MARK: - Save
 
     func save(_ preset: Preset, createBackup: Bool = true) {
+        flushPendingWrites()
+        persistenceQueue.sync { persist(preset, createBackup: createBackup) }
+    }
+
+    private func persist(_ preset: Preset, createBackup: Bool) {
         do {
             let data = try PresetCodec.encode(preset)
             _ = try PresetCodec.decode(data)

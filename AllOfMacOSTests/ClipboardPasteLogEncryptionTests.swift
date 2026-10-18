@@ -97,6 +97,30 @@ final class ClipboardPasteLogEncryptionTests: XCTestCase {
         XCTAssertEqual(ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0).events, legacy)
     }
 
+    func testUnreadableOrCorruptLegacyIsNeverDeletedByNewEncryptedSaves() async throws {
+        for unreadable in [true, false] {
+            let dir = makeDirectory()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let legacy = dir.appendingPathComponent("paste-events.json")
+            if unreadable {
+                try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+            } else {
+                try Data("unreadable legacy format".utf8).write(to: legacy)
+            }
+            let log = ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0)
+            XCTAssertNotNil(log.lastError)
+            let fresh = event(10)
+            log.record(fresh)
+            await log.flush()
+            XCTAssertTrue(FileManager.default.fileExists(atPath: legacy.path))
+            if !unreadable { XCTAssertEqual(try Data(contentsOf: legacy), Data("unreadable legacy format".utf8)) }
+            let reopened = ClipboardPasteLog(directory: dir, cipher: testCipher)
+            XCTAssertEqual(reopened.events, [fresh])
+            XCTAssertNotNil(reopened.lastError)
+        }
+    }
+
     func testKeychainFailureNeverFallsBackToPlaintext() async {
         let dir = makeDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

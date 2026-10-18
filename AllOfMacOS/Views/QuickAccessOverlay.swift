@@ -343,8 +343,8 @@ final class QuickAccessOverlayController {
     private func copyImage() {
         if isVideo { copyFile(); return }
         let keepOpen = NSEvent.modifierFlags.contains(.option)
-        let result = currentResult()
         mediaOperation { [self] in
+            let result = await currentResultAsync()
             do {
                 try await ScreenCaptureService.shared.copyToClipboardAsync(result)
                 GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
@@ -441,7 +441,7 @@ final class QuickAccessOverlayController {
         guard !isVideo else { return }
         Task { @MainActor in
             do {
-                guard let code = try await TextRecognitionService.detectQRCodes(entry.image).first else {
+                guard let code = try await TextRecognitionService.detectQRCodes(await entry.loadImage()).first else {
                     GestureHUD.shared.show(title: "No QR Code", detail: "No QR code was detected.")
                     return
                 }
@@ -463,7 +463,7 @@ final class QuickAccessOverlayController {
         let keepBreaks = CaptureSettings.ocrKeepsLineBreaks
         Task { @MainActor in
             do {
-                let text = try await TextRecognitionService.recognize(entry.image, keepsLineBreaks: keepBreaks)
+                let text = try await TextRecognitionService.recognize(await entry.loadImage(), keepsLineBreaks: keepBreaks)
                 guard !text.isEmpty else {
                     GestureHUD.shared.show(title: "No Text Found", detail: nil)
                     return
@@ -504,7 +504,7 @@ final class QuickAccessOverlayController {
                     } else {
                         // F-04D: snapshot the pixels and format on the main
                         // actor, then encode/write to the panel's URL off it.
-                        let capture = self.currentResult()
+                        let capture = await self.currentResultAsync()
                         let format = CaptureSettings.format
                         try await ScreenCaptureService.shared.writeToURLAsync(capture, to: url, format: format)
                     }
@@ -563,7 +563,7 @@ final class QuickAccessOverlayController {
             fileSize = "Not saved yet"
         }
         GestureHUD.shared.show(title: entry.displayName,
-            detail: "\(entry.image.width) × \(entry.image.height) px • \(fileSize)")
+            detail: "\(entry.pixelWidth) × \(entry.pixelHeight) px • \(fileSize)")
     }
 
     private func printCapture() {
@@ -580,38 +580,57 @@ final class QuickAccessOverlayController {
                       windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
     }
 
+    private func currentResultAsync() async -> CaptureResult {
+        let image = await entry.loadImage()
+        return CaptureResult(image: image, globalRect: CGRect(origin: .zero, size: entry.pointSize),
+                             scale: entry.scale, kind: entry.kind,
+                             windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
+    }
+
     // MARK: - In-place image edits (CleanShot Rotate Left / Flip / Scale / Resize)
 
-    private func applyTransform(_ image: CGImage?, scale: CGFloat? = nil, label: String) {
+    private func transform(scale: CGFloat? = nil, label: String, render: @escaping @Sendable (CGImage) -> CGImage?) {
+        guard !isVideo else { return }
+        let revision = entry.imageRevision
+        mediaOperation { [self] in
+            let source = await entry.loadImage()
+            let rendered = await QuickAccessImageTools.renderAsync(source, render: render)
+            applyTransform(rendered, scale: scale, label: label, ifRevision: revision)
+        }
+    }
+
+    private func applyTransform(_ image: CGImage?, scale: CGFloat? = nil, label: String, ifRevision revision: Int? = nil) {
         guard !isVideo else { return }
         guard let image else {
             GestureHUD.shared.show(title: "Transform Failed", detail: "Unable to render image.")
             return
         }
-        CaptureHistory.shared.replaceImage(of: entry, with: image, scale: scale ?? entry.scale)
+        guard CaptureHistory.shared.replaceImage(of: entry, with: image, scale: scale ?? entry.scale, ifRevision: revision) else {
+            GestureHUD.shared.show(title: "Capture Changed", detail: "The newer edit was kept. Try the transform again.")
+            return
+        }
         refreshView()
         GestureHUD.shared.show(title: label, detail: "\(image.width) × \(image.height) px")
     }
 
     private var canScaleRetina: Bool {
-        !isVideo && entry.scale > 1 && entry.image.width > Int(entry.pointSize.width.rounded())
+        !isVideo && entry.scale > 1 && entry.pixelWidth > Int(entry.pointSize.width.rounded())
     }
 
     private func scaleRetinaToOneX() {
         guard canScaleRetina else { return }
-        applyTransform(QuickAccessImageTools.downscaleToOneX(entry.image, pointSize: entry.pointSize),
-                       scale: 1, label: "Scaled to 1x")
+        let pointSize = entry.pointSize
+        transform(scale: 1, label: "Scaled to 1x") { QuickAccessImageTools.downscaleToOneX($0, pointSize: pointSize) }
     }
 
     private func promptResize() {
         guard !isVideo else { return }
         pauseAutoClose()
         defer { resumeAutoClose() }
-        let prompt = QuickAccessResizePrompt(width: entry.image.width, height: entry.image.height)
+        let prompt = QuickAccessResizePrompt(width: entry.pixelWidth, height: entry.pixelHeight)
         NSApp.activate(ignoringOtherApps: true)
         guard let size = prompt.run() else { return }
-        applyTransform(QuickAccessImageTools.resized(entry.image, width: size.width, height: size.height),
-                       label: "Resized")
+        transform(label: "Resized") { QuickAccessImageTools.resized($0, width: size.width, height: size.height) }
     }
 
     // MARK: - Context menu
@@ -671,9 +690,9 @@ final class QuickAccessOverlayController {
         case .annotate, .editVideo: annotate()
         case .pin: pin()
         case .rotateLeft:
-            applyTransform(QuickAccessImageTools.rotatedLeft(entry.image), label: "Rotated Left")
+            transform(label: "Rotated Left", render: QuickAccessImageTools.rotatedLeft)
         case .flipHorizontal:
-            applyTransform(QuickAccessImageTools.flippedHorizontally(entry.image), label: "Flipped Horizontally")
+            transform(label: "Flipped Horizontally", render: QuickAccessImageTools.flippedHorizontally)
         case .scaleRetina: scaleRetinaToOneX()
         case .resize: promptResize()
         case .extractText: recognizeText()
@@ -733,11 +752,12 @@ final class QuickAccessOverlayController {
     }
 
     private func open(withApplicationAt appURL: URL) {
-        guard let url = ensureFile() else { return }
-        NSWorkspace.shared.open([url], withApplicationAt: appURL,
-                                configuration: NSWorkspace.OpenConfiguration()) { _, error in
-            guard let error else { return }
-            Task { @MainActor in
+        mediaOperation { [self] in
+            guard let url = await ensureFileAsync() else { return }
+            do {
+                _ = try await NSWorkspace.shared.open([url], withApplicationAt: appURL,
+                                                     configuration: NSWorkspace.OpenConfiguration())
+            } catch {
                 GestureHUD.shared.show(title: "Open Failed", detail: error.localizedDescription)
             }
         }
@@ -783,9 +803,13 @@ final class QuickAccessOverlayController {
             return nil
         }
         do {
-            let url = try await ScreenCaptureService.shared.writeToDiskAsync(currentResult())
-            CaptureHistory.shared.attachFile(url, to: entry.id)
-            entry.fileURL = url
+            let capture = await currentResultAsync()
+            let revision = entry.imageRevision
+            let url = try await ScreenCaptureService.shared.writeToDiskAsync(capture)
+            guard CaptureHistory.shared.attachFile(url, to: entry, ifRevision: revision) else {
+                GestureHUD.shared.show(title: "Capture Changed", detail: "The previous version was saved. Save the current edit again.")
+                return nil
+            }
             return url
         } catch {
             GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)

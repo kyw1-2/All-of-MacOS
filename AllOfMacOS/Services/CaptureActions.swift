@@ -9,122 +9,144 @@ import SwiftUI
 /// them from the capture actions keeps a single capture from being taken twice.
 @MainActor
 enum CaptureActions {
+    /// Output boundary shared by menus and automation; replaceable with private
+    /// outputs in tests so no real clipboard, save folder or HUD is touched.
+    struct Output {
+        var copyImage: (CaptureResult) async throws -> Void = { try await ScreenCaptureService.shared.copyToClipboardAsync($0) }
+        var writeImage: (CaptureResult) async throws -> URL = { try await ScreenCaptureService.shared.writeToDiskAsync($0) }
+        var recognize: (CGImage, Bool) async throws -> String = { try await TextRecognitionService.recognize($0, keepsLineBreaks: $1) }
+        var copyText: (String) -> Bool = {
+            NSPasteboard.general.clearContents()
+            return NSPasteboard.general.setString($0, forType: .string)
+        }
+        var notify: (String, String?) -> Void = { GestureHUD.shared.show(title: $0, detail: $1) }
+    }
+    static var output = Output()
+
     private static func latest() -> CaptureHistoryEntry? {
         guard let entry = CaptureHistory.shared.mostRecent else {
-            GestureHUD.shared.show(title: "No Capture", detail: "Take a screenshot first.")
+            output.notify("No Capture", "Take a screenshot first.")
             return nil
         }
         return entry
     }
 
-    private static func result(for entry: CaptureHistoryEntry) -> CaptureResult {
-        CaptureResult(image: entry.image, globalRect: .zero, scale: entry.scale, kind: entry.kind,
+    private static func result(for entry: CaptureHistoryEntry) async -> CaptureResult {
+        let image = await entry.loadImage()
+        return CaptureResult(image: image, globalRect: .zero, scale: entry.scale, kind: entry.kind,
                       windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
     }
 
-    static func copyLastCapture() {
-        guard let entry = latest() else { return }
+    private static func saveResult(for entry: CaptureHistoryEntry) async throws -> URL {
+        let capture = await result(for: entry)
+        let revision = entry.imageRevision
+        let url = try await output.writeImage(capture)
+        guard CaptureHistory.shared.attachFile(url, to: entry, ifRevision: revision) else {
+            throw CaptureError.captureFailed("The previous version was saved, but the capture changed. Save the current edit again.")
+        }
+        return url
+    }
+
+    static func copyLastCapture(completion: ((Bool) -> Void)? = nil) {
+        guard let entry = latest() else { completion?(false); return }
         if entry.kind == .videoRecording {
             guard let url = entry.playableVideoURL,
                   ScreenCaptureService.shared.copyFileToClipboard(url) else {
-                GestureHUD.shared.show(title: "Copy Failed", detail: "The MP4 file is unavailable.")
-                return
+                output.notify("Copy Failed", "The MP4 file is unavailable.")
+                completion?(false); return
             }
-            GestureHUD.shared.show(title: "Copied", detail: "MP4 file on the clipboard")
-            return
+            output.notify("Copied", "MP4 file on the clipboard")
+            completion?(true); return
         }
         // F-04A: encode off the main thread so copying a full-resolution
         // capture cannot block the UI; show the HUD only once the pasteboard
         // actually holds the pixels.
         Task { @MainActor in
             do {
-                try await ScreenCaptureService.shared.copyToClipboardAsync(result(for: entry))
-                GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
+                try await output.copyImage(await result(for: entry))
+                output.notify("Copied", "Image on the clipboard")
+                completion?(true)
             } catch {
-                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                output.notify("Copy Failed", error.localizedDescription)
+                completion?(false)
             }
         }
     }
 
-    static func saveLastCapture() {
-        guard let entry = latest() else { return }
+    static func saveLastCapture(completion: ((Bool) -> Void)? = nil) {
+        guard let entry = latest() else { completion?(false); return }
         if entry.kind == .videoRecording {
             guard let url = entry.playableVideoURL else {
-                GestureHUD.shared.show(title: "Recording Unavailable", detail: "The saved MP4 could not be found.")
-                return
+                output.notify("Recording Unavailable", "The saved MP4 could not be found.")
+                completion?(false); return
             }
             NSWorkspace.shared.activateFileViewerSelecting([url])
-            return
+            completion?(true); return
         }
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
-            return
+            completion?(true); return
         }
         // F-04A: encode/write off the main thread; the history entry can only be
         // given its file once the write has actually landed.
         Task { @MainActor in
             do {
-                let url = try await ScreenCaptureService.shared.writeToDiskAsync(result(for: entry))
-                CaptureHistory.shared.attachFile(url, to: entry.id)
-                GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+                let url = try await saveResult(for: entry)
+                output.notify("Saved", url.lastPathComponent)
+                completion?(true)
             } catch {
-                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                output.notify("Save Failed", error.localizedDescription)
+                completion?(false)
             }
         }
     }
 
-    static func pinLastCapture() {
-        guard let entry = latest() else { return }
+    static func pinLastCapture(completion: ((Bool) -> Void)? = nil) {
+        guard let entry = latest() else { completion?(false); return }
         guard entry.kind != .videoRecording else {
-            GestureHUD.shared.show(title: "Video Recording", detail: "Only screenshots can be pinned.")
-            return
+            output.notify("Video Recording", "Only screenshots can be pinned.")
+            completion?(false); return
         }
         // Write the file first so the pin has something to hand to another app
         // when it is dragged out. A never-saved capture has to be encoded off
         // the main thread, so the pin is created only once the write finishes.
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
             PinnedScreenshotController.shared.pin(entry: entry, url: url)
-            return
+            completion?(true); return
         }
         Task { @MainActor in
-            var pinURL: URL?
+            let pinURL: URL
             do {
-                let written = try await ScreenCaptureService.shared.writeToDiskAsync(result(for: entry))
-                if let current = entry.fileURL, FileManager.default.fileExists(atPath: current.path) {
-                    pinURL = current
-                } else {
-                    CaptureHistory.shared.attachFile(written, to: entry.id)
-                    pinURL = written
-                }
+                pinURL = try await saveResult(for: entry)
             } catch {
-                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                output.notify("Save Failed", error.localizedDescription)
+                completion?(false); return
             }
             PinnedScreenshotController.shared.pin(entry: entry, url: pinURL)
+            completion?(true)
         }
     }
 
-    static func copyTextFromLastCapture(completion: ((Bool) -> Void)? = nil) {
+    static func copyTextFromLastCapture(keepsLineBreaks override: Bool? = nil, completion: ((Bool) -> Void)? = nil) {
         guard let entry = latest() else { completion?(false); return }
-        let keepsLineBreaks = CaptureSettings.ocrKeepsLineBreaks
+        let keepsLineBreaks = override ?? CaptureSettings.ocrKeepsLineBreaks
         Task { @MainActor in
             do {
-                let text = try await TextRecognitionService.recognize(entry.image, keepsLineBreaks: keepsLineBreaks)
+                let text = try await output.recognize(await entry.loadImage(), keepsLineBreaks)
                 guard !text.isEmpty else {
-                    GestureHUD.shared.show(title: "No Text Found", detail: nil)
+                    output.notify("No Text Found", nil)
                     completion?(false)
                     return
                 }
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                guard pasteboard.setString(text, forType: .string) else {
+                guard output.copyText(text) else {
                     completion?(false)
-                    GestureHUD.shared.show(title: "Copy Failed", detail: "The clipboard could not be updated.")
+                    output.notify("Copy Failed", "The clipboard could not be updated.")
                     return
                 }
                 completion?(true)
-                GestureHUD.shared.show(title: "Text Copied", detail: "\(text.count) characters")
+                output.notify("Text Copied", "\(text.count) characters")
             } catch {
-                GestureHUD.shared.show(title: "Text Recognition Failed", detail: error.localizedDescription)
+                output.notify("Text Recognition Failed", error.localizedDescription)
                 completion?(false)
             }
         }

@@ -43,6 +43,7 @@ final class CaptureHistoryEntry: Identifiable {
     /// Bumped by every cache write so a late completion cannot mark pixels from
     /// an older edit as current.
     private var cacheGeneration = 0
+    private(set) var imageRevision = 0
     /// The decoded bitmap, or nil once the memory policy has evicted it. It is
     /// lazily re-read from `cacheURL`, which keeps full fidelity on demand.
     private var residentImage: CGImage?
@@ -76,6 +77,26 @@ final class CaptureHistoryEntry: Identifiable {
         // that never landed, or a file deleted outside the app. The history
         // never removes a managed PNG while any entry still references it.
         return Self.placeholderImage
+    }
+
+    private static let decodeQueue = DispatchQueue(label: "com.kyw.allofmacos.capture-decode", qos: .userInitiated)
+
+    /// Rehydrate evicted captures without decoding a full Retina PNG on the UI
+    /// thread. Publish only if an edit did not supersede this disk snapshot.
+    @MainActor
+    func loadImage() async -> CGImage {
+        if let residentImage { return residentImage }
+        guard cacheIsCurrent, let cacheURL else { return Self.placeholderImage }
+        let generation = cacheGeneration
+        let loaded: CGImage? = await withCheckedContinuation { continuation in
+            Self.decodeQueue.async { continuation.resume(returning: Self.decode(cacheURL)) }
+        }
+        if generation != cacheGeneration { return await loadImage() }
+        if let residentImage { return residentImage }
+        guard let loaded else { return Self.placeholderImage }
+        residentImage = loaded
+        onResidencyChange?()
+        return loaded
     }
 
     var isResident: Bool { residentImage != nil }
@@ -167,6 +188,8 @@ final class CaptureHistoryEntry: Identifiable {
     /// size at `scale`, and the cached thumbnail is rebuilt on next access.
     /// The managed PNG stays stale until the replacement write lands.
     func replaceImage(_ newImage: CGImage, scale newScale: CGFloat) {
+        cacheGeneration += 1
+        imageRevision += 1
         residentImage = newImage
         cacheIsCurrent = false
         scale = max(1, newScale)
@@ -464,10 +487,13 @@ final class CaptureHistory: ObservableObject {
     /// Applies an in-place edit made from Quick Access. A previously written
     /// file is *detached*, never overwritten: the next Save writes a new file
     /// containing the edited pixels, so user files are never silently changed.
-    func replaceImage(of entry: CaptureHistoryEntry, with image: CGImage, scale: CGFloat) {
+    @discardableResult
+    func replaceImage(of entry: CaptureHistoryEntry, with image: CGImage, scale: CGFloat,
+                      ifRevision revision: Int? = nil) -> Bool {
+        guard revision == nil || revision == entry.imageRevision else { return false }
         entry.replaceImage(image, scale: scale)
         if entry.kind != .videoRecording { entry.fileURL = nil }
-        guard let stored = entries.first(where: { $0.id == entry.id }) else { return }
+        guard let stored = entries.first(where: { $0.id == entry.id }) else { return true }
         if stored !== entry {
             stored.replaceImage(image, scale: scale)
             if stored.kind != .videoRecording { stored.fileURL = nil }
@@ -476,6 +502,16 @@ final class CaptureHistory: ObservableObject {
         cacheImage(image, id: entry.id)
         persistIndex()
         enforceResidentBudget()
+        return true
+    }
+
+    /// An export of old pixels must not become the file of a newer edit.
+    @discardableResult
+    func attachFile(_ url: URL, to entry: CaptureHistoryEntry, ifRevision revision: Int) -> Bool {
+        guard entry.imageRevision == revision else { return false }
+        entry.fileURL = url
+        attachFile(url, to: entry.id)
+        return true
     }
 
     func attachFile(_ url: URL, to id: UUID) {

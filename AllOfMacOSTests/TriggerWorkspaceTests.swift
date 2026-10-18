@@ -188,6 +188,7 @@ final class TriggerWorkspaceTests: XCTestCase {
         state.triggerSearch = ""; state.selectedTriggerCategory = .trackpad
         state.moveTrigger(b, offset: -1)
         XCTAssertEqual(state.displayedTriggers.map(\.id), [b.id, a.id])
+        state.flushPendingWrites() // Editing persists asynchronously; this is the disk-read boundary.
         XCTAssertEqual(try XCTUnwrap(PresetManager.loadPreset()).movePeers(of: a).map(\.id), [b.id, a.id])
         state.triggerSortMode = .alphabetical
         XCTAssertEqual(state.displayedTriggers.map(\.id), [a.id, b.id])

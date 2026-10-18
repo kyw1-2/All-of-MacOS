@@ -288,7 +288,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
         ActionExecutor.cancelAllSequences()
-        MainActor.assumeIsolated { ClipboardMCPServer.shared.stopForTermination() }
+        MainActor.assumeIsolated {
+            ClipboardMCPServer.shared.stopForTermination()
+            GestureStatistics.shared.flushPendingWrites()
+            appState?.flushPendingWrites()
+        }
         DisplayControlService.clearAllSoftwareDims()
     }
 

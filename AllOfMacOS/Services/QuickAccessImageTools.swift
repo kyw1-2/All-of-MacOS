@@ -2,6 +2,14 @@ import AppKit
 import CoreGraphics
 
 enum QuickAccessImageTools {
+    private static let renderQueue = DispatchQueue(label: "com.kyw.allofmacos.quick-access-render", qos: .userInitiated)
+
+    static func renderAsync(_ image: CGImage, render: @escaping @Sendable (CGImage) -> CGImage?) async -> CGImage? {
+        await withCheckedContinuation { continuation in
+            renderQueue.async { continuation.resume(returning: render(image)) }
+        }
+    }
+
     /// Retina -> point-resolution pixel output, without changing the source.
     static func downscaleToOneX(_ image: CGImage, pointSize: CGSize) -> CGImage? {
         let width = max(1, Int(pointSize.width.rounded()))

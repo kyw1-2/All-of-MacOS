@@ -431,9 +431,11 @@ class AppState: ObservableObject {
     // MARK: - Persistence
 
     func save() {
-        presetManager.save(currentPreset)
         refreshMonitors()
+        presetManager.scheduleSave(currentPreset)
     }
+
+    func flushPendingWrites() { presetManager.flushPendingWrites() }
 
     func exportPreset(to url: URL) {
         presetManager.exportPreset(currentPreset, to: url)

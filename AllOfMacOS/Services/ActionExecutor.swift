@@ -390,7 +390,11 @@ class ActionExecutor {
         case .captureText, .captureTextWithLineBreaks, .captureTextWithoutLineBreaks:
             let breaks: Bool? = action.actionType == .captureText ? nil : action.actionType == .captureTextWithLineBreaks
             onMain { CaptureCoordinator.shared.captureText(keepsLineBreaks: breaks, completion: completion) }; return
-        case .ocrLastCapture: onMain { CaptureActions.copyTextFromLastCapture(completion: completion) }; return
+        case .copyLastCapture: onMain { CaptureActions.copyLastCapture(completion: completion) }; return
+        case .saveLastCapture: onMain { CaptureActions.saveLastCapture(completion: completion) }; return
+        case .pinLastCapture: onMain { CaptureActions.pinLastCapture(completion: completion) }; return
+        case .ocrLastCapture:
+            onMain { CaptureActions.copyTextFromLastCapture(keepsLineBreaks: action.parameters.ocrKeepsLineBreaks, completion: completion) }; return
         default: break
         }
 
@@ -519,18 +523,13 @@ class ActionExecutor {
         // Capture actions above complete only after their output is ready.
         case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
              .capturePreviousArea, .captureScrolling, .captureText, .captureTextWithLineBreaks,
-             .captureTextWithoutLineBreaks, .captureAllDisplays, .captureSelfTimer, .ocrLastCapture:
+             .captureTextWithoutLineBreaks, .captureAllDisplays, .captureSelfTimer, .ocrLastCapture,
+             .copyLastCapture, .saveLastCapture, .pinLastCapture:
             break
         case .recordScreen:
             onMain { ScreenRecordingService.shared.toggleRecording() }
         case .annotateLastCapture:
             onMain { AnnotationEditorController.shared.openMostRecent() }
-        case .pinLastCapture:
-            onMain { CaptureActions.pinLastCapture() }
-        case .copyLastCapture:
-            onMain { CaptureActions.copyLastCapture() }
-        case .saveLastCapture:
-            onMain { CaptureActions.saveLastCapture() }
         case .openCaptureHistory:
             onMain { CaptureHistoryWindowController.shared.present() }
         case .unpinAllCaptures:

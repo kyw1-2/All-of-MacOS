@@ -277,6 +277,8 @@ final class ClipboardPasteLog {
     /// Blocked when an existing encrypted log could not be opened, so a
     /// Keychain or decode failure cannot overwrite the only copy.
     private var writable = true
+    private var canRetireLegacy = false
+    private var legacyWarning: String?
 
     init(directory: URL, cipher: PasteLogCipher? = nil, saveDelay: UInt64 = 800_000_000,
          willPersist: (@Sendable () async -> Void)? = nil,
@@ -318,7 +320,11 @@ final class ClipboardPasteLog {
             // First encrypted run: migrate the legacy plaintext log, if any.
             if let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) {
                 events = decoded
+                canRetireLegacy = true
                 scheduleSave()
+            } else if FileManager.default.fileExists(atPath: legacyURL.path) {
+                legacyWarning = "The legacy paste log could not be read; its original file was preserved."
+                lastError = legacyWarning
             }
             return
         }
@@ -330,7 +336,13 @@ final class ClipboardPasteLog {
     /// Old plaintext events are folded into the encrypted log, then the
     /// plaintext sibling is retired only after a successful encrypted write.
     private func mergeLegacyIfPresent() {
-        guard let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) else { return }
+        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return }
+        guard let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) else {
+            legacyWarning = "The legacy paste log could not be read; its original file was preserved."
+            lastError = legacyWarning
+            return
+        }
+        canRetireLegacy = true
         let known = Set(events)
         let extra = decoded.filter { !known.contains($0) }
         if !extra.isEmpty { events = Array((events + extra).suffix(Self.limit)) }
@@ -400,15 +412,19 @@ final class ClipboardPasteLog {
         let cipher = cipher, primary = primaryURL, legacy = legacyURL, directory = directory
         let revisionCounter = writeRevision
         let encrypted = cipher.isEncrypted
+        let retireLegacy = canRetireLegacy
         let outcome: Result<Void, Error>? = await onQueue { () -> Result<Void, Error>? in
             guard captured == revisionCounter.current else { return nil }
             do {
                 let json = try JSONEncoder().encode(snapshot)
                 let payload = encrypted ? try cipher.seal(json) : json
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                try payload.write(to: primary, options: [.atomic, .completeFileProtection])
+                // Complete file protection rejects new atomic temporary files
+                // on this macOS filesystem (EPERM). AES-GCM protects the payload;
+                // atomic replacement and owner-only permissions remain in force.
+                try payload.write(to: primary, options: .atomic)
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: primary.path)
-                if encrypted { try? FileManager.default.removeItem(at: legacy) }
+                if encrypted && retireLegacy { try? FileManager.default.removeItem(at: legacy) }
                 return .success(())
             } catch {
                 return .failure(error)
@@ -418,7 +434,7 @@ final class ClipboardPasteLog {
         guard let outcome else { return } // superseded by a newer write or an erase
         switch outcome {
         case .success:
-            lastError = nil
+            lastError = legacyWarning
         case .failure(let error):
             // A Keychain failure must never be "repaired" with a plaintext file.
             lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription

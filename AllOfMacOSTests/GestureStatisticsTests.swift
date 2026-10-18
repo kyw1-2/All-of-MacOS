@@ -190,3 +190,43 @@ final class GestureStatisticsTests: XCTestCase {
         XCTAssertEqual(stats.uniqueGesturesCount, 0)
     }
 }
+
+@MainActor
+final class GestureStatisticsPersistenceTests: XCTestCase {
+    func testBoundedRecentEventsPreserveAllTimeBreakdownAcrossReload() throws {
+        let suite = "AOM-statistics-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let stats = GestureStatistics(defaults: defaults)
+        for _ in 0..<(GestureStatistics.recentEventLimit + 100) { stats.recordDetection("Tap") }
+        stats.recordFire("Tap")
+        stats.flushPendingWrites()
+        let restored = GestureStatistics(defaults: defaults)
+        XCTAssertEqual(restored.events.count, GestureStatistics.recentEventLimit)
+        XCTAssertEqual(restored.totalGestures, GestureStatistics.recentEventLimit + 100)
+        XCTAssertEqual(restored.sortedEntries.first?.totalCount, GestureStatistics.recentEventLimit + 101)
+        XCTAssertEqual(restored.sortedEntries.first?.firedCount, 1)
+        restored.reset()
+        XCTAssertTrue(GestureStatistics(defaults: defaults).sortedEntries.isEmpty)
+    }
+
+    func testMigrationPreservesLegacyArchiveAndUnorderedTimestamps() throws {
+        let suite = "AOM-statistics-migration-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let now = Date()
+        let events = [GestureEvent(gesture: "Old", timestamp: now, fired: false),
+                      GestureEvent(gesture: "Old", timestamp: now.addingTimeInterval(-100), fired: true)]
+        let data = try JSONEncoder().encode(events)
+        defaults.set(data, forKey: "AOMGestureEvents")
+        defaults.set(3, forKey: "AOMGestureStatistics_total")
+        let stats = GestureStatistics(defaults: defaults)
+        stats.recordDetection("New")
+        stats.flushPendingWrites()
+        XCTAssertEqual(defaults.data(forKey: "AOMGestureEvents"), data)
+        let restored = GestureStatistics(defaults: defaults)
+        XCTAssertEqual(restored.totalGestures, 4)
+        XCTAssertEqual(restored.sortedEntries.first { $0.gesture == "Old" }?.lastDetected, now)
+        XCTAssertEqual(restored.uniqueGesturesCount, 2)
+    }
+}
