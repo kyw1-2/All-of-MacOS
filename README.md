@@ -2,6 +2,10 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.2.5
+
+Faster clipboard collection, targeted direct paste, asynchronous capture output, and ordered/cancellable capture automation. See [release notes and comparison](docs/1.2.5-release-notes.md). This release was built without functional or regression tests at the user's request.
+
 ## Version 1.2.2
 
 Native main window (grouped Home, sortable gesture table with inspector), clean ⇧⌘V shelf with shortcut-conflict detection, and a sweep of functional fixes. See [release notes](docs/1.2.2-release-notes.md).

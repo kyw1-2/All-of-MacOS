@@ -68,7 +68,7 @@ final class ClipboardStackPasteMonitor {
     /// Targeted injection preserves physical modifier state, including a held
     /// Command key, and cannot redirect a queued paste into another process.
     static func sendPaste(to target: NSRunningApplication) -> Bool {
-        guard !target.isTerminated,
+        guard AXIsProcessTrusted(), !target.isTerminated,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),

@@ -195,7 +195,7 @@ enum SyntheticInput {
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return false }
         down.flags = flags; up.flags = flags
-        post(down, tap: tap); usleep(12_000); post(up, tap: tap)
+        post(down, tap: tap); post(up, tap: tap)
         return true
     }
 

@@ -67,7 +67,9 @@ final class TextCaptureController {
         let clip = Self.clipboardText(for: output, existing: existing,
                                       additive: allowsAdditive && settings.additiveClipboard)
         pasteboard.clearContents()
-        pasteboard.setString(clip.text, forType: .string)
+        guard pasteboard.setString(clip.text, forType: .string) else {
+            throw CaptureError.captureFailed("The recognized text could not be copied to the clipboard.")
+        }
 
         let copied = Date()
         let links = settings.detectsLinks ? TextPostProcessor.links(in: output) : []
@@ -114,7 +116,10 @@ final class TextCaptureController {
         let clip = Self.clipboardText(for: text, existing: pasteboard.string(forType: .string),
                                       additive: settings.additiveClipboard)
         pasteboard.clearContents()
-        pasteboard.setString(clip.text, forType: .string)
+        guard pasteboard.setString(clip.text, forType: .string) else {
+            GestureHUD.shared.show(title: "Copy Failed", detail: "The recognized codes could not be copied to the clipboard.")
+            return []
+        }
         if settings.playsSound { AOMSystemSound.play("Pop") }
         let links = settings.detectsLinks ? TextPostProcessor.links(in: text) : []
         if settings.showsResultHUD {

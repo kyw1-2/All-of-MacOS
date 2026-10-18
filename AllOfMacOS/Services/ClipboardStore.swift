@@ -55,7 +55,7 @@ final class ClipboardStore: ObservableObject {
         NSPasteboard.PasteboardType.rtfd.rawValue, NSPasteboard.PasteboardType.html.rawValue,
         NSPasteboard.PasteboardType.URL.rawValue, NSPasteboard.PasteboardType.fileURL.rawValue,
         NSPasteboard.PasteboardType.png.rawValue, NSPasteboard.PasteboardType.tiff.rawValue,
-        "public.jpeg", "public.heic", "public.utf16-external-plain-text", "com.apple.cocoa.pasteboard.color"
+        "public.jpeg", "public.heic", "org.webmproject.webp", "com.compuserve.gif", "public.utf16-external-plain-text", "com.apple.cocoa.pasteboard.color"
     ]
 
     /// App choices are inferred from recorded clipboard provenance; they are
@@ -143,6 +143,12 @@ final class ClipboardStore: ObservableObject {
             // that was copied while collection was suspended.
             captureGeneration += 1
             lastChangeCount = pasteboard.changeCount
+            // Every resume path (including keyboard/menu toggles) clears a timed pause.
+            if !paused {
+                pauseTimer?.invalidate()
+                pauseTimer = nil
+                pauseRemainingSeconds = 0
+            }
         }
     }
     @Published var pauseRemainingSeconds: Int = 0
@@ -193,6 +199,8 @@ final class ClipboardStore: ObservableObject {
     private let now: () -> Date
     private let isolated: Bool
     private let queue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-storage", qos: .utility)
+    // Capturing a new copy must not queue behind encryption of the entire archive.
+    private let captureQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-capture", qos: .userInitiated)
     private var timer: Timer?
     private var lastChangeCount: Int
     private var captureGeneration = 0
@@ -239,10 +247,12 @@ final class ClipboardStore: ObservableObject {
         guard timer == nil else { return }
         // Do not capture the user's pre-existing clipboard merely by opening AOM.
         lastChangeCount = pasteboard.changeCount
-        timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
-        timer?.tolerance = 0.15
+        timer.tolerance = 0.025
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     func stop() {
@@ -264,7 +274,7 @@ final class ClipboardStore: ObservableObject {
 
     func poll(sourceName: String? = nil, sourceBundleID: String? = nil) {
         let count = pasteboard.changeCount
-        guard !isLoading else { lastChangeCount = count; return }
+        guard !isLoading else { return }
         if now().timeIntervalSince(lastTrimDate) >= 60 { trim(); lastTrimDate = now() }
         guard count != lastChangeCount else { return }
         lastChangeCount = count
@@ -298,7 +308,7 @@ final class ClipboardStore: ObservableObject {
             guard let self else { return }
             // Decoding and classifying a multi-megabyte text can take longer
             // than hashing it. Keep both off the main actor, not only SHA256.
-            let (entry, digest) = await onQueue {
+            let (entry, digest) = await onCaptureQueue {
                 let entry = ClipboardEntry.captured(items: capturedItems, sourceName: appName,
                                                     sourceBundleID: bundleID, at: capturedAt)
                 return (entry, entry.payloadDigest)
@@ -306,11 +316,13 @@ final class ClipboardStore: ObservableObject {
             guard generation == captureGeneration, settings.enabled, !paused else { return }
             let capturedID: UUID
             if let index = entries.firstIndex(where: { digests[$0.id] == digest }) {
-                var existing = entries.remove(at: index)
+                var updated = entries
+                var existing = updated.remove(at: index)
                 existing.lastCopiedAt = entry.lastCopiedAt
                 existing.sourceName = entry.sourceName
                 existing.sourceBundleID = entry.sourceBundleID
-                entries.insert(existing, at: 0)
+                updated.insert(existing, at: 0)
+                entries = updated
                 capturedID = existing.id
             } else {
                 capturedID = entry.id
@@ -731,6 +743,7 @@ final class ClipboardStore: ObservableObject {
     private func pruneDigests() {
         let ids = Set(entries.map(\.id))
         digests = digests.filter { ids.contains($0.key) }
+        attemptedImages.formIntersection(ids)
     }
 
     private func scheduleSave() {
@@ -793,9 +806,13 @@ final class ClipboardStore: ObservableObject {
         }
         switch loaded {
         case .success(let (document, digests)):
-            entries = document.entries.sorted { $0.lastCopiedAt > $1.lastCopiedAt }
+            // Local snippets can be created while the encrypted archive loads.
+            let local = entries
+            let localIDs = Set(local.map(\.id))
+            entries = (local + document.entries.filter { !localIDs.contains($0.id) })
+                .sorted { $0.lastCopiedAt > $1.lastCopiedAt }
             boards = document.boards + boards.filter { current in !document.boards.contains { $0.id == current.id } }
-            self.digests = digests
+            self.digests.merge(digests) { current, _ in current }
             let boardIDs = Set(boards.map(\.id))
             for index in entries.indices { entries[index].pinboardIDs.formIntersection(boardIDs) }
             if !isolated && !encryptedExists { pendingSave = true }
@@ -807,6 +824,12 @@ final class ClipboardStore: ObservableObject {
         trim()
         if pendingSave { scheduleSave() }
         scheduleImageIndexing()
+    }
+
+    private func onCaptureQueue<T>(_ work: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            captureQueue.async { continuation.resume(returning: work()) }
+        }
     }
 
     private func onQueue<T>(_ work: @escaping () -> T) async -> T {

@@ -44,8 +44,9 @@ enum ShortcutConflicts {
 
     static func decode(_ data: Data) -> KeyboardShortcut? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let keyCode = object["keyCode"] as? Int else { return nil }
+              let keyCode = object["keyCode"] as? Int, (0...65535).contains(keyCode) else { return nil }
         let raw = (object["internalModifiers"] as? Int) ?? (object["modifiers"] as? Int) ?? 0
+        guard raw >= 0 else { return nil }
         return KeyboardShortcut(keyCode: UInt16(keyCode), modifiers: NSEvent.ModifierFlags(rawValue: UInt(raw)))
     }
 

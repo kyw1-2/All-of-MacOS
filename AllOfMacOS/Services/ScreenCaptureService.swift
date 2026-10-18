@@ -492,34 +492,76 @@ final class ScreenCaptureService {
                      format: CaptureFormat = CaptureSettings.format,
                      fileName: String? = nil) throws -> URL {
         let data = try encode(result, format: format)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = fileName ?? CaptureNaming.defaultName(for: result)
-        var url = directory.appendingPathComponent(name).appendingPathExtension(format.fileExtension)
-        // Never clobber an existing file: two captures inside the same second are
-        // ordinary, and silently overwriting one would lose it.
-        var counter = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = directory.appendingPathComponent("\(name)-\(counter)").appendingPathExtension(format.fileExtension)
-            counter += 1
-        }
-        try data.write(to: url, options: .atomic)
-        return url
+        return try Self.writeEncoded(data, directory: directory, name: fileName ?? CaptureNaming.defaultName(for: result), format: format)
     }
 
-    /// Puts the capture on the general pasteboard as image data, so it pastes
-    /// into anything that accepts an image rather than only into Finder.
-    func copyToClipboard(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) throws {
-        let data = try encode(result, format: format)
+    private static let encodingQueue = DispatchQueue(label: "com.kyw.allofmacos.capture-encoding", qos: .userInitiated)
+
+    /// Snapshot preferences and naming on the caller, then encode/write off the UI loop.
+    func writeToDiskAsync(_ result: CaptureResult, directory: URL = CaptureSettings.saveDirectory,
+                          format: CaptureFormat = CaptureSettings.format) async throws -> URL {
+        let name = CaptureNaming.defaultName(for: result)
+        let quality = CaptureSettings.quality
+        return try await withCheckedThrowingContinuation { continuation in
+            Self.encodingQueue.async {
+                continuation.resume(with: Result {
+                    let data = try self.encode(result, format: format, quality: quality)
+                    return try Self.writeEncoded(data, directory: directory, name: name, format: format)
+                })
+            }
+        }
+    }
+
+    private static func writeEncoded(_ data: Data, directory: URL, name: String, format: CaptureFormat) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var counter = 1
+        while true {
+            let basename = counter == 1 ? name : "\(name)-\(counter)"
+            let url = directory.appendingPathComponent(basename).appendingPathExtension(format.fileExtension)
+            do {
+                // Exclusive creation also handles two concurrent saves of the same name.
+                try data.write(to: url, options: .withoutOverwriting)
+                return url
+            } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+                counter += 1
+            }
+        }
+    }
+
+    /// Prepare all representations before replacing the pasteboard, as one item.
+    /// PNG is a compact interoperable fallback for HEIC/WebP (uncompressed TIFF
+    /// previously pushed ordinary Retina captures over the history's 20 MB cap).
+    private func clipboardRepresentations(_ result: CaptureResult, format: CaptureFormat, quality: Double) throws -> [String: Data] {
+        var representations = [format.contentType.identifier: try encode(result, format: format, quality: quality)]
+        if format != .png, let png = Self.representation(result.image, as: .png, quality: 1) {
+            representations[NSPasteboard.PasteboardType.png.rawValue] = png
+        }
+        return representations
+    }
+
+    private func writeClipboardRepresentations(_ representations: [String: Data]) throws {
+        let item = NSPasteboardItem()
+        for (type, data) in representations { item.setData(data, forType: .init(type)) }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        guard pasteboard.setData(data, forType: NSPasteboard.PasteboardType(format.contentType.identifier)) else {
+        guard pasteboard.writeObjects([item]) else {
             throw CaptureError.captureFailed("The image could not be copied to the clipboard.")
         }
-        // A TIFF entry alongside is what makes Preview, Notes and Keynote accept
-        // the paste without knowing about HEIC or WebP.
-        if let tiff = Self.representation(result.image, as: .tiff, quality: 1) {
-            pasteboard.setData(tiff, forType: .tiff)
+    }
+
+    func copyToClipboard(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) throws {
+        try writeClipboardRepresentations(clipboardRepresentations(result, format: format, quality: CaptureSettings.quality))
+    }
+
+    @MainActor
+    func copyToClipboardAsync(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) async throws {
+        let quality = CaptureSettings.quality
+        let data: [String: Data] = try await withCheckedThrowingContinuation { continuation in
+            Self.encodingQueue.async {
+                continuation.resume(with: Result { try self.clipboardRepresentations(result, format: format, quality: quality) })
+            }
         }
+        try writeClipboardRepresentations(data)
     }
 
     /// Copies the file itself (not its pixels) so pasting into Finder or Mail

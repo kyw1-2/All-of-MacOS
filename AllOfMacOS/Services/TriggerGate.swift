@@ -16,6 +16,9 @@ enum TriggerGate {
     }
     /// Triggers whose delay has just elapsed; their re-dispatch must not wait again.
     private static var delayElapsed = Set<UUID>()
+    private static var pending: [UUID: Set<UUID>] = [:]
+    static func cancel(_ id: UUID) { pending.removeValue(forKey: id) }
+    static func cancelAll() { pending.removeAll() }
     static var suppression: () -> TriggerSuppression = { TriggerSuppression.shared }
 
     /// Returns true when the caller should run the trigger's actions now. When
@@ -28,9 +31,23 @@ enum TriggerGate {
             guard suppression().allows(trigger) else { return false }
             let delay = trigger.delayBeforeTriggeringMs
             guard delay > 0, !delayElapsed.contains(triggerID) else { return true }
+            let waiting = pending[triggerID] ?? []
+            if !waiting.isEmpty {
+                switch trigger.executionPolicy {
+                case .ignoreWhileRunning: return false
+                case .restart: pending[triggerID] = []
+                case .parallel: guard waiting.count < 4 else { return false }
+                }
+            }
+            let token = UUID()
+            pending[triggerID, default: []].insert(token)
             schedule(Double(min(delay, 600_000)) / 1000) {
-                // A trigger deleted or disabled during the delay must not run.
-                guard ActionExecutor.registeredTriggers.contains(where: { $0.id == triggerID }) else { return }
+                guard pending[triggerID]?.remove(token) != nil else { return }
+                if pending[triggerID]?.isEmpty == true { pending.removeValue(forKey: triggerID) }
+                // A changed binding or an app/group that no longer matches cannot
+                // send a delayed action into the new foreground application.
+                guard ActionExecutor.registeredTriggers.contains(trigger),
+                      ActionExecutor.cheatSheetTriggers().contains(where: { $0.id == triggerID }) else { return }
                 delayElapsed.insert(triggerID)
                 defer { delayElapsed.remove(triggerID) }
                 redispatch()

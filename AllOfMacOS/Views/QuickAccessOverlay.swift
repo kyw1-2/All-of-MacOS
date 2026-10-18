@@ -103,6 +103,8 @@ final class QuickAccessOverlayController {
     private var dragging = false
     private var wasDeleted = false
     private var recycleInProgress = false
+    private var mediaOperationInProgress = false
+    var captureID: UUID { entry.id }
     private var temporarilyHidden = false
     private var visibleStackCount = 1
     private var preferredDisplayID: UInt32?
@@ -285,6 +287,7 @@ final class QuickAccessOverlayController {
         // A failed Finder recycle must not leave a visible panel without key
         // monitoring or a live auto-close timer.
         if deleteFile {
+            guard !mediaOperationInProgress else { return }
             moveToTrash()
             return
         }
@@ -323,51 +326,81 @@ final class QuickAccessOverlayController {
 
     // MARK: - Actions
 
+    /// Suspend auto-close while an explicit copy/save runs, and serialize clicks.
+    private func mediaOperation(_ body: @escaping () async -> Void) {
+        guard !mediaOperationInProgress else { return }
+        mediaOperationInProgress = true
+        pauseAutoClose()
+        Task { @MainActor in
+            defer {
+                mediaOperationInProgress = false
+                if panel != nil { resumeAutoClose() }
+            }
+            await body()
+        }
+    }
+
     private func copyImage() {
         if isVideo { copyFile(); return }
-        do {
-            try ScreenCaptureService.shared.copyToClipboard(currentResult())
-            GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
-            if !NSEvent.modifierFlags.contains(.option) {
-                dismiss(deleteFile: false)
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
+        let result = currentResult()
+        mediaOperation { [self] in
+            do {
+                try await ScreenCaptureService.shared.copyToClipboardAsync(result)
+                GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
+                if !keepOpen { dismiss(deleteFile: false) }
+            } catch {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
             }
-        } catch {
-            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
         }
     }
 
     private func copyFile() {
-        guard let url = ensureFile() else { return }
-        guard ScreenCaptureService.shared.copyFileToClipboard(url) else {
-            GestureHUD.shared.show(title: "Copy Failed", detail: "Could not copy the capture file.")
-            return
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
+        mediaOperation { [self] in
+            guard let url = await ensureFileAsync() else { return }
+            guard ScreenCaptureService.shared.copyFileToClipboard(url) else {
+                GestureHUD.shared.show(title: "Copy Failed", detail: "Could not copy the capture file.")
+                return
+            }
+            GestureHUD.shared.show(title: "Copied", detail: url.lastPathComponent)
+            if !keepOpen { dismiss(deleteFile: false) }
         }
-        GestureHUD.shared.show(title: "Copied", detail: url.lastPathComponent)
-        if !NSEvent.modifierFlags.contains(.option) { dismiss(deleteFile: false) }
     }
 
     private func save() {
         if QuickAccessPolicy.shouldPromptSave(
             asksForName: CaptureSettings.asksForNameAfterCapture,
             optionPressed: NSEvent.modifierFlags.contains(.option)) {
+            guard !mediaOperationInProgress else { return }
             saveAs()
             return
         }
-        guard let url = ensureFile() else { return }
-        GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
-        dismiss(deleteFile: false)
+        mediaOperation { [self] in
+            guard let url = await ensureFileAsync() else { return }
+            GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+            dismiss(deleteFile: false)
+        }
     }
 
     private func revealInFinder() {
-        guard let url = ensureFile() else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-        // Revealing a file should not discard a still-useful Quick Access card.
+        mediaOperation { [self] in
+            guard let url = await ensureFileAsync() else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     /// Used by Save All: no popup, no Finder activation per capture.
     @discardableResult
-    func saveWithoutPrompt() -> Bool {
-        guard ensureFile() != nil else { return false }
+    func saveWithoutPrompt() async -> Bool {
+        guard !mediaOperationInProgress else { return false }
+        mediaOperationInProgress = true
+        pauseAutoClose()
+        defer {
+            mediaOperationInProgress = false
+            if panel != nil { resumeAutoClose() }
+        }
+        guard await ensureFileAsync() != nil else { return false }
         dismiss(deleteFile: false)
         return true
     }
@@ -388,16 +421,20 @@ final class QuickAccessOverlayController {
             dismiss(deleteFile: false)
             return
         }
-        let url = ensureFile()
-        AnnotationEditorController.shared.open(capture: entry, url: url)
-        dismiss(deleteFile: false)
+        mediaOperation { [self] in
+            let url = await ensureFileAsync()
+            AnnotationEditorController.shared.open(capture: entry, url: url)
+            dismiss(deleteFile: false)
+        }
     }
 
     private func pin() {
         guard !isVideo else { return }
-        let url = ensureFile()
-        PinnedScreenshotController.shared.pin(entry: entry, url: url)
-        dismiss(deleteFile: false)
+        mediaOperation { [self] in
+            let url = await ensureFileAsync()
+            PinnedScreenshotController.shared.pin(entry: entry, url: url)
+            dismiss(deleteFile: false)
+        }
     }
 
     private func recognizeQRCode() {
@@ -617,6 +654,7 @@ final class QuickAccessOverlayController {
     }
 
     private func perform(_ command: QuickAccessMenuCommand) {
+        guard !mediaOperationInProgress else { return }
         switch command {
         case .share, .openWith: break
         case .closeAll: CaptureCoordinator.shared.confirmCloseAllQuickAccess()
@@ -735,6 +773,23 @@ final class QuickAccessOverlayController {
         }
     }
 
+    private func ensureFileAsync() async -> URL? {
+        if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) { return url }
+        guard !isVideo else {
+            GestureHUD.shared.show(title: "Video Unavailable", detail: "The recording file is missing.")
+            return nil
+        }
+        do {
+            let url = try await ScreenCaptureService.shared.writeToDiskAsync(currentResult())
+            CaptureHistory.shared.attachFile(url, to: entry.id)
+            entry.fileURL = url
+            return url
+        } catch {
+            GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
     private func ensureFile() -> URL? {
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) { return url }
         guard !isVideo else {
@@ -761,6 +816,7 @@ final class QuickAccessOverlayController {
     }
 
     private func beginDragFile() -> URL? {
+        guard !mediaOperationInProgress else { return nil }
         let file = ensureFile()
         if file != nil {
             dragging = true

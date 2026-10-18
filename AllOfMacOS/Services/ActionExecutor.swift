@@ -35,7 +35,10 @@ class ActionExecutor {
         inactiveTriggerIDs.formUnion(triggers.map(\.id))
         inactiveTriggerIDs.subtract(next.map(\.id))
         let groupsChanged = activationGroups != groups
-        for id in Array(holds.keys) where groupsChanged || registeredTriggers.first(where: { $0.id == id }) != next.first(where: { $0.id == id }) {
+        // Registration changes invalidate delayed starts and ordinary sequences,
+        // not only repeat-while-held loops.
+        let knownIDs = Set(registeredTriggers.map(\.id)).union(next.map(\.id))
+        for id in knownIDs where groupsChanged || registeredTriggers.first(where: { $0.id == id }) != next.first(where: { $0.id == id }) {
             cancelSequence(id)
         }
         activationGroups = groups
@@ -58,6 +61,7 @@ class ActionExecutor {
 
     static func releaseHold(_ id: UUID) { if holds[id] != nil { cancelSequence(id) } }
     static func cancelSequence(_ id: UUID) {
+        TriggerGate.cancel(id)
         holds.removeValue(forKey: id)?.cancel()
         cancelInvocations(id)
     }
@@ -69,6 +73,7 @@ class ActionExecutor {
         }
     }
     static func cancelAllSequences() {
+        TriggerGate.cancelAll()
         Array(holds.values).forEach { $0.cancel() }; holds.removeAll()
         let active = Array(sequences.values)
         active.forEach { $0.context.cancelled = true }
@@ -171,7 +176,8 @@ class ActionExecutor {
                action.parameters.windowTarget != "underCursor", selected == nil {
                 GestureLog.shared.logFromAnyThread("No accessible window for this step", level: .error); done(false); return
             }
-            executeAction(action, windowTarget: selected, fromTrackpad: fromTrackpad, completion: done)
+            executeAction(action, windowTarget: selected, fromTrackpad: fromTrackpad,
+                          isCancelled: { context.cancelled }, completion: done)
         }, matches: { action in
             let p = action.parameters
             let app = NSWorkspace.shared.frontmostApplication
@@ -283,7 +289,8 @@ class ActionExecutor {
     }
 
     private static func executeAction(_ action: TriggerAction, windowTarget: WindowManager.Target?, fromTrackpad: Bool = false,
-                                      completion: @escaping (Bool) -> Void) {
+                                      isCancelled: @escaping () -> Bool = { false }, completion: @escaping (Bool) -> Void) {
+        guard !isCancelled() else { completion(false); return }
         NSLog("[ActionExecutor] Executing: %@", action.actionType.rawValue)
         GestureLog.shared.logFromAnyThread("Executing: \(action.actionType.rawValue)\(actionDetail(action))", level: .action)
 
@@ -303,12 +310,12 @@ class ActionExecutor {
                 }
                 var approved = action
                 approved.parameters.requiresConfirmation = false
-                executeAction(approved, windowTarget: windowTarget, fromTrackpad: fromTrackpad, completion: completion)
+                executeAction(approved, windowTarget: windowTarget, fromTrackpad: fromTrackpad, isCancelled: isCancelled, completion: completion)
             }
             return
         }
         if ExtendedActions.handles(action.actionType) {
-            ExtendedActions.perform(action, completion: completion)
+            ExtendedActions.perform(action, isCancelled: isCancelled, completion: completion)
             return
         }
 
@@ -361,7 +368,7 @@ class ActionExecutor {
             return
         }
         if action.actionType == .typeText {
-            typeText(action.parameters.text ?? "", completion: completion)
+            typeText(action.parameters.text ?? "", isCancelled: isCancelled, completion: completion)
             return
         }
         if action.actionType == .volumeUp || action.actionType == .volumeDown {
@@ -370,6 +377,23 @@ class ActionExecutor {
             AudioOutputService.shared.adjustVolume(percentagePoints: action.actionType == .volumeUp ? step : -step, completion: completion)
             return
         }
+        switch action.actionType {
+        case .captureArea: onMain { CaptureCoordinator.shared.captureArea(completion: completion) }; return
+        case .captureFullscreen: onMain { CaptureCoordinator.shared.captureFullscreen(completion: completion) }; return
+        case .captureWindow: onMain { CaptureCoordinator.shared.captureWindowFromPicker(completion: completion) }; return
+        case .captureWindowUnderCursor: onMain { CaptureCoordinator.shared.captureWindowUnderCursor(completion: completion) }; return
+        case .capturePreviousArea: onMain { CaptureCoordinator.shared.capturePreviousArea(completion: completion) }; return
+        case .captureScrolling: onMain { CaptureCoordinator.shared.captureScrolling(completion: completion) }; return
+        case .captureAllDisplays: onMain { CaptureCoordinator.shared.captureAllDisplays(completion: completion) }; return
+        case .captureSelfTimer:
+            onMain { CaptureCoordinator.shared.captureWithSelfTimer(seconds: action.parameters.selfTimerSeconds ?? 5, completion: completion) }; return
+        case .captureText, .captureTextWithLineBreaks, .captureTextWithoutLineBreaks:
+            let breaks: Bool? = action.actionType == .captureText ? nil : action.actionType == .captureTextWithLineBreaks
+            onMain { CaptureCoordinator.shared.captureText(keepsLineBreaks: breaks, completion: completion) }; return
+        case .ocrLastCapture: onMain { CaptureActions.copyTextFromLastCapture(completion: completion) }; return
+        default: break
+        }
+
         defer { completion(true) }
         switch action.actionType {
         case .showHUD:
@@ -492,34 +516,13 @@ class ActionExecutor {
         case .previousTrack:
             sendMediaKey(keyCode: NX_KEYTYPE_PREVIOUS)
 
-        // Screen Capture. Every one of these is MainActor work because they end
-        // in AppKit UI; the coordinator owns the async capture path itself, so
-        // this dispatch is fire-and-forget and never blocks the action sequence.
-        case .captureArea:
-            onMain { CaptureCoordinator.shared.captureArea() }
-        case .captureFullscreen:
-            onMain { CaptureCoordinator.shared.captureFullscreen() }
-        case .captureWindow:
-            onMain { CaptureCoordinator.shared.captureWindowFromPicker() }
-        case .captureWindowUnderCursor:
-            onMain { CaptureCoordinator.shared.captureWindowUnderCursor() }
+        // Capture actions above complete only after their output is ready.
+        case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
+             .capturePreviousArea, .captureScrolling, .captureText, .captureTextWithLineBreaks,
+             .captureTextWithoutLineBreaks, .captureAllDisplays, .captureSelfTimer, .ocrLastCapture:
+            break
         case .recordScreen:
             onMain { ScreenRecordingService.shared.toggleRecording() }
-        case .capturePreviousArea:
-            onMain { CaptureCoordinator.shared.capturePreviousArea() }
-        case .captureScrolling:
-            onMain { CaptureCoordinator.shared.captureScrolling() }
-        case .captureText:
-            onMain { CaptureCoordinator.shared.captureText() }
-        case .captureTextWithLineBreaks:
-            onMain { CaptureCoordinator.shared.captureText(keepsLineBreaks: true) }
-        case .captureTextWithoutLineBreaks:
-            onMain { CaptureCoordinator.shared.captureText(keepsLineBreaks: false) }
-        case .captureAllDisplays:
-            onMain { CaptureCoordinator.shared.captureAllDisplays() }
-        case .captureSelfTimer:
-            let seconds = action.parameters.selfTimerSeconds ?? 5
-            onMain { CaptureCoordinator.shared.captureWithSelfTimer(seconds: seconds) }
         case .annotateLastCapture:
             onMain { AnnotationEditorController.shared.openMostRecent() }
         case .pinLastCapture:
@@ -528,8 +531,6 @@ class ActionExecutor {
             onMain { CaptureActions.copyLastCapture() }
         case .saveLastCapture:
             onMain { CaptureActions.saveLastCapture() }
-        case .ocrLastCapture:
-            onMain { CaptureActions.copyTextFromLastCapture() }
         case .openCaptureHistory:
             onMain { CaptureHistoryWindowController.shared.present() }
         case .unpinAllCaptures:
@@ -741,7 +742,7 @@ class ActionExecutor {
         // Do not steal focus from AOM; CGEvent targets the real active app.
         // Generated events retain the AOM tag above to prevent recursive triggers.
         keyDown.post(tap: tapPoint)
-        usleep(20000)
+        // Posting order is preserved by the event queue; no UI-thread sleep.
         keyUp.post(tap: tapPoint)
         NSLog("[ActionExecutor] CGEvent[%@] posted keyCode=%d flags=%llu front=%@",
               label, keyCode, cgFlags.rawValue,
@@ -824,7 +825,7 @@ class ActionExecutor {
         return (down, up)
     }
 
-    private static func typeText(_ text: String, completion: @escaping (Bool) -> Void) {
+    private static func typeText(_ text: String, isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
         guard !text.isEmpty else { completion(true); return }
         let front = NSWorkspace.shared.frontmostApplication
         guard let target = front, !target.isTerminated else { completion(false); return }
@@ -833,6 +834,7 @@ class ActionExecutor {
         let deadline = ProcessInfo.processInfo.systemUptime + 3
         let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
         func begin() {
+            guard !isCancelled() else { completion(false); return }
             // Wait without blocking the event tap until the invoking hotkey is released.
             let held = CGEventSource.flagsState(.combinedSessionState).intersection(shortcutFlags)
             guard held.isEmpty else {
@@ -841,6 +843,7 @@ class ActionExecutor {
                 return
             }
             func post(_ index: Int) {
+                guard !isCancelled() else { completion(false); return }
                 guard !target.isTerminated, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
                     GestureLog.shared.logFromAnyThread("Text input cancelled: focused application changed", level: .error); completion(false); return
                 }

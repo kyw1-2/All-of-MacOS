@@ -60,7 +60,7 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     var imageData: Data? {
         for item in items {
             for type in [NSPasteboard.PasteboardType.png.rawValue, NSPasteboard.PasteboardType.tiff.rawValue,
-                         "public.jpeg", "public.heic"] {
+                         "public.jpeg", "public.heic", "org.webmproject.webp", "com.compuserve.gif"] {
                 if let data = item[type] { return data }
             }
         }
@@ -104,6 +104,17 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
         let strings = items.compactMap { item -> String? in
             for type in [NSPasteboard.PasteboardType.string.rawValue, NSPasteboard.PasteboardType.URL.rawValue] {
                 if let data = item[type], let value = String(data: data, encoding: .utf8) { return value }
+            }
+            if let data = item["public.utf16-external-plain-text"],
+               let value = String(data: data, encoding: .utf16) { return value }
+            // Some editors expose RTF/RTFD without a plain-text representation.
+            // Keep the original payload while making it searchable/plain-pasteable.
+            for (type, format) in [(NSPasteboard.PasteboardType.rtf, NSAttributedString.DocumentType.rtf),
+                                   (.rtfd, .rtfd)] {
+                if let data = item[type.rawValue],
+                   let value = try? NSAttributedString(data: data, options: [.documentType: format], documentAttributes: nil) {
+                    return value.string
+                }
             }
             return nil
         }

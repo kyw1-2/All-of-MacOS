@@ -80,22 +80,29 @@ enum CaptureActions {
         PinnedScreenshotController.shared.pin(entry: entry, url: url)
     }
 
-    static func copyTextFromLastCapture() {
-        guard let entry = latest() else { return }
+    static func copyTextFromLastCapture(completion: ((Bool) -> Void)? = nil) {
+        guard let entry = latest() else { completion?(false); return }
         let keepsLineBreaks = CaptureSettings.ocrKeepsLineBreaks
         Task { @MainActor in
             do {
                 let text = try await TextRecognitionService.recognize(entry.image, keepsLineBreaks: keepsLineBreaks)
                 guard !text.isEmpty else {
                     GestureHUD.shared.show(title: "No Text Found", detail: nil)
+                    completion?(false)
                     return
                 }
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
-                pasteboard.setString(text, forType: .string)
+                guard pasteboard.setString(text, forType: .string) else {
+                    completion?(false)
+                    GestureHUD.shared.show(title: "Copy Failed", detail: "The clipboard could not be updated.")
+                    return
+                }
+                completion?(true)
                 GestureHUD.shared.show(title: "Text Copied", detail: "\(text.count) characters")
             } catch {
                 GestureHUD.shared.show(title: "Text Recognition Failed", detail: error.localizedDescription)
+                completion?(false)
             }
         }
     }

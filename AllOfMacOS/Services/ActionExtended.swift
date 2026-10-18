@@ -71,7 +71,7 @@ enum ExtendedActions {
         if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
     }
 
-    static func perform(_ action: TriggerAction, completion: @escaping (Bool) -> Void) {
+    static func perform(_ action: TriggerAction, isCancelled: @escaping () -> Bool = { false }, completion: @escaping (Bool) -> Void) {
         let p = action.parameters
         switch action.actionType {
         // MARK: Spaces & Mission Control
@@ -102,7 +102,7 @@ enum ExtendedActions {
             click(button: 0, count: preset.count, flags: preset.flags, completion)
         case .customClick:
             click(button: p.clickButton ?? 0, count: p.clickCount ?? 1, flags: ClickPlan.flags(from: p.clickModifiers), completion)
-        case .scrollCustom: scroll(p, completion)
+        case .scrollCustom: scroll(p, isCancelled: isCancelled, completion)
         case .moveMouseRelative:
             let dx = p.mouseDeltaX ?? 0, dy = p.mouseDeltaY ?? 0
             guard dx.isFinite, dy.isFinite else { completion(false); return }
@@ -114,7 +114,21 @@ enum ExtendedActions {
             completion(SyntheticInput.post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: target, mouseButton: .left)))
 
         // MARK: Keyboard
-        case .pasteString: pasteString(p.text ?? "", completion)
+        case .pasteString:
+            let target = NSWorkspace.shared.frontmostApplication
+            pasteString(p.text ?? "", press: {
+                guard !isCancelled(), let target, !target.isTerminated,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return false }
+                let source = CGEventSource(stateID: .privateState)
+                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                      let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return false }
+                for event in [down, up] {
+                    event.flags = .maskCommand
+                    event.setIntegerValueField(.eventSourceUserData, value: SyntheticInput.selfTag)
+                    event.postToPid(target.processIdentifier)
+                }
+                return true
+            }, completion)
         case .pressFunctionKey:
             guard let code = KeyCodes.functionKey(p.functionKeyNumber ?? 1) else { completion(false); return }
             completion(SyntheticInput.key(code, flags: .maskSecondaryFn))
@@ -270,17 +284,17 @@ enum ExtendedActions {
                 event?.setIntegerValueField(.mouseEventButtonNumber, value: spec.buttonNumber)
             }
             ok = SyntheticInput.post(down) && SyntheticInput.post(up) && ok
-            usleep(15_000)
         }
         completion(ok)
     }
 
-    private static func scroll(_ p: ActionParameters, _ completion: @escaping (Bool) -> Void) {
+    private static func scroll(_ p: ActionParameters, isCancelled: @escaping () -> Bool, _ completion: @escaping (Bool) -> Void) {
         guard let steps = ScrollPlan.steps(direction: p.scrollDirection ?? "down", amount: abs(p.scrollAmount ?? 3),
                                            durationMs: p.scrollDurationMs ?? 0) else { completion(false); return }
         let unit: CGScrollEventUnit = (p.scrollUnit ?? "lines") == "pixels" ? .pixel : .line
         let source = CGEventSource(stateID: .hidSystemState)
         func run(_ index: Int) {
+            guard !isCancelled() else { completion(false); return }
             guard index < steps.count else { completion(true); return }
             let step = steps[index]
             let event = CGEvent(scrollWheelEvent2Source: source, units: unit, wheelCount: 2,
@@ -308,6 +322,7 @@ enum ExtendedActions {
         guard pasteboard.writeObjects([item]) else { snapshot.restore(to: pasteboard); completion(false); return }
         let ours = pasteboard.changeCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard pasteboard.changeCount == ours else { completion(false); return }
             let ok = press()
             DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
                 // Leave the clipboard alone if something else wrote to it meanwhile.
@@ -371,13 +386,13 @@ enum ExtendedActions {
     private static func startDictation(_ completion: @escaping (Bool) -> Void) {
         if MenuBarExtras.pressEditMenuItem(prefix: "Start Dictation") { completion(true); return }
         // Fall back to the default shortcut: press fn twice.
-        var ok = true
-        for _ in 0..<2 {
-            ok = SyntheticInput.modifier("fn", down: true, held: ["fn"]) && ok
-            ok = SyntheticInput.modifier("fn", down: false, held: []) && ok
-            usleep(80_000)
+        let first = SyntheticInput.modifier("fn", down: true, held: ["fn"])
+            && SyntheticInput.modifier("fn", down: false, held: [])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            let second = SyntheticInput.modifier("fn", down: true, held: ["fn"])
+                && SyntheticInput.modifier("fn", down: false, held: [])
+            completion(first && second)
         }
-        completion(ok)
     }
 
     // MARK: - Utility

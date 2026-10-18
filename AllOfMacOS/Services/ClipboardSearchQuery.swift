@@ -7,6 +7,7 @@ struct ClipboardSearchQuery {
         var field: String?
         var value: String
         var excluded: Bool
+        var date: Date?
     }
     private var terms: [Term] = []
 
@@ -24,7 +25,9 @@ struct ClipboardSearchQuery {
             let split = text.split(separator: ":", maxSplits: 1).map(String.init)
             let field = split.count == 2 && ["type", "from", "app", "board", "before", "after"].contains(split[0].lowercased())
                 ? split[0].lowercased() : nil
-            terms.append(Term(field: field, value: field == nil ? text : split[1], excluded: excluded))
+            let value = field == nil ? text : split[1]
+            let date = (field == "before" || field == "after") ? Self.dayFormatter.date(from: value) : nil
+            terms.append(Term(field: field, value: value, excluded: excluded, date: date))
         }
     }
 
@@ -63,7 +66,7 @@ struct ClipboardSearchQuery {
             case "board":
                 matched = boards.contains { entry.pinboardIDs.contains($0.id) && $0.name.localizedStandardContains(term.value) }
             case "before", "after":
-                if let date = Self.dayFormatter.date(from: term.value) {
+                if let date = term.date {
                     matched = term.field == "before" ? entry.lastCopiedAt < date : entry.lastCopiedAt >= date
                 } else { matched = false }
             default: matched = Self.contains(entry, term.value)

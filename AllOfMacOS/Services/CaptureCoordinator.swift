@@ -110,14 +110,17 @@ final class CaptureCoordinator {
     /// Save only the cards whose files can be written. Keep failed cards on
     /// screen so the user can retry, with no loss of captured pixels.
     func saveAllQuickAccess() {
-        var success = 0
-        var failure = 0
-        for overlay in Array(overlayControllers) {
-            if overlay.saveWithoutPrompt() { success += 1 }
-            else { failure += 1 }
+        let overlays = overlayControllers
+        Task { @MainActor in
+            var success = 0
+            var failure = 0
+            for overlay in overlays {
+                if await overlay.saveWithoutPrompt() { success += 1 }
+                else { failure += 1 }
+            }
+            GestureHUD.shared.show(title: "Quick Access — Save All",
+                detail: "\(success) saved" + (failure > 0 ? ", \(failure) could not be saved" : ""))
         }
-        GestureHUD.shared.show(title: "Quick Access — Save All",
-            detail: "\(success) saved" + (failure > 0 ? ", \(failure) could not be saved" : ""))
     }
 
     /// Import an existing screenshot or MP4 into the Quick Access stack without
@@ -148,7 +151,7 @@ final class CaptureCoordinator {
             let result = CaptureResult(image: image, globalRect: size, scale: 1,
                 kind: kind, windowTitle: url.deletingPathExtension().lastPathComponent)
             let entry = CaptureHistory.shared.add(result, url: url)
-            showOverlay(for: entry)
+            showOverlay(for: entry, explicit: true)
             added += 1
         }
         if added == 0 {
@@ -222,8 +225,8 @@ final class CaptureCoordinator {
         }
     }
 
-    func captureArea(afterCaptureOverride: AfterCaptureAction? = nil) {
-        run(kind: .area, afterCaptureOverride: afterCaptureOverride) { [weak self] in
+    func captureArea(afterCaptureOverride: AfterCaptureAction? = nil, completion: ((Bool) -> Void)? = nil) {
+        run(kind: .area, afterCaptureOverride: afterCaptureOverride, completion: completion) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
             if self.selectionOverlay?.selectedMode == .window,
@@ -264,8 +267,8 @@ final class CaptureCoordinator {
         return intersect.isNull ? 0 : intersect.width * intersect.height
     }
 
-    func captureFullscreen() {
-        run(kind: .fullscreen) { [weak self] in
+    func captureFullscreen(completion: ((Bool) -> Void)? = nil) {
+        run(kind: .fullscreen, completion: completion) { [weak self] in
             guard let self else { return nil }
             let displays = try await ScreenCaptureService.shared.shareableContentDisplays()
             guard let target = ScreenCaptureService.displayUnderPointer(in: displays) ?? displays.first else {
@@ -278,12 +281,13 @@ final class CaptureCoordinator {
 
     /// Replays the last dragged area. Captures the same rectangle even if the
     /// content beneath it has changed — that is the point of the feature.
-    func capturePreviousArea() {
+    func capturePreviousArea(completion: ((Bool) -> Void)? = nil) {
         guard let rect = CaptureSettings.lastArea else {
             GestureHUD.shared.show(title: "No Previous Area", detail: "Drag an area capture first.")
+            completion?(false)
             return
         }
-        run(kind: .previousArea) { [weak self] in
+        run(kind: .previousArea, completion: completion) { [weak self] in
             guard let self else { return nil }
             let displays = try await ScreenCaptureService.shared.shareableContentDisplays()
             guard let display = displays.first(where: { $0.displayID == CaptureSettings.lastAreaDisplayID })
@@ -325,8 +329,8 @@ final class CaptureCoordinator {
         }
     }
 
-    func captureWindowUnderCursor() {
-        run(kind: .windowUnderCursor) { [weak self] in
+    func captureWindowUnderCursor(completion: ((Bool) -> Void)? = nil) {
+        run(kind: .windowUnderCursor, completion: completion) { [weak self] in
             guard let self else { return nil }
             let window = try await ScreenCaptureService.shared.windowUnderCursor()
             let result = try await ScreenCaptureService.shared.captureWindow(window)
@@ -339,18 +343,14 @@ final class CaptureCoordinator {
     /// Each display produces its own history entry rather than being composited
     /// into one image, because the displays may have different scales and a
     /// composite would have to resample at least one of them.
-    func captureAllDisplays() {
-        run(kind: .fullscreen) { [weak self] in
+    func captureAllDisplays(completion: ((Bool) -> Void)? = nil) {
+        run(kind: .fullscreen, completion: completion) { [weak self] in
             guard let self else { return nil }
             let results = try await ScreenCaptureService.shared.captureAllDisplays()
             guard let first = results.first else { throw CaptureError.noDisplays }
-            // The first display is returned through the normal pipeline; the rest
-            // are stored directly, since the pipeline's epilogue runs once.
-            for extra in results.dropFirst() {
-                let entry = CaptureHistory.shared.add(extra, url: nil)
-                if CaptureSettings.afterCapture == .saveToDisk,
-                   let url = try? ScreenCaptureService.shared.writeToDisk(extra) {
-                    CaptureHistory.shared.attachFile(url, to: entry.id)
+            for extra in results.dropFirst().reversed() {
+                guard await self.finish(extra, kind: .fullscreen) else {
+                    throw CaptureError.captureFailed("A display was captured but its output could not be delivered.")
                 }
             }
             return (first, CaptureKind.fullscreen)
@@ -361,9 +361,9 @@ final class CaptureCoordinator {
     ///
     /// The stored self-timer applies to every capture; this action forces one for
     /// a single binding without changing the global preference.
-    func captureWithSelfTimer(seconds: Int? = nil) {
+    func captureWithSelfTimer(seconds: Int? = nil, completion: ((Bool) -> Void)? = nil) {
         let requested = seconds ?? CaptureSettings.selfTimerInterval
-        run(kind: .area, appliesSelfTimer: false) { [weak self] in
+        run(kind: .area, appliesSelfTimer: false, completion: completion) { [weak self] in
             guard let self else { return nil }
             // CleanShot order: choose the area first, then count down so menus
             // or hover states can be arranged before the pixels are read.
@@ -375,7 +375,7 @@ final class CaptureCoordinator {
     }
 
     /// Captures a window chosen from a list rather than by pointing at it.
-    func captureWindowFromPicker() {        run(kind: .window) { [weak self] in
+    func captureWindowFromPicker(completion: ((Bool) -> Void)? = nil) {        run(kind: .window, completion: completion) { [weak self] in
             guard let self else { return nil }
             guard let window = await self.presentWindowPicker() else { return nil }
             let result = try await ScreenCaptureService.shared.captureWindow(window)
@@ -387,26 +387,19 @@ final class CaptureCoordinator {
     /// rather than an image. CleanShot's "Capture Text"; the recognition and
     /// delivery (clipboard, HUD, sound, speech) are TextSniper-style and live
     /// in `TextCaptureController`.
-    func captureText(keepsLineBreaks: Bool? = nil) {
+    func captureText(keepsLineBreaks: Bool? = nil, completion: ((Bool) -> Void)? = nil) {
         let keepBreaks = keepsLineBreaks ?? TextCaptureSettings.shared.keepsLineBreaks
         Self.textLog.info("capture-text requested (native selector)")
-        run(kind: .area, appliesSelfTimer: false, appliesDesktopSettings: false) {
+        run(kind: .area, appliesSelfTimer: false, appliesDesktopSettings: false,
+            afterCaptureOverride: .doNothing, completion: completion) {
             let image = try await TextCaptureSelection.capture()
             let captured = Date()
             guard try await TextCaptureController.shared.deliver(image: image, keepsLineBreaks: keepBreaks) != nil else { return nil }
             Self.textLog.info("capture-text selected-to-copy=\(Int(Date().timeIntervalSince(captured) * 1000), privacy: .public)ms")
-            // Retain the existing Capture History behavior without delaying the
-            // clipboard delivery. Native selection does not expose its screen
-            // origin; the cropped pixels and main-display scale are sufficient
-            // for image review and export, but not for screen-position anchoring.
-            Task { @MainActor in
-                let scale = max(1, NSScreen.main?.backingScaleFactor ?? 1)
-                let rect = CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale,
-                                  height: CGFloat(image.height) / scale)
-                CaptureHistory.shared.add(CaptureResult(image: image, globalRect: rect,
-                    scale: scale, kind: .area), url: nil)
-            }
-            return nil
+            let scale = max(1, NSScreen.main?.backingScaleFactor ?? 1)
+            let rect = CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale,
+                              height: CGFloat(image.height) / scale)
+            return (CaptureResult(image: image, globalRect: rect, scale: scale, kind: .area), .area)
         }
     }
 
@@ -439,12 +432,12 @@ final class CaptureCoordinator {
 
     /// Scrolling capture: stitches a tall region by repeatedly scrolling and
     /// grabbing, then trims the overlap.
-    func captureScrolling() { captureScrolling(direction: .vertical) }
+    func captureScrolling(completion: ((Bool) -> Void)? = nil) { captureScrolling(direction: .vertical, completion: completion) }
 
     func captureScrollingHorizontal() { captureScrolling(direction: .horizontal) }
 
-    private func captureScrolling(direction: ScrollingCaptureService.Direction) {
-        run(kind: .scrolling) { [weak self] in
+    private func captureScrolling(direction: ScrollingCaptureService.Direction, completion: ((Bool) -> Void)? = nil) {
+        run(kind: .scrolling, completion: completion) { [weak self] in
             guard let self else { return nil }
             guard let rect = await self.presentSelection() else { return nil }
             let result = try await ScrollingCaptureService.shared.capture(area: rect,
@@ -460,29 +453,35 @@ final class CaptureCoordinator {
     /// `body` returns the capture plus its kind, or `nil` when the user cancelled
     /// — a cancel is not an error and must not surface as one.
     private func run(kind: CaptureKind, appliesSelfTimer: Bool = true, appliesDesktopSettings: Bool = true,
-                     afterCaptureOverride: AfterCaptureAction? = nil,
+                     afterCaptureOverride: AfterCaptureAction? = nil, completion: ((Bool) -> Void)? = nil,
                      _ body: @escaping () async throws -> (CaptureResult, CaptureKind)?) {
         guard !isCapturing else {
             GestureHUD.shared.show(title: "Capture In Progress", detail: "Finish or cancel the current capture first.")
+            completion?(false)
             return
         }
         guard ScreenCaptureService.hasPermission else {
             ScreenCaptureService.requestPermission()
             GestureHUD.shared.show(title: "Screen Recording Needed",
                                    detail: "Grant All of MacOS access in System Settings › Privacy & Security.")
+            completion?(false)
             return
         }
 
         isCapturing = true
         Task { @MainActor in
-            defer { isCapturing = false }
+            var succeeded = false
+            defer {
+                isCapturing = false
+                completion?(succeeded)
+            }
             do {
                 if appliesSelfTimer { try await runSelfTimerIfNeeded() }
                 let hiddenIcons = appliesDesktopSettings ? try hideDesktopIconsIfNeeded() : nil
                 defer { restoreDesktopIconsIfNeeded(hiddenIcons) }
 
                 guard let (result, resolvedKind) = try await body() else { return }
-                await finish(result, kind: resolvedKind, actionOverride: afterCaptureOverride)
+                succeeded = await finish(result, kind: resolvedKind, actionOverride: afterCaptureOverride)
             } catch CaptureError.cancelled {
                 // A cancelled capture is a normal outcome, not a failure to report.
             } catch {
@@ -530,7 +529,7 @@ final class CaptureCoordinator {
     }
 
     private func finish(_ captured: CaptureResult, kind: CaptureKind,
-                        actionOverride: AfterCaptureAction? = nil) async {
+                        actionOverride: AfterCaptureAction? = nil) async -> Bool {
         if CaptureSettings.playsSound { playCaptureSound() }
 
         let action = actionOverride ?? CaptureSettings.afterCapture
@@ -545,25 +544,29 @@ final class CaptureCoordinator {
             break
         case .copyToClipboard:
             do {
-                try ScreenCaptureService.shared.copyToClipboard(result)
+                try await ScreenCaptureService.shared.copyToClipboardAsync(result)
                 if CaptureSettings.overlayEnabled { showOverlay(for: stored) }
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                showOverlay(for: stored, explicit: true)
+                return false
             }
         case .saveToDisk:
             do {
-                let url = try ScreenCaptureService.shared.writeToDisk(result)
+                let url = try await ScreenCaptureService.shared.writeToDiskAsync(result)
                 CaptureHistory.shared.attachFile(url, to: stored.id)
                 if CaptureSettings.overlayEnabled { showOverlay(for: stored) }
             } catch {
                 GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                showOverlay(for: stored, explicit: true)
+                return false
             }
         case .openAnnotate:
             // Annotation is still useful even if persisting the original fails;
             // never silently disguise that failure as a successful save.
             var url: URL?
             do {
-                url = try ScreenCaptureService.shared.writeToDisk(result)
+                url = try await ScreenCaptureService.shared.writeToDiskAsync(result)
                 if let url { CaptureHistory.shared.attachFile(url, to: stored.id) }
             } catch {
                 GestureHUD.shared.show(title: "Original Save Failed", detail: error.localizedDescription)
@@ -572,6 +575,7 @@ final class CaptureCoordinator {
         case .showOverlay:
             showOverlay(for: stored)
         }
+        return true
     }
 
     /// CleanShot's "Automatically apply preset to all screenshots": the
@@ -598,6 +602,13 @@ final class CaptureCoordinator {
     private func showOverlay(for entry: CaptureHistoryEntry, forcedAutoCloseSeconds: TimeInterval? = nil,
                              explicit: Bool = false) {
         guard explicit || CaptureSettings.overlayEnabled else { return }
+        if let existing = overlayControllers.first(where: { $0.captureID == entry.id }) {
+            if areQuickAccessHidden {
+                areQuickAccessHidden = false
+                overlayControllers.forEach { $0.setTemporarilyHidden(false) }
+            } else { existing.setTemporarilyHidden(false) }
+            return
+        }
         let controller = QuickAccessOverlayController(
             entry: entry, stackIndex: overlayControllers.count,
             forcedAutoCloseSeconds: forcedAutoCloseSeconds)
