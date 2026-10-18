@@ -502,8 +502,11 @@ final class QuickAccessOverlayController {
                         }
                         if source != url { try FileManager.default.copyItem(at: source, to: url) }
                     } else {
-                        let data = try ScreenCaptureService.shared.encode(self.currentResult())
-                        try data.write(to: url, options: .atomic)
+                        // F-04D: snapshot the pixels and format on the main
+                        // actor, then encode/write to the panel's URL off it.
+                        let capture = self.currentResult()
+                        let format = CaptureSettings.format
+                        try await ScreenCaptureService.shared.writeToURLAsync(capture, to: url, format: format)
                     }
                     GestureHUD.shared.show(title: "Saved As", detail: url.lastPathComponent)
                     self.dismiss(deleteFile: false)

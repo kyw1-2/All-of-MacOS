@@ -44,6 +44,25 @@ final class ClipboardPasteLogEncryptionTests: XCTestCase {
                       "erase must not be resurrected by an in-flight write")
     }
 
+    /// Regression for the F-05 revision guard: every `scheduleSave()` must claim
+    /// a fresh revision (`writeRevision.next()`) so a superseded debounce is
+    /// discarded at write time. A long debounce keeps the scheduled snapshots
+    /// pending, so `flush()` must still persist the newest snapshot rather than
+    /// be discarded as stale by the revision check.
+    func testFlushAfterPendingScheduleStillWritesNewestSnapshot() async {
+        let dir = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 60_000_000_000)
+        let expected = [event(0), event(1)]
+        log.record(expected[0])
+        log.record(expected[1])
+        await log.flush()
+
+        XCTAssertEqual(ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0).events,
+                       expected,
+                       "flush must persist the newest snapshot even when a debounce was pending")
+    }
+
     func testEncryptedAtRestAndReadBack() async throws {
         let dir = makeDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -147,5 +166,82 @@ final class ClipboardPasteLogEncryptionTests: XCTestCase {
         await log.flush()
         XCTAssertEqual(ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0).events, [known, extra],
                        "the deduplicated merge must survive a reload")
+    }
+
+    /// F-05 revision regression: a persist queued by an older snapshot must not
+    /// overwrite a newer one that lands first. The first snapshot is parked at
+    /// the `willPersist` seam, a newer snapshot is flushed, then the stale
+    /// snapshot is released; its revision must make it discard itself.
+    func testStaleQueuedSnapshotCannotOverwriteNewerOne() async {
+        let dir = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let gate = PasteLogWriteGate()
+        let log = ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0,
+                                    willPersist: { await gate.holdFirst() },
+                                    didPersist: { await gate.noteSettled() })
+        let first = event(1)
+        let second = event(2)
+
+        log.record(first)
+        await gate.waitUntilHeld()    // [first] is parked before it reaches the queue
+
+        log.record(second)
+        await log.flush()             // [first, second] lands while [first] is parked
+
+        await gate.release()          // let the parked [first] reach the queue
+        await gate.waitForSettled(2)  // and finish (discarded as stale)
+
+        XCTAssertEqual(ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0).events,
+                       [first, second],
+                       "a stale snapshot released after a newer write must be discarded")
+
+        log.erase()
+        await log.flush()
+        XCTAssertTrue(ClipboardPasteLog(directory: dir, cipher: testCipher, saveDelay: 0).events.isEmpty,
+                      "erase must stay terminal after the stale write settled")
+    }
+}
+
+/// Deterministic F-05 race seam. Parks the first paste-log write before it is
+/// handed to the serial queue and reports how many writes have settled.
+private actor PasteLogWriteGate {
+    private var held = false
+    private var heldWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var released = false
+    private var settled = 0
+    private var settledWaiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    /// The first call parks until `release()`; later calls return immediately.
+    func holdFirst() async {
+        guard !held else { return }
+        held = true
+        heldWaiter?.resume()
+        heldWaiter = nil
+        if released { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilHeld() async {
+        if held { return }
+        await withCheckedContinuation { heldWaiter = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func noteSettled() {
+        settled += 1
+        let ready = settledWaiters.filter { settled >= $0.target }
+        settledWaiters.removeAll { settled >= $0.target }
+        for waiter in ready { waiter.continuation.resume() }
+    }
+
+    func waitForSettled(_ target: Int) async {
+        if settled >= target { return }
+        await withCheckedContinuation { settledWaiters.append((target, $0)) }
     }
 }

@@ -512,6 +512,28 @@ final class ScreenCaptureService {
         }
     }
 
+    /// Encodes a capture at full quality on the shared encoding queue and writes
+    /// it atomically to a caller-chosen URL, replacing any existing file.
+    ///
+    /// This is the Save As counterpart to `writeToDiskAsync`: a save panel owns
+    /// the destination and its own overwrite confirmation, so the write is
+    /// atomic and may replace, matching the synchronous
+    /// `encode(...).write(to:options:.atomic)` it replaces. `format` is taken
+    /// from the caller and the current quality is snapshotted before the encode
+    /// runs, so the queue never reads mutable preferences off the UI thread.
+    func writeToURLAsync(_ result: CaptureResult, to url: URL,
+                         format: CaptureFormat = CaptureSettings.format) async throws {
+        let quality = CaptureSettings.quality
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.encodingQueue.async {
+                continuation.resume(with: Result {
+                    let data = try self.encode(result, format: format, quality: quality)
+                    try data.write(to: url, options: .atomic)
+                })
+            }
+        }
+    }
+
     private static func writeEncoded(_ data: Data, directory: URL, name: String, format: CaptureFormat) throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var counter = 1

@@ -267,12 +267,20 @@ final class ClipboardPasteLog {
     private let saveDelay: UInt64
     private let queue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-paste-log", qos: .utility)
     private let writeRevision = PasteLogRevision()
+    /// Testing seams, `nil` in production. `willPersist` runs on the main actor
+    /// just before a snapshot is handed to the serial write queue; `didPersist`
+    /// runs after that queue block has finished, whether it wrote or was
+    /// discarded as stale.
+    private let willPersist: (@Sendable () async -> Void)?
+    private let didPersist: (@Sendable () async -> Void)?
     private var saveTask: Task<Void, Never>?
     /// Blocked when an existing encrypted log could not be opened, so a
     /// Keychain or decode failure cannot overwrite the only copy.
     private var writable = true
 
-    init(directory: URL, cipher: PasteLogCipher? = nil, saveDelay: UInt64 = 800_000_000) {
+    init(directory: URL, cipher: PasteLogCipher? = nil, saveDelay: UInt64 = 800_000_000,
+         willPersist: (@Sendable () async -> Void)? = nil,
+         didPersist: (@Sendable () async -> Void)? = nil) {
         self.directory = directory
         let isolated = PresetManager.isRunningTests || PresetManager.isUIPreview
         let cipher = cipher ?? (isolated ? .plaintext : .keychain)
@@ -280,6 +288,8 @@ final class ClipboardPasteLog {
         self.primaryURL = directory.appendingPathComponent(cipher.isEncrypted ? "paste-events-v2.encrypted" : "paste-events.json")
         self.legacyURL = directory.appendingPathComponent("paste-events.json")
         self.saveDelay = saveDelay
+        self.willPersist = willPersist
+        self.didPersist = didPersist
         load()
     }
 
@@ -343,7 +353,12 @@ final class ClipboardPasteLog {
     func flush() async {
         saveTask?.cancel()
         saveTask = nil
-        if !events.isEmpty { await persist(events, revision: writeRevision.current) }
+        if !events.isEmpty {
+            // Claim a fresh generation so a write already queued by the
+            // cancelled debounce cannot land after this one with an equal
+            // revision.
+            await persist(events, revision: writeRevision.next())
+        }
         await barrier()
     }
 
@@ -367,7 +382,10 @@ final class ClipboardPasteLog {
         guard writable else { return }
         saveTask?.cancel()
         let snapshot = events
-        let captured = writeRevision.current
+        // Claim a fresh revision for this snapshot *before* the debounce runs,
+        // so an older in-flight write (which captured an earlier revision)
+        // can never land after this newer one.
+        let captured = writeRevision.next()
         let delay = saveDelay
         saveTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
@@ -378,6 +396,7 @@ final class ClipboardPasteLog {
 
     private func persist(_ snapshot: [ClipboardPasteEvent], revision captured: Int) async {
         guard writable else { return }
+        await willPersist?()
         let cipher = cipher, primary = primaryURL, legacy = legacyURL, directory = directory
         let revisionCounter = writeRevision
         let encrypted = cipher.isEncrypted
@@ -395,6 +414,7 @@ final class ClipboardPasteLog {
                 return .failure(error)
             }
         }
+        await didPersist?()
         guard let outcome else { return } // superseded by a newer write or an erase
         switch outcome {
         case .success:

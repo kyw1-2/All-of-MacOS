@@ -584,6 +584,37 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
     }
 
+    /// F-04D: the Save As helper encodes the requested format at a caller-chosen
+    /// URL, replaces an existing file (the panel already confirmed overwrite),
+    /// and surfaces a write failure instead of reporting a false success.
+    func testWriteToURLAsyncHonoursFormatOverwritesAndThrows() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aom-capture-url-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let image = makeImage(width: 20, height: 20)
+        let result = CaptureResult(image: image, globalRect: .zero, scale: 1, kind: .area)
+        let destination = directory.appendingPathComponent("chosen.png")
+
+        // Stale bytes at the panel's URL must be replaced by the encoded image.
+        try Data("stale".utf8).write(to: destination)
+        try await ScreenCaptureService.shared.writeToURLAsync(result, to: destination, format: .png)
+
+        let data = try Data(contentsOf: destination)
+        XCTAssertEqual(Array(data.prefix(4)), [0x89, 0x50, 0x4E, 0x47],
+                       "the helper must encode the requested format at the caller's URL")
+
+        // A destination under a missing directory must throw to the caller.
+        let missing = directory.appendingPathComponent("missing").appendingPathComponent("out.jpg")
+        do {
+            try await ScreenCaptureService.shared.writeToURLAsync(result, to: missing, format: .jpeg)
+            XCTFail("writing under a missing directory must throw")
+        } catch {
+            // expected: the encode/write failure reaches the awaiting save path
+        }
+    }
+
     // MARK: - History
 
     @MainActor
