@@ -844,7 +844,7 @@ final class QuickAccessOverlayController {
     }
 
     private func resumeAutoClose() {
-        guard panel != nil, !hovering, !dragging, !temporarilyHidden, resumedAt == nil,
+        guard panel != nil, !hovering, !dragging, !temporarilyHidden, !mediaOperationInProgress, resumedAt == nil,
               let remaining = secondsRemaining else { return }
         closeTimer?.cancel()
         resumedAt = ProcessInfo.processInfo.systemUptime
@@ -853,10 +853,10 @@ final class QuickAccessOverlayController {
             guard !Task.isCancelled, let self, !self.hovering,
                   !self.dragging, !self.temporarilyHidden else { return }
             self.resumedAt = nil
+            self.closeTimer = nil
+            self.secondsRemaining = nil
             if CaptureSettings.overlayAutoCloseSave {
-                if self.saveWithoutPrompt() == false {
-                    self.secondsRemaining = nil
-                }
+                _ = await self.saveWithoutPrompt()
             } else {
                 self.dismiss(deleteFile: false)
             }
