@@ -8,6 +8,7 @@ struct ClipboardSettingsView: View {
     @State private var recording: ClipboardShortcuts.Command?
     @State private var keyMonitor: Any?
     @State private var clearConfirmation = false
+    @State private var recoverConfirmation = false
     @State private var recordingNote = ""
 
     init(store: ClipboardStore = .shared) { self.store = store }
@@ -107,6 +108,21 @@ struct ClipboardSettingsView: View {
                             Button("Undo Delete") { _ = store.undoDeletion() }.disabled(!store.canUndoDeletion)
                             Button("Clear Unpinned History…", role: .destructive) { clearConfirmation = true }
                         }
+                        if let warning = store.storageWarning {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(warning).font(.caption)
+                                    if store.storageStatus == .unreadableArchive {
+                                        Button("Recover Clipboard Storage…") { recoverConfirmation = true }
+                                            .controlSize(.small)
+                                    } else {
+                                        Button("Retry Saving Now") { Task { await store.recoverStorage() } }
+                                            .controlSize(.small)
+                                    }
+                                }
+                            }
+                        }
                         if let error = store.lastError { Text(error).foregroundStyle(.red).font(.caption) }
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -117,6 +133,12 @@ struct ClipboardSettingsView: View {
             Button("Clear Unpinned History", role: .destructive) { store.clearUnpinned() }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Pinned items and the current system clipboard will be kept.") }
+        .confirmationDialog("Recover clipboard storage?", isPresented: $recoverConfirmation) {
+            Button("Archive Unreadable File and Resume", role: .destructive) {
+                Task { await store.recoverStorage() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The unreadable file is renamed and kept; AOM then starts a new history file.") }
     }
 
     private func startRecording(_ command: ClipboardShortcuts.Command) {

@@ -33,11 +33,16 @@ enum CaptureActions {
             GestureHUD.shared.show(title: "Copied", detail: "MP4 file on the clipboard")
             return
         }
-        do {
-            try ScreenCaptureService.shared.copyToClipboard(result(for: entry))
-            GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
-        } catch {
-            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+        // F-04A: encode off the main thread so copying a full-resolution
+        // capture cannot block the UI; show the HUD only once the pasteboard
+        // actually holds the pixels.
+        Task { @MainActor in
+            do {
+                try await ScreenCaptureService.shared.copyToClipboardAsync(result(for: entry))
+                GestureHUD.shared.show(title: "Copied", detail: "Image on the clipboard")
+            } catch {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+            }
         }
     }
 
@@ -55,12 +60,16 @@ enum CaptureActions {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             return
         }
-        do {
-            let url = try ScreenCaptureService.shared.writeToDisk(result(for: entry))
-            CaptureHistory.shared.attachFile(url, to: entry.id)
-            GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
-        } catch {
-            GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+        // F-04A: encode/write off the main thread; the history entry can only be
+        // given its file once the write has actually landed.
+        Task { @MainActor in
+            do {
+                let url = try await ScreenCaptureService.shared.writeToDiskAsync(result(for: entry))
+                CaptureHistory.shared.attachFile(url, to: entry.id)
+                GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+            } catch {
+                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            }
         }
     }
 
@@ -71,13 +80,27 @@ enum CaptureActions {
             return
         }
         // Write the file first so the pin has something to hand to another app
-        // when it is dragged out.
-        var url = entry.fileURL
-        if url == nil || !FileManager.default.fileExists(atPath: url?.path ?? "") {
-            url = try? ScreenCaptureService.shared.writeToDisk(result(for: entry))
-            if let url { CaptureHistory.shared.attachFile(url, to: entry.id) }
+        // when it is dragged out. A never-saved capture has to be encoded off
+        // the main thread, so the pin is created only once the write finishes.
+        if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
+            PinnedScreenshotController.shared.pin(entry: entry, url: url)
+            return
         }
-        PinnedScreenshotController.shared.pin(entry: entry, url: url)
+        Task { @MainActor in
+            var pinURL: URL?
+            do {
+                let written = try await ScreenCaptureService.shared.writeToDiskAsync(result(for: entry))
+                if let current = entry.fileURL, FileManager.default.fileExists(atPath: current.path) {
+                    pinURL = current
+                } else {
+                    CaptureHistory.shared.attachFile(written, to: entry.id)
+                    pinURL = written
+                }
+            } catch {
+                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            }
+            PinnedScreenshotController.shared.pin(entry: entry, url: pinURL)
+        }
     }
 
     static func copyTextFromLastCapture(completion: ((Bool) -> Void)? = nil) {
@@ -200,10 +223,14 @@ private struct HistoryCell: View {
                     let result = CaptureResult(image: entry.image, globalRect: .zero, scale: entry.scale,
                                                kind: entry.kind, windowTitle: entry.windowTitle,
                                                capturedAt: entry.capturedAt)
-                    do {
-                        try ScreenCaptureService.shared.copyToClipboard(result)
-                    } catch {
-                        GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                    // Encode off the main thread; the HUD reports the same
+                    // failure only after the pasteboard write has been attempted.
+                    Task { @MainActor in
+                        do {
+                            try await ScreenCaptureService.shared.copyToClipboardAsync(result)
+                        } catch {
+                            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                        }
                     }
                 }
                 Button("Annotate") {

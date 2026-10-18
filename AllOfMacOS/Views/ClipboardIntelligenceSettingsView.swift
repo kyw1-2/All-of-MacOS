@@ -20,6 +20,15 @@ struct ClipboardIntelligenceSettingsView: View {
         var token: String?
     }
 
+    /// The destination-window model needs the multimodal Foundation Models API,
+    /// which is macOS 27+. Say so instead of offering an inert toggle.
+    private var destinationModelCopy: String {
+        guard ClipboardIntelligence.destinationModelAvailable else {
+            return "Requires macOS 27 with Apple Intelligence. Suggestions still work from the focused field and your paste history."
+        }
+        return "Only when you open the clipboard and the field type is unclear, a small screenshot of that window is read by Apple Intelligence on this Mac. Needs Screen Recording access."
+    }
+
     var body: some View {
         GroupBox("Intelligence") {
             VStack(alignment: .leading, spacing: 12) {
@@ -27,15 +36,15 @@ struct ClipboardIntelligenceSettingsView: View {
                     .onChange(of: intelligent) { _, value in ClipboardIntelligence.shared.isEnabled = value }
                 Text("Suggests what you are about to paste, based on the field you are typing into and what you pasted there before. Suggested items appear first with ✦. Everything stays on your Mac.")
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle("Look at the destination window with the on-device model", isOn: $readsScreen)
-                    .disabled(!intelligent || !ClipboardIntelligence.modelAvailable)
+                Toggle("Look at the destination window with the on-device model",
+                       isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
+                                     set: { readsScreen = $0 }))
+                    .disabled(!intelligent || !ClipboardIntelligence.destinationModelAvailable)
                     .onChange(of: readsScreen) { _, value in
                         ClipboardIntelligence.shared.readsDestinationScreen = value
                         if value && !ScreenCaptureService.hasPermission { _ = ScreenCaptureService.requestPermission() }
                     }
-                Text(ClipboardIntelligence.modelAvailable
-                     ? "Only when you open the clipboard and the field type is unclear, a small screenshot of that window is read by Apple Intelligence on this Mac. Needs Screen Recording access."
-                     : "Requires Apple Intelligence. Suggestions still work from the focused field and your paste history.")
+                Text(destinationModelCopy)
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Erase Suggestion History…") { eraseConfirmation = true }
                     .disabled(ClipboardIntelligence.shared.log(for: store).events.isEmpty)
@@ -95,6 +104,7 @@ private struct ClipboardMCPConnectSheet: View {
     @State var request: ClipboardIntelligenceSettingsView.ConnectRequest
     let done: () -> Void
     @State private var copied = false
+    @State private var connectError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -121,11 +131,19 @@ private struct ClipboardMCPConnectSheet: View {
                 }
             } else {
                 TextField("Name (e.g. My AI Tool)", text: $request.name).textFieldStyle(.roundedBorder)
+                if let connectError {
+                    Text(connectError).font(.caption).foregroundStyle(.red)
+                }
                 HStack {
                     Spacer()
                     Button("Cancel") { done() }.keyboardShortcut(.cancelAction)
                     Button("Create") {
-                        request.token = ClipboardMCPSettings.shared.connect(name: request.name, client: request.client.rawValue)
+                        do {
+                            request.token = try ClipboardMCPSettings.shared.connect(name: request.name, client: request.client.rawValue)
+                            connectError = nil
+                        } catch {
+                            connectError = error.localizedDescription
+                        }
                     }.keyboardShortcut(.defaultAction)
                 }
             }

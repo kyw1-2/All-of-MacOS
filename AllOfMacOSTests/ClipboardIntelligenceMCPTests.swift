@@ -84,17 +84,17 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertEqual(ClipboardPanelState.promoting([UUID()], in: [a, b]).map(\.id), [a.id, b.id])
     }
 
-    func testPasteLogPersistsAndCaps() throws {
+    func testPasteLogPersistsAndCaps() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("aom-pastelog-\(UUID())")
         defer { try? FileManager.default.removeItem(at: dir) }
         let log = ClipboardPasteLog(directory: dir)
         let event = ClipboardPasteEvent(entryID: UUID(), itemClass: .link, sourceBundleID: "a", destinationBundleID: "b",
                                         destinationKind: .search, date: Date())
         log.record(event)
-        let deadline = Date().addingTimeInterval(3)
-        while ClipboardPasteLog(directory: dir).events.isEmpty, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        await log.flush()
         XCTAssertEqual(ClipboardPasteLog(directory: dir).events, [event])
         log.erase()
+        await log.flush()
         XCTAssertTrue(ClipboardPasteLog(directory: dir).events.isEmpty)
     }
 
@@ -175,9 +175,9 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertEqual(call("read_item", ["id": UUID().uuidString], store: store)["isError"] as? Bool, true)
     }
 
-    func testMCPTokensAreHashedAndRevocable() {
+    func testMCPTokensAreHashedAndRevocable() throws {
         let settings = ClipboardMCPSettings(defaults: UserDefaults(suiteName: "AOMMCPTest.\(UUID())")!)
-        let token = settings.connect(name: "Codex", client: "Codex")
+        let token = try settings.connect(name: "Codex", client: "Codex")
         XCTAssertTrue(token.hasPrefix("aom_"))
         XCTAssertEqual(settings.tools.count, 1)
         XCTAssertNotEqual(settings.tools[0].tokenHash, token, "only a hash is stored")
@@ -187,5 +187,40 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertTrue(snippet.contains("--mcp") && snippet.contains("AOM_MCP_TOKEN=\(token)"))
         settings.disconnect(settings.tools[0].id)
         XCTAssertNil(settings.tool(forToken: token))
+    }
+
+    /// F-07: a CSPRNG failure must not mint the fixed all-zero token, and must
+    /// not leave a connected tool behind.
+    func testMCPConnectFailsClosedWhenRandomnessIsUnavailable() throws {
+        let suite = "AOMMCPTest.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = ClipboardMCPSettings(defaults: defaults)
+
+        XCTAssertThrowsError(try settings.connect(name: "Bad", client: "Custom Tool", randomBytes: { _ in nil })) { error in
+            XCTAssertEqual(error as? ClipboardMCPSettings.TokenError, .randomnessUnavailable)
+        }
+        XCTAssertTrue(settings.tools.isEmpty, "a failed RNG must not connect a tool")
+
+        let token = try settings.connect(name: "Good", client: "Custom Tool", randomBytes: { count in
+            [UInt8](repeating: 0xA5, count: count)
+        })
+        XCTAssertTrue(token.hasPrefix("aom_"))
+        XCTAssertEqual(settings.tools.count, 1)
+        XCTAssertEqual(settings.tool(forToken: token)?.name, "Good")
+    }
+
+    /// F-03: `FoundationModels.Attachment(image)` is macOS 27+, so the
+    /// destination-window refinement must never be reported as available on an
+    /// earlier OS. This guards against the 27.0 gate being lowered to 26.0.
+    func testDestinationWindowModelRequiresMacOS27() {
+        if #unavailable(macOS 27.0) {
+            XCTAssertFalse(ClipboardIntelligence.destinationModelAvailable,
+                           "Attachment(image) does not exist before macOS 27; the toggle must not be enabled")
+        }
+        if ClipboardIntelligence.destinationModelAvailable {
+            XCTAssertTrue(ClipboardIntelligence.modelAvailable,
+                          "the multimodal gate must imply the base on-device model")
+        }
     }
 }

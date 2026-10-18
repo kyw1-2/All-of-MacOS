@@ -33,6 +33,10 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     /// Optional fields keep older clipboard archives readable. OCR stays on device.
     var recognizedText: String?
     var recognizedImageDigest: String?
+    /// Set on entries created by `ClipboardStore.duplicate(entryID:)`. It marks
+    /// a user-made "Copy" so a later copy of the *original* content is credited
+    /// to the original during de-duplication instead of to the copy.
+    var duplicatedFrom: UUID? = nil
 
     init(id: UUID = UUID(), title: String, text: String? = nil, kind: Kind = .text,
          sourceName: String? = nil, sourceBundleID: String? = nil, createdAt: Date = Date(),

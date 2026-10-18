@@ -6,27 +6,76 @@ import UniformTypeIdentifiers
 
 /// One capture kept in the session history.
 ///
-/// The pixels are held in memory rather than re-read from disk so the overlay and
-/// the annotate editor stay responsive and work even when the user chose "Do
-/// Nothing" and no file was ever written.
+/// The pixels are resident while the entry is within the history's byte budget
+/// and are lazily re-read from the managed PNG once evicted, so the overlay and
+/// the annotate editor still get full fidelity on demand. A capture with no
+/// managed PNG yet (the user chose "Do Nothing", or the async write is still in
+/// flight) stays resident and is never evictable, so nothing is lost.
 final class CaptureHistoryEntry: Identifiable {
     let id: UUID
-    /// Mutable only through `replaceImage` (Quick Access Rotate/Flip/Resize).
-    private(set) var image: CGImage
     let kind: CaptureKind
     let capturedAt: Date
     let windowTitle: String?
     /// The file on disk, once one has been written. Nil until then.
     var fileURL: URL?
     var isPinned: Bool = false
-    /// The small preview the overlay draws; built once and reused.
+
+    /// The capture's size in points, as it was on screen.
+    ///
+    /// This is recorded at capture time rather than derived from the pixel size,
+    /// because the editor and the pin window size themselves in points and a
+    /// derived value would be wrong for any capture that is not 1x or 2x.
+    private(set) var pointSize: CGSize
+    /// The backing scale the capture was taken at.
+    private(set) var scale: CGFloat
+    /// Pixel dimensions kept as metadata so the history UI can size a card
+    /// without decoding the bitmap.
+    private(set) var pixelWidth: Int
+    private(set) var pixelHeight: Int
+
+    /// The managed PNG that holds the current pixels, once one exists. Only
+    /// cache-owned files are read back here; user screenshots are not.
+    private var cacheURL: URL?
+    /// True only while `cacheURL` holds the *current* pixels. An in-place edit
+    /// clears it until the replacement PNG has been written, so a stale cache
+    /// can never be rehydrated as if it were the edit.
+    private var cacheIsCurrent = false
+    /// Bumped by every cache write so a late completion cannot mark pixels from
+    /// an older edit as current.
+    private var cacheGeneration = 0
+    /// The decoded bitmap, or nil once the memory policy has evicted it. It is
+    /// lazily re-read from `cacheURL`, which keeps full fidelity on demand.
+    private var residentImage: CGImage?
+    /// The small preview the overlay draws; built once and reused while the
+    /// entry is resident.
     private var cachedThumbnail: NSImage?
-    var thumbnail: NSImage {
-        if let cachedThumbnail { return cachedThumbnail }
-        let made = Self.makeThumbnail(image)
-        cachedThumbnail = made
-        return made
+    /// Called after a lazy rehydration so the owning history can re-apply its
+    /// byte budget. Set by `CaptureHistory`; nil for detached entries.
+    var onResidencyChange: (() -> Void)?
+
+    /// Full-fidelity pixels. Resident when in memory; otherwise decoded on
+    /// demand from the managed PNG and kept until the budget evicts it again.
+    var image: CGImage {
+        if let residentImage { return residentImage }
+        if cacheIsCurrent, let cacheURL, let loaded = Self.decode(cacheURL) {
+            residentImage = loaded
+            onResidencyChange?()
+            return loaded
+        }
+        // Only reachable if the managed cache was removed outside the app.
+        return Self.placeholderImage
     }
+
+    var isResident: Bool { residentImage != nil }
+
+    /// A resident bitmap may be dropped only when the managed PNG already holds
+    /// the current pixels; otherwise dropping it would lose an unsaved capture.
+    var canEvictResidentImage: Bool { residentImage != nil && cacheIsCurrent && cacheURL != nil }
+
+    /// Bytes of decoded surface this entry keeps resident (4 bytes per pixel).
+    var residentByteCost: Int { residentImage == nil ? 0 : pixelWidth * pixelHeight * 4 }
+
+    var pixelSize: CGSize { CGSize(width: pixelWidth, height: pixelHeight) }
 
     var displayName: String {
         if let windowTitle, !windowTitle.isEmpty { return windowTitle }
@@ -41,22 +90,51 @@ final class CaptureHistoryEntry: Identifiable {
         return fileURL
     }
 
-    var pixelSize: CGSize { CGSize(width: image.width, height: image.height) }
+    var thumbnail: NSImage {
+        if let cachedThumbnail { return cachedThumbnail }
+        if let residentImage {
+            let made = Self.makeThumbnail(residentImage)
+            cachedThumbnail = made
+            return made
+        }
+        // Evicted entries build a downscaled preview straight from the PNG, so
+        // the full bitmap is never decoded just to draw a card. It is not kept,
+        // which bounds the thumbnail cache to the resident set.
+        if cacheIsCurrent, let cacheURL, let made = Self.makeThumbnail(from: cacheURL) { return made }
+        let made = Self.makeThumbnail(image)
+        cachedThumbnail = made
+        return made
+    }
 
-    /// The capture's size in points, as it was on screen.
-    ///
-    /// This is recorded at capture time rather than derived from the pixel size,
-    /// because the editor and the pin window size themselves in points and a
-    /// derived value would be wrong for any capture that is not 1× or 2×.
-    private(set) var pointSize: CGSize
-    /// The backing scale the capture was taken at.
-    private(set) var scale: CGFloat
+    /// Drops the decoded bitmap, keeping the managed PNG for later rehydration.
+    func evictResidentImage() {
+        guard canEvictResidentImage else { return }
+        residentImage = nil
+        cachedThumbnail = nil
+    }
+
+    /// Marks the start of a managed-PNG write and returns its generation.
+    func beginCacheWrite() -> Int {
+        cacheGeneration += 1
+        return cacheGeneration
+    }
+
+    /// Marks the managed PNG current only if no newer edit superseded it.
+    func markCacheCurrent(url: URL, generation: Int) {
+        guard generation == cacheGeneration else { return }
+        cacheURL = url
+        cacheIsCurrent = true
+    }
 
     /// Swaps in edited pixels. The on-screen point size follows the new pixel
     /// size at `scale`, and the cached thumbnail is rebuilt on next access.
+    /// The managed PNG stays stale until the replacement write lands.
     func replaceImage(_ newImage: CGImage, scale newScale: CGFloat) {
-        image = newImage
+        residentImage = newImage
+        cacheIsCurrent = false
         scale = max(1, newScale)
+        pixelWidth = newImage.width
+        pixelHeight = newImage.height
         pointSize = CGSize(width: CGFloat(newImage.width) / scale,
                            height: CGFloat(newImage.height) / scale)
         cachedThumbnail = nil
@@ -66,15 +144,59 @@ final class CaptureHistoryEntry: Identifiable {
          windowTitle: String?, fileURL: URL?,
          pointSize: CGSize? = nil, scale: CGFloat = 1) {
         self.id = id
-        self.image = image
         self.kind = kind
         self.capturedAt = capturedAt
         self.windowTitle = windowTitle
         self.fileURL = fileURL
         self.scale = scale
+        self.pixelWidth = image.width
+        self.pixelHeight = image.height
         self.pointSize = pointSize ?? CGSize(width: CGFloat(image.width) / max(1, scale),
                                              height: CGFloat(image.height) / max(1, scale))
+        self.residentImage = image
     }
+
+    /// Metadata-only entry for a managed PNG already on disk. No pixels are
+    /// decoded until `image` (or another full-fidelity consumer) asks for them,
+    /// which is what keeps startup from loading the whole history into RAM.
+    init(id: UUID, kind: CaptureKind, capturedAt: Date, windowTitle: String?,
+         fileURL: URL?, pointSize: CGSize, scale: CGFloat,
+         pixelWidth: Int, pixelHeight: Int, cacheURL: URL) {
+        self.id = id
+        self.kind = kind
+        self.capturedAt = capturedAt
+        self.windowTitle = windowTitle
+        self.fileURL = fileURL
+        self.scale = scale
+        self.pointSize = pointSize
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.cacheURL = cacheURL
+        self.cacheIsCurrent = true
+    }
+
+    private static func decode(_ url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    private static func makeThumbnail(from url: URL, maxSide: CGFloat = 480) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxSide),
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
+    private static let placeholderImage: CGImage = {
+        let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        return context.makeImage()!
+    }()
 
     private static func makeThumbnail(_ image: CGImage, maxSide: CGFloat = 480) -> NSImage {
         let width = CGFloat(image.width), height = CGFloat(image.height)
@@ -82,8 +204,8 @@ final class CaptureHistoryEntry: Identifiable {
         let target = CGSize(width: max(1, (width * scale).rounded()), height: max(1, (height * scale).rounded()))
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(target.width), pixelsHigh: Int(target.height),
                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-        guard let rep else { return NSImage(cgImage: image, size: NSSize(width: width, height: height)) }
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = target
         NSGraphicsContext.saveGraphicsState()
         if let context = NSGraphicsContext(bitmapImageRep: rep) {
             NSGraphicsContext.current = context
@@ -123,6 +245,16 @@ final class CaptureHistory: ObservableObject {
     @Published private(set) var entries: [CaptureHistoryEntry] = []
     private let directory: URL
     private var manifestURL: URL { directory.appendingPathComponent("history-v1.json") }
+    /// Upper bound on decoded bitmap bytes kept resident across all entries.
+    ///
+    /// Pinned entries are never *removed* for this budget and their managed
+    /// PNGs are never deleted; only their decoded bitmap may be dropped and
+    /// lazily rehydrated, which keeps an unbounded pin set from exhausting RAM
+    /// while pins stay durable.
+    private let residentByteBudget: Int
+    /// Cache writes still awaiting their managed PNG and main-actor completion.
+    private var pendingCacheCompletions = 0
+    private var cacheCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
     private struct Record: Codable {
         let id: UUID
@@ -136,8 +268,9 @@ final class CaptureHistory: ObservableObject {
         var isPinned: Bool? = nil
     }
 
-    init(directory: URL) {
+    init(directory: URL, residentByteBudget: Int = 512 * 1_024 * 1_024) {
         self.directory = directory
+        self.residentByteBudget = max(0, residentByteBudget)
         load()
     }
 
@@ -152,21 +285,39 @@ final class CaptureHistory: ObservableObject {
         guard let data = try? Data(contentsOf: manifestURL),
               let records = try? JSONDecoder().decode([Record].self, from: data) else { return }
         // The file name is always derived from the validated UUID and stays in
-        // our managed folder, even if manifest text was corrupted.
+        // our managed folder, even if manifest text was corrupted. Only the PNG
+        // header is read here: pixels are decoded lazily on demand, so startup
+        // no longer loads the whole history into RAM.
         for record in records {
             let imageFile = imageURL(for: record.id)
-            guard let source = CGImageSourceCreateWithURL(imageFile as CFURL, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
+            guard FileManager.default.fileExists(atPath: imageFile.path),
+                  let source = CGImageSourceCreateWithURL(imageFile as CFURL, nil),
+                  CGImageSourceGetCount(source) > 0 else { continue }
             let external = record.externalFilePath.map { URL(fileURLWithPath: $0) }
-            entries.append(CaptureHistoryEntry(
-                id: record.id, image: image, kind: record.kind,
+            let scale = max(1, CGFloat(record.scale))
+            let entry = CaptureHistoryEntry(
+                id: record.id, kind: record.kind,
                 capturedAt: record.capturedAt, windowTitle: record.windowTitle,
                 fileURL: external,
                 pointSize: CGSize(width: record.width, height: record.height),
-                scale: record.scale))
-            entries.last?.isPinned = record.isPinned ?? false
+                scale: scale,
+                pixelWidth: Int((record.width * Double(scale)).rounded()),
+                pixelHeight: Int((record.height * Double(scale)).rounded()),
+                cacheURL: imageFile)
+            entry.isPinned = record.isPinned ?? false
+            entry.onResidencyChange = residencyChangeHandler()
+            entries.append(entry)
         }
         trim()
+    }
+
+    /// A rehydration runs off whatever thread first needs the pixels, so hop
+    /// back to the main actor before re-applying the budget.
+    private func residencyChangeHandler() -> () -> Void {
+        { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in self.enforceResidentBudget() }
+        }
     }
 
     /// Encoding and disk I/O run on one serial utility queue, in order, so a
@@ -194,14 +345,49 @@ final class CaptureHistory: ObservableObject {
 
     private func cacheImage(_ image: CGImage, id: UUID) {
         let directory = directory, url = imageURL(for: id)
-        Self.ioQueue.async {
+        let generation = entries.first(where: { $0.id == id })?.beginCacheWrite() ?? 0
+        pendingCacheCompletions += 1
+        Self.ioQueue.async { [weak self] in
+            var wrote = false
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
-                CGImageDestinationAddImage(destination, image, nil)
-                guard CGImageDestinationFinalize(destination) else { return }
+                if let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) {
+                    CGImageDestinationAddImage(destination, image, nil)
+                    wrote = CGImageDestinationFinalize(destination)
+                }
             } catch {
                 NSLog("[CaptureHistory] Could not save history cache: %@", error.localizedDescription)
+            }
+            guard let self else { return }
+            Task { @MainActor in
+                if wrote, let stored = self.entries.first(where: { $0.id == id }) {
+                    stored.markCacheCurrent(url: url, generation: generation)
+                    self.trim()
+                }
+                self.cacheDidComplete()
+            }
+        }
+    }
+
+    private func cacheDidComplete() {
+        pendingCacheCompletions = max(0, pendingCacheCompletions - 1)
+        guard pendingCacheCompletions == 0, !cacheCompletionWaiters.isEmpty else { return }
+        let waiters = cacheCompletionWaiters
+        cacheCompletionWaiters = []
+        waiters.forEach { $0.resume() }
+    }
+
+    /// Testing seam: waits until every queued managed-PNG write has finished
+    /// and its main-actor completion has run.
+    func flushPendingCacheWrites() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Self.ioQueue.async { continuation.resume() }
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if pendingCacheCompletions == 0 {
+                continuation.resume()
+            } else {
+                cacheCompletionWaiters.append(continuation)
             }
         }
     }
@@ -221,6 +407,7 @@ final class CaptureHistory: ObservableObject {
                                         windowTitle: result.windowTitle, fileURL: url,
                                         pointSize: result.pointSize, scale: result.scale)
         guard CaptureSettings.historyCapacity > 0 else { return entry }
+        entry.onResidencyChange = residencyChangeHandler()
         entries.insert(entry, at: 0)
         cacheImage(result.image, id: entry.id)
         trim()
@@ -242,6 +429,7 @@ final class CaptureHistory: ObservableObject {
         objectWillChange.send()
         cacheImage(image, id: entry.id)
         persistIndex()
+        enforceResidentBudget()
     }
 
     func attachFile(_ url: URL, to id: UUID) {
@@ -305,7 +493,29 @@ final class CaptureHistory: ObservableObject {
         let removedIDs = Set(discarded.map(\.id))
         entries.removeAll { removedIDs.contains($0.id) }
         removeCachedImages(discarded.map(\.id))
+        enforceResidentBudget()
         persistIndex()
+    }
+
+    /// Total decoded bitmap bytes currently held across all entries.
+    var residentPixelBytes: Int { entries.reduce(0) { $0 + $1.residentByteCost } }
+
+    /// Drops decoded bitmaps (oldest first, unpinned before pinned) until the
+    /// resident set fits the byte budget. Entries, pins and managed PNGs are
+    /// never removed here, so nothing is lost and pins stay durable; evicted
+    /// pixels are rehydrated on demand.
+    private func enforceResidentBudget() {
+        var total = residentPixelBytes
+        guard total > residentByteBudget else { return }
+        let oldestFirst = entries.sorted { $0.capturedAt < $1.capturedAt }
+        for pinnedPass in [false, true] {
+            for entry in oldestFirst where entry.isPinned == pinnedPass {
+                guard total > residentByteBudget else { return }
+                guard entry.canEvictResidentImage else { continue }
+                total -= entry.residentByteCost
+                entry.evictResidentImage()
+            }
+        }
     }
 
     var mostRecent: CaptureHistoryEntry? { entries.first }

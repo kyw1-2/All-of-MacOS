@@ -48,10 +48,31 @@ final class ClipboardMCPSettings: ObservableObject {
         SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    enum TokenError: LocalizedError, Equatable {
+        case randomnessUnavailable
+        var errorDescription: String? {
+            switch self {
+            case .randomnessUnavailable:
+                return "A secure token could not be generated because the system random number generator failed. No AI tool was connected."
+            }
+        }
+    }
+
+    /// The only source of token entropy. Injectable so a test can prove the
+    /// fail-closed path; production always reads `SecRandomCopyBytes`.
+    static func secureRandomBytes(_ count: Int) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else { return nil }
+        return bytes
+    }
+
     /// Creates a tool and returns its token. The token is shown once.
-    func connect(name: String, client: String) -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+    /// Throws — and connects nothing — if the CSPRNG fails, so a degenerate
+    /// all-zero token can never be minted.
+    @discardableResult
+    func connect(name: String, client: String,
+                 randomBytes: (Int) -> [UInt8]? = ClipboardMCPSettings.secureRandomBytes) throws -> String {
+        guard let bytes = randomBytes(32), bytes.count == 32 else { throw TokenError.randomnessUnavailable }
         let token = "aom_" + Data(bytes).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

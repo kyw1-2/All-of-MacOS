@@ -128,7 +128,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 if args.contains("--aom-mcp-preview") {
                     // Isolated MCP round-trip check: prints a one-off token.
-                    let token = ClipboardMCPSettings.shared.connect(name: "Preview", client: "Custom Tool")
+                    let token = (try? ClipboardMCPSettings.shared.connect(name: "Preview", client: "Custom Tool")) ?? ""
                     print("AOM_MCP_PREVIEW_TOKEN=\(token)"); fflush(stdout)
                 }
                 if args.contains("--aom-clipboard-preview-filters") {

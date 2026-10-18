@@ -603,16 +603,21 @@ struct MediaHistoryOverlayView: View {
                 return
             }
             GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied to clipboard")
-        } else {
+            controller?.dismiss()
+            return
+        }
+        // F-04B: encode the image off the main thread; dismiss the sheet only
+        // once the pasteboard actually holds the pixels so it never closes on a
+        // stale/empty clipboard.
+        Task { @MainActor in
             do {
-                try ScreenCaptureService.shared.copyToClipboard(res)
+                try await ScreenCaptureService.shared.copyToClipboardAsync(res)
                 GestureHUD.shared.show(title: "Copied", detail: "Image copied to clipboard")
+                controller?.dismiss()
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
-                return
             }
         }
-        controller?.dismiss()
     }
 
     private func annotateEntry(_ entry: CaptureHistoryEntry) {
@@ -626,21 +631,39 @@ struct MediaHistoryOverlayView: View {
 
     private func pinEntry(_ entry: CaptureHistoryEntry) {
         guard entry.kind != .videoRecording else { previewEntry = entry; return }
-        var url = entry.fileURL
-        if url == nil || !FileManager.default.fileExists(atPath: url?.path ?? "") {
-            let res = CaptureResult(
-                image: entry.image,
-                globalRect: .zero,
-                scale: entry.scale,
-                kind: entry.kind,
-                windowTitle: entry.windowTitle,
-                capturedAt: entry.capturedAt
-            )
-            url = try? ScreenCaptureService.shared.writeToDisk(res)
-            if let url { CaptureHistory.shared.attachFile(url, to: entry.id) }
+        let res = CaptureResult(
+            image: entry.image,
+            globalRect: .zero,
+            scale: entry.scale,
+            kind: entry.kind,
+            windowTitle: entry.windowTitle,
+            capturedAt: entry.capturedAt
+        )
+        if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
+            PinnedScreenshotController.shared.pin(entry: entry, url: url)
+            controller?.dismiss()
+            return
         }
-        PinnedScreenshotController.shared.pin(entry: entry, url: url)
-        controller?.dismiss()
+        // F-04B: a pin wants a file to hand to other apps on drag-out, so write
+        // it off the main thread and pin only after the write lands. The entry
+        // may have gained a valid file (or been deleted) while we awaited, so
+        // re-check before attaching and never clobber a newer file.
+        Task { @MainActor in
+            var pinURL: URL?
+            do {
+                let written = try await ScreenCaptureService.shared.writeToDiskAsync(res)
+                if let current = entry.fileURL, FileManager.default.fileExists(atPath: current.path) {
+                    pinURL = current
+                } else {
+                    CaptureHistory.shared.attachFile(written, to: entry.id)
+                    pinURL = written
+                }
+            } catch {
+                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            }
+            PinnedScreenshotController.shared.pin(entry: entry, url: pinURL)
+            controller?.dismiss()
+        }
     }
 
     /// Reopens the capture as a Quick Access overlay (CleanShot "Restore").
@@ -904,6 +927,12 @@ private struct CaptureHistoryCard: View {
     }
 
     private func dragItemProvider() -> NSItemProvider {
+        // F-04B deferred limitation: `NSItemProvider` for `.onDrag` must be
+        // produced synchronously on the main thread, so this one path still
+        // encodes/writes with the synchronous `writeToDisk`. Making it async
+        // would need a promise-based `NSItemProvider` (e.g. `registerFileRepresentation`),
+        // which is out of scope for this bounded fix; a drag of a never-saved
+        // capture can therefore still briefly block the UI.
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
             return NSItemProvider(contentsOf: url) ?? NSItemProvider(object: entry.thumbnail)
         }

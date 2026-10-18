@@ -195,18 +195,28 @@ enum CapturePreviewActions {
     }
 
     static func copy(_ entry: CaptureHistoryEntry) {
-        do {
-            if entry.kind == .videoRecording {
+        if entry.kind == .videoRecording {
+            do {
                 guard let url = entry.playableVideoURL,
                       ScreenCaptureService.shared.copyFileToClipboard(url) else {
                     throw CaptureError.captureFailed("The MP4 file could not be copied.")
                 }
-            } else {
-                try ScreenCaptureService.shared.copyToClipboard(result(entry))
+                GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied")
+            } catch {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
             }
-            GestureHUD.shared.show(title: "Copied", detail: entry.kind == .videoRecording ? "MP4 file copied" : "Image copied")
-        } catch {
-            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+            return
+        }
+        // F-04B: encode off the main thread; the HUD still reports the final
+        // success/failure exactly once.
+        let capture = result(entry)
+        Task { @MainActor in
+            do {
+                try await ScreenCaptureService.shared.copyToClipboardAsync(capture)
+                GestureHUD.shared.show(title: "Copied", detail: "Image copied")
+            } catch {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+            }
         }
     }
 
@@ -218,23 +228,35 @@ enum CapturePreviewActions {
             saveAs(entry, completion: completion)
             return
         }
-        defer { completion() }
-        do {
-            let url: URL
-            if entry.kind == .videoRecording {
+        if entry.kind == .videoRecording {
+            defer { completion() }
+            do {
                 guard let file = entry.playableVideoURL else {
                     throw CaptureError.captureFailed("Recording file is missing.")
                 }
-                url = file
-            } else if let file = entry.fileURL, FileManager.default.isReadableFile(atPath: file.path) {
-                url = file
-            } else {
-                url = try ScreenCaptureService.shared.writeToDisk(result(entry))
-                CaptureHistory.shared.attachFile(url, to: entry.id)
+                GestureHUD.shared.show(title: "Saved", detail: file.lastPathComponent)
+            } catch {
+                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
             }
-            GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
-        } catch {
-            GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            return
+        }
+        if let file = entry.fileURL, FileManager.default.isReadableFile(atPath: file.path) {
+            GestureHUD.shared.show(title: "Saved", detail: file.lastPathComponent)
+            completion()
+            return
+        }
+        // F-04B: write the never-saved capture off the main thread, then run
+        // the caller's completion exactly once on every path.
+        let capture = result(entry)
+        Task { @MainActor in
+            defer { completion() }
+            do {
+                let url = try await ScreenCaptureService.shared.writeToDiskAsync(capture)
+                CaptureHistory.shared.attachFile(url, to: entry.id)
+                GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+            } catch {
+                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            }
         }
     }
 
@@ -246,10 +268,13 @@ enum CapturePreviewActions {
         panel.nameFieldStringValue = entry.fileURL?.lastPathComponent
             ?? "Screenshot-\(entry.id.uuidString.prefix(8)).\(isVideo ? "mp4" : CaptureSettings.format.fileExtension)"
         let finished: (NSApplication.ModalResponse) -> Void = { response in
-            defer { completion() }
-            guard response == .OK, let destination = panel.url else { return }
-            do {
-                if isVideo {
+            guard response == .OK, let destination = panel.url else {
+                completion()
+                return
+            }
+            if isVideo {
+                defer { completion() }
+                do {
                     guard let source = entry.playableVideoURL else {
                         throw CaptureError.captureFailed("Recording file is missing.")
                     }
@@ -264,13 +289,28 @@ enum CapturePreviewActions {
                             try FileManager.default.moveItem(at: temporary, to: destination)
                         }
                     }
-                } else {
-                    try ScreenCaptureService.shared.encode(result(entry)).write(to: destination, options: .atomic)
+                    CaptureHistory.shared.attachFile(destination, to: entry.id)
+                    GestureHUD.shared.show(title: "Saved", detail: destination.lastPathComponent)
+                } catch {
+                    GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
                 }
-                CaptureHistory.shared.attachFile(destination, to: entry.id)
-                GestureHUD.shared.show(title: "Saved", detail: destination.lastPathComponent)
-            } catch {
-                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                return
+            }
+            // F-04D: snapshot the pixels, format and entry id on the main actor,
+            // then encode and atomically write to the panel's URL off it. The
+            // completion runs exactly once, after the write resolves.
+            let capture = result(entry)
+            let format = CaptureSettings.format
+            let entryID = entry.id
+            Task { @MainActor in
+                defer { completion() }
+                do {
+                    try await ScreenCaptureService.shared.writeToURLAsync(capture, to: destination, format: format)
+                    CaptureHistory.shared.attachFile(destination, to: entryID)
+                    GestureHUD.shared.show(title: "Saved", detail: destination.lastPathComponent)
+                } catch {
+                    GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                }
             }
         }
         if let window = NSApp.keyWindow {

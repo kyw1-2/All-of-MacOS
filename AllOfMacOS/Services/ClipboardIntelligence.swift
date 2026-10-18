@@ -220,7 +220,7 @@ enum ClipboardDestinationReader {
 
 // MARK: - Paste log
 
-struct ClipboardPasteEvent: Codable, Equatable {
+struct ClipboardPasteEvent: Codable, Equatable, Hashable {
     var entryID: UUID
     var itemClass: ClipboardItemClass
     var sourceBundleID: String?
@@ -229,38 +229,203 @@ struct ClipboardPasteEvent: Codable, Equatable {
     var date: Date
 }
 
-/// Local, capped log of what was pasted where (JSON next to the clipboard
-/// store, so tests and previews stay isolated with it).
+/// Seals the paste log at rest. Production reuses the clipboard archive's
+/// Keychain-held AES-GCM key; isolated test/preview logs stay plaintext in
+/// their throwaway directory, and tests may inject a reversible cipher to
+/// exercise the encrypted path deterministically.
+struct PasteLogCipher: @unchecked Sendable {
+    let isEncrypted: Bool
+    let seal: (Data) throws -> Data
+    let open: (Data) throws -> Data
+
+    static let keychain = PasteLogCipher(isEncrypted: true,
+                                         seal: ClipboardArchiveEncryption.encrypt,
+                                         open: ClipboardArchiveEncryption.decrypt)
+    static let plaintext = PasteLogCipher(isEncrypted: false, seal: { $0 }, open: { $0 })
+}
+
+/// Local, capped log of what was pasted where. Production keeps it encrypted
+/// (`paste-events-v2.encrypted`) beside the clipboard archive; isolated
+/// test/preview runs keep the legacy plaintext `paste-events.json` in their
+/// throwaway directory. A legacy plaintext log is read once and migrated.
+///
+/// Writes are serialised through one debounced task on a single serial queue
+/// with a monotonic revision, so a burst of pastes cannot let an older
+/// snapshot land after a newer one, and `erase()` cannot be resurrected by an
+/// in-flight write. A Keychain failure never falls back to plaintext: the
+/// encrypted file is left untouched and `lastError` is set.
 @MainActor
 final class ClipboardPasteLog {
     static let limit = 2_000
     private(set) var events: [ClipboardPasteEvent] = []
-    private let url: URL
+    private(set) var lastError: String?
 
-    init(directory: URL) {
-        url = directory.appendingPathComponent("paste-events.json")
-        if let data = try? Data(contentsOf: url),
-           let decoded = try? JSONDecoder().decode([ClipboardPasteEvent].self, from: data) {
-            events = Array(decoded.suffix(Self.limit))
+    let directory: URL
+    private let primaryURL: URL
+    private let legacyURL: URL
+    private let cipher: PasteLogCipher
+    private let saveDelay: UInt64
+    private let queue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-paste-log", qos: .utility)
+    private let writeRevision = PasteLogRevision()
+    private var saveTask: Task<Void, Never>?
+    /// Blocked when an existing encrypted log could not be opened, so a
+    /// Keychain or decode failure cannot overwrite the only copy.
+    private var writable = true
+
+    init(directory: URL, cipher: PasteLogCipher? = nil, saveDelay: UInt64 = 800_000_000) {
+        self.directory = directory
+        let isolated = PresetManager.isRunningTests || PresetManager.isUIPreview
+        let cipher = cipher ?? (isolated ? .plaintext : .keychain)
+        self.cipher = cipher
+        self.primaryURL = directory.appendingPathComponent(cipher.isEncrypted ? "paste-events-v2.encrypted" : "paste-events.json")
+        self.legacyURL = directory.appendingPathComponent("paste-events.json")
+        self.saveDelay = saveDelay
+        load()
+    }
+
+    deinit { saveTask?.cancel() }
+
+    private func load() {
+        if cipher.isEncrypted {
+            if FileManager.default.fileExists(atPath: primaryURL.path) {
+                guard let data = try? Data(contentsOf: primaryURL) else {
+                    writable = false
+                    lastError = "The encrypted paste log could not be read; it was left unchanged."
+                    return
+                }
+                do {
+                    events = try decode(cipher.open(data))
+                } catch {
+                    // Preserve the unreadable file; never fall back to plaintext.
+                    writable = false
+                    lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription
+                        ?? "The encrypted paste log could not be read; it was left unchanged."
+                    return
+                }
+                mergeLegacyIfPresent()
+                return
+            }
+            // First encrypted run: migrate the legacy plaintext log, if any.
+            if let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) {
+                events = decoded
+                scheduleSave()
+            }
+            return
         }
+        if let data = try? Data(contentsOf: primaryURL), let decoded = try? decode(data) {
+            events = decoded
+        }
+    }
+
+    /// Old plaintext events are folded into the encrypted log, then the
+    /// plaintext sibling is retired only after a successful encrypted write.
+    private func mergeLegacyIfPresent() {
+        guard let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) else { return }
+        let known = Set(events)
+        let extra = decoded.filter { !known.contains($0) }
+        if !extra.isEmpty { events = Array((events + extra).suffix(Self.limit)) }
+        // Rewrite either way so the legacy file is retired.
+        scheduleSave()
+    }
+
+    private func decode(_ data: Data) throws -> [ClipboardPasteEvent] {
+        Array(try JSONDecoder().decode([ClipboardPasteEvent].self, from: data).suffix(Self.limit))
     }
 
     func record(_ event: ClipboardPasteEvent) {
         events.append(event)
         if events.count > Self.limit { events.removeFirst(events.count - Self.limit) }
-        let snapshot = events, url = url
-        Task.detached(priority: .utility) {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: [.atomic, .completeFileProtection])
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        }
+        scheduleSave()
+    }
+
+    /// Testing seam: cancel the debounce and write (and await) the current
+    /// snapshot, then wait for any queued erase to finish.
+    func flush() async {
+        saveTask?.cancel()
+        saveTask = nil
+        if !events.isEmpty { await persist(events, revision: writeRevision.current) }
+        await barrier()
     }
 
     func erase() {
         events.removeAll()
-        try? FileManager.default.removeItem(at: url)
+        saveTask?.cancel()
+        saveTask = nil
+        _ = writeRevision.next()
+        let primary = primaryURL, legacy = legacyURL
+        // Synchronous removal makes the erase visible immediately; the queued
+        // copy runs after any in-flight write and deletes a stale resurrection.
+        try? FileManager.default.removeItem(at: primary)
+        try? FileManager.default.removeItem(at: legacy)
+        queue.async {
+            try? FileManager.default.removeItem(at: primary)
+            try? FileManager.default.removeItem(at: legacy)
+        }
     }
+
+    private func scheduleSave() {
+        guard writable else { return }
+        saveTask?.cancel()
+        let snapshot = events
+        let captured = writeRevision.current
+        let delay = saveDelay
+        saveTask = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+            guard !Task.isCancelled else { return }
+            await self?.persist(snapshot, revision: captured)
+        }
+    }
+
+    private func persist(_ snapshot: [ClipboardPasteEvent], revision captured: Int) async {
+        guard writable else { return }
+        let cipher = cipher, primary = primaryURL, legacy = legacyURL, directory = directory
+        let revisionCounter = writeRevision
+        let encrypted = cipher.isEncrypted
+        let outcome: Result<Void, Error>? = await onQueue { () -> Result<Void, Error>? in
+            guard captured == revisionCounter.current else { return nil }
+            do {
+                let json = try JSONEncoder().encode(snapshot)
+                let payload = encrypted ? try cipher.seal(json) : json
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try payload.write(to: primary, options: [.atomic, .completeFileProtection])
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: primary.path)
+                if encrypted { try? FileManager.default.removeItem(at: legacy) }
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+        guard let outcome else { return } // superseded by a newer write or an erase
+        switch outcome {
+        case .success:
+            lastError = nil
+        case .failure(let error):
+            // A Keychain failure must never be "repaired" with a plaintext file.
+            lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func barrier() async {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume() }
+        }
+    }
+
+    private func onQueue<T>(_ work: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: work()) }
+        }
+    }
+}
+
+/// Thread-safe monotonic counter shared with the serial write queue so a
+/// superseded snapshot can be discarded at execution time.
+private final class PasteLogRevision: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var current: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func next() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
 }
 
 // MARK: - Ranking
@@ -370,6 +535,20 @@ final class ClipboardIntelligence {
         return value
     }
 
+    /// Whether the destination-window refinement can actually run. It sends a
+    /// screenshot to the on-device model with `Attachment(image)`, and Apple
+    /// introduces both `FoundationModels.Attachment` and
+    /// `ImageAttachmentContent` in **macOS 27.0**. This is deliberately a
+    /// stricter gate than `modelAvailable` (macOS 26.0, text-only): do not lower
+    /// it to 26.0, or the API would not exist. On macOS 26 the settings toggle
+    /// stays disabled instead of appearing enabled while doing nothing.
+    static var destinationModelAvailable: Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 27.0, *) { return modelAvailable }
+        #endif
+        return false
+    }
+
     private var classCache: [UUID: (digest: Int, value: ClipboardItemClass)] = [:]
     private var logs: [ObjectIdentifier: ClipboardPasteLog] = [:]
     private(set) var lastContext = ClipboardDestinationContext()
@@ -421,7 +600,7 @@ final class ClipboardIntelligence {
         let entries = Array(store.entries.prefix(400))
         let events = log(for: store).events
         let cache = classCache
-        let wantsModel = readsDestinationScreen && Self.modelAvailable && ScreenCaptureService.hasPermission && !isolated
+        let wantsModel = readsDestinationScreen && Self.destinationModelAvailable && ScreenCaptureService.hasPermission && !isolated
         Self.suggestionQueue.async {
             let context = ClipboardDestinationReader.read(pid: pid, bundleID: bundleID, appName: appName, isolated: isolated)
             var fresh: [UUID: (digest: Int, value: ClipboardItemClass)] = [:]
@@ -504,6 +683,9 @@ final class ClipboardIntelligence {
 
     private static func modelDestinationKind() async -> ClipboardDestinationKind? {
         #if canImport(FoundationModels)
+        // macOS 27 is required, not a typo for 26: `Attachment(image)` and
+        // `ImageAttachmentContent` are introduced in 27.0. Keep this in sync
+        // with `destinationModelAvailable`.
         if #available(macOS 27.0, *) {
             guard let window = try? await ScreenCaptureService.shared.frontmostCapturableWindow(),
                   let shot = try? await ScreenCaptureService.shared.captureWindow(window),

@@ -397,11 +397,15 @@ private final class PinnedWindow: NSPanel {
     }
 
     private func copyImage() {
-        do {
-            try ScreenCaptureService.shared.copyToClipboard(result)
-            GestureHUD.shared.show(title: "Copied", detail: nil)
-        } catch {
-            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+        // F-04B: encode off the main thread, then report the outcome once.
+        let capture = result
+        Task { @MainActor in
+            do {
+                try await ScreenCaptureService.shared.copyToClipboardAsync(capture)
+                GestureHUD.shared.show(title: "Copied", detail: nil)
+            } catch {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+            }
         }
     }
 
@@ -415,11 +419,13 @@ private final class PinnedWindow: NSPanel {
         NSApp.activate(ignoringOtherApps: true)
         panel.begin { [weak self] response in
             guard response == .OK, let destination = panel.url else { return }
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 guard let self else { return }
+                // F-04D: snapshot the pixels before the await, then encode and
+                // atomically write to the panel's URL off the main actor.
+                let capture = self.result
                 do {
-                    let data = try ScreenCaptureService.shared.encode(self.result, format: format)
-                    try data.write(to: destination, options: .atomic)
+                    try await ScreenCaptureService.shared.writeToURLAsync(capture, to: destination, format: format)
                     GestureHUD.shared.show(title: "Saved As", detail: destination.lastPathComponent)
                 } catch {
                     GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)

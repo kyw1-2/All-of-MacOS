@@ -44,6 +44,11 @@ final class SelectionOverlayController {
     private let completion: (CGRect?) -> Void
     private var didFinish = false
     private var globalKeyMonitor: Any?
+    /// The app that was frontmost when the overlay took activation, if any.
+    ///
+    /// Stored as a pid + bundle id rather than an `NSRunningApplication` so a
+    /// terminated app is never kept alive and is not reactivated.
+    private var previousFrontmost: SelectionOverlayFocusPolicy.Snapshot?
 
     init(integrated: Bool = false, startInWindowMode: Bool = false,
          completion: @escaping (CGRect?) -> Void) {
@@ -93,6 +98,9 @@ final class SelectionOverlayController {
             windows.append(window)
             window.present(initiallyActive: index == 0)
         }
+        // Remember who owned the keyboard before the overlay takes it, so a
+        // cancelled selection can hand it back. Captured before `activate`.
+        capturePreviousFrontmost()
         NSApp.activate(ignoringOtherApps: true)
         windows.first?.makeKey()
         CaptureCoordinator.textLog.info("selection overlay presented")
@@ -204,16 +212,64 @@ final class SelectionOverlayController {
         windows = []
         for window in toClose { window.orderOut(nil) }
         if rect == nil {
+            // Hand activation back to the app the overlay took it from. This
+            // runs after the windows are ordered out so the previous app is not
+            // asked to become active while a screen-saver-level panel still
+            // covers it. It is a no-op when the user has since switched apps.
+            restorePreviousFrontmostIfNeeded()
             // Cancellation does not start a capture. Notify immediately instead
             // of leaving Escape waiting on an already-busy main queue.
             completion(nil)
         } else {
+            // A successful capture must not pull focus back: the capture target
+            // (or whatever the user is doing now) keeps the keyboard.
+            previousFrontmost = nil
             // A successful capture requires one runloop turn for the selection
             // windows to disappear before ScreenCaptureKit reads any pixels.
             DispatchQueue.main.async { [completion] in
                 completion(rect)
             }
         }
+    }
+
+    /// Snapshots the frontmost app before `NSApp.activate` takes over.
+    ///
+    /// If AOM is already frontmost there is nothing to restore, so the snapshot
+    /// stays `nil` and no duplicate activation is attempted later.
+    private func capturePreviousFrontmost() {
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            previousFrontmost = nil
+            return
+        }
+        previousFrontmost = SelectionOverlayFocusPolicy.Snapshot(
+            processIdentifier: front.processIdentifier,
+            bundleIdentifier: front.bundleIdentifier)
+    }
+
+    /// Reactivates the app the overlay took activation from, if it is still the
+    /// right thing to do. Consumes the snapshot so it runs at most once.
+    private func restorePreviousFrontmostIfNeeded() {
+        guard let previous = previousFrontmost else { return }
+        previousFrontmost = nil
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let current = NSWorkspace.shared.frontmostApplication.map {
+            SelectionOverlayFocusPolicy.Snapshot(processIdentifier: $0.processIdentifier,
+                                                 bundleIdentifier: $0.bundleIdentifier)
+        }
+        guard SelectionOverlayFocusPolicy.shouldRestore(previous: previous, current: current,
+                                                        ownProcessIdentifier: ownPID) else { return }
+        // Prefer the exact process; fall back to another instance of the same
+        // bundle only if the original has quit. A terminated process is never
+        // activated: `NSRunningApplication(processIdentifier:)` already returns
+        // nil for a dead pid, and `isTerminated` covers an app that is exiting.
+        let app = NSRunningApplication(processIdentifier: previous.processIdentifier)
+            ?? previous.bundleIdentifier.flatMap {
+                NSRunningApplication.runningApplications(withBundleIdentifier: $0)
+                    .first { !$0.isTerminated }
+            }
+        guard let app, !app.isTerminated else { return }
+        _ = app.activate(options: [])
     }
 
     /// A still image of each display, used as the overlay's backdrop.
@@ -228,6 +284,31 @@ final class SelectionOverlayController {
             result[screen.displayID] = image
         }
         return result
+    }
+}
+
+/// Pure decision logic for returning keyboard focus after a cancelled
+/// selection. Kept free of AppKit objects so it can be unit-tested
+/// deterministically; the controller supplies the live snapshots.
+enum SelectionOverlayFocusPolicy {
+    /// A frontmost application, identified by process and bundle.
+    struct Snapshot: Equatable {
+        let processIdentifier: pid_t
+        let bundleIdentifier: String?
+    }
+
+    /// Whether a cancelled overlay should reactivate `previous`.
+    ///
+    /// Restore only when the overlay actually took activation from another app,
+    /// the user has not switched away in the meantime (AOM is still frontmost),
+    /// and we are not already back on the previous app — the last case would be
+    /// a duplicate activation.
+    static func shouldRestore(previous: Snapshot?, current: Snapshot?,
+                              ownProcessIdentifier: pid_t) -> Bool {
+        guard let previous else { return false }
+        guard previous.processIdentifier != ownProcessIdentifier else { return false }
+        guard let current else { return false }
+        return current.processIdentifier == ownProcessIdentifier
     }
 }
 

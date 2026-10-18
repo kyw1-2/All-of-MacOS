@@ -128,6 +128,9 @@ final class AnnotationEditorController {
 @MainActor
 final class AnnotationEditorSession {
     var isDirty: () -> Bool = { false }
+    /// F-04C: true while an asynchronous export is in flight, so the window is
+    /// never torn down mid-write.
+    var isBusy: () -> Bool = { false }
     /// Saves (or applies, for clipboard edits); returns false on failure.
     var commit: () -> Bool = { true }
     var close: () -> Void = {}
@@ -180,7 +183,12 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !closeConfirmed, session.isDirty() else { return true }
+        guard !closeConfirmed else { return true }
+        // F-04C: never tear the editor down in the middle of an asynchronous
+        // export. The export closes the window itself on success when a commit
+        // is pending; otherwise the user can close again once it finishes.
+        guard !session.isBusy() else { return false }
+        guard session.isDirty() else { return true }
         let alert = NSAlert()
         alert.messageText = AnnotationClosePrompt.message
         alert.informativeText = "Your changes will be lost if you don't save them."
@@ -241,6 +249,12 @@ private struct AnnotationEditorView: View {
     @State private var smartHighlightBusy = false
     @State private var cropRect: CGRect?
     @State private var status: String?
+    /// F-04C: a full-image export is encoding/writing off the main thread; this
+    /// blocks re-entry so a double click can never start two writes.
+    @State private var exportInFlight = false
+    /// F-04C: a Done / close-Save commit is waiting for the in-flight export to
+    /// finish; the export closes the window itself once the file is written.
+    @State private var closeAfterExport = false
 
     @State private var colorPopover = false
     @State private var optionsPopover = false
@@ -293,6 +307,19 @@ private struct AnnotationEditorView: View {
 
     private func markSaved() { savedState = AnnotationSavedState(document) }
 
+    /// F-04C: records the exact document state that was written to disk.
+    ///
+    /// `exportedState` is captured *before* the asynchronous encode/write starts.
+    /// If an edit lands while that write is in flight, `savedState` is set to the
+    /// exported snapshot and the newer edit stays dirty, instead of the old
+    /// `markSaved()` behaviour that stamped the (possibly changed) live document
+    /// as saved. Returns `true` when the document has moved past what was written.
+    @discardableResult
+    private func markExported(_ exportedState: AnnotationSavedState) -> Bool {
+        savedState = exportedState
+        return AnnotationSavedState(document) != exportedState
+    }
+
     private var scale: CGFloat {
         guard capture.pointSize.width > 0, capture.image.width > 0 else {
             return capture.scale > 0 ? capture.scale : 2.0
@@ -336,6 +363,7 @@ private struct AnnotationEditorView: View {
         .background(CaptureKeyEventHandler(handle: handleEditorKey))
         .onAppear {
             session?.isDirty = { isDirty }
+            session?.isBusy = { exportInFlight }
             session?.commit = { commitChanges() }
         }
         // "Apply Previous Settings" offers the last background used in an editor.
@@ -1412,15 +1440,52 @@ private struct AnnotationEditorView: View {
         document.render(scale: scale)
     }
 
-    private func copyToClipboard() {
+    /// F-04C: the editor's own encode/write queue. `ScreenCaptureService.writeToDiskAsync`
+    /// always derives the file name with `CaptureNaming.defaultName(for:)`, which
+    /// would drop the editor's "… Edited" suffix. The service's synchronous
+    /// `writeToDisk(_:fileName:)` keeps that name, and `ScreenCaptureService` is
+    /// not main-actor isolated, so it is run here off the main thread. This is the
+    /// same encode/write work `writeToDiskAsync` performs on its private queue.
+    private static let exportQueue = DispatchQueue(label: "com.kyw.allofmacos.annotation-export",
+                                                   qos: .userInitiated)
+
+    /// Encodes and writes a named export on `exportQueue`, never on the main actor.
+    private func writeEditedToDisk(_ result: CaptureResult, fileName: String) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.exportQueue.async {
+                continuation.resume(with: Result<URL, Error> {
+                    try ScreenCaptureService.shared.writeToDisk(result, fileName: fileName)
+                })
+            }
+        }
+    }
+
+    /// Encodes to `format` and atomically writes to a user-chosen Save As path,
+    /// off the main actor.
+    private func encodeAndWrite(_ result: CaptureResult, format: CaptureFormat, to url: URL) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            Self.exportQueue.async {
+                continuation.resume(with: Result<Void, Error> {
+                    let data = try ScreenCaptureService.shared.encode(result, format: format)
+                    try data.write(to: url, options: .atomic)
+                })
+            }
+        }
+    }
+
+    private func copyToClipboard(completionStatus: String? = nil) {
         guard let image = renderedImage() else { return }
         let result = CaptureResult(image: image, globalRect: .zero, scale: scale, kind: capture.kind,
                                    windowTitle: capture.windowTitle, capturedAt: capture.capturedAt)
-        do {
-            try ScreenCaptureService.shared.copyToClipboard(result)
-            status = "Copied to clipboard."
-        } catch {
-            status = "Copy failed: \(error.localizedDescription)"
+        // F-04C: encode the full-resolution image off the main thread and only
+        // report success once the pasteboard actually holds the pixels.
+        Task { @MainActor in
+            do {
+                try await ScreenCaptureService.shared.copyToClipboardAsync(result)
+                status = completionStatus ?? "Copied to clipboard."
+            } catch {
+                status = "Copy failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -1565,8 +1630,9 @@ private struct AnnotationEditorView: View {
     private func copyObjects() {
         let objects = selectedObjects
         guard !objects.isEmpty else {
-            copyToClipboard()
-            status = "No object selected — copied the whole image (⇧⌘C)."
+            // F-04C: the copy is asynchronous, so hand it the final status text
+            // instead of overwriting it right after the call returns.
+            copyToClipboard(completionStatus: "No object selected — copied the whole image (⇧⌘C).")
             return
         }
         let image = document.renderObjectsImage(ids: Set(objects.map(\.id)), scale: scale)
@@ -1684,6 +1750,10 @@ private struct AnnotationEditorView: View {
 
     private func saveAs(format: CaptureFormat = CaptureSettings.format) {
         guard let image = renderedImage() else { return }
+        // F-04C: remember the exact document state this `image` was rendered from.
+        // The write below is asynchronous, so a later edit must not be stamped as
+        // saved just because the old snapshot finished encoding.
+        let exportedState = AnnotationSavedState(document)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format.contentType]
         panel.nameFieldStringValue = CaptureNaming.defaultName(
@@ -1697,10 +1767,14 @@ private struct AnnotationEditorView: View {
                 let result = CaptureResult(image: image, globalRect: .zero, scale: scale, kind: capture.kind,
                                            windowTitle: capture.windowTitle, capturedAt: capture.capturedAt)
                 do {
-                    let data = try ScreenCaptureService.shared.encode(result, format: format)
-                    try data.write(to: url, options: .atomic)
-                    markSaved()
-                    status = "Saved \(url.lastPathComponent)."
+                    // F-04C: the full-resolution encode and the atomic write run
+                    // on the export queue, never on the main actor.
+                    try await encodeAndWrite(result, format: format, to: url)
+                    if markExported(exportedState) {
+                        status = "Saved \(url.lastPathComponent). Newer changes are not saved yet."
+                    } else {
+                        status = "Saved \(url.lastPathComponent)."
+                    }
                 } catch {
                     status = "Save failed: \(error.localizedDescription)"
                 }
@@ -1710,24 +1784,50 @@ private struct AnnotationEditorView: View {
 
     /// ⌘S: a new "… Edited" file in the export location. Source files are
     /// never overwritten.
+    ///
+    /// F-04C: the encode/write runs off the main thread. The Bool says whether a
+    /// save was started, not whether it finished; the status (and, for a commit,
+    /// the window close) is applied from the completion.
     @discardableResult
     private func saveToExportLocation() -> Bool {
+        guard !exportInFlight else { return false }
         guard let image = renderedImage() else { status = "Nothing to save."; return false }
+        // F-04C: snapshot the document state this export actually writes. The
+        // encode/write below is asynchronous; edits made while it runs must stay
+        // dirty instead of being marked saved by a completion-time `markSaved()`.
+        let exportedState = AnnotationSavedState(document)
         let result = CaptureResult(image: image,
                                    globalRect: CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale,
                                                       height: CGFloat(image.height) / scale),
                                    scale: scale, kind: capture.kind,
                                    windowTitle: capture.windowTitle, capturedAt: capture.capturedAt)
-        do {
-            let name = CaptureNaming.defaultName(for: result) + " Edited"
-            let url = try ScreenCaptureService.shared.writeToDisk(result, fileName: name)
-            markSaved()
-            status = "Saved \(url.lastPathComponent)."
-            return true
-        } catch {
-            status = "Save failed: \(error.localizedDescription)"
-            return false
+        // Keep the editor's own " Edited" suffix; `writeToDiskAsync` cannot take
+        // a file name, so `writeEditedToDisk` preserves the exact result name.
+        let name = CaptureNaming.defaultName(for: result) + " Edited"
+        exportInFlight = true
+        Task { @MainActor in
+            defer { exportInFlight = false }
+            do {
+                let url = try await writeEditedToDisk(result, fileName: name)
+                if markExported(exportedState) {
+                    // The file holds the pre-await snapshot; the user kept editing.
+                    // Keep the newer edits dirty and leave the window open so they
+                    // are not silently dropped by a `closeAfterExport` close.
+                    closeAfterExport = false
+                    status = "Saved \(url.lastPathComponent). Newer changes are not saved yet."
+                } else {
+                    status = "Saved \(url.lastPathComponent)."
+                    if closeAfterExport {
+                        closeAfterExport = false
+                        session?.close()
+                    }
+                }
+            } catch {
+                closeAfterExport = false
+                status = "Save failed: \(error.localizedDescription)"
+            }
         }
+        return true
     }
 
     /// Save (or apply to the clipboard for clipboard edits).
@@ -1739,7 +1839,17 @@ private struct AnnotationEditorView: View {
             markSaved()
             return true
         }
-        return saveToExportLocation()
+        // F-04C: the export is asynchronous, so return false to keep the
+        // synchronous Done / close-Save path from closing the window before the
+        // file is written. `saveToExportLocation` closes it from its completion
+        // on success, and on failure the editor stays open with the error.
+        closeAfterExport = true
+        if exportInFlight { return false }
+        if !saveToExportLocation() {
+            closeAfterExport = false
+            return false
+        }
+        return false
     }
 
     /// Done: keep the changes, then close.

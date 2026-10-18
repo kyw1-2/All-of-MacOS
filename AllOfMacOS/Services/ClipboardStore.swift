@@ -43,6 +43,20 @@ final class ClipboardStore: ObservableObject {
         }
     }
 
+    /// Why persistence is (or is not) currently available.
+    enum StorageStatus: Equatable {
+        case ok
+        /// The archive could not be read for a reason that may clear by itself,
+        /// such as a locked login Keychain. Reading is retried automatically;
+        /// nothing is written until a read succeeds, so the existing archive is
+        /// never overwritten while it is merely unreachable.
+        case transientFailure
+        /// The archive exists but cannot be decoded. Writing stays blocked so
+        /// the unreadable bytes are preserved until the user explicitly
+        /// recovers, which archives them under a new name first.
+        case unreadableArchive
+    }
+
     static let shared = ClipboardStore()
     static let maximumEntryBytes = 20 * 1_024 * 1_024
     private static let settingsKey = "AOMClipboardSettings.v1"
@@ -137,6 +151,12 @@ final class ClipboardStore: ObservableObject {
     private var attemptedImages: Set<UUID> = []
     private let indexingQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-ocr", qos: .utility)
     @Published var lastError: String?
+    /// Whether the archive can currently be read and written. A transient
+    /// failure is retried automatically; an unreadable archive waits for the
+    /// user, so a failed read never overwrites the only copy of the history.
+    @Published private(set) var storageStatus: StorageStatus = .ok
+    /// A persistent, user-facing explanation shown while persistence is blocked.
+    @Published private(set) var storageWarning: String?
     @Published var paused = false {
         didSet {
             // Pausing is a privacy boundary: resuming must not ingest anything
@@ -208,7 +228,16 @@ final class ClipboardStore: ObservableObject {
     private var loadingTask: Task<Void, Never>?
     private var captureTasks: [Task<Void, Never>] = []
     private var saveTask: Task<Void, Never>?
-    private var storageWritable = true
+    /// Persistence is blocked whenever the archive could not be read. This
+    /// prevents a failed read (a locked Keychain or a corrupt file) from being
+    /// "repaired" by overwriting the user's only copy of the history.
+    private var storageWritable: Bool { storageStatus == .ok }
+    private var storageRetryTask: Task<Void, Never>?
+    private var storageRetryAttempts = 0
+    /// Test seam: injects the error the next archive load reports. Production
+    /// never sets this; it lets a unit test exercise transient-Keychain
+    /// recovery without a real Keychain.
+    var loadFailureOverride: Error?
     private var pendingSave = false
     private var lastTrimDate: Date = .distantPast
 
@@ -239,7 +268,7 @@ final class ClipboardStore: ObservableObject {
         loadingTask = Task { [weak self] in await self?.loadFromDisk() }
     }
 
-    deinit { timer?.invalidate(); saveTask?.cancel() }
+    deinit { timer?.invalidate(); saveTask?.cancel(); storageRetryTask?.cancel() }
 
     func ready() async { await loadingTask?.value }
 
@@ -315,7 +344,7 @@ final class ClipboardStore: ObservableObject {
             }
             guard generation == captureGeneration, settings.enabled, !paused else { return }
             let capturedID: UUID
-            if let index = entries.firstIndex(where: { digests[$0.id] == digest }) {
+            if let index = Self.deduplicationIndex(in: entries, digests: digests, digest: digest, excluding: entry.id) {
                 var updated = entries
                 var existing = updated.remove(at: index)
                 existing.lastCopiedAt = entry.lastCopiedAt
@@ -487,16 +516,36 @@ final class ClipboardStore: ObservableObject {
     @discardableResult
     func duplicate(entryID: UUID) -> ClipboardEntry? {
         guard var entry = entries.first(where: { $0.id == entryID }) else { return nil }
-        let digest = digests[entry.id]
         entry.id = UUID()
+        entry.duplicatedFrom = entryID
         entry.title += " Copy"
         entry.createdAt = now()
         entry.lastCopiedAt = now()
         entries.insert(entry, at: 0)
-        digests[entry.id] = digest
+        // The duplicate has its own identity. Do not adopt the source's cached
+        // digest blindly: recompute it for the new entry. De-duplication also
+        // prefers a non-duplicate match, so a later copy of the original is
+        // credited to the original rather than to this "Copy".
+        let duplicated = entry
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let digest = await onQueue { duplicated.payloadDigest }
+            if entries.contains(where: { $0.id == duplicated.id }) { digests[duplicated.id] = digest }
+        }
+        captureTasks.append(task)
         trim()
         scheduleSave()
         return entries.first { $0.id == entry.id }
+    }
+
+    /// The entry a fresh copy should be credited to. Among existing entries
+    /// with the same payload, an original (`duplicatedFrom == nil`) wins over a
+    /// user-made copy so the copy cannot absorb the original's timestamp and
+    /// age it out of the history first.
+    private static func deduplicationIndex(in entries: [ClipboardEntry], digests: [UUID: String],
+                                           digest: String, excluding id: UUID) -> Int? {
+        let matches = entries.indices.filter { entries[$0].id != id && digests[entries[$0].id] == digest }
+        return matches.first(where: { entries[$0].duplicatedFrom == nil }) ?? matches.first
     }
 
     func delete(entryID: UUID) { delete(entryIDs: [entryID]) }
@@ -786,6 +835,12 @@ final class ClipboardStore: ObservableObject {
     }
 
     private func loadFromDisk() async {
+        if let injected = loadFailureOverride {
+            loadFailureOverride = nil
+            handleStorageFailure(injected)
+            isLoading = false
+            return
+        }
         let directory = directory
         let encryptedURL = directory.appendingPathComponent("history-v2.encrypted")
         let encryptedExists = !isolated && FileManager.default.fileExists(atPath: encryptedURL.path)
@@ -806,6 +861,11 @@ final class ClipboardStore: ObservableObject {
         }
         switch loaded {
         case .success(let (document, digests)):
+            storageStatus = .ok
+            storageWarning = nil
+            storageRetryAttempts = 0
+            storageRetryTask?.cancel()
+            storageRetryTask = nil
             // Local snippets can be created while the encrypted archive loads.
             let local = entries
             let localIDs = Set(local.map(\.id))
@@ -817,14 +877,118 @@ final class ClipboardStore: ObservableObject {
             for index in entries.indices { entries[index].pinboardIDs.formIntersection(boardIDs) }
             if !isolated && !encryptedExists { pendingSave = true }
         case .failure(let error):
-            storageWritable = false
-            lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription ?? StoreError.invalidArchive.localizedDescription
+            handleStorageFailure(error)
         }
         isLoading = false
         trim()
         if pendingSave { scheduleSave() }
         scheduleImageIndexing()
     }
+
+    /// Classifies a failed archive read. A locked or temporarily unavailable
+    /// login Keychain is transient: reading can succeed later, so the existing
+    /// archive must not be overwritten in the meantime. A corrupt archive, a
+    /// missing or rotated key, or a decode failure is not transient.
+    nonisolated static func isTransientStorageFailure(_ error: Error) -> Bool {
+        if let failure = error as? ClipboardArchiveEncryption.Failure,
+           case .keychain = failure { return true }
+        return false
+    }
+
+    private func handleStorageFailure(_ error: Error) {
+        storageStatus = Self.isTransientStorageFailure(error) ? .transientFailure : .unreadableArchive
+        storageWarning = Self.storageWarning(for: storageStatus)
+        lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription
+            ?? StoreError.invalidArchive.localizedDescription
+        if storageStatus == .transientFailure { scheduleStorageRetry() }
+    }
+
+    private static func storageWarning(for status: StorageStatus) -> String? {
+        switch status {
+        case .ok:
+            return nil
+        case .transientFailure:
+            return "Clipboard history is not being saved because the login Keychain is locked or unavailable. New items are kept in memory and saved automatically once the Keychain is available. Your existing history is preserved."
+        case .unreadableArchive:
+            return "Clipboard history could not be read, so saving is paused to protect the existing file. Use “Recover Clipboard Storage” to archive the unreadable file and resume saving. Your saved file has not been changed."
+        }
+    }
+
+    private func scheduleStorageRetry() {
+        guard storageStatus == .transientFailure, storageRetryTask == nil,
+              storageRetryAttempts < Self.storageRetryLimit else { return }
+        storageRetryAttempts += 1
+        storageRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.storageRetryDelay)
+            guard let self, !Task.isCancelled else { return }
+            // Clear the slot before retrying: this task is the one currently in
+            // `storageRetryTask`, and `retryStorage` must not cancel itself.
+            self.storageRetryTask = nil
+            await self.retryStorage()
+        }
+    }
+
+    /// Retries reading a transiently unavailable archive. Also backs the manual
+    /// "Retry" action; a no-op unless the last failure was transient. A
+    /// re-entrant call is ignored while a load is already in flight so two
+    /// loads can never merge the archive concurrently.
+    func retryStorage() async {
+        guard storageStatus == .transientFailure, !isLoading else { return }
+        storageRetryTask?.cancel()
+        storageRetryTask = nil
+        isLoading = true
+        await loadFromDisk()
+        if storageStatus == .ok, pendingSave { await persist() }
+    }
+
+    /// User-initiated recovery from a blocked persistence state.
+    /// - `.transientFailure`: retry now and reset the automatic retry budget.
+    /// - `.unreadableArchive`: move the unreadable archive aside (its bytes are
+    ///   preserved under a `.unreadable-<timestamp>` name) and start saving a
+    ///   fresh archive.
+    func recoverStorage() async {
+        switch storageStatus {
+        case .ok:
+            return
+        case .transientFailure:
+            storageRetryAttempts = 0
+            await retryStorage()
+        case .unreadableArchive:
+            await quarantineUnreadableArchive()
+        }
+    }
+
+    private func quarantineUnreadableArchive() async {
+        let directory = directory
+        let quarantined = await onQueue { () -> Bool in
+            do {
+                try Self.prepare(directory: directory)
+                let stamp = String(Int(Date().timeIntervalSince1970))
+                var movedAny = false
+                for name in ["history-v2.encrypted", "history-v1.json"] {
+                    let file = directory.appendingPathComponent(name)
+                    guard FileManager.default.fileExists(atPath: file.path),
+                          !(try Self.isSymlink(file)) else { continue }
+                    let backup = file.appendingPathExtension("unreadable-\(stamp)")
+                    try FileManager.default.moveItem(at: file, to: backup)
+                    movedAny = true
+                }
+                return movedAny
+            } catch { return false }
+        }
+        guard quarantined else {
+            lastError = StoreError.storageUnavailable.localizedDescription
+            return
+        }
+        storageStatus = .ok
+        storageWarning = nil
+        storageRetryAttempts = 0
+        pendingSave = true
+        await persist()
+    }
+
+    private static let storageRetryLimit = 12
+    private static let storageRetryDelay: UInt64 = 5_000_000_000
 
     private func onCaptureQueue<T>(_ work: @escaping () -> T) async -> T {
         await withCheckedContinuation { continuation in

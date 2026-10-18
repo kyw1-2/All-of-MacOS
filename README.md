@@ -4,7 +4,7 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 
 ## Version 1.2.5
 
-Faster clipboard collection, targeted direct paste, asynchronous capture output, and ordered/cancellable capture automation. See [release notes and comparison](docs/1.2.5-release-notes.md). This release was built without functional or regression tests at the user's request.
+Faster clipboard collection, targeted direct paste, asynchronous capture output, and ordered/cancellable capture automation. See [release notes and comparison](docs/1.2.5-release-notes.md). The repository ships an automated `swift test` suite under `AllOfMacOSTests` (55 files) wired into `.github/workflows/tests.yml`, but it was not run for this release's commits at the user's request: this release was built without functional or regression verification.
 
 ## Version 1.2.2
 
