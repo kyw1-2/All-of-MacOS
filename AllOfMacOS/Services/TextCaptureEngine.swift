@@ -838,18 +838,10 @@ enum TextRecognitionEngine {
         var configuration = ImageAnalyzer.Configuration(.text)
         let usable = locales.filter { supported.contains($0) }
         if !usable.isEmpty { configuration.locales = usable }
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask {
-                let analyzer = ImageAnalyzer()
-                return try? await analyzer.analyze(image, orientation: .up, configuration: configuration).transcript
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        let requestConfiguration = configuration
+        return await TextAnalysisDeadline<String>.run(seconds: 10) {
+            let analyzer = ImageAnalyzer()
+            return try? await analyzer.analyze(image, orientation: .up, configuration: requestConfiguration).transcript
         }
     }
 

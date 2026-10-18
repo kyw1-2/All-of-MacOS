@@ -76,12 +76,12 @@ struct TextCaptureSettingsSection: View {
                 .padding(.vertical, 8)
             }
             AppleSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Instant Recognition",
-                             subtitle: "One fast pass like TextSniper; mixed scripts still get the full multi-pass read",
+                             subtitle: "Copy after one recognition; turn off for slower, detailed mixed-script recognition",
                              showDivider: true) {
                 toggle(\.prefersFastRecognition, "Instant recognition")
             }
             AppleSettingsRow(icon: "cpu", iconColor: .purple, title: "Engine",
-                             subtitle: "Automatic reads each script separately and cross-checks with Live Text",
+                             subtitle: "Automatic uses Live Text for Korean, Chinese and Japanese primary languages",
                              showDivider: true) {
                 Picker("", selection: Binding(get: { settings.engine }, set: { settings.engine = $0 })) {
                     ForEach(TextRecognitionEngineMode.allCases) { Text($0.displayName).tag($0) }

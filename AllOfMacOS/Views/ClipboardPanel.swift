@@ -134,9 +134,11 @@ final class ClipboardPanelState: ObservableObject {
     }
 
     func quickPasteIDs(in store: ClipboardStore) -> [UUID] {
-        let ids = results(in: store).map(\.id)
         let visible = Set(visibleCardIDs)
-        return Array((visible.isEmpty ? ids : ids.filter { visible.contains($0) }).prefix(9))
+        // Stop at nine; mapping/filtering all 10,000 clips on every modifier
+        // event made the shortcut badges needlessly scale with history size.
+        return Array(results(in: store).lazy.map(\.id)
+            .filter { visible.isEmpty || visible.contains($0) }.prefix(9))
     }
 
     func selectedIDs(in store: ClipboardStore) -> [UUID] {
@@ -443,14 +445,13 @@ final class ClipboardPanelController {
             // focus graph for a "first key view" (≈200 ms per ⇧⌘V).
             let container = ClipboardPanelContainerView()
             let hosting = NSHostingView(rootView: ClipboardPanelView(store: store, state: state, controller: self))
-            hosting.translatesAutoresizingMaskIntoConstraints = false
+            // The controller owns both dimensions. Intrinsic min/ideal/max
+            // sizing needlessly measures the SwiftUI shelf while AppKit
+            // orders the panel front (including its lazy card hierarchy).
+            hosting.sizingOptions = []
+            hosting.autoresizingMask = [.width, .height]
+            hosting.frame = container.bounds
             container.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                hosting.topAnchor.constraint(equalTo: container.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ])
             window.contentView = container
             window.initialFirstResponder = container
             window.autorecalculatesKeyViewLoop = false
@@ -474,18 +475,19 @@ final class ClipboardPanelController {
                             width: max(1, bounds.width - 16), height: targetHeight)
         }
         // Stale messages from an earlier session must not greet the user.
-        state.status = ""
+        if !state.status.isEmpty { state.status = "" }
         if !wasVisible {
             // Suggestions are computed off the main thread and slot in while
             // the shelf slides up; opening never waits on Accessibility IPC.
-            state.suggestedIDs = []
+            if !state.suggestedIDs.isEmpty { state.suggestedIDs = [] }
             ClipboardIntelligence.shared.suggestionsAsync(for: destination, store: store) { [weak self] ids in
                 guard let self, self.isVisible, !self.slidingOut, self.state.suggestedIDs != ids else { return }
                 self.state.suggestedIDs = ids
             }
             ClipboardIntelligence.shared.refineClassesWithModel(store.entries)
         }
-        state.searchExpanded = !state.query.isEmpty
+        let expandSearch = !state.query.isEmpty
+        if state.searchExpanded != expandSearch { state.searchExpanded = expandSearch }
         state.setCommandHeld(NSEvent.modifierFlags.contains(.command))
         if wasVisible || !Self.animatesPanel {
             panel.setFrame(target, display: true)
@@ -1054,7 +1056,8 @@ struct ClipboardPanelView: View {
         .onChange(of: state.recentDays) { _, _ in state.clearSelection() }
         .onChange(of: entries.map(\.id)) { _, ids in
             let visible = Set(ids)
-            state.selected.formIntersection(visible)
+            let selection = state.selected.intersection(visible)
+            if state.selected != selection { state.selected = selection }
             if let id = state.focusedID, !visible.contains(id) { state.focusedID = nil }
             if let preview = state.preview, !visible.contains(preview.id) { state.preview = nil }
         }
@@ -1685,6 +1688,25 @@ private extension Color {
     }
 }
 
+/// Bounded first-line extraction for card headers. Finding the newline before
+/// taking a prefix walks an entire multi-megabyte single-line clip on each draw.
+enum ClipboardCardText {
+    static func automaticTitle(_ text: String) -> String {
+        // A clip consisting mostly of whitespace must be bounded too. If
+        // its real title is farther away, the card uses the stored title
+        // already derived by background capture instead of rescanning it.
+        guard let start = text.prefix(4_096).firstIndex(where: { !$0.isWhitespace }) else { return "Text" }
+        let rest = text[start...]
+        let prefix = rest.prefix(101)
+        let end = prefix.firstIndex(where: \.isNewline) ?? prefix.endIndex
+        var line = prefix[..<end]
+        if end == text.endIndex {
+            while let last = line.last, last.isWhitespace { line = line.dropLast() }
+        }
+        return String(line.prefix(100))
+    }
+}
+
 // MARK: - Paste-style Luxury Card View
 
 @MainActor
@@ -1715,29 +1737,15 @@ private struct ClipboardCardView: View, Equatable {
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @State private var imagePreview: ClipboardThumbnailCache.Preview?
+    @State private var characterCount: Int?
     @FocusState private var titleFocused: Bool
 
     static let radius: CGFloat = 16
 
-    /// What the card actually draws. Copying another item (which reorders
-    /// history and bumps the store revision) no longer re-renders every card.
-    nonisolated private var contentKey: Int {
-        var hasher = Hasher()
-        hasher.combine(entry.title)
-        hasher.combine(entry.lastCopiedAt)
-        hasher.combine(entry.pinboardIDs)
-        hasher.combine(entry.kind)
-        hasher.combine(entry.text?.utf16.count ?? -1)
-        hasher.combine(entry.recognizedText?.utf16.count ?? -1)
-        hasher.combine(entry.items.count)
-        hasher.combine(entry.sourceBundleID)
-        return hasher.finalize()
-    }
-
     /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
     /// cards alone instead of re-running every visible card body.
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.entry.id == rhs.entry.id && lhs.contentKey == rhs.contentKey && lhs.number == rhs.number
+        lhs.entry.id == rhs.entry.id && lhs.revision == rhs.revision && lhs.number == rhs.number
             && lhs.compact == rhs.compact && lhs.side == rhs.side && lhs.isSelected == rhs.isSelected
             && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
             && lhs.searchActive == rhs.searchActive && lhs.isPreviewing == rhs.isPreviewing
@@ -1761,14 +1769,7 @@ private struct ClipboardCardView: View, Equatable {
     /// The title `ClipboardEntry.captured` derives (first non-empty line,
     /// 100 characters) without trimming or splitting the whole clip.
     static func automaticTitle(_ text: String) -> String {
-        guard let start = text.firstIndex(where: { !$0.isWhitespace }) else { return "Text" }
-        let rest = text[start...]
-        let end = rest.firstIndex(where: \.isNewline) ?? rest.endIndex
-        var line = rest[..<end]
-        if end == rest.endIndex {
-            while let last = line.last, last.isWhitespace { line = line.dropLast() }
-        }
-        return String(line.prefix(100))
+        ClipboardCardText.automaticTitle(text)
     }
 
     var body: some View {
@@ -1898,6 +1899,15 @@ private struct ClipboardCardView: View, Equatable {
             if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { pasteByDoubleClick() } else { selectCard() }
         }
         .onHover { isHovered = $0 }
+        .task(id: revision) {
+            if let text = entry.text {
+                // UTF-16 counting is linear for native non-ASCII strings.
+                // A large Korean clip must not block the key/scroll loop.
+                let count = await Task.detached(priority: .utility) { text.count }.value
+                guard !Task.isCancelled else { return }
+                characterCount = count
+            } else { characterCount = nil }
+        }
         .task(id: entry.id) {
             guard let data = entry.imageData else { imagePreview = nil; return }
             let preview = await ClipboardThumbnailCache.shared.preview(id: entry.id, data: data)
@@ -1923,11 +1933,9 @@ private struct ClipboardCardView: View, Equatable {
             return entry.fileURLs.count == 1 ? Self.abbreviatedPath(entry.fileURLs[0]) : "\(entry.fileURLs.count) files"
         }
         if entry.kind == .link { return URL(string: entry.text ?? "")?.host ?? "Link" }
-        // Counting grapheme clusters walks the whole clip; huge texts use the
-        // (equal for Hangul/Latin) UTF-16 length instead.
-        guard let text = entry.text else { return "0 characters" }
-        let count = text.utf16.count > 20_000 ? text.utf16.count : text.count
-        return "\(count.formatted()) characters"
+        guard entry.text != nil else { return "0 characters" }
+        guard let characterCount else { return "Text" }
+        return "\(characterCount.formatted()) characters"
     }
 
     @ViewBuilder

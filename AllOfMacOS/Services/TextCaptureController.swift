@@ -54,7 +54,7 @@ final class TextCaptureController {
         let readsBarcodes = settings.readsBarcodes
         async let codes: [String] = readsBarcodes
             ? ((try? await TextRecognitionService.detectBarcodes(image)) ?? []).map(\.payload) : []
-        let result = try await TextRecognitionService.recognize(image, options: options)
+        let result = try await TextCaptureInstant.recognize(image, options: options)
         let barcodes = await codes
         CaptureCoordinator.textLog.info("recognition=\(Int(Date().timeIntervalSince(started) * 1000), privacy: .public)ms passes=\(result.passCount, privacy: .public) live=\(result.usedLiveText, privacy: .public)")
         let output = Self.composeOutput(text: result.text, barcodes: barcodes)

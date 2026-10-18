@@ -389,17 +389,23 @@ final class CaptureCoordinator {
     /// in `TextCaptureController`.
     func captureText(keepsLineBreaks: Bool? = nil) {
         let keepBreaks = keepsLineBreaks ?? TextCaptureSettings.shared.keepsLineBreaks
-        let requested = Date()
-        Self.textLog.info("capture-text requested")
-        run(kind: .area) { [weak self] in
-            guard let self else { return nil }
-            Self.textLog.info("capture-text run started +\(Int(Date().timeIntervalSince(requested) * 1000), privacy: .public)ms")
-            guard let rect = await self.presentSelection() else { return nil }
-            let selected = Date()
-            let result = try await ScreenCaptureService.shared.captureArea(rect)
+        Self.textLog.info("capture-text requested (native selector)")
+        run(kind: .area, appliesSelfTimer: false, appliesDesktopSettings: false) {
+            let image = try await TextCaptureSelection.capture()
             let captured = Date()
-            try await self.deliverRecognizedText(result, keepsLineBreaks: keepBreaks)
-            Self.textLog.info("capture-text pixels=\(Int(captured.timeIntervalSince(selected) * 1000), privacy: .public)ms total=\(Int(Date().timeIntervalSince(selected) * 1000), privacy: .public)ms")
+            guard try await TextCaptureController.shared.deliver(image: image, keepsLineBreaks: keepBreaks) != nil else { return nil }
+            Self.textLog.info("capture-text selected-to-copy=\(Int(Date().timeIntervalSince(captured) * 1000), privacy: .public)ms")
+            // Retain the existing Capture History behavior without delaying the
+            // clipboard delivery. Native selection does not expose its screen
+            // origin; the cropped pixels and main-display scale are sufficient
+            // for image review and export, but not for screen-position anchoring.
+            Task { @MainActor in
+                let scale = max(1, NSScreen.main?.backingScaleFactor ?? 1)
+                let rect = CGRect(x: 0, y: 0, width: CGFloat(image.width) / scale,
+                                  height: CGFloat(image.height) / scale)
+                CaptureHistory.shared.add(CaptureResult(image: image, globalRect: rect,
+                    scale: scale, kind: .area), url: nil)
+            }
             return nil
         }
     }
@@ -453,7 +459,7 @@ final class CaptureCoordinator {
     ///
     /// `body` returns the capture plus its kind, or `nil` when the user cancelled
     /// — a cancel is not an error and must not surface as one.
-    private func run(kind: CaptureKind, appliesSelfTimer: Bool = true,
+    private func run(kind: CaptureKind, appliesSelfTimer: Bool = true, appliesDesktopSettings: Bool = true,
                      afterCaptureOverride: AfterCaptureAction? = nil,
                      _ body: @escaping () async throws -> (CaptureResult, CaptureKind)?) {
         guard !isCapturing else {
@@ -472,7 +478,7 @@ final class CaptureCoordinator {
             defer { isCapturing = false }
             do {
                 if appliesSelfTimer { try await runSelfTimerIfNeeded() }
-                let hiddenIcons = try hideDesktopIconsIfNeeded()
+                let hiddenIcons = appliesDesktopSettings ? try hideDesktopIconsIfNeeded() : nil
                 defer { restoreDesktopIconsIfNeeded(hiddenIcons) }
 
                 guard let (result, resolvedKind) = try await body() else { return }

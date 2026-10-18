@@ -246,11 +246,18 @@ final class ClipboardStore: ObservableObject {
         }
         // A promised representation can change while its source supplies data.
         guard !items.isEmpty, pasteboard.changeCount == count else { return }
-        let entry = ClipboardEntry.captured(items: items, sourceName: appName, sourceBundleID: bundleID, at: now())
+        let capturedItems = items
+        let capturedAt = now()
         let generation = captureGeneration
         let task = Task { [weak self] in
             guard let self else { return }
-            let digest: String = await onQueue { entry.payloadDigest }
+            // Decoding and classifying a multi-megabyte text can take longer
+            // than hashing it. Keep both off the main actor, not only SHA256.
+            let (entry, digest) = await onQueue {
+                let entry = ClipboardEntry.captured(items: capturedItems, sourceName: appName,
+                                                    sourceBundleID: bundleID, at: capturedAt)
+                return (entry, entry.payloadDigest)
+            }
             guard generation == captureGeneration, settings.enabled, !paused else { return }
             let capturedID: UUID
             if let index = entries.firstIndex(where: { digests[$0.id] == digest }) {
@@ -276,6 +283,7 @@ final class ClipboardStore: ObservableObject {
 
     func filtered(query: String = "", kind: ClipboardEntry.Kind? = nil, source: String? = nil,
                   board: UUID? = nil, since: Date? = nil) -> [ClipboardEntry] {
+        if query.isEmpty, kind == nil, source == nil, board == nil, since == nil { return entries }
         let search = ClipboardSearchQuery(query)
         return entries.filter { entry in
             (kind == nil || entry.kind == kind) &&

@@ -109,7 +109,7 @@ final class TextCaptureSettings: ObservableObject {
 
     /// Also read QR codes and barcodes inside a text capture.
     var readsBarcodes: Bool {
-        get { bool(Key.readsBarcodes, true) }
+        get { bool(Key.readsBarcodes, false) }
         set { set(newValue, Key.readsBarcodes) }
     }
 
@@ -160,8 +160,8 @@ final class TextCaptureSettings: ObservableObject {
         set { set(newValue.rawValue, Key.engine) }
     }
 
-    /// Instant recognition: a single pass unless the text needs the
-    /// multi-script voting pipeline (on by default, like TextSniper).
+    /// Interactive Capture Text uses one recognizer; disable for detailed
+    /// multi-script voting (slower).
     var prefersFastRecognition: Bool {
         get { bool(Key.fastRecognition, true) }
         set { set(newValue, Key.fastRecognition) }
