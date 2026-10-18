@@ -58,6 +58,51 @@ final class ClipboardStore: ObservableObject {
         "public.jpeg", "public.heic", "public.utf16-external-plain-text", "com.apple.cocoa.pasteboard.color"
     ]
 
+    /// App choices are inferred from recorded clipboard provenance; they are
+    /// never a catalog of installed or hardcoded applications.
+    struct AppSource: Identifiable, Equatable {
+        let id: String
+        let filterValue: String
+        let name: String
+        let bundleID: String?
+        let count: Int
+        let lastUsed: Date
+
+        static func collect(from entries: [ClipboardEntry]) -> [AppSource] {
+            var indexed: [String: AppSource] = [:]
+            for entry in entries {
+                let bundleID = entry.sourceBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let bundle = bundleID?.isEmpty == false ? bundleID : nil
+                let rawName = entry.sourceName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = rawName?.isEmpty == false ? rawName : nil
+                guard let source = bundle ?? name else { continue }
+                let key = bundle.map { "bundle:" + $0 } ?? ("name:" + source)
+                if let old = indexed[key] {
+                    indexed[key] = AppSource(id: key, filterValue: source,
+                        name: name ?? old.name, bundleID: bundle,
+                        count: old.count + 1,
+                        lastUsed: max(old.lastUsed, entry.lastCopiedAt))
+                } else {
+                    indexed[key] = AppSource(id: key, filterValue: source,
+                        name: name ?? bundle ?? source, bundleID: bundle,
+                        count: 1, lastUsed: entry.lastCopiedAt)
+                }
+            }
+            return indexed.values.sorted {
+                if $0.lastUsed != $1.lastUsed { return $0.lastUsed > $1.lastUsed }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+        }
+    }
+
+    private var appSourceCache: (revision: Int, options: [AppSource])?
+    var availableAppSources: [AppSource] {
+        if let cached = appSourceCache, cached.revision == revision { return cached.options }
+        let options = AppSource.collect(from: entries)
+        appSourceCache = (revision, options)
+        return options
+    }
+
     @Published private(set) var entries: [ClipboardEntry] = [] { didSet { revision &+= 1 } }
     /// Bumped on every change to `entries` or `boards`; lets views memoise
     /// filtered results instead of re-filtering per card per frame.

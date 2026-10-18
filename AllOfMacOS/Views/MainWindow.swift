@@ -19,6 +19,7 @@ struct MainWindow: View {
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettingsAction
+    @Environment(\.displayScale) private var displayScale
 
     private var isDark: Bool { appearance == "dark" }
 
@@ -49,6 +50,18 @@ struct MainWindow: View {
                 }
             }
             .background(Color(nsColor: .windowBackgroundColor))
+            // The native unified toolbar also draws its own separator. Suppress
+            // that line and paint a single device-pixel boundary at the detail
+            // pane's exact origin so the title row and board cannot be offset.
+            .overlay(alignment: .top) {
+                GeometryReader { geometry in
+                    Color(nsColor: .separatorColor)
+                        .opacity(0.48)
+                        .frame(height: 1 / max(displayScale, 1))
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .allowsHitTesting(false)
+                }
+            }
             .navigationTitle(appState.selectedMainTab.title)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -76,6 +89,7 @@ struct MainWindow: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .background(AOMWindowTitlebarSeparator().frame(width: 0, height: 0))
         .scrollIndicators(.hidden)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
             // Opt-in, single-value layout probe for diagnosing split view regressions.
@@ -110,5 +124,23 @@ struct MainWindow: View {
 
     private func openSettings() {
         openSettingsAction()
+    }
+}
+
+/// Disable AppKit's separately rendered toolbar hairline. SwiftUI paints one
+/// aligned separator in the detail column instead of creating a double edge.
+private struct AOMWindowTitlebarSeparator: NSViewRepresentable {
+    private final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.titlebarSeparatorStyle = .none
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { Probe(frame: .zero) }
+    func updateNSView(_ view: NSView, context: Context) {
+        if let window = view.window, window.titlebarSeparatorStyle != .none {
+            window.titlebarSeparatorStyle = .none
+        }
     }
 }

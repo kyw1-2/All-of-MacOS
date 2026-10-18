@@ -962,10 +962,9 @@ struct ClipboardPanelView: View {
     let controller: ClipboardPanelController
     @FocusState private var searchFocused: Bool
     @State private var boardPendingDeletion: ClipboardPinboard?
-    @State private var showAllFilterApps = false
 
     private var entries: [ClipboardEntry] { state.results(in: store) }
-    private var sources: [String] { Array(Set(store.entries.compactMap(\.sourceBundleID))).sorted() }
+    private var sources: [ClipboardStore.AppSource] { store.availableAppSources }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1293,8 +1292,6 @@ struct ClipboardPanelView: View {
 
     private var filterPopover: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
-        let appLimit = 8
-        let visibleSources = showAllFilterApps ? sources : Array(sources.prefix(appLimit))
         return ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -1314,16 +1311,13 @@ struct ClipboardPanelView: View {
                 if !sources.isEmpty {
                     filterSection("App")
                     LazyVGrid(columns: columns, spacing: 6) {
-                        ForEach(visibleSources, id: \.self) { source in
-                            filterChip(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source,
-                                       icon: nil, appIcon: AppMetadataCache.shared.icon(for: source),
-                                       selected: state.source == source) {
-                                state.source = state.source == source ? nil : source
+                        ForEach(sources) { source in
+                            filterChip(source.name, icon: nil,
+                                       appIcon: AppMetadataCache.shared.icon(for: source.bundleID),
+                                       selected: state.source == source.filterValue) {
+                                state.source = state.source == source.filterValue ? nil : source.filterValue
                             }
-                        }
-                        if sources.count > appLimit {
-                            filterChip(showAllFilterApps ? "Less" : "More", icon: showAllFilterApps ? "chevron.up" : "ellipsis",
-                                       selected: false) { showAllFilterApps.toggle() }
+                            .help("\(source.name) · \(source.count) saved clips")
                         }
                     }
                 }
@@ -1402,17 +1396,17 @@ struct ClipboardPanelView: View {
         Menu("App") {
             Button("All Apps") { state.source = nil }
             Divider()
-            ForEach(sources, id: \.self) { source in
-                Button { state.source = source } label: {
+            ForEach(sources) { source in
+                Button { state.source = source.filterValue } label: {
                     HStack {
-                        if let appIcon = AppMetadataCache.shared.icon(for: source) {
+                        if let appIcon = AppMetadataCache.shared.icon(for: source.bundleID) {
                             Image(nsImage: appIcon).resizable().scaledToFit()
                                 .frame(width: 16, height: 16).accessibilityHidden(true)
                         } else {
                             Image(systemName: "app")
                         }
-                        Text(store.entries.first { $0.sourceBundleID == source }?.sourceName ?? source)
-                        if state.source == source { Image(systemName: "checkmark") }
+                        Text(source.name)
+                        if state.source == source.filterValue { Image(systemName: "checkmark") }
                     }
                 }
             }
