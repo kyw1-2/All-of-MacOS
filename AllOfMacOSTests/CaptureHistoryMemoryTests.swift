@@ -178,4 +178,47 @@ final class CaptureHistoryMemoryTests: XCTestCase {
         XCTAssertEqual(history.entries.count, 1, "eviction must never drop the entry")
         XCTAssertEqual(entry.image.width, 64, "full fidelity must remain retrievable")
     }
+
+    /// F-01 regression: removing an entry that a controller still holds must not
+    /// delete the managed PNG its evicted `image` rehydrates from. The file is
+    /// deleted only once the last owner releases the entry.
+    func testRemovedEntryKeepsFullPixelsUntilLastReferenceReleases() async throws {
+        let dir = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let size = 64
+        // A budget too small for a single bitmap forces eviction once the
+        // managed PNG lands, which is the state that used to fall back to the
+        // 1x1 placeholder after removal.
+        let history = CaptureHistory(directory: dir, residentByteBudget: 1)
+
+        let original = makeImage(size: size, red: 0.65)
+        // `retained` stands in for the Quick Access card / annotate editor /
+        // preview that keeps a strong reference to the entry.
+        var retained: CaptureHistoryEntry? = history.add(result(original), url: nil)
+        let id = try XCTUnwrap(retained?.id)
+        let png = managedPNG(id, in: dir)
+
+        await history.flushPendingCacheWrites()
+        XCTAssertFalse(try XCTUnwrap(retained).isResident,
+                       "the byte budget must evict the decoded bitmap")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: png.path),
+                      "the managed PNG must exist before the entry is removed")
+
+        history.remove(try XCTUnwrap(retained))
+        XCTAssertTrue(history.entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: png.path),
+                      "the managed PNG must survive while another owner still holds the entry")
+
+        // Evicted and detached, but still full fidelity: no 1x1 placeholder.
+        let rehydrated = try XCTUnwrap(retained).image
+        XCTAssertEqual(rehydrated.width, size)
+        XCTAssertEqual(rehydrated.height, size)
+        assertSamePixels(rehydrated, original)
+
+        // Last owner lets go: the file is unreachable and is deleted.
+        retained = nil
+        await history.flushPendingCacheWrites()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: png.path),
+                       "the managed PNG must be deleted once the last owner is gone")
+    }
 }

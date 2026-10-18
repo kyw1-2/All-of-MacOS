@@ -49,6 +49,16 @@ final class CaptureHistoryEntry: Identifiable {
     /// The small preview the overlay draws; built once and reused while the
     /// entry is resident.
     private var cachedThumbnail: NSImage?
+    /// The deterministic location of this entry's managed PNG, assigned by the
+    /// owning history. Keeping it independent of `cacheURL` means the file can
+    /// still be deleted from `deinit` even if the write that would have set
+    /// `cacheURL` never completed (for example the entry was removed mid-write).
+    private var managedCacheURL: URL?
+    /// True only once the history has removed the entry. The managed PNG is
+    /// deleted when the last strong reference to the entry goes away, not at
+    /// removal time, so a Quick Access card, the annotate editor or the preview
+    /// that still holds a detached entry keeps full-fidelity pixels.
+    private var cacheIsRetired = false
     /// Called after a lazy rehydration so the owning history can re-apply its
     /// byte budget. Set by `CaptureHistory`; nil for detached entries.
     var onResidencyChange: (() -> Void)?
@@ -62,7 +72,9 @@ final class CaptureHistoryEntry: Identifiable {
             onResidencyChange?()
             return loaded
         }
-        // Only reachable if the managed cache was removed outside the app.
+        // Only reachable when the managed PNG is genuinely unavailable: a write
+        // that never landed, or a file deleted outside the app. The history
+        // never removes a managed PNG while any entry still references it.
         return Self.placeholderImage
     }
 
@@ -126,6 +138,31 @@ final class CaptureHistoryEntry: Identifiable {
         cacheIsCurrent = true
     }
 
+    /// Records the managed-PNG path this entry owns. Called by `CaptureHistory`
+    /// as soon as the entry is created, so the file has an owner even before
+    /// the asynchronous write that would set `cacheURL` completes.
+    func assignManagedCache(_ url: URL) {
+        managedCacheURL = url
+    }
+
+    /// Marks the entry as removed from the history.
+    ///
+    /// This deliberately does *not* delete the managed PNG. A controller can
+    /// still hold the entry (a Quick Access card, an open annotate window, the
+    /// expanded preview), and deleting now would make its lazily rehydrated
+    /// `image` silently fall back to the 1x1 placeholder — exactly the copy/save
+    /// a 1x1 screenshot bug this type is meant to prevent. `deinit` schedules
+    /// the delete once the last owner lets go, on the same serial queue as the
+    /// cache writes so a write still in flight always lands before the delete.
+    func retireManagedCache() {
+        cacheIsRetired = true
+    }
+
+    deinit {
+        guard cacheIsRetired, let managedCacheURL else { return }
+        scheduleCaptureHistoryCacheDeletion(at: managedCacheURL)
+    }
+
     /// Swaps in edited pixels. The on-screen point size follows the new pixel
     /// size at `scale`, and the cached thumbnail is rebuilt on next access.
     /// The managed PNG stays stale until the replacement write lands.
@@ -172,6 +209,7 @@ final class CaptureHistoryEntry: Identifiable {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.cacheURL = cacheURL
+        self.managedCacheURL = cacheURL
         self.cacheIsCurrent = true
     }
 
@@ -202,9 +240,14 @@ final class CaptureHistoryEntry: Identifiable {
         let width = CGFloat(image.width), height = CGFloat(image.height)
         let scale = min(1, maxSide / max(width, height))
         let target = CGSize(width: max(1, (width * scale).rounded()), height: max(1, (height * scale).rounded()))
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(target.width), pixelsHigh: Int(target.height),
-                                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        // Under memory pressure NSBitmapImageRep can fail to allocate its backing
+        // store. Fall back to a lightweight wrapper around the existing CGImage
+        // rather than trapping the whole app on a force unwrap.
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(target.width), pixelsHigh: Int(target.height),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+            return NSImage(cgImage: image, size: NSSize(width: width, height: height))
+        }
         rep.size = target
         NSGraphicsContext.saveGraphicsState()
         if let context = NSGraphicsContext(bitmapImageRep: rep) {
@@ -218,6 +261,21 @@ final class CaptureHistoryEntry: Identifiable {
             return true
         }
     }
+}
+
+/// Encoding and disk I/O for the capture history run on one serial utility
+/// queue, in order, so a capture never stalls the main thread while the HUD or
+/// overlay appears. Keeping it at file scope lets a retired entry schedule its
+/// managed-PNG deletion on the very same queue from `deinit`; because the queue
+/// is serial, a cache write still in flight for that file always lands before
+/// the delete runs. Every `CaptureHistory` instance shares it, and opening a
+/// history first drains any pending writes.
+private let captureHistoryIOQueue = DispatchQueue(
+    label: "com.kyw.allofmacos.capture-history-io", qos: .utility)
+
+/// Schedules deletion of one managed cache PNG behind any queued write for it.
+private func scheduleCaptureHistoryCacheDeletion(at url: URL) {
+    captureHistoryIOQueue.async { try? FileManager.default.removeItem(at: url) }
 }
 
 /// Recent captures are retained across app restarts under Application Support.
@@ -281,7 +339,7 @@ final class CaptureHistory: ObservableObject {
     }
 
     private func load() {
-        Self.ioQueue.sync {}
+        captureHistoryIOQueue.sync {}
         guard let data = try? Data(contentsOf: manifestURL),
               let records = try? JSONDecoder().decode([Record].self, from: data) else { return }
         // The file name is always derived from the validated UUID and stays in
@@ -320,11 +378,6 @@ final class CaptureHistory: ObservableObject {
         }
     }
 
-    /// Encoding and disk I/O run on one serial utility queue, in order, so a
-    /// capture never stalls the main thread while the HUD or overlay appears.
-    /// Every instance shares it; opening a history first drains pending writes.
-    private static let ioQueue = DispatchQueue(label: "com.kyw.allofmacos.capture-history-io", qos: .utility)
-
     private func persistIndex() {
         let records: [Record] = entries.map { entry in
             Record(id: entry.id, kind: entry.kind, capturedAt: entry.capturedAt,
@@ -334,7 +387,7 @@ final class CaptureHistory: ObservableObject {
                    isPinned: entry.isPinned)
         }
         let directory = directory, manifestURL = manifestURL
-        Self.ioQueue.async {
+        captureHistoryIOQueue.async {
             let kept = records.filter {
                 FileManager.default.fileExists(atPath: Self.imageURL(for: $0.id, in: directory).path)
             }
@@ -347,7 +400,7 @@ final class CaptureHistory: ObservableObject {
         let directory = directory, url = imageURL(for: id)
         let generation = entries.first(where: { $0.id == id })?.beginCacheWrite() ?? 0
         pendingCacheCompletions += 1
-        Self.ioQueue.async { [weak self] in
+        captureHistoryIOQueue.async { [weak self] in
             var wrote = false
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -381,7 +434,7 @@ final class CaptureHistory: ObservableObject {
     /// and its main-actor completion has run.
     func flushPendingCacheWrites() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Self.ioQueue.async { continuation.resume() }
+            captureHistoryIOQueue.async { continuation.resume() }
         }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             if pendingCacheCompletions == 0 {
@@ -392,14 +445,6 @@ final class CaptureHistory: ObservableObject {
         }
     }
 
-    private func removeCachedImages(_ ids: [UUID]) {
-        guard !ids.isEmpty else { return }
-        let directory = directory
-        Self.ioQueue.async {
-            for id in ids { try? FileManager.default.removeItem(at: Self.imageURL(for: id, in: directory)) }
-        }
-    }
-
     @discardableResult
     func add(_ result: CaptureResult, url: URL?) -> CaptureHistoryEntry {
         let entry = CaptureHistoryEntry(image: result.image, kind: result.kind,
@@ -407,6 +452,7 @@ final class CaptureHistory: ObservableObject {
                                         windowTitle: result.windowTitle, fileURL: url,
                                         pointSize: result.pointSize, scale: result.scale)
         guard CaptureSettings.historyCapacity > 0 else { return entry }
+        entry.assignManagedCache(imageURL(for: entry.id))
         entry.onResidencyChange = residencyChangeHandler()
         entries.insert(entry, at: 0)
         cacheImage(result.image, id: entry.id)
@@ -438,15 +484,15 @@ final class CaptureHistory: ObservableObject {
     }
 
     func remove(_ entry: CaptureHistoryEntry) {
+        entries.first { $0.id == entry.id }?.retireManagedCache()
         entries.removeAll { $0.id == entry.id }
-        removeCachedImages([entry.id])
         persistIndex()
     }
 
     func removeAll() {
         let removed = entries
+        removed.forEach { $0.retireManagedCache() }
         entries.removeAll()
-        removeCachedImages(removed.map(\.id))
         persistIndex()
     }
 
@@ -473,8 +519,8 @@ final class CaptureHistory: ObservableObject {
 
     func removeUnpinned() {
         let removed = entries.filter { !$0.isPinned }
+        removed.forEach { $0.retireManagedCache() }
         entries.removeAll { !$0.isPinned }
-        removeCachedImages(removed.map(\.id))
         persistIndex()
     }
 
@@ -491,8 +537,10 @@ final class CaptureHistory: ObservableObject {
             return unpinnedCount > capacity
         }
         let removedIDs = Set(discarded.map(\.id))
+        // Tombstone first: the file is deleted only when the last controller
+        // still holding a discarded entry lets go, never while it is readable.
+        discarded.forEach { $0.retireManagedCache() }
         entries.removeAll { removedIDs.contains($0.id) }
-        removeCachedImages(discarded.map(\.id))
         enforceResidentBudget()
         persistIndex()
     }
