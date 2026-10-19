@@ -75,8 +75,7 @@ struct MainWindow: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .background(AOMWindowTitlebarSeparator().frame(width: 0, height: 0))
-        .background(TranslucentWindow().frame(width: 0, height: 0))
+        .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
         .scrollIndicators(.hidden)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
             // Opt-in, single-value layout probe for diagnosing split view regressions.
@@ -114,19 +113,31 @@ struct MainWindow: View {
     }
 }
 
-/// Native toolbar material and scroll-edge treatment own the chrome boundary.
-private struct AOMWindowTitlebarSeparator: NSViewRepresentable {
+/// Keep the system toolbar's own material visible. A clear transparent titlebar
+/// without content beneath it can become a white strip in an explicitly dark
+/// SwiftUI window. Synchronize AppKit appearance rather than painting a toolbar.
+struct AOMMainWindowChrome: NSViewRepresentable {
+    var appearance: String
+
     private final class Probe: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            window?.titlebarSeparatorStyle = .none
+        var appearanceChoice = "system"
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); configure() }
+        func configure() {
+            guard let window else { return }
+            let selected: NSAppearance? = appearanceChoice == "dark" ? NSAppearance(named: .darkAqua)
+                : appearanceChoice == "light" ? NSAppearance(named: .aqua) : nil
+            if window.appearance?.name != selected?.name { window.appearance = selected }
+            if window.isOpaque { window.isOpaque = false }
+            if window.backgroundColor != .clear { window.backgroundColor = .clear }
+            if window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = false }
+            if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
         }
     }
-
-    func makeNSView(context: Context) -> NSView { Probe(frame: .zero) }
+    func makeNSView(context: Context) -> NSView {
+        let view = Probe(frame: .zero); view.appearanceChoice = appearance; return view
+    }
     func updateNSView(_ view: NSView, context: Context) {
-        if let window = view.window, window.titlebarSeparatorStyle != .none {
-            window.titlebarSeparatorStyle = .none
-        }
+        guard let probe = view as? Probe else { return }
+        probe.appearanceChoice = appearance; probe.configure()
     }
 }

@@ -6,6 +6,7 @@ import SwiftUI
 /// rings and selection highlighting come from the system.
 struct ModernSidebarView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.controlActiveState) private var activeState
     @State private var showingAppPicker = false
     @State private var editingGroup: ActivationGroup?
     @State private var groupPendingDeletion: ActivationGroup?
@@ -58,7 +59,7 @@ struct ModernSidebarView: View {
         } icon: {
             Image(systemName: tab.iconName)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(tab.accentColor)
+                .foregroundStyle(selection.wrappedValue == .hub(tab) && activeState == .key ? Color.white : tab.accentColor)
                 .frame(width: 24, height: 28)
         }
         .badge(badge ?? 0)

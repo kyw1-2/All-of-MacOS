@@ -575,6 +575,8 @@ struct ActionParameters: Codable, Hashable {
     var windowTitleContains: String?
     var useCurrentWindow: Bool?
     var text: String?
+    /// Delay between individual keystrokes. Missing values use 20 ms.
+    var typingIntervalMs: Int?
     var applicationPath: String?
     var applicationName: String?
     var scriptContent: String?

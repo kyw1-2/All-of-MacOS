@@ -627,13 +627,19 @@ struct ActionConfigView: View {
                 .id(action.id)
             case .typeText:
                 GroupBox("Text to Type") {
-                    TextEditor(text: $text)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 80)
-                        .onChange(of: text) { _, newValue in
-                            saveAction { $0.parameters.text = newValue }
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextEditor(text: $text)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 80)
+                            .onChange(of: text) { _, newValue in saveAction { $0.parameters.text = newValue } }
+                        Stepper(value: Binding(get: { action.parameters.typingIntervalMs ?? 20 },
+                            set: { value in saveAction { $0.parameters.typingIntervalMs = value } }), in: 0...500, step: 5) {
+                            Text("Delay between characters: \(action.parameters.typingIntervalMs ?? 20) ms")
                         }
-                        .padding(4)
+                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(8)
                 }
 
             case .runAppleScript, .runShellScript:

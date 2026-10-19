@@ -4,7 +4,7 @@ All of MacOS is a macOS productivity application with configurable gestures, key
 
 ## Version 1.2.8
 
-Redesigned main window with native translucent navigation, a responsive action dashboard, consistent page headings and inset gesture editing. Removes unnecessary window-wide log updates and moves library search/copy work off the UI thread. See [design references, performance scope and validation](docs/1.2.8-release-notes.md).
+Redesigned main window with native translucent navigation, a responsive action dashboard, consistent page headings and inset gesture editing. Removes unnecessary window-wide log updates and moves library search/copy work off the UI thread. Type Text automation now types individual characters with an adjustable interval and preserves the clipboard. See [design references, performance scope and validation](docs/1.2.8-release-notes.md).
 
 ## Version 1.2.7
 

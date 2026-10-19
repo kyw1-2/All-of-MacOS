@@ -64,7 +64,9 @@ private struct AOMSidebarMaterial: ViewModifier {
         } else if #available(macOS 26, *) {
             content
         } else {
-            content.scrollContentBackground(.hidden).translucentPane(.sidebar)
+            content.scrollContentBackground(.hidden).background {
+                VisualEffectBackground(material: .sidebar).ignoresSafeArea()
+            }
         }
     }
 }

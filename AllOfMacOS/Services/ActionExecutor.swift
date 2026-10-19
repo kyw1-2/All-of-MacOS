@@ -368,7 +368,7 @@ class ActionExecutor {
             return
         }
         if action.actionType == .typeText {
-            typeText(action.parameters.text ?? "", isCancelled: isCancelled, completion: completion)
+            typeText(action.parameters.text ?? "", intervalMs: action.parameters.typingIntervalMs, isCancelled: isCancelled, completion: completion)
             return
         }
         if action.actionType == .volumeUp || action.actionType == .volumeDown {
@@ -800,60 +800,36 @@ class ActionExecutor {
         }
     }
 
-    /// Bounded Unicode payloads keep surrogate pairs intact, including emoji.
-    static func textChunks(_ text: String) -> [[UInt16]] {
-        var chunks: [[UInt16]] = []; var current: [UInt16] = []
-        for scalar in text.unicodeScalars {
-            let units = Array(String(scalar).utf16)
-            if current.count + units.count > 20 { chunks.append(current); current = [] }
-            current.append(contentsOf: units)
-        }
-        if !current.isEmpty { chunks.append(current) }
-        return chunks
-    }
-
-    static func textEvents(_ units: [UInt16]) -> (CGEvent, CGEvent)? {
+    static func textEvents(_ units: [UInt16], keyCode: CGKeyCode = 0, shifted: Bool = false) -> (CGEvent, CGEvent)? {
         let source = CGEventSource(stateID: .privateState)
-        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { return nil }
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { return nil }
         for event in [down, up] {
-            event.flags = []
+            event.flags = shifted ? .maskShift : []
             event.setIntegerValueField(.eventSourceUserData, value: 0x475454)
             units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
         }
         return (down, up)
     }
 
-    private static func typeText(_ text: String, isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+    private static func typeText(_ text: String, intervalMs: Int?, isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
         guard !text.isEmpty else { completion(true); return }
-        let front = NSWorkspace.shared.frontmostApplication
-        guard let target = front, !target.isTerminated else { completion(false); return }
-        if front?.processIdentifier != target.processIdentifier { target.activate(options: .activateIgnoringOtherApps) }
-        let chunks = textChunks(text)
-        let deadline = ProcessInfo.processInfo.systemUptime + 3
-        let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
-        func begin() {
-            guard !isCancelled() else { completion(false); return }
-            // Wait without blocking the event tap until the invoking hotkey is released.
-            let held = CGEventSource.flagsState(.combinedSessionState).intersection(shortcutFlags)
-            guard held.isEmpty else {
-                if ProcessInfo.processInfo.systemUptime < deadline { DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: begin) }
-                else { GestureLog.shared.logFromAnyThread("Text input cancelled: release modifier keys", level: .error); completion(false) }
-                return
-            }
-            func post(_ index: Int) {
-                guard !isCancelled() else { completion(false); return }
-                guard !target.isTerminated, NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else {
-                    GestureLog.shared.logFromAnyThread("Text input cancelled: focused application changed", level: .error); completion(false); return
-                }
-                guard index < chunks.count else { completion(true); return }
-                guard let (down, up) = textEvents(chunks[index]) else { completion(false); return }
-                down.postToPid(target.processIdentifier); up.postToPid(target.processIdentifier)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { post(index + 1) }
-            }
-            post(0)
+        guard AXIsProcessTrusted(), let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else {
+            completion(false); return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: begin)
+        let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        let session = TextTypingSession(text: text, intervalMs: intervalMs, environment: .init(
+            isCancelled: isCancelled,
+            targetIsReady: { !target.isTerminated && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier },
+            modifiersAreReleased: { CGEventSource.flagsState(.combinedSessionState).intersection(shortcutFlags).isEmpty },
+            now: { ProcessInfo.processInfo.systemUptime },
+            send: { stroke in
+                guard let (down, up) = textEvents(stroke.units, keyCode: stroke.keyCode, shifted: stroke.shifted) else { return false }
+                down.postToPid(target.processIdentifier); up.postToPid(target.processIdentifier)
+                return true
+            },
+            schedule: { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }), completion: completion)
+        DispatchQueue.main.async { session.start() }
     }
 
     private static func runAppleScript(_ script: String) {

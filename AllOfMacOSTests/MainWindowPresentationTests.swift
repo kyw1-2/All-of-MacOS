@@ -42,6 +42,24 @@ final class SidebarSummaryTests: XCTestCase {
 
 @MainActor
 final class MainWindowMaterialTests: XCTestCase {
+    func testMainChromeKeepsNativeToolbarAndMatchesExplicitAppearance() {
+        let host = NSHostingView(rootView: Color.clear.background(AOMMainWindowChrome(appearance: "dark")))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        window.contentView = host; host.layoutSubtreeIfNeeded()
+        XCTAssertFalse(window.isOpaque)
+        XCTAssertFalse(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.appearance?.name, .darkAqua)
+        host.rootView = Color.clear.background(AOMMainWindowChrome(appearance: "light"))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(window.appearance?.name, .aqua)
+        host.rootView = Color.clear.background(AOMMainWindowChrome(appearance: "system"))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertNil(window.appearance)
+    }
+
     func testWindowMaterialConfiguresWhenHostAttachesAndReattaches() {
         let host = NSHostingView(rootView: Color.clear.background(TranslucentWindow()))
         let first = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),

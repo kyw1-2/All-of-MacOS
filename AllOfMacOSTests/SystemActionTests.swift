@@ -77,16 +77,20 @@ final class SystemActionTests: XCTestCase {
         XCTAssertEqual(ActionType.moveWindowNextMonitorAndMaximize.category, .windowManagement)
         XCTAssertEqual(ActionType.setSoundOutput.category, .systemActions)
     }
-    func testTextChunksPreserveEmojiAndCombiningCharacters() {
+    func testIndividualTextStrokesPreserveEmojiAndCombiningCharacters() {
         let input = String(repeating: "한글 e\u{301} 😀", count: 9)
-        let chunks = ActionExecutor.textChunks(input)
+        var cursor = TextTypingCursor(input)
+        var chunks: [[UInt16]] = []
+        while let stroke = cursor.next() { chunks.append(stroke.units) }
+        XCTAssertEqual(chunks.count, input.count)
         XCTAssertTrue(chunks.allSatisfy { !$0.isEmpty && $0.count <= 20 })
         XCTAssertEqual(chunks.flatMap { $0 }, Array(input.utf16))
         for chunk in chunks {
             XCTAssertFalse((0xDC00...0xDFFF).contains(chunk.first!))
             XCTAssertFalse((0xD800...0xDBFF).contains(chunk.last!))
         }
-        XCTAssertTrue(ActionExecutor.textChunks("").isEmpty)
+        var empty = TextTypingCursor("")
+        XCTAssertNil(empty.next())
     }
 
     func testTextEventsClearHotkeyModifiersAndTagBothEdges() throws {
