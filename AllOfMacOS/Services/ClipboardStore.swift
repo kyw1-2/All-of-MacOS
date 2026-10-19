@@ -221,6 +221,8 @@ final class ClipboardStore: ObservableObject {
     private let queue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-storage", qos: .utility)
     // Capturing a new copy must not queue behind encryption of the entire archive.
     private let captureQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-capture", qos: .userInitiated)
+    // Snapshot B must not wait behind expensive decoding/hashing of copy A.
+    private let readQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-read", qos: .userInitiated)
     private var timer: Timer?
     private var lastChangeCount: Int
     private var captureGeneration = 0
@@ -276,10 +278,10 @@ final class ClipboardStore: ObservableObject {
         guard timer == nil else { return }
         // Do not capture the user's pre-existing clipboard merely by opening AOM.
         lastChangeCount = pasteboard.changeCount
-        let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.075, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
-        timer.tolerance = 0.025
+        timer.tolerance = 0.01
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -312,31 +314,24 @@ final class ClipboardStore: ObservableObject {
         let bundleID = sourceBundleID ?? frontmost?.bundleIdentifier
         let appName = sourceName ?? frontmost?.localizedName
         guard !settings.ignoredApps.contains(where: { $0.caseInsensitiveCompare(bundleID ?? "") == .orderedSame }) else { return }
-        guard let boardItems = pasteboard.pasteboardItems, !boardItems.isEmpty, boardItems.count <= 32 else { return }
-        // Check the entire transaction before reading any payload. A concealed
-        // marker on a later item protects the earlier items too.
-        guard !boardItems.contains(where: { item in item.types.contains { Self.excludedTypes.contains($0.rawValue) } }) else { return }
-        var items: [[String: Data]] = []
-        var total = 0
-        for boardItem in boardItems {
-            var item: [String: Data] = [:]
-            for type in boardItem.types.prefix(64) where Self.supportedTypes.contains(type.rawValue) {
-                guard let data = boardItem.data(forType: type) else { continue }
-                guard data.count <= Self.maximumEntryBytes - total else { lastError = StoreError.tooLarge.localizedDescription; return }
-                total += data.count
-                item[type.rawValue] = data
-            }
-            if !item.isEmpty { items.append(item) }
-        }
-        // A promised representation can change while its source supplies data.
-        guard !items.isEmpty, pasteboard.changeCount == count else { return }
-        let capturedItems = items
+        let boardName = pasteboard.name
+        let read = captureReadOverride
         let capturedAt = now()
         let generation = captureGeneration
         let task = Task { [weak self] in
             guard let self else { return }
             // Decoding and classifying a multi-megabyte text can take longer
             // than hashing it. Keep both off the main actor, not only SHA256.
+            let snapshot = await onReadQueue {
+                read?(boardName, count) ?? Self.readPasteboard(named: boardName, expectedCount: count)
+            }
+            guard generation == captureGeneration, settings.enabled, !paused else { return }
+            let capturedItems: [[String: Data]]
+            switch snapshot {
+            case .items(let items): capturedItems = items
+            case .tooLarge: lastError = StoreError.tooLarge.localizedDescription; return
+            case .unavailable: return
+            }
             let (entry, digest) = await onCaptureQueue {
                 let entry = ClipboardEntry.captured(items: capturedItems, sourceName: appName,
                                                     sourceBundleID: bundleID, at: capturedAt)
@@ -365,6 +360,34 @@ final class ClipboardStore: ObservableObject {
         }
         captureTasks.append(task)
         if captureTasks.count > 64 { captureTasks.removeFirst(captureTasks.count - 64) }
+    }
+
+    enum PasteboardSnapshot {
+        case items([[String: Data]]), tooLarge, unavailable
+    }
+    /// Deterministic slow-provider seam. Production uses a worker-owned board
+    /// connection; no promised representation is requested on the UI thread.
+    var captureReadOverride: (@Sendable (NSPasteboard.Name, Int) -> PasteboardSnapshot)?
+
+    nonisolated private static func readPasteboard(named name: NSPasteboard.Name, expectedCount: Int) -> PasteboardSnapshot {
+        let board = NSPasteboard(name: name)
+        guard board.changeCount == expectedCount,
+              let boardItems = board.pasteboardItems, !boardItems.isEmpty, boardItems.count <= 32 else { return .unavailable }
+        guard !boardItems.contains(where: { item in item.types.contains { Self.excludedTypes.contains($0.rawValue) } }) else { return .unavailable }
+        var items: [[String: Data]] = []
+        var total = 0
+        for boardItem in boardItems {
+            var item: [String: Data] = [:]
+            for type in boardItem.types.prefix(64) where Self.supportedTypes.contains(type.rawValue) {
+                guard let data = boardItem.data(forType: type) else { continue }
+                guard data.count <= Self.maximumEntryBytes - total else { return .tooLarge }
+                total += data.count
+                item[type.rawValue] = data
+            }
+            if !item.isEmpty { items.append(item) }
+        }
+        guard !items.isEmpty, board.changeCount == expectedCount else { return .unavailable }
+        return .items(items)
     }
 
     func filtered(query: String = "", kind: ClipboardEntry.Kind? = nil, source: String? = nil,
@@ -498,6 +521,7 @@ final class ClipboardStore: ObservableObject {
         var edited = ClipboardEntry.captured(items: [representations],
                                              sourceName: old.sourceName, sourceBundleID: old.sourceBundleID, at: old.createdAt)
         edited.id = old.id
+        edited.contentRevision = UUID()
         edited.title = old.title
         edited.lastCopiedAt = old.lastCopiedAt
         edited.pinboardIDs = old.pinboardIDs
@@ -617,58 +641,53 @@ final class ClipboardStore: ObservableObject {
     /// them into one string; no key event or application activation occurs here.
     @discardableResult
     func write(entryIDs: [UUID], plainText: Bool = false, separator: String = "\n", playSound: Bool = true) throws -> Bool {
+        let selected = try selectedEntries(entryIDs)
+        let payload = try ClipboardWritePayload.make(selected, plainText: plainText, separator: separator)
+        _ = try commitWrite(payload, ids: Set(selected.map(\.id)), playSound: playSound)
+        return true
+    }
+
+    private let writeQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-output", qos: .userInitiated)
+    var prepareWriteOverride: (@Sendable ([ClipboardEntry], Bool, String) throws -> [[String: Data]])?
+    /// Selection and focus stay responsive while a large rich payload is built.
+    /// A newer copy/cancel invalidates this request before replacing the board.
+    func writeAsync(entryIDs: [UUID], plainText: Bool = false, separator: String = "\n", playSound: Bool = true) async throws -> Int {
+        let selected = try selectedEntries(entryIDs)
+        let expected = pasteboard.changeCount
+        let prepare = prepareWriteOverride
+        let payload: [[String: Data]] = try await withCheckedThrowingContinuation { continuation in
+            writeQueue.async {
+                continuation.resume(with: Result {
+                    if let prepare { return try prepare(selected, plainText, separator) }
+                    return try ClipboardWritePayload.make(selected, plainText: plainText, separator: separator)
+                })
+            }
+        }
+        try Task.checkCancellation()
+        guard pasteboard.changeCount == expected else { throw StoreError.cannotWrite }
+        let current = try selectedEntries(entryIDs)
+        guard current.map(\.contentVersion) == selected.map(\.contentVersion) else { throw StoreError.emptySelection }
+        return try commitWrite(payload, ids: Set(selected.map(\.id)), playSound: playSound)
+    }
+
+    private func selectedEntries(_ entryIDs: [UUID]) throws -> [ClipboardEntry] {
         var seen = Set<UUID>()
-        let selected = entryIDs.filter { seen.insert($0).inserted }.compactMap { id in entries.first { $0.id == id } }
-        guard !selected.isEmpty, selected.count == seen.count else { throw StoreError.emptySelection }
-        let objects: [NSPasteboardItem]
-        if plainText && selected.allSatisfy({ $0.text != nil || !$0.fileURLs.isEmpty }) {
-            let parts = selected.compactMap { entry -> String? in
-                if let text = entry.text { return text }
-                if !entry.fileURLs.isEmpty { return entry.fileURLs.map(\.path).joined(separator: separator) }
-                return nil
-            }
-            guard parts.count == selected.count else { throw StoreError.cannotWrite }
-            let text = parts.joined(separator: separator)
-            guard text.utf8.count <= Self.maximumEntryBytes else { throw StoreError.tooLarge }
+        let ids = entryIDs.filter { seen.insert($0).inserted }
+        let selected: [ClipboardEntry]
+        if ids.count == 1 { selected = entries.first(where: { $0.id == ids[0] }).map { [$0] } ?? [] }
+        else {
+            let indexed = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            selected = ids.compactMap { indexed[$0] }
+        }
+        guard !selected.isEmpty, selected.count == ids.count else { throw StoreError.emptySelection }
+        return selected
+    }
+
+    private func commitWrite(_ payload: [[String: Data]], ids seen: Set<UUID>, playSound: Bool) throws -> Int {
+        let objects = payload.map { data in
             let item = NSPasteboardItem()
-            item.setString(text, forType: .string)
-            objects = [item]
-        } else if selected.count > 1 && selected.allSatisfy({ [.text, .link, .color].contains($0.kind) && $0.text != nil }) {
-            // Most text destinations consume only the first pasteboard item.
-            // Multiple selected text cards therefore need one combined item,
-            // while files/images retain their individual representations below.
-            let text = selected.compactMap(\.text).joined(separator: separator)
-            guard text.utf8.count <= Self.maximumEntryBytes,
-                  selected.reduce(0, { $0 + $1.byteCount }) <= Self.maximumEntryBytes else { throw StoreError.tooLarge }
-            let item = NSPasteboardItem()
-            item.setString(text, forType: .string)
-            let attributed = NSMutableAttributedString(string: "")
-            var hasRichText = false
-            for (index, entry) in selected.enumerated() {
-                if index > 0 { attributed.append(NSAttributedString(string: separator)) }
-                if let data = entry.items.first?[NSPasteboard.PasteboardType.rtf.rawValue],
-                   let rich = try? NSAttributedString(data: data,
-                        options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil),
-                   rich.string == entry.text {
-                    attributed.append(rich)
-                    hasRichText = true
-                } else {
-                    attributed.append(NSAttributedString(string: entry.text ?? ""))
-                }
-            }
-            if hasRichText, let rtf = try? attributed.data(from: NSRange(location: 0, length: attributed.length),
-                    documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]),
-               rtf.count <= Self.maximumEntryBytes {
-                item.setData(rtf, forType: .rtf)
-            }
-            objects = [item]
-        } else {
-            guard selected.reduce(0, { $0 + $1.byteCount }) <= 1_024 * 1_024 * 1_024 else { throw StoreError.tooLarge }
-            objects = selected.flatMap(\.items).map { data in
-                let item = NSPasteboardItem()
-                for (type, value) in data { item.setData(value, forType: .init(type)) }
-                return item
-            }
+            for (type, value) in data { item.setData(value, forType: .init(type)) }
+            return item
         }
         guard !objects.isEmpty else { throw StoreError.emptySelection }
         pasteboard.clearContents()
@@ -687,7 +706,7 @@ final class ClipboardStore: ObservableObject {
             scheduleSave()
         }
         if playSound { ClipboardAudioFeedback.copy() }
-        return true
+        return lastChangeCount
     }
 
     /// Tests and application termination can await durable storage without
@@ -741,6 +760,7 @@ final class ClipboardStore: ObservableObject {
         guard let index = entries.firstIndex(where: { $0.id == entryID }), entries[index].kind == .image,
               let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
         guard data.count <= Self.maximumEntryBytes else { lastError = StoreError.tooLarge.localizedDescription; return }
+        entries[index].contentRevision = UUID()
         entries[index].items = [[NSPasteboard.PasteboardType.png.rawValue: data]]
         entries[index].text = nil
         entries[index].recognizedText = nil
@@ -989,6 +1009,12 @@ final class ClipboardStore: ObservableObject {
 
     private static let storageRetryLimit = 12
     private static let storageRetryDelay: UInt64 = 5_000_000_000
+
+    private func onReadQueue<T>(_ work: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            readQueue.async { continuation.resume(returning: work()) }
+        }
+    }
 
     private func onCaptureQueue<T>(_ work: @escaping () -> T) async -> T {
         await withCheckedContinuation { continuation in

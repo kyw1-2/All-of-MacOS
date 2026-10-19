@@ -37,6 +37,10 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     /// a user-made "Copy" so a later copy of the *original* content is credited
     /// to the original during de-duplication instead of to the copy.
     var duplicatedFrom: UUID? = nil
+    /// Changes only when the payload is edited, never for selection/pinning/OCR.
+    /// Optional so older archives retain their original schema compatibility.
+    var contentRevision: UUID? = nil
+    var contentVersion: UUID { contentRevision ?? id }
 
     init(id: UUID = UUID(), title: String, text: String? = nil, kind: Kind = .text,
          sourceName: String? = nil, sourceBundleID: String? = nil, createdAt: Date = Date(),

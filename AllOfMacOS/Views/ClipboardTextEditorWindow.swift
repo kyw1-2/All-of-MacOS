@@ -369,6 +369,12 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
 @MainActor
 struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
     let entry: ClipboardEntry
+    var prepared: NSAttributedString? = nil
+    final class Coordinator {
+        var version: UUID?
+        var isPrepared = false
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = false
@@ -395,15 +401,14 @@ struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let text = scroll.documentView as? NSTextView else { return }
-        let attributed: NSAttributedString
-        if let data = entry.items.compactMap({ $0[NSPasteboard.PasteboardType.rtf.rawValue] }).first,
-           let decoded = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) {
-            attributed = decoded
-        } else {
-            attributed = NSAttributedString(string: entry.text ?? entry.previewText, attributes: [
-                .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.black
-            ])
-        }
-        if !text.attributedString().isEqual(to: attributed) { text.textStorage?.setAttributedString(attributed) }
+        guard context.coordinator.version != entry.contentVersion || context.coordinator.isPrepared != (prepared != nil) else { return }
+        context.coordinator.version = entry.contentVersion
+        context.coordinator.isPrepared = prepared != nil
+        // Full text and RTF are prepared by ClipboardPreviewCache's worker.
+        // Until then, display a bounded plain preview without parsing rich data.
+        let attributed = prepared ?? NSAttributedString(string: entry.previewText, attributes: [
+            .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.black
+        ])
+        text.textStorage?.setAttributedString(attributed)
     }
 }

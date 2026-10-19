@@ -2,6 +2,10 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.2.7
+
+Improves clipboard responsiveness: background pasteboard payload reads, asynchronous rich-text preparation/search/previews, focus handoff before direct paste, and content-versioned image caches. See [findings, Paste 2 reference and verification](docs/1.2.7-release-notes.md).
+
 ## Version 1.2.6
 
 Fixes capture workflow completion, per-action OCR options and macOS paste-log persistence. Moves gesture-statistics encoding, coalesced preset saves and Quick Access image transforms off the UI thread, with revision checks to preserve newer edits. See [audit, release notes and validation](docs/1.2.6-release-notes.md).

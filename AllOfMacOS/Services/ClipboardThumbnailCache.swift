@@ -14,8 +14,8 @@ final class ClipboardThumbnailCache: @unchecked Sendable {
 
     private init() { cache.totalCostLimit = 48 * 1024 * 1024; cache.countLimit = 150 }
 
-    func preview(id: UUID, data: Data) async -> Preview {
-        let key = id.uuidString as NSString
+    func preview(id: UUID, revision: UUID? = nil, data: Data) async -> Preview {
+        let key = "\(id.uuidString):\((revision ?? id).uuidString)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
         return await withCheckedContinuation { continuation in
             queue.async { [self] in
