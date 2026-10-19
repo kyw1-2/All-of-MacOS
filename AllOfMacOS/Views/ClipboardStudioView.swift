@@ -7,9 +7,8 @@ import SwiftUI
 /// image thumbnails decode off the main thread.
 struct ClipboardStudioView: View {
     @ObservedObject private var store = ClipboardStore.shared
-    @State private var searchQuery = ""
-    @State private var selectedKind: ClipboardEntry.Kind? = nil
-    @State private var selectedBoardID: UUID? = nil
+    @StateObject private var search = ClipboardPanelState()
+    @State private var boardCounts: [UUID: Int] = [:]
     @State private var hoveredCardID: UUID? = nil
     @State private var showingSettings = false
     @State private var showingNewBoardSheet = false
@@ -20,7 +19,7 @@ struct ClipboardStudioView: View {
     private let boardColors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "gray"]
 
     private var filteredEntries: [ClipboardEntry] {
-        store.filtered(query: searchQuery, kind: selectedKind, source: nil, board: selectedBoardID, since: nil)
+        search.displayedResults(in: store)
     }
 
     private var subtitle: String {
@@ -40,7 +39,7 @@ struct ClipboardStudioView: View {
                 }
                 HStack(spacing: 12) {
                     pinboardsBar
-                    Picker("Type", selection: $selectedKind) {
+                    Picker("Type", selection: $search.kind) {
                         Text("All").tag(ClipboardEntry.Kind?.none)
                         ForEach(ClipboardEntry.Kind.allCases) { kind in
                             Image(systemName: kind.symbol)
@@ -60,20 +59,22 @@ struct ClipboardStudioView: View {
 
             Divider()
 
-            if entries.isEmpty {
+            if search.isSearchPending {
+                ProgressView("Searching clipboard…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
                 if store.entries.isEmpty {
                     AOMEmptyState("Your Clipboard Is Empty", systemImage: "doc.on.clipboard",
                                   message: store.paused ? "Recording is paused. Resume to keep what you copy."
                                   : "Copy text, links, colors, images or files and they appear here — searchable, pinnable and encrypted on this Mac.") {
                         if store.paused { Button("Resume Recording") { store.resume() }.buttonStyle(.borderedProminent) }
                     }
-                } else if !searchQuery.isEmpty {
-                    ContentUnavailableView.search(text: searchQuery)
+                } else if !search.query.isEmpty {
+                    ContentUnavailableView.search(text: search.query)
                 } else {
-                    AOMEmptyState(selectedBoardID == nil ? "No Matching Items" : "Pinboard Is Empty",
-                                  systemImage: selectedBoardID == nil ? "line.3.horizontal.decrease.circle" : "pin",
-                                  message: selectedBoardID == nil ? "No items of this type yet." : "Pin items from a card's menu to keep them here.") {
-                        Button("Show All Items") { selectedKind = nil; selectedBoardID = nil }
+                    AOMEmptyState(search.board == nil ? "No Matching Items" : "Pinboard Is Empty",
+                                  systemImage: search.board == nil ? "line.3.horizontal.decrease.circle" : "pin",
+                                  message: search.board == nil ? "No items of this type yet." : "Pin items from a card's menu to keep them here.") {
+                        Button("Show All Items") { search.kind = nil; search.board = nil }
                     }
                 }
             } else {
@@ -102,8 +103,18 @@ struct ClipboardStudioView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search Clipboard")
+        .background(AOMWorkspaceBackground())
+        .searchable(text: $search.query, placement: .toolbar, prompt: "Search Clipboard")
+        .task(id: store.revision) {
+            let entries = store.entries
+            let counts = await Task.detached(priority: .userInitiated) {
+                var counts: [UUID: Int] = [:]
+                for entry in entries { for id in entry.pinboardIDs { counts[id, default: 0] += 1 } }
+                return counts
+            }.value
+            guard !Task.isCancelled else { return }
+            boardCounts = counts
+        }
         .sheet(isPresented: $showingSettings) {
             VStack(spacing: 0) {
                 ClipboardSettingsView()
@@ -173,16 +184,16 @@ struct ClipboardStudioView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
                 chip(title: "All Items", count: store.entries.count, color: nil, symbol: "tray.full",
-                     selected: selectedBoardID == nil) { selectedBoardID = nil }
+                     selected: search.board == nil) { search.board = nil }
                 ForEach(store.boards) { board in
-                    let count = store.entries.filter { $0.pinboardIDs.contains(board.id) }.count
+                    let count = boardCounts[board.id] ?? 0
                     chip(title: board.name, count: count, color: colorForBoard(board.color), symbol: nil,
-                         selected: selectedBoardID == board.id) {
-                        selectedBoardID = selectedBoardID == board.id ? nil : board.id
+                         selected: search.board == board.id) {
+                        search.board = search.board == board.id ? nil : board.id
                     }
                     .contextMenu {
                         Button("Delete Pinboard…", role: .destructive) {
-                            if selectedBoardID == board.id { selectedBoardID = nil }
+                            if search.board == board.id { search.board = nil }
                             store.deleteBoard(id: board.id)
                         }
                     }
@@ -274,11 +285,11 @@ struct ClipboardStudioView: View {
     // MARK: - Helpers
 
     private func copy(_ entry: ClipboardEntry) {
-        do {
-            _ = try store.write(entryIDs: [entry.id], plainText: false, playSound: true)
-            showToast("Copied “\(entry.title.prefix(40))”")
-        } catch {
-            showToast("Could not copy: \(error.localizedDescription)")
+        Task {
+            do {
+                _ = try await store.writeAsync(entryIDs: [entry.id], plainText: false, playSound: true)
+                showToast("Copied “\(entry.title.prefix(40))”")
+            } catch { showToast("Could not copy: \(error.localizedDescription)") }
         }
     }
 

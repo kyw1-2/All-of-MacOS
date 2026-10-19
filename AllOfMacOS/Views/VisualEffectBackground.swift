@@ -24,10 +24,10 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = state
-        view.isEmphasized = isEmphasized
+        if view.material != material { view.material = material }
+        if view.blendingMode != blendingMode { view.blendingMode = blendingMode }
+        if view.state != state { view.state = state }
+        if view.isEmphasized != isEmphasized { view.isEmphasized = isEmphasized }
     }
 }
 
@@ -35,24 +35,43 @@ struct VisualEffectBackground: NSViewRepresentable {
 ///
 /// A window is opaque by default, and an opaque window is exactly what makes a
 /// `.behindWindow` material render as flat grey. This walks up to the window and
-/// turns that off, which has to happen after the window exists, hence the async
-/// hop.
+/// turns that off when its host actually joins a window, including reattachment.
 struct TranslucentWindow: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async { [weak view] in
-            guard let window = view?.window else { return }
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            // The title bar keeps its own material, matching System Settings.
-            window.titlebarAppearsTransparent = true
+    private final class WindowProbe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configure()
         }
-        return view
+        func configure() {
+            guard let window else { return }
+            if window.isOpaque { window.isOpaque = false }
+            if window.backgroundColor != .clear { window.backgroundColor = .clear }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+        }
     }
-    func updateNSView(_ view: NSView, context: Context) {}
+    func makeNSView(context: Context) -> NSView { WindowProbe(frame: .zero) }
+    func updateNSView(_ view: NSView, context: Context) { (view as? WindowProbe)?.configure() }
+}
+
+/// macOS 26+ owns the sidebar's Liquid Glass. Older systems get one AppKit
+/// material; accessibility settings substitute an opaque surface.
+private struct AOMSidebarMaterial: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @ViewBuilder func body(content: Content) -> some View {
+        if reduceTransparency || contrast == .increased {
+            content.scrollContentBackground(.hidden).background(Color(nsColor: .windowBackgroundColor))
+        } else if #available(macOS 26, *) {
+            content
+        } else {
+            content.scrollContentBackground(.hidden).translucentPane(.sidebar)
+        }
+    }
 }
 
 extension View {
+    func aomSidebarMaterial() -> some View { modifier(AOMSidebarMaterial()) }
+
     /// Gives a pane the System Settings treatment: a real behind-window blur
     /// with the window itself made non-opaque so the blur is visible.
     func translucentPane(_ material: NSVisualEffectView.Material = .sidebar) -> some View {

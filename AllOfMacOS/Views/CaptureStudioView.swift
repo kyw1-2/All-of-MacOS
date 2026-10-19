@@ -60,7 +60,7 @@ struct CaptureStudioView: View {
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMWorkspaceBackground())
         .sheet(isPresented: $showingSettingsSheet) {
             VStack(spacing: 0) {
                 CaptureSettingsView()

@@ -40,7 +40,7 @@ struct StatisticsView: View {
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMWorkspaceBackground())
         .confirmationDialog("Reset gesture statistics?", isPresented: $confirmingReset) {
             Button("Reset Statistics", role: .destructive) { stats.reset() }
         } message: {

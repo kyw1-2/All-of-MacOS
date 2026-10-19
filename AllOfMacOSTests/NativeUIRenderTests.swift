@@ -42,6 +42,13 @@ final class NativeUIRenderTests: XCTestCase {
         state.selectedMainTab = .home
         try render(MainWindow().environmentObject(state), size: NSSize(width: 1320, height: 820),
                    appearance: .darkAqua, url: output.appendingPathComponent("main-home-dark.png"))
+        state.selectedMainTab = .home
+        try render(MainWindow().environmentObject(state).environment(\.colorScheme, .light),
+                   size: NSSize(width: 1040, height: 700), appearance: .aqua,
+                   url: output.appendingPathComponent("main-home-compact.png"))
+        try render(MainWindow().environmentObject(state).environment(\.colorScheme, .light),
+                   size: NSSize(width: 1320, height: 820), appearance: .accessibilityHighContrastAqua,
+                   url: output.appendingPathComponent("main-home-high-contrast.png"))
         state.selectedMainTab = .gestures
         let empty = AppState()
         empty.currentPreset = Preset(name: "Empty Review")

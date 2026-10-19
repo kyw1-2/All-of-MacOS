@@ -67,7 +67,7 @@ struct ModernWindowSnappingView: View {
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMWorkspaceBackground())
         .aomToast(toast.message)
         .sheet(isPresented: $showingSnapZones) {
             CustomSnapZonesEditor(preset: appState.currentPreset, profile: appState.activeSnapProfile)

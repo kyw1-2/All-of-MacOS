@@ -75,19 +75,31 @@ struct ModernGesturesWorkspace: View {
     }
 
     var body: some View {
-        Group {
-            if scopedTriggers.isEmpty {
-                onboardingView
-            } else if rows.isEmpty {
-                ContentUnavailableView.search(text: searchQuery)
-            } else {
-                table
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Label(scopeTitle, systemImage: "square.stack.3d.up")
+                    .font(.callout.weight(.semibold))
+                Text("\(scopedTriggers.count) gestures")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text("Select a gesture to edit its workflow")
+                    .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
             }
+            .padding(.horizontal, 2)
+            Group {
+                if scopedTriggers.isEmpty { onboardingView }
+                else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
+                else { table }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .aomSurface(padding: 0)
+            .clipShape(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(18)
+        .background(AOMWorkspaceBackground())
         .inspector(isPresented: $showsInspector) {
             inspectorContent
-                .inspectorColumnWidth(min: 340, ideal: 420, max: 620)
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 560)
         }
         .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search Gestures")
         .toolbar {
@@ -198,7 +210,7 @@ struct ModernGesturesWorkspace: View {
             }
             .width(min: 70, ideal: 100)
         }
-        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: UUID.self) { ids in
             if let id = ids.first, let trigger = appState.currentPreset.triggers.first(where: { $0.id == id }) {
                 triggerMenu(trigger)

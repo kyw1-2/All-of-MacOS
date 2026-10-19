@@ -10,7 +10,6 @@ private struct AOMTriggerPaneHeightKey: PreferenceKey {
 
 struct MainWindow: View {
     @EnvironmentObject var appState: AppState
-    @ObservedObject private var gestureLog = GestureLog.shared
     @AppStorage("AOMShowLog") private var showLog = false
     @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
     @State private var showingCommandPalette = false
@@ -19,14 +18,13 @@ struct MainWindow: View {
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettingsAction
-    @Environment(\.displayScale) private var displayScale
 
     private var isDark: Bool { appearance == "dark" }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
             ModernSidebarView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 244, max: 300)
                 .tutorialAnchor(.sidebar)
         } detail: {
             HStack(spacing: 0) {
@@ -49,19 +47,7 @@ struct MainWindow: View {
                     DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                 }
             }
-            .background(Color(nsColor: .windowBackgroundColor))
-            // The native unified toolbar also draws its own separator. Suppress
-            // that line and paint a single device-pixel boundary at the detail
-            // pane's exact origin so the title row and board cannot be offset.
-            .overlay(alignment: .top) {
-                GeometryReader { geometry in
-                    Color(nsColor: .separatorColor)
-                        .opacity(0.48)
-                        .frame(height: 1 / max(displayScale, 1))
-                        .frame(maxHeight: .infinity, alignment: .top)
-                        .allowsHitTesting(false)
-                }
-            }
+            .background(AOMWorkspaceBackground())
             .navigationTitle(appState.selectedMainTab.title)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -90,6 +76,7 @@ struct MainWindow: View {
         }
         .navigationSplitViewStyle(.balanced)
         .background(AOMWindowTitlebarSeparator().frame(width: 0, height: 0))
+        .background(TranslucentWindow().frame(width: 0, height: 0))
         .scrollIndicators(.hidden)
         .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
             // Opt-in, single-value layout probe for diagnosing split view regressions.
@@ -127,8 +114,7 @@ struct MainWindow: View {
     }
 }
 
-/// Disable AppKit's separately rendered toolbar hairline. SwiftUI paints one
-/// aligned separator in the detail column instead of creating a double edge.
+/// Native toolbar material and scroll-edge treatment own the chrome boundary.
 private struct AOMWindowTitlebarSeparator: NSViewRepresentable {
     private final class Probe: NSView {
         override func viewDidMoveToWindow() {

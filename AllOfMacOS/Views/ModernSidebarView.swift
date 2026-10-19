@@ -49,23 +49,17 @@ struct ModernSidebarView: View {
         appState.selectedMainTab = .gestures
     }
 
-    private func triggerCount(app: AppTarget? = nil, group: UUID? = nil) -> Int {
-        appState.currentPreset.triggers.filter { trigger in
-            if let group { return trigger.activationGroupID == group }
-            guard trigger.activationGroupID == nil else { return false }
-            if let app, !app.isGlobal { return trigger.appBundleID == app.bundleID }
-            return trigger.appBundleID?.isEmpty ?? true
-        }.count
-    }
-
     @AppStorage("AOMSidebarAppsExpanded") private var appsExpanded = true
     @AppStorage("AOMSidebarGroupsExpanded") private var groupsExpanded = true
 
     private func hubRow(_ tab: AOMMainTab, badge: Int? = nil) -> some View {
         Label {
-            Text(tab.title)
+            Text(tab.title).font(.system(size: 13, weight: .medium))
         } icon: {
-            AOMIconTile(systemImage: tab.iconName, tint: tab.accentColor, size: 22)
+            Image(systemName: tab.iconName)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(tab.accentColor)
+                .frame(width: 24, height: 28)
         }
         .badge(badge ?? 0)
         .tag(Destination.hub(tab))
@@ -73,13 +67,14 @@ struct ModernSidebarView: View {
     }
 
     var body: some View {
+        let counts = AOMSidebarSummary(triggers: appState.currentPreset.triggers)
         List(selection: selection) {
             Section {
                 hubRow(.home)
                 hubRow(.insights)
             }
             Section("Automation") {
-                hubRow(.gestures, badge: appState.currentPreset.triggers.filter(\.isEnabled).count)
+                hubRow(.gestures, badge: counts.enabled)
                 hubRow(.snapping)
             }
             Section("Media") {
@@ -92,19 +87,15 @@ struct ModernSidebarView: View {
                 } icon: {
                     AOMIconTile(systemImage: "globe", tint: .gray, size: 22)
                 }
-                .badge(triggerCount())
+                .badge(counts.global)
                 .tag(Destination.allApps)
                 ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { app in
                     Label {
                         Text(app.name).lineLimit(1)
                     } icon: {
-                        if let icon = app.icon {
-                            Image(nsImage: icon).resizable().frame(width: 22, height: 22)
-                        } else {
-                            AOMIconTile(systemImage: "app", tint: .gray, size: 22)
-                        }
+                        AOMSidebarAppIcon(app: app)
                     }
-                    .badge(triggerCount(app: app))
+                    .badge(counts.applications[app.bundleID ?? ""] ?? 0)
                     .tag(Destination.profile(app.id))
                     .contextMenu {
                         Button("Remove Application Profile", role: .destructive) {
@@ -127,7 +118,7 @@ struct ModernSidebarView: View {
                         AOMIconTile(systemImage: group.isEnabled ? "square.stack.3d.up.fill" : "pause.fill",
                                     tint: group.isEnabled ? .teal : .gray, size: 22)
                     }
-                    .badge(triggerCount(group: group.id))
+                    .badge(counts.groups[group.id] ?? 0)
                     .tag(Destination.group(group.id))
                     .contextMenu {
                         Button("Edit Group…") { editingGroup = group }
@@ -150,6 +141,8 @@ struct ModernSidebarView: View {
         }
         .listStyle(.sidebar)
         .scrollIndicators(.hidden)
+        .aomSidebarMaterial()
+        .safeAreaInset(edge: .top, spacing: 0) { identity }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .popover(isPresented: $showingAppPicker) {
             AppPickerView { app in
@@ -185,19 +178,21 @@ struct ModernSidebarView: View {
 
     private var identity: some View {
         HStack(spacing: 10) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable().frame(width: 34, height: 34)
+            Image(systemName: "command")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.tint)
+                .frame(width: 38, height: 38)
+                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("All of MacOS").font(.headline)
-                Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–")")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(appState.currentPreset.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
+        .padding(.top, 14)
+        .padding(.bottom, 18)
     }
 
     private var footer: some View {
@@ -227,7 +222,22 @@ struct ModernSidebarView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .top) { Divider().opacity(0.35) }
+    }
+}
+
+/// Resolve application artwork once per visible row rather than on every
+/// hover, selection or preset publication. The task follows profile identity.
+private struct AOMSidebarAppIcon: View {
+    let app: AppTarget
+    @State private var icon: NSImage?
+    var body: some View {
+        Group {
+            if let icon { Image(nsImage: icon).resizable().scaledToFit() }
+            else { Image(systemName: "app").foregroundStyle(.secondary) }
+        }
+        .frame(width: 22, height: 22)
+        .task(id: app.bundleID) { icon = app.icon }
+        .accessibilityHidden(true)
     }
 }

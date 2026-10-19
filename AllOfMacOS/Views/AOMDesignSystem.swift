@@ -12,13 +12,32 @@ enum AOMDesign {
     static let sectionSpacing: CGFloat = 18
     static let gridSpacing: CGFloat = 12
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
-    static let surfaceRadius: CGFloat = 12
-    static let tileRadius: CGFloat = 10
+    static let surfaceRadius: CGFloat = 16
+    static let tileRadius: CGFloat = 12
     static let controlRadius: CGFloat = 7
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     static func animation(_ animation: Animation = .snappy(duration: 0.22)) -> Animation? {
         reduceMotion ? nil : animation
+    }
+}
+
+/// A static canvas: no live backdrop sampling, per-frame work or animated blur.
+struct AOMWorkspaceBackground: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        Color(nsColor: .windowBackgroundColor)
+            .overlay(alignment: .top) {
+                if !reduceTransparency && contrast != .increased {
+                    LinearGradient(colors: [Color.accentColor.opacity(scheme == .dark ? 0.055 : 0.035), .clear],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .frame(height: 360)
+                }
+            }
+            .allowsHitTesting(false)
     }
 }
 
@@ -31,6 +50,7 @@ struct AOMSurface: ViewModifier {
     var radius: CGFloat = AOMDesign.surfaceRadius
     var padding: CGFloat? = 14
     var highlighted = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         content
@@ -38,8 +58,8 @@ struct AOMSurface: ViewModifier {
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? Color.accentColor.opacity(0.7) : Color(nsColor: .separatorColor).opacity(0.6),
-                                  lineWidth: highlighted ? 1.5 : 0.5)
+                    .strokeBorder(highlighted ? Color.accentColor.opacity(0.7) : Color(nsColor: .separatorColor).opacity(contrast == .increased ? 1 : 0.48),
+                                  lineWidth: highlighted ? 1.5 : (contrast == .increased ? 1 : 0.5))
             }
     }
 }
@@ -111,9 +131,8 @@ struct AOMSectionHeader<Accessory: View>: View {
 
 // MARK: - Page header
 
-/// The top line of a page. The page title is the window title (toolbar),
-/// so this only carries live status and the page's own controls — no
-/// banner, icon or box, matching Apple's apps.
+/// A consistent page heading, live summary and native controls. Controls move
+/// below the title when a compact detail column needs more room.
 struct AOMPageHeader<Trailing: View>: View {
     let title: String
     let subtitle: String
@@ -131,17 +150,34 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 12)
-            trailing.controlSize(.regular)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 16) {
+                heading
+                Spacer(minLength: 12)
+                trailing.controlSize(.regular)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                heading
+                trailing.controlSize(.regular)
+            }
         }
-        .frame(minHeight: 28)
+        .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
+    }
+
+    private var heading: some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 23, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 44, height: 44)
+                .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 24, weight: .bold)).tracking(-0.5)
+                Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            }
+        }
     }
 }
 
@@ -208,25 +244,36 @@ struct AOMActionTile: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                AOMIconTile(systemImage: systemImage, tint: tint, size: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                    if let subtitle {
-                        Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
+            VStack(alignment: .leading, spacing: 15) {
+                HStack {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 23, weight: .medium)).foregroundStyle(tint)
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                 }
-                Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovering ? Color.primary.opacity(0.08) : Color.primary.opacity(0.035),
-                        in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(tint.opacity(hovering ? 0.09 : 0.035))
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(hovering ? tint.opacity(0.35) : Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: hovering)
         .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
     }
 }
