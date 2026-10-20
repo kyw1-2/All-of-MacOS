@@ -99,7 +99,15 @@ final class AnnotationEditorController {
     }
 
     static func entry(fromImageAt url: URL) -> CaptureHistoryEntry? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+        guard url.isFileURL,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? Int.max) <= 200_000_000,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 32768, height <= 32768,
+              Int64(width) * Int64(height) <= 100_000_000,
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         // Honour the file's DPI so a Retina PNG opens at its on-screen size.
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]

@@ -14,6 +14,9 @@ import Combine
 /// tests construct them directly, so no real sleep / USB / Bluetooth / Wi-Fi is
 /// ever involved in verification.
 enum SystemSignal: Equatable {
+    case hid(vendorID: Int, productID: Int, usagePage: Int, usage: Int, value: Int)
+    case midi(device: String, status: Int, channel: Int, number: Int, value: Int)
+    case gamepad(device: String, control: String, pressed: Bool)
     case willSleep, didWake
     case appActivated(bundleID: String)
     case appDeactivated(bundleID: String)
@@ -38,6 +41,8 @@ enum SystemSignal: Equatable {
 /// The independent OS observers a set of triggers needs. A preset only pays for
 /// the sources its triggers actually use.
 enum SignalSource: Hashable {
+    case midi, gamepad
+    case hid(Set<GenericHIDFilter>)
     case sleepWake, appFocus, screensaver, space, battery, wifi, usb, bluetooth
     case inputSource, audioOutput, clipboard, variables, pointer
     case files(Set<String>)
@@ -46,8 +51,13 @@ enum SignalSource: Hashable {
     static func needs(for kinds: [SystemTriggerKind]) -> Set<SignalSource> {
         var out = Set<SignalSource>()
         var paths = Set<String>()
+        var hidFilters = Set<GenericHIDFilter>()
         for kind in kinds {
             switch kind {
+            case .hidInput(let vendor, let product, _, _, _, _):
+                if (1...65535).contains(vendor), (1...65535).contains(product) { hidFilters.insert(GenericHIDFilter(vendorID: vendor, productID: product)) }
+            case .midiMessage: out.insert(.midi)
+            case .gamepadButton: out.insert(.gamepad)
             case .systemWillSleep, .systemDidWake: out.insert(.sleepWake)
             case .appActivated, .appDeactivated: out.insert(.appFocus)
             case .screensaverStarted, .screensaverStopped: out.insert(.screensaver)
@@ -67,6 +77,7 @@ enum SignalSource: Hashable {
             }
         }
         if !paths.isEmpty { out.insert(.files(paths)) }
+        if !hidFilters.isEmpty { out.insert(.hid(hidFilters)) }
         return out
     }
 }
@@ -92,7 +103,18 @@ enum SystemSignalMatcher {
     /// Case-insensitive substring filter; an empty filter matches everything.
     static func nameMatches(_ filter: String, _ name: String) -> Bool {
         let wanted = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if wanted.hasPrefix("regex:") { return regexMatches(String(wanted.dropFirst(6)), name) }
         return wanted.isEmpty || name.range(of: wanted, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    static func networkMatches(_ filter: String, _ name: String) -> Bool {
+        if filter.hasPrefix("regex:") { return regexMatches(String(filter.dropFirst(6)), name) }
+        return filter.isEmpty || filter.caseInsensitiveCompare(name) == .orderedSame
+    }
+    private static func regexMatches(_ pattern: String, _ name: String) -> Bool {
+        guard pattern.count <= 256, name.count <= 1024,
+              let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
+        return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
     }
 
     /// Stateless match of a signal against a kind. Stateful kinds (battery
@@ -100,6 +122,14 @@ enum SystemSignalMatcher {
     /// the monitor before it builds the signal it passes here.
     static func matches(_ kind: SystemTriggerKind, _ signal: SystemSignal) -> Bool {
         switch (kind, signal) {
+        case (.hidInput(let vendor, let product, let page, let usage, let low, let high),
+              .hid(let actualVendor, let actualProduct, let actualPage, let actualUsage, let value)):
+            return vendor == actualVendor && product == actualProduct && page == actualPage && usage == actualUsage && (low...max(low, high)).contains(value)
+        case (.midiMessage(let filter, let status, let channel, let number, let low, let high),
+              .midi(let device, let actualStatus, let actualChannel, let actualNumber, let value)):
+            return nameMatches(filter, device) && status == actualStatus && (channel == 0 || channel == actualChannel) && number == actualNumber && (low...max(low, high)).contains(value)
+        case (.gamepadButton(let filter, let control, let pressed), .gamepad(let device, let actualControl, let actualPressed)):
+            return nameMatches(filter, device) && control == actualControl && pressed == actualPressed
         case (.systemWillSleep, .willSleep), (.systemDidWake, .didWake): return true
         case (.appActivated(let id), .appActivated(let actual)): return id.isEmpty || id == actual
         case (.appDeactivated(let id), .appDeactivated(let actual)): return id.isEmpty || id == actual
@@ -256,6 +286,9 @@ struct ScreenHoverRecognizer {
 /// on `stop()`. Nothing here is exercised by tests (they inject a fake provider).
 final class LiveSystemSignalProvider: SystemSignalProvider {
     private var emit: ((SystemSignal) -> Void)?
+    private var hidMonitor: GenericHIDInputMonitor?
+    private var midiMonitor: MIDIInputMonitor?
+    private var gamepadMonitor: GamepadInputMonitor?
     private var workspaceTokens: [NSObjectProtocol] = []
     private var distributedTokens: [NSObjectProtocol] = []
     private var defaultsToken: NSObjectProtocol?
@@ -271,7 +304,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     private var bluetoothTokens: [IOBluetoothUserNotification] = []
     private var bluetoothDisconnectTokens: [String: IOBluetoothUserNotification] = [:]
     private var audioListener: (AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)?
-    private var fileWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    private var fileWatchers: [String: ResilientFileWatcher] = [:]
     private var clipboardSink: AnyCancellable?
     private var pointerMonitors: [Any] = []
     private var lastVariableSnapshot: [String: String] = [:]
@@ -281,6 +314,12 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
         self.emit = emit
         for need in needs {
             switch need {
+            case .hid(let filters):
+                let monitor = GenericHIDInputMonitor(filters: filters) { [weak self] in self?.send($0) }; hidMonitor = monitor; monitor.start()
+            case .midi:
+                let monitor = MIDIInputMonitor { [weak self] in self?.send($0) }; midiMonitor = monitor; monitor.start()
+            case .gamepad:
+                let monitor = GamepadInputMonitor { [weak self] in self?.send($0) }; gamepadMonitor = monitor; monitor.start()
             case .sleepWake: observeSleepWake()
             case .appFocus: observeAppFocus()
             case .screensaver: observeScreensaver()
@@ -300,6 +339,9 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     }
 
     func stop() {
+        hidMonitor?.stop(); hidMonitor = nil
+        midiMonitor?.stop(); midiMonitor = nil
+        gamepadMonitor?.stop(); gamepadMonitor = nil
         let workspace = NSWorkspace.shared.notificationCenter
         workspaceTokens.forEach(workspace.removeObserver); workspaceTokens.removeAll()
         distributedTokens.forEach(DistributedNotificationCenter.default().removeObserver); distributedTokens.removeAll()
@@ -315,7 +357,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
             AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &a, .main, block)
             audioListener = nil
         }
-        fileWatchers.values.forEach { $0.cancel() }; fileWatchers.removeAll()
+        fileWatchers.values.forEach { $0.stop() }; fileWatchers.removeAll()
         clipboardSink = nil
         pointerMonitors.forEach(NSEvent.removeMonitor); pointerMonitors.removeAll()
         emit = nil
@@ -538,22 +580,8 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
 
     private func watch(_ path: String) {
         guard fileWatchers[path] == nil else { return }
-        let descriptor = open(path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor, eventMask: [.write, .extend, .attrib, .delete, .rename, .link], queue: .main)
-        source.setEventHandler { [weak self, weak source] in
-            guard let self, let source else { return }
-            self.send(.fileChanged(path: path))
-            // Atomic saves replace the inode; re-arm on the new file.
-            if !source.data.isDisjoint(with: [.delete, .rename]) {
-                source.cancel(); self.fileWatchers[path] = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.watch(path) }
-            }
-        }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        fileWatchers[path] = source
+        let watcher = ResilientFileWatcher(path: path) { [weak self] in self?.send(.fileChanged(path: path)) }
+        fileWatchers[path] = watcher; watcher.start()
     }
 
     // MARK: Pointer

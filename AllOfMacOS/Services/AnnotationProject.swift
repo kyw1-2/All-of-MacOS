@@ -30,7 +30,7 @@ struct AnnotationProject: Codable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 
-    static func read(from url: URL) throws -> (AnnotationDocument, CGFloat) {
+    static func read(from url: URL, thumbnailMaxPixelSize: Int? = nil) throws -> (AnnotationDocument, CGFloat) {
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true, (values.fileSize ?? Int.max) <= 300_000_000 else {
             throw CocoaError(.fileReadTooLarge)
@@ -43,8 +43,7 @@ struct AnnotationProject: Codable {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               width > 0, height > 0, width <= 32768, height <= 32768,
-              Int64(width) * Int64(height) <= 100_000_000,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+              Int64(width) * Int64(height) <= 100_000_000 else {
             throw CocoaError(.fileReadCorruptFile)
         }
         func validRect(_ rect: CGRect) -> Bool {
@@ -61,11 +60,37 @@ struct AnnotationProject: Codable {
               }), project.background.isValid else {
             throw CocoaError(.fileReadCorruptFile)
         }
+        let image: CGImage
+        let renderScale: CGFloat
+        if let maximum = thumbnailMaxPixelSize {
+            guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: min(1024, max(32, maximum)),
+                kCGImageSourceShouldCacheImmediately: true
+            ] as CFDictionary) else { throw CocoaError(.fileReadCorruptFile) }
+            image = thumbnail
+            renderScale = project.scale * min(CGFloat(image.width) / CGFloat(width), CGFloat(image.height) / CGFloat(height))
+        } else {
+            guard let original = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw CocoaError(.fileReadCorruptFile) }
+            image = original
+            renderScale = project.scale
+        }
         var document = AnnotationDocument(baseImage: image)
-        document.cropRect = project.crop
+        document.cropRect = project.crop.map { rect in
+            CGRect(x: rect.minX * CGFloat(image.width) / CGFloat(width),
+                   y: rect.minY * CGFloat(image.height) / CGFloat(height),
+                   width: rect.width * CGFloat(image.width) / CGFloat(width),
+                   height: rect.height * CGFloat(image.height) / CGFloat(height))
+        }
         document.objects = project.objects
         document.background = project.background
-        return (document, project.scale)
+        if thumbnailMaxPixelSize != nil {
+            let canvas = document.backgroundLayout(scale: renderScale).canvasSize
+            guard canvas.width <= 4096, canvas.height <= 4096, canvas.width * canvas.height <= 4_194_304 else {
+                throw CocoaError(.fileReadTooLarge)
+            }
+        }
+        return (document, renderScale)
     }
 }
 

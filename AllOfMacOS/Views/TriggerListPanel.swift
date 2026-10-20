@@ -460,7 +460,27 @@ struct AddTriggerSheet: View {
     @State private var scheduleMinute = 0
     @State private var selectedWeekdays: Set<Int> = [2, 3, 4, 5, 6]
     @State private var intervalMinutes = 30
+    @State private var restrictInterval = false
+    @State private var windowStartMinute = 9 * 60
+    @State private var windowEndMinute = 17 * 60
+    @State private var restrictDates = false
+    @State private var windowFirstDate = Date()
+    @State private var windowLastDate = Date().addingTimeInterval(30 * 86400)
     @State private var systemEventKind = "display"
+    @State private var eventFilter = ""
+    @State private var eventNumber = 60
+    @State private var hidVendor = 1
+    @State private var hidProduct = 1
+    @State private var hidPage = 12
+    @State private var hidUsage = 1
+    @State private var hidMinimum = 1
+    @State private var hidMaximum = 1
+    @State private var midiChannel = 0
+    @State private var midiStatus = 144
+    @State private var midiMinimum = 1
+    @State private var midiMaximum = 127
+    @State private var gamepadControl = "a"
+    @State private var eventPressed = true
     @State private var powerOnAC = true
     @State private var systemEventAppID = ""
     @State private var systemEventAppName = ""
@@ -731,6 +751,17 @@ struct AddTriggerSheet: View {
                         .textFieldStyle(.roundedBorder).frame(width: 64)
                     Text("minutes")
                 }
+                Toggle("Restrict to a time and weekday window", isOn: $restrictInterval)
+                if restrictInterval {
+                    Stepper("From \(String(format: "%02d:%02d", windowStartMinute / 60, windowStartMinute % 60))", value: $windowStartMinute, in: 0...1439, step: 15)
+                    Stepper("Until \(String(format: "%02d:%02d", windowEndMinute / 60, windowEndMinute % 60))", value: $windowEndMinute, in: 0...1439, step: 15)
+                    Text("An end time before the start time continues into the next morning.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Restrict calendar date range", isOn: $restrictDates)
+                    if restrictDates {
+                        DatePicker("First date", selection: $windowFirstDate, displayedComponents: .date)
+                        DatePicker("Last date", selection: $windowLastDate, in: windowFirstDate..., displayedComponents: .date)
+                    }
+                }
             } else {
                 HStack {
                     Text("At")
@@ -739,12 +770,12 @@ struct AddTriggerSheet: View {
                     }.labelsHidden().frame(width: 70)
                     Text(":")
                     Picker("", selection: $scheduleMinute) {
-                        ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                        ForEach(0..<60, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
                     }.labelsHidden().frame(width: 70)
                 }
             }
 
-            if scheduleKind == "weekly" {
+            if scheduleKind == "weekly" || (scheduleKind == "interval" && restrictInterval) {
                 HStack(spacing: 4) {
                     ForEach(1...7, id: \.self) { day in
                         let label = ["S", "M", "T", "W", "T", "F", "S"][day - 1]
@@ -771,37 +802,79 @@ struct AddTriggerSheet: View {
     private var systemEventField: some View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("Event", selection: $systemEventKind) {
-                Text("Display configuration changes").tag("display")
-                Text("Power source changes").tag("power")
-                Text("Screen locks").tag("lock")
-                Text("Screen unlocks").tag("unlock")
-                Text("Application launches").tag("appLaunch")
-                Text("Application quits").tag("appQuit")
+                ForEach(Self.systemEvents, id: \.0) { event in Text(event.1).tag(event.0) }
             }
-
-            if systemEventKind == "power" {
-                Picker("When", selection: $powerOnAC) {
-                    Text("Power is connected").tag(true)
-                    Text("Switched to battery").tag(false)
-                }.pickerStyle(.segmented)
+            if ["wifiOn", "wifiOff", "usbOn", "usbOff", "btOn", "btOff", "midi", "gamepad"].contains(systemEventKind) {
+                TextField("Device name / SSID filter (empty = any)", text: $eventFilter)
+                Text("USB, Bluetooth and MIDI match a substring; Wi-Fi matches the full SSID. Use regex:pattern for a regular expression. SSID names require Location permission.").font(.caption).foregroundStyle(.secondary)
             }
-
-            if systemEventKind == "appLaunch" || systemEventKind == "appQuit" {
-                Button("Choose Application…") {
-                    let panel = NSOpenPanel()
-                    panel.allowedContentTypes = [.applicationBundle]
-                    panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-                    if panel.runModal() == .OK, let url = panel.url {
-                        systemEventAppID = Bundle(url: url)?.bundleIdentifier ?? ""
-                        systemEventAppName = url.deletingPathExtension().lastPathComponent
-                    }
+            if systemEventKind == "file" {
+                TextField("Absolute file or folder path", text: $eventFilter)
+                Button("Choose File or Folder…") {
+                    let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true
+                    if panel.runModal() == .OK { eventFilter = panel.url?.path ?? "" }
                 }
-                if !systemEventAppName.isEmpty {
-                    Text(systemEventAppName).font(.caption).foregroundStyle(.secondary)
+                Text("Watches this file or immediate folder changes, including atomic replacement and later creation.").font(.caption).foregroundStyle(.secondary)
+            }
+            if systemEventKind == "variable" { TextField("Variable name (empty = any)", text: $eventFilter) }
+            if systemEventKind == "batteryBelow" || systemEventKind == "batteryAbove" {
+                Stepper("Charge: \(eventNumber)%", value: $eventNumber, in: 1...99)
+            }
+            if systemEventKind == "midi" {
+                Picker("Message", selection: $midiStatus) {
+                    Text("Note On").tag(144); Text("Note Off").tag(128); Text("Control Change").tag(176)
+                }
+                .onChange(of: midiStatus) { _, status in
+                    // Keep custom ranges; the initial Note On range must also
+                    // accept zero-velocity releases when changed to Note Off.
+                    if status == 128, midiMinimum == 1, midiMaximum == 127 { midiMinimum = 0 }
+                }
+                Stepper("Channel: \(midiChannel == 0 ? "Any" : String(midiChannel))", value: $midiChannel, in: 0...16)
+                Stepper("Note / controller number: \(eventNumber)", value: $eventNumber, in: 0...127)
+                Stepper("Minimum value: \(midiMinimum)", value: $midiMinimum, in: 0...127)
+                Stepper("Maximum value: \(midiMaximum)", value: $midiMaximum, in: midiMinimum...127)
+                Text("CoreMIDI Note On/Off and Control Change from connected sources. Note On velocity zero is treated as Note Off.").font(.caption).foregroundStyle(.secondary)
+            }
+            if systemEventKind == "hid" {
+                TextField("Vendor ID (decimal)", value: $hidVendor, format: .number)
+                TextField("Product ID (decimal)", value: $hidProduct, format: .number)
+                TextField("Usage page (decimal)", value: $hidPage, format: .number)
+                TextField("Usage (decimal)", value: $hidUsage, format: .number)
+                TextField("Minimum value", value: $hidMinimum, format: .number)
+                TextField("Maximum value", value: $hidMaximum, format: .number)
+                Text("Opt-in IOHID input for this exact vendor/product and element usage. Standard keyboards/mice are excluded. May require Input Monitoring permission; use values documented by your device.").font(.caption).foregroundStyle(.secondary)
+            }
+            if systemEventKind == "gamepad" {
+                Picker("Control", selection: $gamepadControl) {
+                    ForEach(["a", "b", "x", "y", "leftShoulder", "rightShoulder", "leftTrigger", "rightTrigger", "up", "down", "left", "right", "menu", "options", "leftThumbstick", "rightThumbstick", "leftStickUp", "leftStickDown", "leftStickLeft", "leftStickRight", "rightStickUp", "rightStickDown", "rightStickLeft", "rightStickRight"], id: \.self) { Text($0).tag($0) }
+                }
+                Toggle("On press (off = release)", isOn: $eventPressed)
+                Text("Uses macOS GameController extended and micro gamepads (including supported Siri Remotes); triggers and stick directions cross a 50% threshold.").font(.caption).foregroundStyle(.secondary)
+            }
+            if systemEventKind == "power" {
+                Picker("When", selection: $powerOnAC) { Text("Power connected").tag(true); Text("Battery").tag(false) }.pickerStyle(.segmented)
+            }
+            if ["appLaunch", "appQuit", "appActive", "appInactive"].contains(systemEventKind) {
+                TextField("Application bundle ID", text: $systemEventAppID)
+                Button("Choose Application…") {
+                    let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+                    if panel.runModal() == .OK, let url = panel.url { systemEventAppID = Bundle(url: url)?.bundleIdentifier ?? "" }
                 }
             }
         }
     }
+    private static let systemEvents: [(String, String)] = [
+        ("display", "Display configuration changes"), ("power", "Power source changes"),
+        ("lock", "Screen locks"), ("unlock", "Screen unlocks"), ("sleep", "Mac will sleep"), ("wake", "Mac wakes"),
+        ("appLaunch", "Application launches"), ("appQuit", "Application quits"),
+        ("appActive", "Application becomes active"), ("appInactive", "Application becomes inactive"),
+        ("wifiOn", "Wi-Fi connects"), ("wifiOff", "Wi-Fi disconnects"),
+        ("usbOn", "USB connects"), ("usbOff", "USB disconnects"), ("btOn", "Bluetooth connects"), ("btOff", "Bluetooth disconnects"),
+        ("file", "File or folder changes"), ("variable", "Variable changes"),
+        ("batteryBelow", "Battery drops below"), ("batteryAbove", "Battery rises above"),
+        ("screensaverOn", "Screensaver starts"), ("screensaverOff", "Screensaver stops"),
+        ("space", "Active Space changes"), ("audio", "Audio output changes"), ("input", "Input source changes"),
+        ("clipboard", "Clipboard changes"), ("midi", "MIDI message"), ("gamepad", "Gamepad / Siri Remote control"), ("hid", "Generic HID device input")]
 
     /// Builds the Other Triggers input. Kept separate from `addTrigger` so the
     /// validity check and the constructed value cannot drift apart.
@@ -809,7 +882,13 @@ struct AddTriggerSheet: View {
         switch otherTriggerMode {
         case "scheduled":
             switch scheduleKind {
-            case "interval": return .systemEvent(.everyMinutes(max(1, intervalMinutes)))
+            case "interval":
+                if restrictInterval {
+                    let window = TriggerTimeWindow(weekdays: Array(selectedWeekdays).sorted(), startMinute: windowStartMinute, endMinute: windowEndMinute,
+                        firstDate: restrictDates ? windowFirstDate : nil, lastDate: restrictDates ? windowLastDate : nil)
+                    return .systemEvent(.everyMinutesInWindow(interval: max(1, intervalMinutes), window: window))
+                }
+                return .systemEvent(.everyMinutes(max(1, intervalMinutes)))
             case "weekly":
                 return .systemEvent(.weekly(days: Array(selectedWeekdays).sorted(),
                                             hour: scheduleHour, minute: scheduleMinute))
@@ -817,6 +896,29 @@ struct AddTriggerSheet: View {
             }
         case "event":
             switch systemEventKind {
+            case "hid": return .systemEvent(.hidInput(vendorID: hidVendor, productID: hidProduct, usagePage: hidPage, usage: hidUsage, minimumValue: hidMinimum, maximumValue: hidMaximum))
+            case "midi": return .systemEvent(.midiMessage(device: eventFilter, status: midiStatus, channel: midiChannel, number: eventNumber, minimumValue: midiMinimum, maximumValue: max(midiMinimum, midiMaximum)))
+            case "gamepad": return .systemEvent(.gamepadButton(device: eventFilter, control: gamepadControl, pressed: eventPressed))
+            case "wifiOn": return .systemEvent(.wifiConnected(ssid: eventFilter))
+            case "wifiOff": return .systemEvent(.wifiDisconnected(ssid: eventFilter))
+            case "usbOn": return .systemEvent(.usbConnected(name: eventFilter))
+            case "usbOff": return .systemEvent(.usbDisconnected(name: eventFilter))
+            case "btOn": return .systemEvent(.bluetoothConnected(name: eventFilter))
+            case "btOff": return .systemEvent(.bluetoothDisconnected(name: eventFilter))
+            case "file": return .systemEvent(.fileDidChange(path: eventFilter))
+            case "variable": return .systemEvent(.variableChanged(name: eventFilter))
+            case "batteryBelow": return .systemEvent(.batteryBelow(eventNumber))
+            case "batteryAbove": return .systemEvent(.batteryAbove(eventNumber))
+            case "appActive": return .systemEvent(.appActivated(systemEventAppID))
+            case "appInactive": return .systemEvent(.appDeactivated(systemEventAppID))
+            case "sleep": return .systemEvent(.systemWillSleep)
+            case "wake": return .systemEvent(.systemDidWake)
+            case "screensaverOn": return .systemEvent(.screensaverStarted)
+            case "screensaverOff": return .systemEvent(.screensaverStopped)
+            case "space": return .systemEvent(.activeSpaceChanged)
+            case "audio": return .systemEvent(.audioOutputChanged)
+            case "input": return .systemEvent(.inputSourceChanged)
+            case "clipboard": return .systemEvent(.clipboardChanged)
             case "power": return .systemEvent(.powerSourceChanged(ac: powerOnAC))
             case "lock": return .systemEvent(.screenLocked)
             case "unlock": return .systemEvent(.screenUnlocked)
@@ -832,10 +934,14 @@ struct AddTriggerSheet: View {
     private var canAddOtherTrigger: Bool {
         switch otherTriggerMode {
         case "scheduled":
-            if scheduleKind == "interval" { return intervalMinutes >= 1 && intervalMinutes <= 1440 }
+            if scheduleKind == "interval" { return intervalMinutes >= 1 && intervalMinutes <= 1440 && (!restrictInterval || !selectedWeekdays.isEmpty) }
             if scheduleKind == "weekly" { return !selectedWeekdays.isEmpty }
             return true
         case "event":
+            if systemEventKind == "hid" { return (1...65535).contains(hidVendor) && (1...65535).contains(hidProduct) && (0...65535).contains(hidPage) && (0...65535).contains(hidUsage) && hidMinimum <= hidMaximum }
+            if systemEventKind == "midi" { return (0...127).contains(eventNumber) }
+            if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return (1...99).contains(eventNumber) }
+            if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
             if systemEventKind == "appLaunch" || systemEventKind == "appQuit" { return !systemEventAppID.isEmpty }
             return true
         default:

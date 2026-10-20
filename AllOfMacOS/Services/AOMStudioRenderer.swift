@@ -1,8 +1,10 @@
 import Foundation
 import CoreGraphics
 import CoreImage
+import AppKit
+import AVFoundation
 
-enum AOMStudioBackdrop: String, CaseIterable, Identifiable {
+enum AOMStudioBackdrop: String, Codable, CaseIterable, Identifiable {
     case none, graphite, midnight, slate
     var id: String { rawValue }
     var displayName: String {
@@ -23,7 +25,7 @@ enum AOMStudioBackdrop: String, CaseIterable, Identifiable {
     }
 }
 
-struct AOMStudioSettings: Equatable {
+struct AOMStudioSettings: Codable, Equatable {
     var keyframes: [AOMStudioZoomKeyframe] = []
     var backdrop: AOMStudioBackdrop = .none
     var paddingFraction: Double = 0
@@ -31,9 +33,24 @@ struct AOMStudioSettings: Equatable {
     var cursorPoints: [AOMCursorPoint] = []
     var cursorOverlaySize: Double = 1
 
+    var clicks: [AOMClickEvent] = []
+    var showClickRipples = true
+    var cursorStyle: AOMStudioCursorStyle = .arrow
+    var keystrokes: [AOMKeystrokeEvent] = []
+    var showKeystrokes = true
+    var keystrokeScale: Double = 1
+    var keystrokeY: Double = 0.9
+    var showCamera = true
+    var cameraSize: Double = 0.24
+    var cameraX: Double = 0.84
+    var cameraY: Double = 0.84
+    var cameraRoundness: Double = 0.18
+    var aspect: AOMStudioAspect = .source
+    var resolution: AOMStudioResolution = .source
+
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0)
-            || !cursorPoints.isEmpty
+            || !cursorPoints.isEmpty || !clicks.isEmpty || !keystrokes.isEmpty || aspect != .source || resolution != .source
     }
 }
 
@@ -48,7 +65,7 @@ enum AOMStudioRenderer {
     }
 
     static func frame(_ image: CIImage, time: Double,
-                      settings: AOMStudioSettings) -> CIImage {
+                      settings: AOMStudioSettings, cameraImage: CIImage? = nil) -> CIImage {
         let extent = image.extent.integral
         guard extent.width > 0, extent.height > 0, !extent.isInfinite,
               extent.width <= 16384, extent.height <= 16384 else { return image }
@@ -89,7 +106,7 @@ enum AOMStudioRenderer {
                 result = inner.composited(over: background).cropped(to: extent)
             }
         }
-        if !settings.cursorPoints.isEmpty, let glyph = cursorGlyph,
+        if settings.cursorStyle != .hidden, !settings.cursorPoints.isEmpty, let glyph = settings.cursorStyle == .arrow ? cursorGlyph : dotGlyph,
            let cursor = AOMCursorTrack(points: settings.cursorPoints).smoothedPosition(at: time) {
             let pointerSize = CGFloat(min(3, max(0.5, settings.cursorOverlaySize)))
             let inset = settings.backdrop == .none ? 0 : min(0.2, max(0, settings.paddingFraction))
@@ -99,12 +116,82 @@ enum AOMStudioRenderer {
             // The glyph's actual hotspot is (2, 30), not its bitmap corner.
             let transformed = glyph.transformed(by:
                     CGAffineTransform(scaleX: pointerSize, y: pointerSize))
-                .transformed(by: CGAffineTransform(translationX: x - pointerSize * 2,
-                                                   y: y - pointerSize * 30))
+                .transformed(by: CGAffineTransform(translationX: x - pointerSize * (settings.cursorStyle == .dot ? 6 : 2),
+                                                   y: y - pointerSize * (settings.cursorStyle == .dot ? 6 : 30)))
             let videoBounds = extent.insetBy(dx: extent.width * inset, dy: extent.height * inset)
             result = transformed.cropped(to: videoBounds)
                 .composited(over: result).cropped(to: extent)
         }
+        if settings.showClickRipples {
+            for click in AOMStudioTimeline.activeClicks(at: time, clicks: settings.clicks) {
+                let progress = (time - click.time) / 0.65
+                let inset = settings.backdrop == .none ? 0 : settings.paddingFraction
+                let point = AOMStudioTimeline.projectedPoint(CGPoint(x: click.x, y: click.y), focus: f, padding: inset)
+                let center = CIVector(x: extent.minX + point.x * extent.width, y: extent.maxY - point.y * extent.height)
+                let radius = 8 + progress * 30
+                if let ring = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": center,
+                    "inputRadius0": radius - 2, "inputRadius1": radius + 2,
+                    "inputColor0": CIColor(red: 0.2, green: 0.65, blue: 1, alpha: 0),
+                    "inputColor1": CIColor(red: 0.2, green: 0.65, blue: 1, alpha: 0.65 * (1 - progress))])?.outputImage {
+                    let box = CGRect(x: center.x - radius - 2, y: center.y - radius - 2, width: 2 * radius + 4, height: 2 * radius + 4)
+                    // Crop the gradient to a circular outer boundary.
+                    let mask = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": center,
+                        "inputRadius0": radius, "inputRadius1": radius + 2,
+                        "inputColor0": CIColor.white, "inputColor1": CIColor.clear])!.outputImage!
+                    let transparent = CIImage(color: .clear).cropped(to: box)
+                    result = ring.cropped(to: box).applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: transparent, kCIInputMaskImageKey: mask]).composited(over: result).cropped(to: extent)
+                }
+            }
+        }
+        if settings.showCamera, let cameraImage {
+            let side = min(extent.width, extent.height) * min(0.6, max(0.1, settings.cameraSize))
+            let x = min(extent.maxX - side, max(extent.minX, extent.minX + settings.cameraX * extent.width - side / 2))
+            let y = min(extent.maxY - side, max(extent.minY, extent.maxY - settings.cameraY * extent.height - side / 2))
+            let target = CGRect(x: x, y: y, width: side, height: side)
+            let scale = max(side / cameraImage.extent.width, side / cameraImage.extent.height)
+            let scaled = cameraImage.transformed(by: CGAffineTransform(scaleX: -scale, y: scale))
+            let placed = scaled.transformed(by: CGAffineTransform(translationX: target.midX - scaled.extent.midX, y: target.midY - scaled.extent.midY))
+            if let mask = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: target), "inputRadius": side * min(0.5, max(0, settings.cameraRoundness)), "inputColor": CIColor.white])?.outputImage {
+                result = placed.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: result, kCIInputMaskImageKey: mask]).cropped(to: extent)
+            }
+        }
+        if settings.showKeystrokes,
+           let key = settings.keystrokes.last(where: { time >= $0.time && time < $0.time + $0.duration }),
+           let glyph = keyGlyph(key.label) {
+            let scale = min(2, max(0.5, settings.keystrokeScale))
+            let scaled = glyph.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let y = extent.maxY - min(1, max(0, settings.keystrokeY)) * extent.height
+            result = scaled.transformed(by: CGAffineTransform(translationX: extent.midX - scaled.extent.midX, y: y - scaled.extent.midY)).composited(over: result).cropped(to: extent)
+        }
+        let size = settings.outputSize(source: extent.size)
+        if size != extent.size {
+            let target = CGRect(origin: .zero, size: size)
+            let factor = min(size.width / extent.width, size.height / extent.height)
+            let scaled = result.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)).transformed(by: CGAffineTransform(scaleX: factor, y: factor))
+            result = scaled.transformed(by: CGAffineTransform(translationX: (size.width - scaled.extent.width) / 2, y: (size.height - scaled.extent.height) / 2)).composited(over: CIImage(color: settings.backdrop.color).cropped(to: target)).cropped(to: target)
+        }
+        return result
+    }
+
+    private static let dotGlyph = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: CGRect(x: 0, y: 0, width: 12, height: 12)), "inputRadius": 6, "inputColor": CIColor.white])?.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 12, height: 12))
+
+    private static let glyphLock = NSLock()
+    private static var keyGlyphs: [String: CIImage] = [:]
+    private static func keyGlyph(_ label: String) -> CIImage? {
+        glyphLock.lock(); defer { glyphLock.unlock() }
+        if let image = keyGlyphs[label] { return image }
+        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold), .foregroundColor: NSColor.white])
+        let size = CGSize(width: max(70, text.size().width + 36), height: 58)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: CGRect(origin: .zero, size: size), xRadius: 14, yRadius: 14).fill()
+        text.draw(at: CGPoint(x: (size.width - text.size().width) / 2, y: 12))
+        image.unlockFocus()
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let result = CIImage(cgImage: cg)
+        if keyGlyphs.count > 256 { keyGlyphs.removeAll() }
+        keyGlyphs[label] = result
         return result
     }
 
@@ -132,4 +219,100 @@ enum AOMStudioRenderer {
         guard let image = context.makeImage() else { return nil }
         return CIImage(cgImage: image)
     }()
+}
+
+enum AOMStudioCursorStyle: String, Codable, CaseIterable { case arrow, dot, hidden }
+enum AOMStudioAspect: String, Codable, CaseIterable {
+    case source, landscape, portrait, square
+    var displayName: String {
+        switch self { case .source: "Original"; case .landscape: "16:9 Landscape"; case .portrait: "9:16 Portrait"; case .square: "1:1 Square" }
+    }
+}
+enum AOMStudioResolution: String, Codable, CaseIterable {
+    case source, hd720, hd1080, uhd2160
+    var displayName: String {
+        switch self { case .source: "Original size"; case .hd720: "1280 px long edge"; case .hd1080: "1920 px long edge"; case .uhd2160: "3840 px long edge" }
+    }
+}
+extension AOMStudioSettings {
+    var isValid: Bool {
+        let scalars = [paddingFraction, motionBlurRadius, cursorOverlaySize, keystrokeScale, keystrokeY, cameraSize, cameraX, cameraY, cameraRoundness]
+        return scalars.allSatisfy { $0.isFinite } && keyframes.count <= 400 &&
+            keyframes.allSatisfy { $0.time.isFinite && $0.time >= 0 && $0.magnification.isFinite && $0.focusX.isFinite && $0.focusY.isFinite } &&
+            AOMCursorTrack(points: cursorPoints, clicks: clicks, keystrokes: keystrokes).isValid
+    }
+    func outputSize(source: CGSize) -> CGSize {
+        var ratio = source.width / max(1, source.height)
+        switch aspect { case .source: break; case .landscape: ratio = 16 / 9; case .portrait: ratio = 9 / 16; case .square: ratio = 1 }
+        let edge: Double
+        switch resolution { case .source: edge = max(source.width, source.height); case .hd720: edge = 1280; case .hd1080: edge = 1920; case .uhd2160: edge = 3840 }
+        return CGSize(width: max(2, floor((ratio >= 1 ? edge : edge * ratio) / 2) * 2), height: max(2, floor((ratio >= 1 ? edge / ratio : edge) / 2) * 2))
+    }
+}
+
+struct AOMStudioProject: Codable {
+    var version = 1
+    var sourceName: String
+    var sourceBytes: Int
+    var sourceDuration: Double
+    var clips: [AOMStudioClip]
+    var settings: AOMStudioSettings
+    var muteAudio = false
+    static func url(for source: URL) -> URL { source.appendingPathExtension("aom-studio.json") }
+    func write(for source: URL) throws {
+        guard settings.isValid, sourceDuration.isFinite, sourceDuration > 0, clips.count <= 1000, !clips.isEmpty, clips.allSatisfy({ $0.isValid(duration: sourceDuration) }) else { throw CocoaError(.fileWriteInvalidFileName) }
+        try JSONEncoder().encode(self).write(to: Self.url(for: source), options: .atomic)
+    }
+    static func read(for source: URL, duration: Double) -> Self? {
+        guard let handle = try? FileHandle(forReadingFrom: url(for: source)) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 16_000_001), data.count <= 16_000_000,
+              let project = try? JSONDecoder().decode(Self.self, from: data), project.version == 1, project.settings.isValid,
+              project.sourceName == source.lastPathComponent,
+              project.sourceBytes == (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize),
+              abs(project.sourceDuration - duration) < 0.1, !project.clips.isEmpty,
+              project.clips.count <= 1000, project.clips.allSatisfy({ $0.isValid(duration: duration) }) else { return nil }
+        return project
+    }
+}
+
+/// Camera remains a separate movie so disabling/moving it never damages screen pixels.
+final class AOMStudioCameraFrames: @unchecked Sendable {
+    static func url(for source: URL) -> URL { source.appendingPathExtension("aom-camera.mp4") }
+    private let generator: AVAssetImageGenerator
+    private let lock = NSLock()
+    init?(source: URL) {
+        let url = Self.url(for: source)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
+    }
+    func frame(at time: Double) -> CIImage? {
+        lock.lock(); defer { lock.unlock() }
+        guard let image = try? generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 600), actualTime: nil) else { return nil }
+        return CIImage(cgImage: image)
+    }
+}
+
+/// The exported presentation is self-contained. Its adjacent local link lets
+/// AOM reopen the untouched screen/camera/telemetry sources for later editing.
+enum AOMStudioSourceLink {
+    static func url(for movie: URL) -> URL { movie.appendingPathExtension("aom-source.json") }
+    static func write(presentation: URL, source: URL) throws {
+        guard presentation.deletingLastPathComponent() == source.deletingLastPathComponent(), presentation != source else { throw CocoaError(.fileWriteInvalidFileName) }
+        try JSONEncoder().encode(source.lastPathComponent).write(to: url(for: presentation), options: .atomic)
+    }
+    static func resolve(_ movie: URL) -> URL {
+        guard let handle = try? FileHandle(forReadingFrom: url(for: movie)) else { return movie }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4097), data.count <= 4096,
+              let name = try? JSONDecoder().decode(String.self, from: data),
+              !name.isEmpty, name == URL(fileURLWithPath: name).lastPathComponent,
+              !name.contains("/"), !name.contains("\\"), name != movie.lastPathComponent else { return movie }
+        let original = movie.deletingLastPathComponent().appendingPathComponent(name)
+        guard original.pathExtension.lowercased() == "mp4", FileManager.default.isReadableFile(atPath: original.path) else { return movie }
+        return original
+    }
 }

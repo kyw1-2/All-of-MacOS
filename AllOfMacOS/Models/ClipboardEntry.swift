@@ -115,6 +115,9 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
             }
             if let data = item["public.utf16-external-plain-text"],
                let value = String(data: data, encoding: .utf16) { return value }
+            if let data = item[NSPasteboard.PasteboardType.color.rawValue],
+               let color = NSColor(pasteboardPropertyList: data, ofType: .color),
+               let hex = ClipboardColorEditor.hexString(color) { return hex }
             // Some editors expose RTF/RTFD without a plain-text representation.
             // Keep the original payload while making it searchable/plain-pasteable.
             for (type, format) in [(NSPasteboard.PasteboardType.rtf, NSAttributedString.DocumentType.rtf),
@@ -153,4 +156,6 @@ struct ClipboardPinboard: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var color: String = "blue"
+    /// Optional for archives created before manual pinboard ordering.
+    var itemOrder: [UUID]? = nil
 }

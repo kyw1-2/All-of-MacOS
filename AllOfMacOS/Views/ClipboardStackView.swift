@@ -87,6 +87,7 @@ struct ClipboardStackView: View {
                     .help("Paste the next item (⌘V in the destination does the same)")
             }.padding(.horizontal, 10).frame(height: 36)
         }
+        .onChange(of: state.stack.count) { _, _ in controller.fitStackPanel() }
         .frame(width: 264)
         .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -126,6 +127,22 @@ struct ClipboardStackView: View {
         }
         .padding(.horizontal, 6).frame(height: 44)
         .contentShape(Rectangle())
+        .onDrag {
+            let provider = NSItemProvider()
+            let snapshot = ClipboardStackDragPayload(index: index, queue: state.stack)
+            provider.registerDataRepresentation(forTypeIdentifier: ClipboardStackDragPayload.type, visibility: .ownProcess) { done in
+                done(try? JSONEncoder().encode(snapshot), nil); return nil
+            }
+            return provider
+        }
+        .onDrop(of: [ClipboardStackDragPayload.type], isTargeted: nil) { providers in
+            guard let provider = providers.first else { return false }
+            provider.loadDataRepresentation(forTypeIdentifier: ClipboardStackDragPayload.type) { data, _ in
+                guard let data, let payload = try? JSONDecoder().decode(ClipboardStackDragPayload.self, from: data) else { return }
+                Task { @MainActor in state.reorderStack(from: payload.index, before: index, expected: payload.queue) }
+            }
+            return true
+        }
         .contextMenu {
             Button("Paste Next First") {
                 guard state.stack.indices.contains(index) else { return }
@@ -135,4 +152,10 @@ struct ClipboardStackView: View {
             Button("Remove from Stack") { if state.stack.indices.contains(index) { state.stack.remove(at: index) } }
         }
     }
+}
+
+private struct ClipboardStackDragPayload: Codable {
+    static let type = "com.kyw.allofmacos.clipboard-stack-order"
+    let index: Int
+    let queue: [UUID]
 }

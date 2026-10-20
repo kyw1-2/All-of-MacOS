@@ -10,10 +10,11 @@ protocol ScriptRunnerProtocol {
 /// compile this file) so the two lists cannot drift apart.
 enum ScriptRunnerKinds {
     /// "javascript" is JavaScript for Automation, run by `osascript -l JavaScript`.
-    static let allowed: Set<String> = ["shell", "applescript", "javascript"]
+    static let allowed: Set<String> = ["shell", "applescript", "javascript", "swift"]
     /// Interpreter and leading arguments; the script file path is appended.
     static func command(for kind: String) -> (executable: String, arguments: [String])? {
         switch kind {
+        case "swift": return ("/usr/bin/xcrun", ["swift"])
         case "shell": return ("/bin/zsh", [])
         case "applescript": return ("/usr/bin/osascript", [])
         case "javascript": return ("/usr/bin/osascript", ["-l", "JavaScript"])

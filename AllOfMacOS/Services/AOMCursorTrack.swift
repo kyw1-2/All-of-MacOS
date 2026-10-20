@@ -3,7 +3,7 @@ import Foundation
 
 /// Local cursor metadata saved alongside an AOM-owned screen recording.
 /// Screen coordinates are normalized into the video frame; raw app/window titles
-/// or keyboard events are never collected.
+/// or ordinary typed text are never collected.
 struct AOMCursorPoint: Codable, Equatable {
     var time: Double
     var x: Double
@@ -14,12 +14,19 @@ struct AOMCursorPoint: Codable, Equatable {
 
 struct AOMCursorTrack: Codable {
     var points: [AOMCursorPoint]
+    // Optional fields preserve compatibility with pre-Studio sidecars.
+    var clicks: [AOMClickEvent]? = nil
+    var keystrokes: [AOMKeystrokeEvent]? = nil
 
     static func sidecarURL(for movie: URL) -> URL {
         movie.appendingPathExtension("aom-cursor.json")
     }
 
     var isValid: Bool {
+        zip(clicks ?? [], (clicks ?? []).dropFirst()).allSatisfy { $0.0.time <= $0.1.time } &&
+        zip(keystrokes ?? [], (keystrokes ?? []).dropFirst()).allSatisfy { $0.0.time <= $0.1.time } &&
+        (clicks ?? []).count <= 60_000 && (clicks ?? []).allSatisfy { $0.isValid } &&
+        (keystrokes ?? []).count <= 60_000 && (keystrokes ?? []).allSatisfy { $0.isValid } &&
         points.count <= 60_000 && points.allSatisfy {
             $0.time.isFinite && $0.time >= 0 && $0.x.isFinite && $0.y.isFinite &&
             (0...1).contains($0.x) && (0...1).contains($0.y)
@@ -88,4 +95,20 @@ struct AOMCursorTrack: Codable {
         return CGPoint(x: from.x + (to.x - from.x) * t,
                        y: from.y + (to.y - from.y) * t)
     }
+}
+
+struct AOMClickEvent: Codable, Equatable {
+    var time: Double
+    var x: Double
+    var y: Double
+    var button: Int = 0
+    var isValid: Bool { time.isFinite && time >= 0 && x.isFinite && y.isFinite && (0...1).contains(x) && (0...1).contains(y) && (0...2).contains(button) }
+}
+
+struct AOMKeystrokeEvent: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var time: Double
+    var label: String
+    var duration: Double = 1.4
+    var isValid: Bool { time.isFinite && time >= 0 && duration.isFinite && (0.1...10).contains(duration) && !label.isEmpty && label.count <= 80 }
 }

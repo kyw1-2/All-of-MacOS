@@ -205,6 +205,75 @@ final class RecordingExportTests: XCTestCase {
         XCTAssertEqual(AOMCursorTrack.read(for: source)?.points, track.points)
     }
 
+    func testOrderedMultiCutExportPreservesSourceAndSquareResolution() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("AOM-multicut-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("source.mp4")
+        try await makeSyntheticVideo(at: source)
+        let before = try Data(contentsOf: source)
+        let clips = [AOMStudioClip(start: 1, end: 1.4), AOMStudioClip(start: 0.1, end: 0.5)]
+        let settings = AOMStudioSettings(aspect: .square, resolution: .hd720)
+        let output = try await RecordingExportService.render(source: source, start: 0, end: 1.5,
+            muteAudio: true, quality: .high, studio: settings, clips: clips)
+        let asset = AVURLAsset(url: output)
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(duration, 0.8, accuracy: 0.15)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(tracks.first)
+        let size = try await video.load(.naturalSize)
+        XCTAssertEqual(size.width, 1280)
+        XCTAssertEqual(size.height, 1280)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let first = try generator.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil)
+        let second = try generator.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil)
+        let firstColor = NSBitmapImageRep(cgImage: first).colorAt(x: 640, y: 640)!.usingColorSpace(.deviceRGB)!
+        let secondColor = NSBitmapImageRep(cgImage: second).colorAt(x: 640, y: 640)!.usingColorSpace(.deviceRGB)!
+        XCTAssertGreaterThan(firstColor.redComponent, secondColor.redComponent + 0.1)
+        let gif = try await RecordingExportService.gif(source: source, start: 0, end: 1.5,
+            fps: 5, studio: settings, clips: clips)
+        let gifSource = try XCTUnwrap(CGImageSourceCreateWithURL(gif as CFURL, nil))
+        let gifFrame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(gifSource, 0, nil))
+        XCTAssertEqual(gifFrame.width, gifFrame.height)
+        XCTAssertEqual(CGImageSourceGetCount(gifSource), 4)
+        XCTAssertEqual(AOMStudioSourceLink.resolve(output), source)
+        try JSONEncoder().encode("../outside.mp4").write(to: AOMStudioSourceLink.url(for: output))
+        XCTAssertEqual(AOMStudioSourceLink.resolve(output), output)
+        try FileManager.default.copyItem(at: source, to: AOMStudioCameraFrames.url(for: source))
+        let camera = try XCTUnwrap(AOMStudioCameraFrames(source: source))
+        XCTAssertNotNil(camera.frame(at: 0.2))
+        XCTAssertEqual(try Data(contentsOf: source), before)
+        let bytes = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        try AOMStudioProject(sourceName: source.lastPathComponent, sourceBytes: bytes, sourceDuration: 1.6,
+                             clips: clips, settings: settings).write(for: source)
+        XCTAssertEqual(AOMStudioProject.read(for: source, duration: 1.6)?.clips, clips)
+        XCTAssertNil(AOMStudioProject.read(for: source, duration: 10))
+    }
+
+    func testCameraAndInputLayersCanBeRestyledAndDisabledWithoutTouchingScreen() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 400, height: 240)
+        let screen = CIImage(color: .black).cropped(to: bounds)
+        let camera = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 640, height: 640))
+        var settings = AOMStudioSettings(clicks: [AOMClickEvent(time: 1, x: 0.2, y: 0.2)],
+            keystrokes: [AOMKeystrokeEvent(time: 1, label: "⌘K")], cameraSize: 0.5, cameraX: 0.7, cameraY: 0.3)
+        let context = CIContext()
+        func color(_ image: CIImage, x: Int, y: Int) throws -> NSColor {
+            let cg = try XCTUnwrap(context.createCGImage(image, from: bounds))
+            return try XCTUnwrap(NSBitmapImageRep(cgImage: cg).colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+        }
+        let layered = AOMStudioRenderer.frame(screen, time: 1.2, settings: settings, cameraImage: camera)
+        XCTAssertGreaterThan(try color(layered, x: 280, y: 72).greenComponent, 0.8)
+        settings.showCamera = false; settings.showKeystrokes = false; settings.showClickRipples = false
+        let clean = AOMStudioRenderer.frame(screen, time: 1.2, settings: settings, cameraImage: camera)
+        XCTAssertLessThan(try color(clean, x: 280, y: 72).greenComponent, 0.05)
+        XCTAssertEqual(clean.extent, screen.extent)
+        settings.showCamera = true; settings.cameraX = 0.3; settings.cameraY = 0.6
+        let moved = AOMStudioRenderer.frame(screen, time: 1.2, settings: settings, cameraImage: camera)
+        XCTAssertGreaterThan(try color(moved, x: 120, y: 144).greenComponent, 0.8)
+        XCTAssertLessThan(try color(moved, x: 280, y: 72).greenComponent, 0.05)
+    }
+
     private func assertCursorOnRight(_ image: CGImage) throws {
         let bitmap = NSBitmapImageRep(cgImage: image)
         var whiteX: [Int] = []

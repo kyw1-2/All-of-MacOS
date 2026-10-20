@@ -174,7 +174,7 @@ class AppState: ObservableObject {
     func presentPresetImport() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]
         panel.begin { [weak self] response in
-            if response == .OK, let url = panel.url { self?.importPreset(from: url) }
+            if response == .OK, let url = panel.url { self?.reviewCompatiblePresetImport(from: url) }
         }
     }
 

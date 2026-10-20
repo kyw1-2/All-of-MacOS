@@ -53,6 +53,9 @@ iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$CONTENTS/Resources/AppIcon.ic
 
 bash "$PWD/scripts/bundle-webp.sh" "$CONTENTS" "$SIGN_ID"
 bash "$PWD/scripts/bundle-annotation-preview.sh" "$CONTENTS" "$SIGN_ID"
+mkdir -p "$CONTENTS/Resources/bin"
+cp "$PWD/scripts/aomctl.py" "$CONTENTS/Resources/bin/aomctl"
+chmod 755 "$CONTENTS/Resources/bin/aomctl"
 
 echo "==> Codesigning with '$SIGN_ID'"
 codesign --force --sign "$SIGN_ID" \

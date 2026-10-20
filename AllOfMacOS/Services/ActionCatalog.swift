@@ -8,6 +8,13 @@ extension ActionType {
     /// One line shown under the action's name in the picker and in the editor.
     var description: String {
         switch self {
+        case .matchScreenImage: return "Finds a local image template on the pointer display and optionally clicks its center."
+        case .pressAccessibilityElement: return "Finds a UI element by exact title or accessibility identifier, and presses it."
+        case .setAccessibilityValue: return "Sets the value of a UI element identified by title or accessibility identifier."
+        case .runSwiftScript: return "Runs Swift through xcrun (requires Apple command line tools) and can capture its output."
+        case .showFloatingMenu: return "Opens a saved native menu with action buttons, clocks, and variable widgets."
+        case .hideFloatingMenus: return "Closes all floating menus."
+        case .editFloatingMenus: return "Opens the menu and widget editor, with native JSON import and export."
         // Workflow
         case .actionGroup: return "Runs a list of actions in order, as one step."
         case .ifElse: return "Runs one list of actions when a condition holds, another when it does not."
@@ -205,7 +212,8 @@ extension ActionType {
         case .playSoundFile, .openFileOrFolder, .revealInFinder: return "File path"
         case .showNotification: return "Title, message"
         case .runAppleShortcut: return "Shortcut name"
-        case .runJavaScript, .runAppleScript, .runShellScript: return "Script, timeout"
+        case .runJavaScript, .runAppleScript, .runShellScript, .runSwiftScript: return "Script, timeout, output variable"
+        case .showFloatingMenu: return "Saved menu name or UUID"
         case .emptyTrash, .logOut: return "Confirmation (on by default)"
         case .repeatLoop: return "Count 1–100, inner actions"
         case .cycleActions: return "Inner actions, optional reset time"
@@ -286,7 +294,8 @@ extension ActionType {
         case .waitFor: p.waitCondition = "appRunning"; p.waitTimeoutMs = 30_000
         case .disableTriggersForSeconds: p.pauseSeconds = 5
         case .runAppleShortcut: p.scriptTimeoutSeconds = 60
-        case .runJavaScript: p.scriptTimeoutSeconds = 30
+        case .runJavaScript, .runSwiftScript: p.scriptTimeoutSeconds = 30
+        case .matchScreenImage: p.imageMatchThreshold = 0.98; p.imageMatchClick = false
         case .setVariable: p.variableName = "state"; p.variableValue = "on"
         case .ifElse: p.variableName = "state"; p.conditionValue = "on"
         default: break
@@ -309,8 +318,22 @@ enum ActionParameterValidation {
 
     static func problem(for action: TriggerAction) -> String? {
         let p = action.parameters
+        if let name = p.scriptResultVariable, !name.isEmpty,
+           name.count > 55 || !name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) {
+            return "Output variable must use 1–55 ASCII letters, digits, or underscores."
+        }
         func finite(_ values: [Double?]) -> Bool { values.compactMap { $0 }.allSatisfy { $0.isFinite } }
         switch action.actionType {
+        case .matchScreenImage:
+            if TriggerSystemPaths.normalized(p.imageTemplatePath ?? "") == nil { return "Choose an absolute local template image path." }
+            if let threshold = p.imageMatchThreshold, !threshold.isFinite || !(0.8...1).contains(threshold) { return "Image similarity must be 0.8–1.0." }
+            if let name = p.imageMatchVariable, !name.isEmpty,
+               name.count > 58 || !name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) {
+                return "Image result variable must use up to 58 ASCII letters, digits, or underscores."
+            }
+        case .pressAccessibilityElement, .setAccessibilityValue:
+            if (p.uiElementTitle ?? "").isEmpty && (p.uiElementIdentifier ?? "").isEmpty { return "Choose an exact UI title or accessibility identifier." }
+
         case .moveResizeWindow:
             guard finite([p.moveResizeX, p.moveResizeY, p.moveResizeWidth, p.moveResizeHeight]) else { return "Move / Resize values must be numbers." }
             if let unit = p.moveResizeUnit, !["percent", "pixels"].contains(unit) { return "Unit must be percent or pixels." }
@@ -362,7 +385,7 @@ enum ActionParameterValidation {
             if let s = p.pauseSeconds, !s.isFinite || !(0.1...86_400).contains(s) { return "Pause must be 0.1–86,400 seconds." }
         case .debounce:
             if let w = p.waitMs, !(0...60_000).contains(w) { return "Debounce must be 0–60,000 ms." }
-        case .runJavaScript, .runAppleShortcut:
+        case .runJavaScript, .runAppleShortcut, .runSwiftScript, .runShellScript, .runAppleScript:
             if let timeout = p.scriptTimeoutSeconds, !timeout.isFinite || !(0.1...120).contains(timeout) { return "Timeout must be 0.1–120 seconds." }
         default: break
         }

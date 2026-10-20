@@ -2,6 +2,12 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.3.0
+
+Local feature expansion based on the retained Oracle REA/Ghidra audits of CleanShot X, BetterTouchTool and Paste. Adds editable recording layers and ordered cuts, click-based zoom, output presets, clipboard ordering and native multiple-file dragging, private opt-in link previews, floating menus/widgets, scoped local automation MCP/CLI, MIDI/GameController/explicit HID inputs, resilient file triggers, and native Finder thumbnail/share extensions. Cloud, Magic Mouse and Stream Deck are excluded.
+
+See [release details and validation](docs/1.3.0-release-notes.md) and the complete [CleanShot](docs/1.3.0-cleanshot-coverage.md), [BTT](docs/1.3.0-btt-coverage.md) and [Paste](docs/1.3.0-paste-coverage.md) coverage records. These distinguish implemented features from proprietary interoperability and physical-device checks that remain unsupported or unverified.
+
 ## Version 1.2.8
 
 Redesigned main window with native translucent navigation, a responsive action dashboard, consistent page headings and inset gesture editing. Removes unnecessary window-wide log updates and moves library search/copy work off the UI thread. Type Text automation now types individual characters with an adjustable interval and preserves the clipboard. See [design references, performance scope and validation](docs/1.2.8-release-notes.md).

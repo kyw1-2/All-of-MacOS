@@ -653,6 +653,8 @@ struct ActionConfigView: View {
                         .padding(4)
                 }
 
+                TextField("Output variable (optional, up to 55 characters)", text: stringParameter(\.scriptResultVariable))
+                Text("Saves up to 512 output characters plus _exitCode and _timedOut status variables.").font(.caption).foregroundStyle(.secondary)
                 GroupBox("Execution timeout") {
                     HStack {
                         Text("Seconds")
@@ -740,6 +742,8 @@ struct ActionConfigView: View {
                 }
 
             case .sendKeyStroke:
+                TextField("Target app bundle ID (empty = focused app)", text: stringParameter(\.targetApplicationBundleID))
+                Text("A named app must already be running. Delivery uses its process ID; app support for background shortcuts varies.").font(.caption).foregroundStyle(.secondary)
                 GroupBox("Keyboard Shortcut to Send") {
                     let monitoring = keyboardMonitor.isMonitoring
                     VStack(spacing: 12) {

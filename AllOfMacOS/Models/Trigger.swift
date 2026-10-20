@@ -78,6 +78,7 @@ enum SystemTriggerKind: Codable, Hashable {
     case weekly(days: [Int], hour: Int, minute: Int)
     /// Fires every N minutes while enabled, anchored to when it was registered.
     case everyMinutes(Int)
+    case everyMinutesInWindow(interval: Int, window: TriggerTimeWindow)
     /// Fires when the display configuration changes: a display connects or disconnects.
     case displayChanged
     /// Fires when the set of running applications changes in a way that matches.
@@ -123,16 +124,24 @@ enum SystemTriggerKind: Codable, Hashable {
     case screenEdgeHover(edge: ScreenEdge, dwellMs: Int, minDistance: Int)
     /// A workflow variable changed value ("" = any variable).
     case variableChanged(name: String)
+    /// MIDI 1 Note On/Off or Control Change. Channel 0 means any channel.
+    case midiMessage(device: String, status: Int, channel: Int, number: Int, minimumValue: Int, maximumValue: Int)
+    case gamepadButton(device: String, control: String, pressed: Bool)
+    case hidInput(vendorID: Int, productID: Int, usagePage: Int, usage: Int, minimumValue: Int, maximumValue: Int)
 
     static let defaultHoverDwellMs = 300
     static let defaultEdgeDistancePx = 4
 
     var displayName: String {
         switch self {
+        case .midiMessage(_, let status, let channel, let number, _, _): return "MIDI \(status == 0xB0 ? "CC" : status == 0x80 ? "Note Off" : "Note On") \(number) · channel \(channel == 0 ? "any" : String(channel))"
+        case .hidInput(let vendor, let product, let page, let usage, _, _): return "HID \(vendor):\(product) · \(page)/\(usage)"
+        case .gamepadButton(_, let control, let pressed): return "Gamepad \(control) \(pressed ? "pressed" : "released")"
         case .daily(let h, let m): return String(format: "Every day at %02d:%02d", h, m)
         case .weekly(let days, let h, let m):
             let names = SystemTriggerKind.weekdayNames(days)
             return String(format: "%@ at %02d:%02d", names, h, m)
+        case .everyMinutesInWindow(let n, _): return "Every \(n) minutes in time window"
         case .everyMinutes(let n): return n == 1 ? "Every minute" : "Every \(n) minutes"
         case .displayChanged: return "Display configuration changes"
         case .appLaunched(let id): return "App launches: \(SystemTriggerKind.appName(id))"
@@ -167,8 +176,11 @@ enum SystemTriggerKind: Codable, Hashable {
 
     var symbolName: String {
         switch self {
+        case .midiMessage: return "pianokeys"
+        case .gamepadButton: return "gamecontroller"
+        case .hidInput: return "cable.connector"
         case .daily, .weekly: return "clock"
-        case .everyMinutes: return "timer"
+        case .everyMinutes, .everyMinutesInWindow: return "timer"
         case .displayChanged: return "display"
         case .appLaunched: return "app.badge.checkmark"
         case .appQuit: return "app.badge"

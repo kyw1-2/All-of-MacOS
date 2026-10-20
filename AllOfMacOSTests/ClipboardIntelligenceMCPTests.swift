@@ -210,17 +210,14 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertEqual(settings.tool(forToken: token)?.name, "Good")
     }
 
-    /// F-03: `FoundationModels.Attachment(image)` is macOS 27+, so the
-    /// destination-window refinement must never be reported as available on an
-    /// earlier OS. This guards against the 27.0 gate being lowered to 26.0.
-    func testDestinationWindowModelRequiresMacOS27() {
-        if #unavailable(macOS 27.0) {
-            XCTAssertFalse(ClipboardIntelligence.destinationModelAvailable,
-                           "Attachment(image) does not exist before macOS 27; the toggle must not be enabled")
+    /// macOS 26 uses local OCR + text inference; image attachments stay 27+.
+    func testDestinationWindowModelRequiresSupportedOnDeviceModel() {
+        if #unavailable(macOS 26.0) {
+            XCTAssertFalse(ClipboardIntelligence.destinationModelAvailable)
         }
         if ClipboardIntelligence.destinationModelAvailable {
             XCTAssertTrue(ClipboardIntelligence.modelAvailable,
-                          "the multimodal gate must imply the base on-device model")
+                          "Destination refinement requires an available on-device model")
         }
     }
 }

@@ -5,6 +5,7 @@ import SwiftUI
 struct ClipboardSettingsView: View {
     @ObservedObject var store: ClipboardStore
     @ObservedObject private var shortcuts = ClipboardShortcuts.shared
+    @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var recording: ClipboardShortcuts.Command?
     @State private var keyMonitor: Any?
     @State private var clearConfirmation = false
@@ -39,6 +40,7 @@ struct ClipboardSettingsView: View {
                             Text("500 MB").tag(500 * 1_024 * 1_024)
                             Text("1 GB").tag(1_024 * 1_024 * 1_024)
                         }
+                        Text("Unpinned history is removed when its age, item count or storage limit is reached, including with Indefinitely selected. Single items larger than 20 MB are skipped. File clips save references only, not file contents.").font(.caption).foregroundStyle(.secondary)
                         Text("Pinboards are exempt from age, item count and storage limits. Pinned items stay until you delete them.")
                             .font(.caption).foregroundStyle(.secondary)
                         Text("History: \(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · Pinboards: \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file))")
@@ -49,7 +51,14 @@ struct ClipboardSettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle("Paste directly into the previous app", isOn: $store.settings.pasteDirectly)
                         Toggle("Paste text without formatting by default", isOn: $store.settings.plainText)
-                        Text("Turn off direct paste to copy only. Hold Shift while pasting to remove text formatting. Images and files keep their original clipboard representation.")
+                        Picker("Quick Paste modifier (1–9)", selection: $preferences.quickModifier) {
+                            ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .shift }) { Text($0.symbol).tag($0) }
+                        }
+                        Picker("Plain Text modifier", selection: $preferences.plainModifier) {
+                            ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .command && $0 != preferences.quickModifier }) { Text($0.symbol).tag($0) }
+                        }
+                        Toggle("Compact clipboard shelf", isOn: $preferences.compact)
+                        Text("Turn off direct paste to copy only. Hold the Plain Text modifier while pasting to remove text formatting. Images and files keep their original clipboard representation.")
                             .font(.caption).foregroundStyle(.secondary)
                         Text("Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -88,6 +97,10 @@ struct ClipboardSettingsView: View {
                 }
                 GroupBox("Privacy & Storage") {
                     VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Show clipboard windows in screen sharing and recording", isOn: $preferences.showInScreenCapture)
+                        Text("When disabled, AOM requests macOS window capture exclusion. Some capture apps may ignore this policy; test with your sharing app before displaying sensitive clips.").font(.caption).foregroundStyle(.secondary)
+                        Toggle("Allow private web previews for links", isOn: $preferences.networkPreviews)
+                        Text("Off by default. Opening a link preview contacts the website and may consume one-time links or send tracking parameters. Preview cookies and website data are kept only in memory; JavaScript is disabled.").font(.caption).foregroundStyle(.secondary)
                         Text("History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.").font(.callout)
                         Text("Text inside copied images is indexed locally for search. Search supports phrases in quotes, type:image, from:Safari, board:Work, before:2026-01-01, after:2026-01-01 and -excluded terms.").font(.caption).foregroundStyle(.secondary)
                         Text("Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps.").font(.caption).foregroundStyle(.secondary)

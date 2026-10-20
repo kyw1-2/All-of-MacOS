@@ -103,6 +103,9 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     // Keyboard Actions
     case sendKeyStroke = "Send Keyboard Shortcut"
     case typeText = "Type Text"
+    case matchScreenImage = "Find Screen Image / Click Match"
+    case pressAccessibilityElement = "Press Accessible UI Element"
+    case setAccessibilityValue = "Set Accessible UI Value"
 
     // Application Control
     case activateApplication = "Activate Application"
@@ -239,6 +242,10 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     // Script Execution
     case runAppleShortcut = "Run Apple Shortcut"
     case runJavaScript = "Run JavaScript (JXA)"
+    case runSwiftScript = "Run Swift Script"
+    case showFloatingMenu = "Show Floating Menu"
+    case hideFloatingMenus = "Hide Floating Menus"
+    case editFloatingMenus = "Edit Floating Menus & Widgets"
 
     // Control Flow
     case repeatLoop = "Repeat N Times"
@@ -273,7 +280,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
              .bringWindowToFront, .maximizeWindowUnderCursor, .minimizeWindowUnderCursor, .closeWindowUnderCursor:
             return .windowManagement
         case .showClipboardHistory, .showPasteStack, .pasteNextClipboardItem, .toggleClipboardRecording: return .clipboard
-        case .sendKeyStroke, .typeText:
+        case .sendKeyStroke, .typeText, .pressAccessibilityElement, .setAccessibilityValue, .matchScreenImage:
             return .keyboardActions
         case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
             return .applicationControl
@@ -315,7 +322,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
             return .systemActions
         case .playSoundFile, .speakText, .showNotification, .copyTextToClipboard, .openFileOrFolder, .revealInFinder:
             return .utilityActions
-        case .runAppleShortcut, .runJavaScript: return .scriptExecution
+        case .runAppleShortcut, .runJavaScript, .runSwiftScript: return .scriptExecution
+        case .showFloatingMenu, .hideFloatingMenus, .editFloatingMenus: return .utilityActions
         case .repeatLoop, .breakLoop, .cycleActions, .toggleOnOff, .increaseVariable, .decreaseVariable,
              .askForInput, .debounce, .stopAllSequences, .enableTrigger, .disableTrigger, .waitFor,
              .disableTriggersForSeconds, .resumeTriggers:
@@ -370,6 +378,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .showPasteStack: return "square.stack"
         case .pasteNextClipboardItem: return "text.insert"
         case .toggleClipboardRecording: return "pause.circle"
+        case .matchScreenImage: return "viewfinder"
+        case .pressAccessibilityElement, .setAccessibilityValue: return "hand.point.up.braille"
         case .sendKeyStroke: return "command"
         case .typeText: return "text.cursor"
         case .activateApplication: return "app.badge"
@@ -466,6 +476,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .revealInFinder: return "magnifyingglass.circle"
         case .runAppleShortcut: return "square.stack.3d.up"
         case .runJavaScript: return "curlybraces"
+        case .runSwiftScript: return "swift"
+        case .showFloatingMenu, .hideFloatingMenus, .editFloatingMenus: return "rectangle.grid.2x2"
         case .repeatLoop: return "repeat"
         case .breakLoop: return "xmark.circle"
         case .cycleActions: return "arrow.triangle.2.circlepath"
@@ -580,6 +592,18 @@ struct ActionParameters: Codable, Hashable {
     var applicationPath: String?
     var applicationName: String?
     var scriptContent: String?
+    /// Captures stdout plus exit status and timeout in <name>, <name>_exitCode, <name>_timedOut.
+    var scriptResultVariable: String?
+    var targetApplicationBundleID: String?
+    var imageTemplatePath: String?
+    var imageMatchThreshold: Double?
+    var imageMatchClick: Bool?
+    var imageMatchVariable: String?
+    var uiElementTitle: String?
+    var uiElementIdentifier: String?
+    var uiElementRole: String?
+    var uiElementValue: String?
+    var floatingMenuName: String?
     var url: String?
     var shortcutKeyCode: UInt16?
     var shortcutModifiers: UInt?

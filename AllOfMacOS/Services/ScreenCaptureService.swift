@@ -451,19 +451,21 @@ final class ScreenCaptureService {
 
     /// Encodes a capture to the user's chosen format.
     func encode(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format,
-                quality: Double = CaptureSettings.quality) throws -> Data {
+                quality: Double = CaptureSettings.quality,
+                colorProfile: CaptureColorProfile = CaptureSettings.colorProfile) throws -> Data {
+        guard let image = colorProfile.effective(for: format).applying(to: result.image) else { throw CaptureError.encodeFailed }
         let data: Data?
         switch format {
         case .webp:
-            data = WebPEncoder.encode(image: result.image, quality: quality)
+            data = WebPEncoder.encode(image: image, quality: quality)
         case .png:
-            data = Self.representation(result.image, as: .png, quality: 1)
+            data = Self.representation(image, as: .png, quality: 1)
         case .jpeg:
-            data = Self.representation(result.image, as: .jpeg, quality: quality)
+            data = Self.representation(image, as: .jpeg, quality: quality)
         case .tiff:
-            data = Self.representation(result.image, as: .tiff, quality: 1)
+            data = Self.representation(image, as: .tiff, quality: 1)
         case .heic:
-            data = Self.encodeHEIC(result.image, quality: quality)
+            data = Self.encodeHEIC(image, quality: quality)
         }
         guard let data else { throw CaptureError.encodeFailed }
         return data
@@ -502,10 +504,11 @@ final class ScreenCaptureService {
                           format: CaptureFormat = CaptureSettings.format) async throws -> URL {
         let name = CaptureNaming.defaultName(for: result)
         let quality = CaptureSettings.quality
+        let colorProfile = CaptureSettings.colorProfile
         return try await withCheckedThrowingContinuation { continuation in
             Self.encodingQueue.async {
                 continuation.resume(with: Result {
-                    let data = try self.encode(result, format: format, quality: quality)
+                    let data = try self.encode(result, format: format, quality: quality, colorProfile: colorProfile)
                     return try Self.writeEncoded(data, directory: directory, name: name, format: format)
                 })
             }
@@ -524,10 +527,11 @@ final class ScreenCaptureService {
     func writeToURLAsync(_ result: CaptureResult, to url: URL,
                          format: CaptureFormat = CaptureSettings.format) async throws {
         let quality = CaptureSettings.quality
+        let colorProfile = CaptureSettings.colorProfile
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Self.encodingQueue.async {
                 continuation.resume(with: Result {
-                    let data = try self.encode(result, format: format, quality: quality)
+                    let data = try self.encode(result, format: format, quality: quality, colorProfile: colorProfile)
                     try data.write(to: url, options: .atomic)
                 })
             }
@@ -553,9 +557,12 @@ final class ScreenCaptureService {
     /// Prepare all representations before replacing the pasteboard, as one item.
     /// PNG is a compact interoperable fallback for HEIC/WebP (uncompressed TIFF
     /// previously pushed ordinary Retina captures over the history's 20 MB cap).
-    private func clipboardRepresentations(_ result: CaptureResult, format: CaptureFormat, quality: Double) throws -> [String: Data] {
-        var representations = [format.contentType.identifier: try encode(result, format: format, quality: quality)]
-        if format != .png, let png = Self.representation(result.image, as: .png, quality: 1) {
+    private func clipboardRepresentations(_ result: CaptureResult, format: CaptureFormat, quality: Double,
+                                          colorProfile: CaptureColorProfile = CaptureSettings.colorProfile) throws -> [String: Data] {
+        let colorProfile = colorProfile.effective(for: format)
+        var representations = [format.contentType.identifier: try encode(result, format: format, quality: quality, colorProfile: colorProfile)]
+        if format != .png, let image = colorProfile.applying(to: result.image),
+           let png = Self.representation(image, as: .png, quality: 1) {
             representations[NSPasteboard.PasteboardType.png.rawValue] = png
         }
         return representations
@@ -578,9 +585,10 @@ final class ScreenCaptureService {
     @MainActor
     func copyToClipboardAsync(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) async throws {
         let quality = CaptureSettings.quality
+        let colorProfile = CaptureSettings.colorProfile
         let data: [String: Data] = try await withCheckedThrowingContinuation { continuation in
             Self.encodingQueue.async {
-                continuation.resume(with: Result { try self.clipboardRepresentations(result, format: format, quality: quality) })
+                continuation.resume(with: Result { try self.clipboardRepresentations(result, format: format, quality: quality, colorProfile: colorProfile) })
             }
         }
         try writeClipboardRepresentations(data)

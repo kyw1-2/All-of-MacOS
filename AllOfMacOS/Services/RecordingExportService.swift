@@ -60,10 +60,10 @@ enum RecordingExportService {
     static func trim(source: URL, start: Double, end: Double) async throws -> URL {
         // Cursor-track recordings intentionally omit the baked pointer. Render
         // it into standalone trims so playback never depends on a missing sidecar.
-        if let track = AOMCursorTrack.read(for: source), !track.points.isEmpty {
+        if let track = AOMCursorTrack.read(for: source), !track.points.isEmpty || !(track.keystrokes ?? []).isEmpty || FileManager.default.fileExists(atPath: AOMStudioCameraFrames.url(for: source).path) {
             return try await render(source: source, start: start, end: end,
                                     muteAudio: false, quality: .high,
-                                    studio: AOMStudioSettings(cursorPoints: track.points),
+                                    studio: AOMStudioSettings(cursorPoints: track.points, clicks: track.clicks ?? [], keystrokes: track.keystrokes ?? []),
                                     outputSuffix: "Trimmed")
         }
         let total = try await duration(for: source)
@@ -114,9 +114,12 @@ enum RecordingExportService {
     static func render(source: URL, start: Double, end: Double,
                        muteAudio: Bool, quality: StudioQuality,
                        studio: AOMStudioSettings = AOMStudioSettings(),
-                       outputSuffix: String = "Edited") async throws -> URL {
+                       outputSuffix: String = "Edited",
+                       clips: [AOMStudioClip]? = nil) async throws -> URL {
         let total = try await duration(for: source)
-        let range = try validatedRange(start: start, end: end, duration: total)
+        let selected = clips ?? [AOMStudioClip(start: start, end: end)]
+        guard !selected.isEmpty, selected.count <= 1000 else { throw ExportError.invalidRange }
+        let ranges = try selected.map { try validatedRange(start: $0.start, end: $0.end, duration: total) }
         let asset = AVURLAsset(url: source)
         guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
             throw ExportError.unsupportedFile
@@ -126,7 +129,11 @@ enum RecordingExportService {
                          preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw ExportError.failed("Could not create the video timeline.")
         }
-        try video.insertTimeRange(range, of: sourceVideo, at: .zero)
+        var outputTime = CMTime.zero
+        for range in ranges {
+            try video.insertTimeRange(range, of: sourceVideo, at: outputTime)
+            outputTime = CMTimeAdd(outputTime, range.duration)
+        }
         video.preferredTransform = try await sourceVideo.load(.preferredTransform)
 
         if !muteAudio {
@@ -136,7 +143,15 @@ enum RecordingExportService {
                                   preferredTrackID: kCMPersistentTrackID_Invalid) else {
                     throw ExportError.failed("Could not create the audio timeline.")
                 }
-                try audio.insertTimeRange(range, of: sourceAudio, at: .zero)
+                var outputTime = CMTime.zero
+                let available = try await sourceAudio.load(.timeRange)
+                for range in ranges {
+                    let intersection = CMTimeRangeGetIntersection(range, otherRange: available)
+                    if intersection.duration > .zero {
+                        try audio.insertTimeRange(intersection, of: sourceAudio, at: CMTimeAdd(outputTime, CMTimeSubtract(intersection.start, range.start)))
+                    }
+                    outputTime = CMTimeAdd(outputTime, range.duration)
+                }
             }
         }
         guard let exporter = AVAssetExportSession(asset: composition,
@@ -150,20 +165,21 @@ enum RecordingExportService {
         exporter.outputURL = url
         exporter.outputFileType = .mp4
         exporter.shouldOptimizeForNetworkUse = true
-        if studio.isActive {
-            // AVFoundation owns the composition timeline. Core Image effects
-            // execute on its render queue; no app/window capture or file I/O
-            // happens within this callback.
-            let effect = studio
-            exporter.videoComposition = AVVideoComposition(
-                asset: composition, applyingCIFiltersWithHandler: { request in
-                    let t = CMTimeGetSeconds(request.compositionTime)
-                    let timestamp = t.isFinite ? t : 0
-                    let result = AOMStudioRenderer.frame(request.sourceImage,
-                                                          time: start + timestamp, settings: effect)
-                    request.finish(with: result, context: nil)
-                })
-        }
+        let camera = studio.showCamera ? AOMStudioCameraFrames(source: source) : nil
+        let effect = studio
+        let naturalSize = try await sourceVideo.load(.naturalSize)
+        let transform = try await sourceVideo.load(.preferredTransform)
+        let transformed = CGRect(origin: .zero, size: naturalSize).applying(transform).size
+        let sourceSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
+        let filters = AVMutableVideoComposition(asset: composition, applyingCIFiltersWithHandler: { request in
+            let outputTime = CMTimeGetSeconds(request.compositionTime)
+            let sourceTime = AOMStudioClip.sourceTime(at: outputTime, clips: selected) ?? selected.last!.end
+            let result = AOMStudioRenderer.frame(request.sourceImage, time: sourceTime, settings: effect,
+                cameraImage: camera?.frame(at: sourceTime))
+            request.finish(with: result, context: nil)
+        })
+        filters.renderSize = studio.outputSize(source: sourceSize)
+        exporter.videoComposition = filters
         do {
             try await withCheckedThrowingContinuation {
                 (continuation: CheckedContinuation<Void, Error>) in
@@ -181,6 +197,7 @@ enum RecordingExportService {
             guard (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0 > 0 else {
                 throw ExportError.failed("The rendered MP4 was empty.")
             }
+            try AOMStudioSourceLink.write(presentation: url, source: source)
             return url
         } catch {
             try? FileManager.default.removeItem(at: url)
@@ -247,6 +264,11 @@ enum RecordingExportService {
         do {
             try await complete(exporter)
             try await mixRecordedAudio(in: target)
+            if let track = AOMCursorTrack.read(for: source) { try track.write(for: target) }
+            let camera = AOMStudioCameraFrames.url(for: source)
+            if FileManager.default.fileExists(atPath: camera.path) {
+                try FileManager.default.copyItem(at: camera, to: AOMStudioCameraFrames.url(for: target))
+            }
             return target
         } catch {
             try? FileManager.default.removeItem(at: target)
@@ -266,19 +288,21 @@ enum RecordingExportService {
     /// Export the requested span as a GIF, capped at 120 seconds / 30 fps to keep
     /// memory and output file sizes bounded. Work runs off the main event loop.
     static func gif(source: URL, start: Double, end: Double, fps: Int = 8,
-                    studio: AOMStudioSettings = AOMStudioSettings()) async throws -> URL {
+                    studio: AOMStudioSettings = AOMStudioSettings(), clips: [AOMStudioClip]? = nil) async throws -> URL {
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let safeEnd = CMTimeGetSeconds(range.end)
-        guard safeEnd - start <= 120.5, (1...30).contains(fps) else {
+        let selected = clips ?? [AOMStudioClip(start: start, end: safeEnd)]
+        guard !selected.isEmpty, selected.count <= 1000, selected.allSatisfy({ $0.isValid(duration: total) }) else { throw ExportError.invalidRange }
+        guard selected.reduce(0, { $0 + $1.duration }) <= 120.5, (1...30).contains(fps) else {
             throw ExportError.failed("GIFs support up to 120 seconds at 1–30 fps.")
         }
         return try await Task.detached(priority: .userInitiated) {
-            try generateGIF(source: source, start: start, end: safeEnd, fps: fps, studio: studio)
+            try generateGIF(source: source, clips: selected, fps: fps, studio: studio)
         }.value
     }
 
-    private static func generateGIF(source: URL, start: Double, end: Double, fps: Int,
+    private static func generateGIF(source: URL, clips: [AOMStudioClip], fps: Int,
                                     studio: AOMStudioSettings) throws -> URL {
         let target = outputURL(for: source, suffix: "Animated", extension: "gif")
         let temporary = target.deletingLastPathComponent()
@@ -288,16 +312,20 @@ enum RecordingExportService {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 960, height: 960)
-        if studio.isActive {
-            generator.videoComposition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+        let camera = studio.showCamera ? AOMStudioCameraFrames(source: source) : nil
+        if studio.isActive || camera != nil {
+            let filters = AVMutableVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
                 let result = AOMStudioRenderer.frame(request.sourceImage,
-                    time: CMTimeGetSeconds(request.compositionTime), settings: studio)
+                    time: CMTimeGetSeconds(request.compositionTime), settings: studio, cameraImage: camera?.frame(at: CMTimeGetSeconds(request.compositionTime)))
                 request.finish(with: result, context: nil)
             })
+            filters.renderSize = studio.outputSize(source: filters.renderSize)
+            generator.videoComposition = filters
         }
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5 / Double(fps), preferredTimescale: 600)
-        let frames = max(1, Int(((end - start) * Double(fps)).rounded(.up)))
+        let length = clips.reduce(0) { $0 + $1.duration }
+        let frames = max(1, Int((length * Double(fps)).rounded(.up)))
         guard let destination = CGImageDestinationCreateWithURL(temporary as CFURL,
                                                                 UTType.gif.identifier as CFString,
                                                                 frames, nil) else {
@@ -311,7 +339,7 @@ enum RecordingExportService {
         ]
 
         for index in 0..<frames {
-            let sample = min(end - 0.001, start + Double(index) / Double(fps))
+            let sample = AOMStudioClip.sourceTime(at: min(length - 0.001, Double(index) / Double(fps)), clips: clips) ?? clips[0].start
             guard sample >= 0 else { continue }
             let time = CMTime(seconds: sample, preferredTimescale: 600)
             try Task.checkCancellation()

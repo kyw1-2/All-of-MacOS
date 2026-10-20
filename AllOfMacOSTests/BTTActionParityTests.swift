@@ -408,6 +408,8 @@ final class BTTActionParityTests: XCTestCase {
             action.parameters.variableName = unique(); action.parameters.variableValue = "1"
             action.parameters.triggerSelector = "no such trigger"; action.parameters.waitMs = 1
             action.parameters.filePath = "/tmp/nothing"; action.parameters.shortcutKeyCode = 0
+            action.parameters.uiElementTitle = "Fixture element"
+            action.parameters.imageTemplatePath = "/tmp/fixture-template.png"
             let (fired, ok) = run([action])
             XCTAssertTrue(ok, type.rawValue)
             XCTAssertEqual(fired.count, 1, "\(type.rawValue) reached the hook \(fired.count) times")
@@ -823,7 +825,12 @@ final class BTTActionPickerTests: XCTestCase {
     func testEveryDefaultParameterSetIsValid() {
         for type in ActionType.allCases {
             let action = TriggerAction(actionType: type, parameters: type.defaultParameters)
-            XCTAssertNil(ActionParameterValidation.problem(for: action), "\(type.rawValue): \(ActionParameterValidation.problem(for: action) ?? "")")
+            let requiresSelection: Set<ActionType> = [.pressAccessibilityElement, .setAccessibilityValue, .matchScreenImage]
+            if requiresSelection.contains(type) {
+                XCTAssertNotNil(ActionParameterValidation.problem(for: action), "\(type.rawValue) must require the user to select a target")
+            } else {
+                XCTAssertNil(ActionParameterValidation.problem(for: action), "\(type.rawValue): \(ActionParameterValidation.problem(for: action) ?? "")")
+            }
         }
         XCTAssertEqual(ActionType.setVolume.defaultParameters.levelPercent, 50)
         XCTAssertEqual(ActionType.moveResizeWindow.defaultParameters.moveResizeUnit, "percent")
@@ -837,10 +844,11 @@ final class BTTActionPickerTests: XCTestCase {
             .pressFunctionKey, .modifierKeyDown, .modifierKeyUp, .pressArrowKey, .setVolume, .setBrightness, .playSoundFile,
             .speakText, .showNotification, .copyTextToClipboard, .openFileOrFolder, .revealInFinder, .runAppleShortcut,
             .runJavaScript, .repeatLoop, .cycleActions, .toggleOnOff, .increaseVariable, .decreaseVariable, .askForInput,
-            .debounce, .enableTrigger, .disableTrigger, .waitFor, .disableTriggersForSeconds]
+            .debounce, .enableTrigger, .disableTrigger, .waitFor, .disableTriggersForSeconds,
+            .runSwiftScript, .pressAccessibilityElement, .setAccessibilityValue, .matchScreenImage, .showFloatingMenu]
         for type in needsForm { XCTAssertTrue(ActionParameterForm.handles(type), type.rawValue) }
         XCTAssertFalse(ActionParameterForm.handles(.maximizeWindow))
-        XCTAssertFalse(ActionParameterForm.handles(.runShellScript))
+        XCTAssertTrue(ActionParameterForm.handles(.runShellScript), "Shared script form is also used by floating menu items")
         XCTAssertFalse(ActionParameterForm.infoNote(.emptyTrash).isEmpty)
         for anchor in ActionParameterValidation.anchors { XCTAssertFalse(ActionParameterForm.anchorTitle(anchor).isEmpty) }
         for name in ActionParameterValidation.modifierNames { XCTAssertFalse(ActionParameterForm.modifierTitle(name).isEmpty) }

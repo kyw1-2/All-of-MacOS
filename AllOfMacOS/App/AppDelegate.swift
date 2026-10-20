@@ -74,6 +74,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AOMScrollChromePolicy.shared.start()
+        if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
         if showIcon {
             setupMenuBarIcon()
@@ -184,16 +185,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !PresetManager.isUIPreview else { return }
         for link in urls.prefix(8) {
+            if let request = AOMSharedImages.parse(link) {
+                Task { @MainActor in
+                    for file in request.files {
+                        if request.mode == .annotate { self.openLocalDocument(file) }
+                        else if let entry = AnnotationEditorController.entry(fromImageAt: file) {
+                            PinnedScreenshotController.shared.pin(entry: entry, url: file)
+                        }
+                    }
+                }
+                continue
+            }
             if link.isFileURL {
                 Task { @MainActor in self.openLocalDocument(link) }
                 continue
             }
-            if link.scheme?.lowercased() == "aom",
-               let host = link.host?.lowercased(),
-               host == "trigger" || host == "trigger_named",
-               let components = URLComponents(url: link, resolvingAgainstBaseURL: false),
-               let name = components.queryItems?.first(where: { $0.name == "name" || $0.name == "trigger_name" })?.value {
-                ActionExecutor.executeNamedTrigger(name)
+            if let command = AOMAutomationLink.parse(link) {
+                Task { @MainActor in
+                    switch command {
+                    case .trigger(let name): ActionExecutor.executeNamedTrigger(name)
+                    case .showMenu(let name):
+                        if !FloatingMenuController.shared.show(name) {
+                            GestureHUD.shared.show(title: "Menu Not Found", detail: name)
+                        }
+                    case .editMenus: FloatingMenuController.shared.edit()
+                    case .hideMenus: FloatingMenuController.shared.hideAll()
+                    }
+                }
                 continue
             }
             guard let command = AOMCaptureDeepLink.parse(link) else { continue }
@@ -277,6 +295,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for url in urls.prefix(8) where url.isFileURL {
             Task { @MainActor in self.openLocalDocument(url) }
         }
+    }
+
+    @objc private func editFloatingMenus() {
+        MainActor.assumeIsolated { FloatingMenuController.shared.edit() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -477,6 +499,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsItem.target = self
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(settingsItem)
+        let menusItem = NSMenuItem(title: "Floating Menus & Widgets…", action: #selector(editFloatingMenus), keyEquivalent: "")
+        menusItem.target = self
+        menu.addItem(menusItem)
         let cheatSheetItem = NSMenuItem(title: "Show Cheat Sheet", action: #selector(showCheatSheet), keyEquivalent: "")
         cheatSheetItem.target = self; menu.addItem(cheatSheetItem)
         let hudItem = NSMenuItem(title: "Gesture HUD", action: #selector(toggleHUD), keyEquivalent: "")

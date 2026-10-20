@@ -5,13 +5,17 @@ import AppKit
 @MainActor
 final class ClipboardShortcuts: ObservableObject {
     enum Command: String, CaseIterable, Identifiable {
-        case history, stack, next, pause
+        case history, stack, next, pause, previousBoard, nextBoard
         var id: String { rawValue }
         var title: String {
-            switch self { case .history: return "Clipboard History"; case .stack: return "Paste Stack"; case .next: return "Paste Next in Stack"; case .pause: return "Pause / Resume Clipboard History" }
+            switch self { case .history: return "Clipboard History"; case .stack: return "Paste Stack"; case .next: return "Paste Next in Stack"; case .pause: return "Pause / Resume Clipboard History"; case .previousBoard: return "Previous Pinboard"; case .nextBoard: return "Next Pinboard" }
         }
         var initial: KeyboardShortcut? {
-            self == .history ? KeyboardShortcut(keyCode: 9, modifiers: [.command, .shift]) : nil
+            switch self {
+            case .history: return KeyboardShortcut(keyCode: 9, modifiers: [.command, .shift])
+            case .stack: return KeyboardShortcut(keyCode: 8, modifiers: [.command, .shift])
+            default: return nil
+            }
         }
     }
     static let shared = ClipboardShortcuts()
@@ -53,6 +57,8 @@ final class ClipboardShortcuts: ObservableObject {
             case .stack: ClipboardPanelController.shared.showStack()
             case .next: ClipboardPanelController.shared.pasteNext()
             case .pause: ClipboardStore.shared.paused.toggle()
+            case .previousBoard: ClipboardPanelController.shared.navigateBoard(offset: -1)
+            case .nextBoard: ClipboardPanelController.shared.navigateBoard(offset: 1)
             }
         }
         return true

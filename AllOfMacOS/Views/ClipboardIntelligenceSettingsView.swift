@@ -20,13 +20,12 @@ struct ClipboardIntelligenceSettingsView: View {
         var token: String?
     }
 
-    /// The destination-window model needs the multimodal Foundation Models API,
-    /// which is macOS 27+. Say so instead of offering an inert toggle.
+    /// Destination context uses APIs supported by each macOS version.
     private var destinationModelCopy: String {
         guard ClipboardIntelligence.destinationModelAvailable else {
-            return "Requires macOS 27 with Apple Intelligence. Suggestions still work from the focused field and your paste history."
+            return "Requires macOS 26 or later with Apple Intelligence. Suggestions still work from the focused field and your paste history."
         }
-        return "Only when you open the clipboard and the field type is unclear, a small screenshot of that window is read by Apple Intelligence on this Mac. Needs Screen Recording access."
+        return "Only when the focused field is unclear, AOM reads the destination window on this Mac. macOS 26 uses local Vision text recognition and the text model; macOS 27 can analyze the image directly. Needs Screen Recording access."
     }
 
     var body: some View {
@@ -80,6 +79,9 @@ struct ClipboardIntelligenceSettingsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
+                            Toggle("Automation", isOn: Binding(get: { tool.automationAccess == true },
+                                set: { mcp.setAutomationAccess($0, for: tool.id) }))
+                                .help("Allow this client to configure named triggers, run their actions and manage floating menus. This can run scripts and control other apps.")
                             Button("Disconnect…") { pendingDisconnect = tool }
                         }
                     }

@@ -12,7 +12,8 @@ final class ClipboardIntegrationTests: XCTestCase {
         XCTAssertEqual(shortcuts.matchingCommand(keyCode: 9, modifiers: [.command, .shift]), .history)
         XCTAssertNil(shortcuts.matchingCommand(keyCode: 9, modifiers: [.command, .shift, .option]))
         shortcuts.setShortcut(nil, for: .history)
-        XCTAssertFalse(ClipboardShortcuts(defaults: defaults).hasActiveShortcuts)
+        XCTAssertNil(ClipboardShortcuts(defaults: defaults).shortcut(for: .history))
+        XCTAssertEqual(ClipboardShortcuts(defaults: defaults).matchingCommand(keyCode: 8, modifiers: [.command, .shift]), .stack)
     }
     func testBuiltinConsumesDownRepeatAndUpExactlyOnce() {
         let old = UserDefaults.standard.object(forKey: "AOMGlobalEnabled")

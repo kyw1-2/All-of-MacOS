@@ -2,7 +2,7 @@ import Foundation
 
 /// Source-video seconds throughout the editor, preview and export. Trimming
 /// changes the playback range, never the meaning of an existing edit.
-struct AOMStudioZoomKeyframe: Equatable, Identifiable {
+struct AOMStudioZoomKeyframe: Codable, Equatable, Identifiable {
     let id: UUID
     var time: Double
     var magnification: Double
@@ -77,6 +77,24 @@ enum AOMStudioTimeline {
                        y: inset + (0.5 + (point.y - center.y) * focus.magnification) * factor)
     }
 
+    /// Event tracks are sorted once when captured/loaded. Bound per-frame work
+    /// to the current ripple interval rather than scanning an entire recording.
+    static func activeClicks(at time: Double, clicks: [AOMClickEvent]) -> ArraySlice<AOMClickEvent> {
+        guard time.isFinite else { return [] }
+        func boundary(_ threshold: Double, inclusive: Bool) -> Int {
+            var lower = 0, upper = clicks.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if clicks[middle].time < threshold || (!inclusive && clicks[middle].time == threshold) { lower = middle + 1 }
+                else { upper = middle }
+            }
+            return lower
+        }
+        let begin = boundary(time - 0.65, inclusive: false)
+        let end = boundary(time, inclusive: false)
+        return clicks[begin..<max(begin, end)]
+    }
+
     /// Independent, editable zoom suggestions from sustained pointer dwell.
     /// No clicks, keystrokes, window names or proprietary scene model required.
     static func suggestedZooms(track: AOMCursorTrack, start: Double, end: Double,
@@ -84,6 +102,35 @@ enum AOMStudioTimeline {
         guard start.isFinite, end.isFinite, start >= 0, end > start,
               track.isValid, magnification.isFinite else { return [] }
         let zoom = min(3, max(1.2, magnification))
+        // Clicks carry explicit interaction context; group repeated actions at
+        // the same target and leave room for the entrance/exit transitions.
+        let clicks = (track.clicks ?? []).filter { $0.time >= start && $0.time <= end }.sorted { $0.time < $1.time }
+        if !clicks.isEmpty {
+            var groups: [[AOMClickEvent]] = []
+            for click in clicks {
+                if let last = groups.last?.last, click.time - last.time < 1.4,
+                   hypot(click.x - last.x, click.y - last.y) < 0.12 {
+                    groups[groups.count - 1].append(click)
+                } else { groups.append([click]) }
+            }
+            var frames: [AOMStudioZoomKeyframe] = []
+            var available = start
+            for (index, group) in groups.prefix(40).enumerated() {
+                guard let first = group.first, let last = group.last else { continue }
+                let begin = max(available, first.time - 0.3)
+                let limit = index + 1 < groups.count ? groups[index + 1][0].time - 0.3 : end
+                let peak = min(end, max(begin, first.time + 0.12))
+                let hold = min(end, limit, max(peak, last.time + 0.7))
+                guard hold >= peak else { continue }
+                let finish = min(end, limit, hold + 0.3)
+                frames += [AOMStudioZoomKeyframe(time: begin, magnification: 1, focusX: first.x, focusY: first.y),
+                           AOMStudioZoomKeyframe(time: peak, magnification: zoom, focusX: first.x, focusY: first.y),
+                           AOMStudioZoomKeyframe(time: hold, magnification: zoom, focusX: last.x, focusY: last.y),
+                           AOMStudioZoomKeyframe(time: finish, magnification: 1, focusX: last.x, focusY: last.y)]
+                available = finish
+            }
+            return frames
+        }
         var result: [AOMStudioZoomKeyframe] = []
         var cluster: [AOMCursorPoint] = []
         var availableAfter = start
@@ -116,5 +163,27 @@ enum AOMStudioTimeline {
         }
         finishCluster()
         return result
+    }
+}
+
+/// Ordered, non-destructive source ranges. Reordering never rewrites telemetry.
+struct AOMStudioClip: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var start: Double
+    var end: Double
+    var duration: Double { end - start }
+    func isValid(duration: Double) -> Bool {
+        start.isFinite && end.isFinite && start >= 0 && end > start && end <= duration + 0.05
+    }
+    static func sourceTime(at outputTime: Double, clips: [Self]) -> Double? {
+        guard outputTime.isFinite, outputTime >= 0 else { return nil }
+        var offset = 0.0
+        for clip in clips {
+            guard clip.start.isFinite, clip.end.isFinite, clip.duration > 0 else { return nil }
+            if outputTime < offset + clip.duration { return clip.start + outputTime - offset }
+            offset += clip.duration
+        }
+        if outputTime == offset { return clips.last?.end }
+        return nil
     }
 }

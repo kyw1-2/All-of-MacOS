@@ -230,6 +230,48 @@ final class StudioTimelineTests: XCTestCase {
         }
     }
 
+    func testClickDrivenZoomWorksWithoutCursorDwellAndGroupsRepeatedClicks() {
+        let track = AOMCursorTrack(points: [], clicks: [
+            AOMClickEvent(time: 2, x: 0.2, y: 0.7),
+            AOMClickEvent(time: 2.4, x: 0.21, y: 0.7),
+            AOMClickEvent(time: 5, x: 0.8, y: 0.2)])
+        let frames = AOMStudioTimeline.suggestedZooms(track: track, start: 1, end: 7)
+        XCTAssertEqual(frames.count, 8)
+        XCTAssertEqual(frames[1].focusX, 0.2)
+        XCTAssertEqual(frames[5].focusX, 0.8)
+        XCTAssertTrue(frames.allSatisfy { (1...7).contains($0.time) })
+        XCTAssertEqual(frames.map(\.time), frames.map(\.time).sorted())
+    }
+
+    func testReorderedCutsMapOutputToOriginalTelemetryTime() {
+        let clips = [AOMStudioClip(start: 10, end: 12), AOMStudioClip(start: 2, end: 3)]
+        XCTAssertEqual(AOMStudioClip.sourceTime(at: 0, clips: clips), 10)
+        XCTAssertEqual(AOMStudioClip.sourceTime(at: 1.5, clips: clips), 11.5)
+        XCTAssertEqual(AOMStudioClip.sourceTime(at: 2, clips: clips), 2)
+        XCTAssertEqual(AOMStudioClip.sourceTime(at: 3, clips: clips), 3)
+        XCTAssertNil(AOMStudioClip.sourceTime(at: 3.1, clips: clips))
+        XCTAssertNil(AOMStudioClip.sourceTime(at: .nan, clips: clips))
+    }
+
+    func testClickAndShortcutTelemetryRoundTripRejectsInvalidEvents() throws {
+        try withTemporaryMovie { movie in
+            let track = AOMCursorTrack(points: [], clicks: [AOMClickEvent(time: 1, x: 0.5, y: 0.5)],
+                keystrokes: [AOMKeystrokeEvent(time: 1, label: "⌘K")])
+            try track.write(for: movie)
+            XCTAssertEqual(AOMCursorTrack.read(for: movie)?.clicks, track.clicks)
+            XCTAssertEqual(AOMCursorTrack.read(for: movie)?.keystrokes, track.keystrokes)
+            let invalid = AOMCursorTrack(points: [], clicks: [AOMClickEvent(time: 1, x: 2, y: 0.5)])
+            XCTAssertThrowsError(try invalid.write(for: movie))
+        }
+    }
+
+    func testRippleEventsExcludeExpiredAndFutureClicksAtExactBoundaries() {
+        let clicks = [AOMClickEvent(time: 0, x: 0.5, y: 0.5), AOMClickEvent(time: 0.5, x: 0.5, y: 0.5), AOMClickEvent(time: 1, x: 0.5, y: 0.5)]
+        XCTAssertEqual(AOMStudioTimeline.activeClicks(at: 0.65, clicks: clicks).map(\.time), [0.5])
+        XCTAssertEqual(AOMStudioTimeline.activeClicks(at: 1, clicks: clicks).map(\.time), [0.5, 1])
+        XCTAssertTrue(AOMStudioTimeline.activeClicks(at: .nan, clicks: clicks).isEmpty)
+    }
+
     private func withTemporaryMovie(_ body: (URL) throws -> Void) throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("AOM-StudioTimelineTests-\(UUID().uuidString)", isDirectory: true)

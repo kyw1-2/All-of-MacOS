@@ -55,6 +55,8 @@ final class SystemTriggerMonitor {
     /// Tracks which apps were running so launches and quits can be told apart.
     private var runningBundleIDs: Set<String> = []
 
+    deinit { unregisterAll() }
+
     // MARK: - Registration
 
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
@@ -75,7 +77,10 @@ final class SystemTriggerMonitor {
         // reach its interval.
         let anchor = Date()
         for entry in entries {
-            if case .everyMinutes = entry.kind { lastIntervalFire[entry.id] = anchor }
+            switch entry.kind {
+            case .everyMinutes, .everyMinutesInWindow: lastIntervalFire[entry.id] = anchor
+            default: break
+            }
         }
         startTimerIfNeeded()
         installObserversIfNeeded()
@@ -113,9 +118,9 @@ final class SystemTriggerMonitor {
             for transition in tracker.wifiTransitions(ssid) {
                 switch transition {
                 case .connected(let name):
-                    fireMatching { if case .wifiConnected(let f) = $0 { return f.isEmpty || f.caseInsensitiveCompare(name) == .orderedSame }; return false }
+                    fireMatching { if case .wifiConnected(let f) = $0 { return SystemSignalMatcher.networkMatches(f, name) }; return false }
                 case .disconnected(let name):
-                    fireMatching { if case .wifiDisconnected(let f) = $0 { return f.isEmpty || f.caseInsensitiveCompare(name) == .orderedSame }; return false }
+                    fireMatching { if case .wifiDisconnected(let f) = $0 { return SystemSignalMatcher.networkMatches(f, name) }; return false }
                 }
             }
         case .variable(let name, let value):
@@ -151,8 +156,9 @@ final class SystemTriggerMonitor {
     func unregisterAll() {
         provider.stop()
         hoverGeneration = UUID(); hover.reset(); tracker.reset(); lastFileFire.removeAll()
+        if let powerSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .defaultMode); self.powerSource = nil }
         timer?.invalidate(); timer = nil
-        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.forEach { NotificationCenter.default.removeObserver($0); DistributedNotificationCenter.default().removeObserver($0) }
         observers.removeAll()
         workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         workspaceObservers.removeAll()
@@ -166,7 +172,7 @@ final class SystemTriggerMonitor {
     private var needsTimer: Bool {
         entries.contains {
             switch $0.kind {
-            case .daily, .weekly, .everyMinutes: return true
+            case .daily, .weekly, .everyMinutes, .everyMinutesInWindow: return true
             default: return false
             }
         }
@@ -192,7 +198,7 @@ final class SystemTriggerMonitor {
         let minuteStamp = hour * 60 + minute
         // A day-scoped stamp so "09:00" on one day is distinct from "09:00" on
         // the next, while still collapsing repeat ticks within one minute.
-        let dayStamp = (components.year ?? 0) * 1000 + (components.day ?? 0)
+        let dayStamp = calendar.ordinality(of: .day, in: .era, for: now) ?? 0
 
         for entry in entries {
             switch entry.kind {
@@ -210,7 +216,8 @@ final class SystemTriggerMonitor {
                 lastFiredMinute[entry.id] = stamp
                 fire(entry, reason: "weekly")
 
-            case .everyMinutes(let interval):
+            case .everyMinutes(let interval), .everyMinutesInWindow(let interval, _):
+                if case .everyMinutesInWindow(_, let window) = entry.kind, !window.contains(now) { continue }
                 guard interval > 0 else { continue }
                 // The anchor is set at registration, so a missing entry means
                 // this trigger was added without one; adopt now and wait a

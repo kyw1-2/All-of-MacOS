@@ -21,6 +21,9 @@ struct ClipboardMCPTool: Codable, Identifiable, Equatable {
     var tokenHash: String
     var createdAt = Date()
     var lastUsed: Date?
+    /// Absent in older registrations: existing clipboard clients retain their
+    /// original access until the user explicitly enables automation for them.
+    var automationAccess: Bool?
 }
 
 @MainActor
@@ -83,6 +86,12 @@ final class ClipboardMCPSettings: ObservableObject {
 
     func disconnect(_ id: UUID) {
         tools.removeAll { $0.id == id }
+        ClipboardMCPServer.shared.dropConnections(of: id)
+    }
+
+    func setAutomationAccess(_ enabled: Bool, for id: UUID) {
+        guard let index = tools.firstIndex(where: { $0.id == id }) else { return }
+        tools[index].automationAccess = enabled
         ClipboardMCPServer.shared.dropConnections(of: id)
     }
 
@@ -240,7 +249,8 @@ final class ClipboardMCPServer {
             return
         }
         if let toolID = connection.toolID { ClipboardMCPSettings.shared.markUsed(toolID) }
-        if let response = ClipboardMCPHandler.handle(object, store: .shared) { connection.send(response) }
+        let automation = ClipboardMCPSettings.shared.tools.first { $0.id == connection.toolID }?.automationAccess == true
+        if let response = ClipboardMCPHandler.handle(object, store: .shared, automationAccess: automation) { connection.send(response) }
     }
 
     final class Connection {
@@ -313,7 +323,7 @@ final class ClipboardMCPServer {
 enum ClipboardMCPHandler {
     static let protocolVersion = "2025-06-18"
 
-    static func handle(_ message: [String: Any], store: ClipboardStore) -> [String: Any]? {
+    static func handle(_ message: [String: Any], store: ClipboardStore, automationAccess: Bool = false) -> [String: Any]? {
         let id = message["id"]
         guard let method = message["method"] as? String else { return nil }
         func result(_ value: Any) -> [String: Any]? {
@@ -331,13 +341,17 @@ enum ClipboardMCPHandler {
                 "instructions": "Search and manage the user's local All of MacOS clipboard history and pinboards. Items that look like secrets are never returned.",
             ])
         case "ping": return result([String: Any]())
-        case "tools/list": return result(["tools": tools])
+        case "tools/list": return result(["tools": tools + (automationAccess ? AutomationMCP.tools : [])])
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             do {
-                let value = try call(name, arguments, store: store)
+                let value: [String: Any]
+                if name.hasPrefix("automation_") {
+                    guard automationAccess else { throw ToolError("Automation access is disabled for this client. Enable it in Clipboard > Intelligence > MCP & AI Tools.") }
+                    value = try AutomationMCP.call(name, arguments)
+                } else { value = try call(name, arguments, store: store) }
                 let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
                 return result(["content": [["type": "text", "text": String(decoding: data, as: UTF8.self)]],
                                "structuredContent": value, "isError": false])

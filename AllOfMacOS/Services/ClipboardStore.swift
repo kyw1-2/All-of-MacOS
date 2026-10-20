@@ -394,13 +394,14 @@ final class ClipboardStore: ObservableObject {
                   board: UUID? = nil, since: Date? = nil) -> [ClipboardEntry] {
         if query.isEmpty, kind == nil, source == nil, board == nil, since == nil { return entries }
         let search = ClipboardSearchQuery(query)
-        return entries.filter { entry in
+        let matched = entries.filter { entry in
             (kind == nil || entry.kind == kind) &&
             (source == nil || entry.sourceBundleID == source || entry.sourceName == source) &&
             (board == nil || entry.pinboardIDs.contains(board!)) &&
             (since == nil || entry.lastCopiedAt >= since!) &&
             search.matches(entry, boards: boards)
         }
+        return Self.ordered(matched, board: board, boards: boards)
     }
 
     /// Creates a local reusable clip without changing the system pasteboard.
@@ -439,6 +440,35 @@ final class ClipboardStore: ObservableObject {
         boards.append(board)
         scheduleSave()
         return board
+    }
+
+    nonisolated static func ordered(_ entries: [ClipboardEntry], board: UUID?, boards: [ClipboardPinboard]) -> [ClipboardEntry] {
+        guard let board, let order = boards.first(where: { $0.id == board })?.itemOrder else { return entries }
+        let positions = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        return entries.enumerated().sorted {
+            let left = positions[$0.element.id] ?? (order.count + $0.offset)
+            let right = positions[$1.element.id] ?? (order.count + $1.offset)
+            return left < right
+        }.map(\.element)
+    }
+
+    func moveBoard(_ id: UUID, before target: UUID) {
+        guard id != target, let source = boards.firstIndex(where: { $0.id == id }), boards.contains(where: { $0.id == target }) else { return }
+        let board = boards.remove(at: source)
+        boards.insert(board, at: boards.firstIndex(where: { $0.id == target })!)
+        scheduleSave()
+    }
+
+    func moveItem(_ id: UUID, before target: UUID, in boardID: UUID) {
+        guard id != target, let boardIndex = boards.firstIndex(where: { $0.id == boardID }),
+              entries.contains(where: { $0.id == id }), entries.contains(where: { $0.id == target && $0.pinboardIDs.contains(boardID) }) else { return }
+        pin(entryID: id, boardID: boardID)
+        var order = Self.ordered(entries.filter { $0.pinboardIDs.contains(boardID) }, board: boardID, boards: boards).map(\.id)
+        order.removeAll { $0 == id }
+        guard let insertion = order.firstIndex(of: target) else { return }
+        order.insert(id, at: insertion)
+        boards[boardIndex].itemOrder = order
+        scheduleSave()
     }
 
     func renameBoard(id: UUID, name: String) {
@@ -516,8 +546,12 @@ final class ClipboardStore: ObservableObject {
         guard let index = entries.firstIndex(where: { $0.id == entryID }), [.text, .link, .color].contains(entries[index].kind) else { return }
         guard text.utf8.count <= Self.maximumEntryBytes else { lastError = StoreError.tooLarge.localizedDescription; return }
         let old = entries[index]
-        let representations = old.kind == .text ? Self.textRepresentations(text, rtfData: rtfData)
+        var representations = old.kind == .text ? Self.textRepresentations(text, rtfData: rtfData)
             : [NSPasteboard.PasteboardType.string.rawValue: Data(text.utf8)]
+        if old.kind == .color, let color = ClipboardColorEditor.color(text),
+           let native = color.pasteboardPropertyList(forType: .color) as? Data {
+            representations[NSPasteboard.PasteboardType.color.rawValue] = native
+        }
         var edited = ClipboardEntry.captured(items: [representations],
                                              sourceName: old.sourceName, sourceBundleID: old.sourceBundleID, at: old.createdAt)
         edited.id = old.id

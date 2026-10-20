@@ -41,6 +41,7 @@ struct ClipboardTextEditorPresenter: NSViewRepresentable {
             else { size = NSSize(width: 390, height: 316) }
             let window = ClipboardTextPanel(contentRect: NSRect(origin: .zero, size: size),
                                  styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+            window.sharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
             window.level = .floating
             window.isOpaque = false
             window.backgroundColor = .clear

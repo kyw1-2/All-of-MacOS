@@ -47,6 +47,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMPinnedBorder") private var pinnedBorder = false
     @AppStorage("AOMCaptureFilenameTemplate") private var filenameTemplate = ""
     @AppStorage("AOMCaptureFilenameUTC") private var filenameUTC = false
+    @AppStorage("AOMCaptureColorProfile") private var colorProfile = CaptureColorProfile.display.rawValue
 
     @State private var saveDirectory: String = CaptureSettings.saveDirectory.path
     @State private var permissionGranted = ScreenCaptureService.hasPermission
@@ -103,6 +104,15 @@ struct CaptureSettingsView: View {
 
     private var formatGroup: some View {
         AppleSettingsGroup("Format") {
+            AppleSettingsRow(icon: "paintpalette", iconColor: .purple, title: "Color Profile",
+                             subtitle: format == .webp ? "WebP output always uses standard sRGB" : "Preserve wide gamut or convert pixels to standard sRGB", showDivider: true) {
+                if format == .webp { Text("sRGB (WebP)").foregroundStyle(.secondary) }
+                else {
+                    Picker("", selection: $colorProfile) {
+                        ForEach(CaptureColorProfile.allCases) { Text($0.title).tag($0.rawValue) }
+                    }.labelsHidden().frame(width: 220)
+                }
+            }
             AppleSettingsRow(icon: "doc", iconColor: .blue, title: "Image Format",
                              subtitle: "PNG is lossless; JPEG and HEIC are smaller",
                              showDivider: format.isLossy) {
@@ -237,11 +247,11 @@ struct CaptureSettingsView: View {
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "video.fill", iconColor: .green,
-                             title: "Camera Overlay", subtitle: "Include a camera bubble in the recording", showDivider: true) {
+                             title: "Camera Overlay", subtitle: "Editable camera layer; original and standalone video are saved", showDivider: true) {
                 Toggle("", isOn: $recordingCameraOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "keyboard", iconColor: .purple,
-                             title: "Show Keyboard Shortcuts", subtitle: "Show modifier shortcuts; typed text is never displayed", showDivider: true) {
+                             title: "Show Keyboard Shortcuts", subtitle: "Editable shortcuts; ordinary typed text is never collected", showDivider: true) {
                 Toggle("", isOn: $recordingKeystrokeOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,

@@ -14,7 +14,7 @@ struct ActionParameterForm: View {
 
     private enum Kind {
         case moveResize, windowTarget, windowDrag, desktop, spaceShortcut, customClick, scroll, relativeMouse
-        case textPayload, functionKey, modifier, arrow, level, filePath, speak, notification, shortcut, javascript
+        case textPayload, functionKey, modifier, arrow, level, filePath, speak, notification, shortcut, javascript, floatingMenu, accessibility, imageTemplate
         case repeatLoop, cycle, toggle, variableStep, askInput, debounce, triggerSelector, waitFor, pause, info
     }
 
@@ -37,7 +37,11 @@ struct ActionParameterForm: View {
         case .speakText: return .speak
         case .showNotification: return .notification
         case .runAppleShortcut: return .shortcut
-        case .runJavaScript: return .javascript
+        case .runJavaScript, .runSwiftScript, .runAppleScript, .runShellScript: return .javascript
+        case .matchScreenImage: return .imageTemplate
+        case .pressAccessibilityElement, .setAccessibilityValue: return .accessibility
+        case .showFloatingMenu: return .floatingMenu
+        case .hideFloatingMenus, .editFloatingMenus: return .info
         case .repeatLoop: return .repeatLoop
         case .cycleActions: return .cycle
         case .toggleOnOff: return .toggle
@@ -137,12 +141,33 @@ struct ActionParameterForm: View {
             TextField("Shortcut name (exactly as in Shortcuts)", text: stringBinding(\.shortcutName, default: "")).textFieldStyle(.roundedBorder)
             timeout(default: 60)
             footnote("Runs /usr/bin/shortcuts in AOM's script helper. A failing shortcut fails this step.")
+        case .imageTemplate:
+            TextField("Template image path", text: stringBinding(\.imageTemplatePath, default: ""))
+            Button("Choose Template Image…") {
+                let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg, .tiff]; panel.allowsMultipleSelection = false
+                if panel.runModal() == .OK { save { $0.parameters.imageTemplatePath = panel.url?.path } }
+            }
+            numberRow("Similarity (0.8–1.0)", \.imageMatchThreshold, default: 0.98, range: 0.8...1)
+            Toggle("Click center of the first match", isOn: Binding(get: { p.imageMatchClick ?? false }, set: { value in save { $0.parameters.imageMatchClick = value } }))
+            TextField("Result variable (optional)", text: stringBinding(\.imageMatchVariable, default: ""))
+            footnote("Searches the pointer display locally using the current image scale and appearance. Result is true/false plus _x, _y, _score. Needs Screen Recording permission and Accessibility for clicking. Templates up to 1 million pixels; bounded search at up to 1600 pixels per display edge. No rotation or scale inference.")
+        case .accessibility:
+            TextField("Application bundle ID (empty = frontmost)", text: stringBinding(\.targetApplicationBundleID, default: ""))
+            TextField("Exact element title", text: stringBinding(\.uiElementTitle, default: ""))
+            TextField("Accessibility identifier", text: stringBinding(\.uiElementIdentifier, default: ""))
+            TextField("Role (e.g. AXButton; empty = any)", text: stringBinding(\.uiElementRole, default: ""))
+            if action.actionType == .setAccessibilityValue { TextField("New value", text: stringBinding(\.uiElementValue, default: "")) }
+            footnote("Requires Accessibility permission. Matches both title and identifier when both are supplied; first matching element in the running app is used. Some applications require focus.")
+        case .floatingMenu:
+            TextField("Menu name or UUID", text: stringBinding(\.floatingMenuName, default: ""))
+            Button("Open Menu & Widget Editor") { FloatingMenuController.shared.edit() }
         case .javascript:
-            ActionTextEditor(initial: p.scriptContent ?? "", label: "JavaScript for Automation", monospaced: true) { value in
+            ActionTextEditor(initial: p.scriptContent ?? "", label: action.actionType.rawValue, monospaced: true) { value in
                 save { $0.parameters.scriptContent = value.isEmpty ? nil : value }
             }.id(action.id)
             timeout(default: 30)
-            footnote("Runs with osascript -l JavaScript in the same sandboxed helper as AppleScript and shell scripts.")
+            TextField("Output variable (optional)", text: stringBinding(\.scriptResultVariable, default: ""))
+            footnote("Captures output, plus _exitCode and _timedOut variables. Swift requires Apple command line tools; script execution uses the separate helper.")
         case .repeatLoop:
             Stepper(value: intBinding(\.loopCount, default: 2), in: 1...100) { Text("Repeat \(p.loopCount ?? 2) times") }
                 .accessibilityLabel("Loop count")

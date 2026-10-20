@@ -34,6 +34,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var isStopping = false
     private var recordedScale: CGFloat = 1
     private var outputGIF = false
+    private var recordsEditableCursor = false
     private var gifFPS = 10
     private var outputSize = CGSize.zero
     private var cursorSampler: Timer?
@@ -43,6 +44,14 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var acceptAudioAfter = CMTime.zero
     private var camera: RecordingCameraSource?
     private var cameraImage: CIImage?
+    private var cameraWriter: AVAssetWriter?
+    private var cameraInput: AVAssetWriterInput?
+    private var cameraAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var cameraStarted = false
+    private var clickEvents: [AOMClickEvent] = []
+    private var keyEvents: [AOMKeystrokeEvent] = []
+    private var clickMonitor: Any?
+    private var localClickMonitor: Any?
     private var keyMonitor: Any?
     private var localKeyMonitor: Any?
     private var keyImage: CIImage?
@@ -99,6 +108,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         guard !isRecording, !isStarting, !isStopping else { return }
         isStarting = true
         defer { isStarting = false }
+        recordsEditableCursor = CaptureSettings.recordingCursorMotion
         outputGIF = UserDefaults.standard.string(forKey: "AOMCaptureRecordingOutputFormat") == "gif"
         gifFPS = max(1, min(30, UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS") == 0 ? 10 : UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS")))
         let source = outputGIF ? RecordingAudioSource.off : CaptureSettings.recordingAudioSource
@@ -180,10 +190,20 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         firstSampleTime = nil; lastVideoTime = nil; firstImage = nil
         pausedDuration = .zero; pauseStarted = nil; isPaused = false; acceptAudioAfter = .zero
         isSessionStarted = false; elapsedSeconds = 0
-        frames.removeAll(); displayRects.removeAll(); cursorPoints.removeAll()
+        frames.removeAll(); displayRects.removeAll(); cursorPoints.removeAll(); clickEvents.removeAll(); keyEvents.removeAll()
         do {
             try RecordingRecovery.add(url)
             if CaptureSettings.recordingCameraOverlay {
+                let cameraURL = AOMStudioCameraFrames.url(for: url)
+                let cameraWriter = try AVAssetWriter(outputURL: cameraURL, fileType: .mp4)
+                cameraWriter.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
+                let cameraInput = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 640, AVVideoHeightKey: 640])
+                cameraInput.expectsMediaDataInRealTime = true
+                guard cameraWriter.canAdd(cameraInput) else { throw CaptureError.captureFailed("Cannot save editable camera track.") }
+                cameraWriter.add(cameraInput)
+                self.cameraAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: cameraInput, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 640, kCVPixelBufferHeightKey as String: 640, kCVPixelBufferIOSurfacePropertiesKey as String: [:]])
+                guard cameraWriter.startWriting() else { throw cameraWriter.error ?? CaptureError.captureFailed("Cannot start camera track.") }
+                self.cameraWriter = cameraWriter; self.cameraInput = cameraInput; cameraStarted = false
                 let camera = RecordingCameraSource()
                 camera.onFrame = { [weak self] image in self?.cameraImage = image }
                 try await camera.start()
@@ -199,9 +219,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 config.sourceRect = piece.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
                 config.width = max(2, Int(piece.width * effectiveScale))
                 config.height = max(2, Int(piece.height * effectiveScale))
-                config.showsCursor = !CaptureSettings.recordingCursorMotion && (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
+                config.showsCursor = !recordsEditableCursor && (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
                 if #available(macOS 15.0, *) {
-                    config.showMouseClicks = CaptureSettings.recordingClickIndicators
+                    config.showMouseClicks = false // Editable local click events are rendered in Studio.
                     config.captureMicrophone = wantsMic && index == 0
                 }
                 config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(CaptureSettings.recordingFPS))
@@ -222,12 +242,13 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 try await stream.startCapture()
             }
             isRecording = true
-            if CaptureSettings.recordingCursorMotion { startCursorSampling() }
+            startCursorSampling()
+            startClickMonitoring()
             startTimer(); ScreenRecordingBarController.shared.show()
             GestureHUD.shared.show(title: "Recording Started", detail: "\(Int(globalRect.width)) × \(Int(globalRect.height))")
         } catch {
             for stream in streams { try? await stream.stopCapture() }
-            writer.cancelWriting(); try? FileManager.default.removeItem(at: url)
+            writer.cancelWriting(); cameraWriter?.cancelWriting(); try? FileManager.default.removeItem(at: AOMStudioCameraFrames.url(for: url)); try? FileManager.default.removeItem(at: AOMCursorTrack.sidecarURL(for: url)); try? FileManager.default.removeItem(at: url)
             RecordingRecovery.remove(url); clearSession()
             throw error
         }
@@ -268,7 +289,12 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let needsMix = audioInput != nil && microphoneInput != nil
         let thumb = firstImage ?? Self.makeFallbackThumbnail(size: recordingRect.size)
         let rect = recordingRect; let scale = recordedScale; let points = cursorPoints
+        let telemetry = AOMCursorTrack(points: recordsEditableCursor ? points : [], clicks: clickEvents, keystrokes: keyEvents)
+        let cameraWriter = cameraWriter
+        cameraInput?.markAsFinished()
+        if cameraWriter?.status == .writing { await cameraWriter?.finishWriting() }
         let wantsGIF = outputGIF; let animationFPS = gifFPS
+        let wantsRipples = CaptureSettings.recordingClickIndicators
         if writer.status == .writing { await writer.finishWriting() }
         clearSession()
         guard hasFrames, writer.status == .completed else {
@@ -283,39 +309,60 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
             }
         }
         RecordingRecovery.remove(url)
-        if !points.isEmpty { try? AOMCursorTrack(points: points).write(for: url) }
+        var finishingWarning: String?
+        do { try telemetry.write(for: url) }
+        catch { finishingWarning = "Editable input track could not be saved: \(error.localizedDescription)" }
+        let defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
+        var presentation = url
+        if !telemetry.points.isEmpty || !(telemetry.keystrokes ?? []).isEmpty || cameraWriter?.status == .completed || (wantsRipples && !(telemetry.clicks ?? []).isEmpty) {
+            GestureHUD.shared.show(title: "Finishing Recording", detail: "Rendering editable layers. The original screen and camera tracks are kept.")
+            do {
+                let length = try await RecordingExportService.duration(for: url)
+                let rendered = try await RecordingExportService.render(source: url, start: 0, end: length,
+                    muteAudio: false, quality: .high, studio: defaultStyle, outputSuffix: "Presentation")
+                try AOMStudioSourceLink.write(presentation: rendered, source: url)
+                presentation = rendered
+            } catch {
+                finishingWarning = "Layer export failed; raw recording and editable tracks were kept: \(error.localizedDescription). Open Edit Recording to retry."
+            }
+        }
+        if let cameraWriter, cameraWriter.status != .completed {
+            finishingWarning = "The screen recording was saved. Camera fragments were retained: \(cameraWriter.error?.localizedDescription ?? "Camera track could not finalize.")"
+        }
         let result = CaptureResult(image: thumb, globalRect: rect, scale: scale, kind: .videoRecording, windowTitle: "Screen Recording")
-        let entry = CaptureHistory.shared.add(result, url: url)
+        let entry = CaptureHistory.shared.add(result, url: presentation)
         CaptureCoordinator.shared.showRecordingOverlay(for: entry)
         if wantsGIF {
             GestureHUD.shared.show(title: "Creating GIF", detail: "The MP4 source has been saved.")
             do {
                 let duration = try await RecordingExportService.duration(for: url)
                 let gif = try await RecordingExportService.gif(source: url, start: 0, end: duration, fps: animationFPS,
-                    studio: AOMStudioSettings(cursorPoints: points))
+                    studio: defaultStyle)
                 NSWorkspace.shared.activateFileViewerSelecting([gif])
                 GestureHUD.shared.show(title: "GIF Saved", detail: gif.lastPathComponent)
             } catch {
                 GestureHUD.shared.show(title: "GIF Export Failed", detail: "MP4 retained. \(error.localizedDescription)")
             }
+        } else if let finishingWarning {
+            GestureHUD.shared.show(title: "Recording Saved with Warning", detail: finishingWarning)
         } else {
-            GestureHUD.shared.show(title: "Recording Saved", detail: url.lastPathComponent)
+            GestureHUD.shared.show(title: "Recording Saved", detail: presentation.lastPathComponent)
         }
         AOMSystemSound.play("Glass")
-        return url
+        return presentation
     }
 
     func cancelRecording() {
         guard isRecording, !isStopping else { return }
         isStopping = true; isRecording = false
         stopTimer(); stopCursorSampling(); stopOverlays(); ScreenRecordingBarController.shared.hide()
-        let activeStreams = streams; let writer = writer; let url = outputURL
+        let activeStreams = streams; let writer = writer; let cameraWriter = cameraWriter; let url = outputURL
         clearSession()
         Task {
             defer { isStopping = false }
             for stream in activeStreams { try? await stream.stopCapture() }
-            writer?.cancelWriting()
-            if let url { try? FileManager.default.removeItem(at: url); RecordingRecovery.remove(url) }
+            writer?.cancelWriting(); cameraWriter?.cancelWriting()
+            if let url { try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: AOMStudioCameraFrames.url(for: url)); try? FileManager.default.removeItem(at: AOMCursorTrack.sidecarURL(for: url)); RecordingRecovery.remove(url) }
         }
         GestureHUD.shared.show(title: "Recording Discarded", detail: "")
     }
@@ -323,6 +370,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private func clearSession() {
         stopOverlays(); stopTimer(); stopCursorSampling()
         streams.removeAll(); frames.removeAll(); displayRects.removeAll()
+        cameraWriter = nil; cameraInput = nil; cameraAdaptor = nil; cameraStarted = false
         writer = nil; videoInput = nil; pixelAdaptor = nil; audioInput = nil; microphoneInput = nil
         outputURL = nil; isSessionStarted = false; isPaused = false
         firstSampleTime = nil; lastVideoTime = nil; cursorPoints.removeAll()
@@ -370,6 +418,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if !isSessionStarted {
             writer.startSession(atSourceTime: pts)
             firstSampleTime = pts; isSessionStarted = true
+            if let cameraWriter, cameraWriter.status == .writing {
+                cameraWriter.startSession(atSourceTime: pts); cameraStarted = true
+            }
         }
         guard videoInput?.isReadyForMoreMediaData == true,
               let adaptor = pixelAdaptor, let pool = adaptor.pixelBufferPool else { return }
@@ -379,6 +430,19 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
               let destination else { return }
         let canvas = compositedFrame()
         ciContext.render(canvas, to: destination)
+        if let image = cameraImage, let cameraWriter, cameraWriter.status == .writing {
+            if !cameraStarted { cameraWriter.startSession(atSourceTime: pts); cameraStarted = true }
+            if cameraInput?.isReadyForMoreMediaData == true, let adaptor = cameraAdaptor, let pool = adaptor.pixelBufferPool {
+                var cameraPixel: CVPixelBuffer?
+                if CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &cameraPixel) == kCVReturnSuccess, let cameraPixel {
+                    let factor = max(640 / image.extent.width, 640 / image.extent.height)
+                    let scaled = image.transformed(by: CGAffineTransform(scaleX: factor, y: factor))
+                    let centered = scaled.transformed(by: CGAffineTransform(translationX: 320 - scaled.extent.midX, y: 320 - scaled.extent.midY)).cropped(to: CGRect(x: 0, y: 0, width: 640, height: 640))
+                    ciContext.render(centered, to: cameraPixel)
+                    _ = adaptor.append(cameraPixel, withPresentationTime: pts)
+                }
+            }
+        }
         if adaptor.append(destination, withPresentationTime: pts) {
             lastVideoTime = pts
             if firstImage == nil { firstImage = ciContext.createCGImage(canvas, from: canvas.extent) }
@@ -412,22 +476,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 .transformed(by: CGAffineTransform(translationX: target.minX, y: target.minY))
             canvas = fitted.cropped(to: target).composited(over: canvas)
         }
-        if let cameraImage {
-            let side = min(bounds.width, bounds.height) * 0.24
-            let target = CGRect(x: bounds.maxX - side - 24, y: 24, width: side, height: side)
-            let factor = max(side / cameraImage.extent.width, side / cameraImage.extent.height)
-            let scaled = cameraImage.transformed(by: CGAffineTransform(scaleX: -factor, y: factor))
-            let placed = scaled.transformed(by: CGAffineTransform(translationX: target.midX - scaled.extent.midX, y: target.midY - scaled.extent.midY))
-            let mask = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: target), "inputRadius": side * 0.18, "inputColor": CIColor.white])?.outputImage
-            if let mask {
-                canvas = placed.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: canvas, kCIInputMaskImageKey: mask]).cropped(to: bounds)
-            }
-        }
-        if let keyImage, keyExpires > Date(), !IsSecureEventInputEnabled() {
-            let factor = min(1, bounds.width * 0.8 / keyImage.extent.width)
-            let scaled = keyImage.transformed(by: CGAffineTransform(scaleX: factor, y: factor))
-            canvas = scaled.transformed(by: CGAffineTransform(translationX: bounds.midX - scaled.extent.midX, y: 24)).composited(over: canvas)
-        }
+        // Camera and shortcuts remain independent editable tracks.
         return canvas.cropped(to: bounds)
     }
 
@@ -450,20 +499,37 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         guard flags.contains(.command) || flags.contains(.control) || flags.contains(.option) || special[event.keyCode] != nil else { return }
         let modifiers = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "") + (flags.contains(.shift) ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
         let label = modifiers + (special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "")
-        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold), .foregroundColor: NSColor.white])
-        let size = CGSize(width: max(70, text.size().width + 36), height: 58)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor.black.withAlphaComponent(0.75).setFill()
-        NSBezierPath(roundedRect: CGRect(origin: .zero, size: size), xRadius: 14, yRadius: 14).fill()
-        text.draw(at: CGPoint(x: (size.width - text.size().width) / 2, y: 12))
-        image.unlockFocus()
-        if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) { keyImage = CIImage(cgImage: cg) }
-        keyExpires = Date().addingTimeInterval(1.4)
+        guard let time = recordingTime(), keyEvents.count < 60_000 else { return }
+        keyEvents.append(AOMKeystrokeEvent(time: time, label: label))
+    }
+
+    private func recordingTime() -> Double? {
+        guard isRecording, !isPaused, let start = firstSampleTime else { return nil }
+        let time = CMTimeGetSeconds(CMTimeSubtract(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pausedDuration), start))
+        return time.isFinite && time >= 0 ? time : nil
+    }
+
+    private func startClickMonitoring() {
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            Task { @MainActor in self?.recordClick(event) }
+        }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in self?.recordClick(event); return event }
+    }
+
+    private func recordClick(_ event: NSEvent) {
+        guard let time = recordingTime(), clickEvents.count < 60_000 else { return }
+        let mouse = NSEvent.mouseLocation
+        let x = (mouse.x - recordingRect.minX) / recordingRect.width
+        let y = ((NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y - recordingRect.minY) / recordingRect.height
+        guard (0...1).contains(x), (0...1).contains(y) else { return }
+        clickEvents.append(AOMClickEvent(time: time, x: x, y: y, button: min(2, event.buttonNumber)))
     }
 
     private func stopOverlays() {
         camera?.stop(); camera = nil; cameraImage = nil; keyImage = nil
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor); self.clickMonitor = nil }
+        if let localClickMonitor { NSEvent.removeMonitor(localClickMonitor); self.localClickMonitor = nil }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
         if let localKeyMonitor { NSEvent.removeMonitor(localKeyMonitor); self.localKeyMonitor = nil }
     }
@@ -482,6 +548,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let seconds = CMTimeGetSeconds(CMTimeSubtract(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pausedDuration), start))
         guard sx.isFinite, sy.isFinite, seconds.isFinite, seconds >= 0 else { return }
         cursorPoints.append(AOMCursorPoint(time: seconds, x: Double(min(1, max(0, sx))), y: Double(min(1, max(0, sy))), visible: (0...1).contains(sx) && (0...1).contains(sy)))
+        if cursorPoints.count % 40 == 0, let url = outputURL {
+            try? AOMCursorTrack(points: recordsEditableCursor ? cursorPoints : [], clicks: clickEvents, keystrokes: keyEvents).write(for: url)
+        }
     }
     private func stopCursorSampling() { cursorSampler?.invalidate(); cursorSampler = nil }
     private func startTimer() {

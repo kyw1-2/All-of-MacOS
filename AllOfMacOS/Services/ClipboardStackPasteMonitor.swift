@@ -34,15 +34,16 @@ final class ClipboardStackPasteMonitor {
                         owner.swallowedV = false
                         return nil
                     }
+                    let modifiers = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection([.command, .option, .control, .shift])
+                    let allowed = NSEvent.ModifierFlags.command.union(ClipboardPreferences.shared.plainModifier.flags)
                     guard type == .keyDown, !KeyboardMonitor.isRecordingShortcut,
-                          event.flags.contains(.maskCommand),
-                          event.flags.intersection([.maskAlternate, .maskControl]).isEmpty else {
+                          modifiers.contains(.command), modifiers.subtracting(allowed).isEmpty else {
                         return Unmanaged.passUnretained(event)
                     }
                     if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
                         return owner.swallowedV ? nil : Unmanaged.passUnretained(event)
                     }
-                    guard owner.onPaste?(event.flags.contains(.maskShift)) == true else {
+                    guard owner.onPaste?(ClipboardPreferences.shared.isPlain(modifiers)) == true else {
                         return Unmanaged.passUnretained(event)
                     }
                     owner.swallowedV = true

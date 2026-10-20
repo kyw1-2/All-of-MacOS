@@ -49,7 +49,7 @@ enum ExtendedActions {
         .startScreenSaver, .emptyTrash, .sleepDisplay, .logOut, .toggleHiddenFiles, .openNotificationCenter,
         .openControlCenter, .setVolume, .setBrightness, .toggleMuteMicrophone, .startDictation,
         .playSoundFile, .speakText, .showNotification, .copyTextToClipboard, .openFileOrFolder, .revealInFinder,
-        .runAppleShortcut, .runJavaScript]
+        .runAppleShortcut, .runJavaScript, .matchScreenImage]
 
     static func handles(_ type: ActionType) -> Bool { handled.contains(type) }
 
@@ -74,6 +74,7 @@ enum ExtendedActions {
     static func perform(_ action: TriggerAction, isCancelled: @escaping () -> Bool = { false }, completion: @escaping (Bool) -> Void) {
         let p = action.parameters
         switch action.actionType {
+        case .matchScreenImage: ImageTemplateAutomation.perform(action, isCancelled: isCancelled, completion: completion)
         // MARK: Spaces & Mission Control
         case .switchSpaceLeft: postHotKey(SymbolicHotKeys.spaceLeft, completion)
         case .switchSpaceRight: postHotKey(SymbolicHotKeys.spaceRight, completion)
@@ -208,7 +209,10 @@ enum ExtendedActions {
             guard !name.isEmpty, name.count <= 256, !name.contains("\0") else { log("Choose a shortcut name"); completion(false); return }
             runScript(kind: "shell", source: "/usr/bin/shortcuts run \(ShellQuote.single(name))", timeout: p.scriptTimeoutSeconds ?? 60, completion)
         case .runJavaScript:
-            runScript(kind: "javascript", source: p.scriptContent ?? "", timeout: p.scriptTimeoutSeconds ?? 30, completion)
+            ScriptRunnerClient.shared.run(kind: "javascript", source: p.scriptContent ?? "", timeout: p.scriptTimeoutSeconds ?? 30) { code, output, timedOut in
+                ScriptActionResults.record(name: p.scriptResultVariable, output: output, code: code, timedOut: timedOut)
+                completion(code == 0 && !timedOut)
+            }
 
         default: completion(false)
         }

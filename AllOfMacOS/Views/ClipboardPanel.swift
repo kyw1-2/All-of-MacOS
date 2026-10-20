@@ -66,6 +66,13 @@ final class ClipboardPanelState: ObservableObject {
         if stackReversed, let index = stack.lastIndex(of: id) { stack.remove(at: index) }
         else if let index = stack.firstIndex(of: id) { stack.remove(at: index) }
     }
+    /// Reject a drop if collection/pasting changed the queue during the drag.
+    func reorderStack(from source: Int, before target: Int, expected: [UUID]) {
+        guard stack == expected, stack.indices.contains(source), stack.indices.contains(target), source != target else { return }
+        let moved = stack.remove(at: source)
+        let destination = target - (source < target ? 1 : 0) + (stackReversed ? 1 : 0)
+        stack.insert(moved, at: min(max(0, destination), stack.count))
+    }
     /// Multi-item deletes ask first, like Paste's "Delete selected items?".
     @Published var pendingDeletion: [UUID] = []
     @Published var status = ""
@@ -164,7 +171,7 @@ final class ClipboardPanelState: ObservableObject {
                     }
                 }
                 guard !Task.isCancelled else { return }
-                let found = matches
+                let found = ClipboardStore.ordered(matches, board: key.board, boards: boards)
                 await MainActor.run {
                     guard let self, let store, self.pendingSearchKey == key,
                           self.query == key.query, store.revision == key.revision else { return }
@@ -312,6 +319,44 @@ final class ClipboardPanelController {
     let state = ClipboardPanelState()
     private var panel: ClipboardHistoryPanel?
     private var stackPanel: NSPanel?
+    private var detachedPreview: NSWindow?
+    private var presentationObserver: NSObjectProtocol?
+    private init() {
+        presentationObserver = NotificationCenter.default.addObserver(forName: ClipboardPreferences.changed, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let sharing: NSWindow.SharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
+                self.panel?.sharingType = sharing; self.stackPanel?.sharingType = sharing; self.detachedPreview?.sharingType = sharing
+                if self.isVisible { self.show() }
+            }
+        }
+    }
+
+    func navigateBoard(offset: Int) {
+        if !isVisible { show() }
+        let ids: [UUID?] = [nil] + store.boards.map { Optional($0.id) }
+        let index = ids.firstIndex(of: state.board) ?? 0
+        state.selectBoard(ids[(index + offset + ids.count) % ids.count])
+    }
+
+    func fitStackPanel() {
+        guard let window = stackPanel else { return }
+        let limit = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        let height = min(max(150, CGFloat(state.stack.count) * 45 + 88), min(600, limit - 40))
+        var frame = window.frame; frame.origin.y += frame.height - height; frame.size.height = height
+        window.setFrame(frame, display: true)
+    }
+
+    func detachPreview(_ entry: ClipboardEntry) {
+        state.preview = nil
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = entry.title
+        window.isReleasedWhenClosed = false
+        window.sharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
+        window.contentView = NSHostingView(rootView: ClipboardDetachedPreview(entry: entry, store: store))
+        window.center(); detachedPreview?.close(); detachedPreview = window
+        hideImmediately(); window.makeKeyAndOrderFront(nil)
+    }
     private var destination: NSRunningApplication?
     private var keyMonitor: Any?
     private var outsideMonitor: Any?
@@ -354,6 +399,8 @@ final class ClipboardPanelController {
             panel.setFrameOrigin(NSPoint(x: bounds.maxX - panel.frame.width - 20,
                                          y: bounds.maxY - panel.frame.height - 20))
         }
+        stackPanel?.sharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
+        fitStackPanel()
         stackPanel?.orderFrontRegardless()
         stackPasteMonitor.onPaste = { [weak self] plainText in
             guard let self, self.stackPanel?.isVisible == true, !self.isVisible,
@@ -536,6 +583,7 @@ final class ClipboardPanelController {
             panel = window
         }
         guard let panel else { return }
+        panel.sharingType = ClipboardPreferences.shared.showInScreenCapture ? .readOnly : .none
         if let container = panel.contentView as? ClipboardPanelContainerView, panel.firstResponder !== container,
            !((panel.firstResponder as? NSTextView)?.isEditable ?? false) {
             panel.makeFirstResponder(container)
@@ -547,7 +595,7 @@ final class ClipboardPanelController {
         var target = panel.frame
         if let bounds = screen?.visibleFrame {
             let storedHeight = CGFloat(UserDefaults.standard.double(forKey: "AOMClipboardPanelHeight"))
-            let targetHeight = Self.clampedHeight(storedHeight > 0 ? storedHeight : Self.defaultHeight,
+            let targetHeight = Self.clampedHeight(ClipboardPreferences.shared.compact ? Self.minimumHeight : (storedHeight > 0 ? storedHeight : Self.defaultHeight),
                                                   visibleHeight: bounds.height)
             target = NSRect(x: bounds.minX + 8, y: bounds.minY + 8,
                             width: max(1, bounds.width - 16), height: targetHeight)
@@ -567,22 +615,21 @@ final class ClipboardPanelController {
         DispatchQueue.main.async { [weak self] in self?.store.poll() }
         let expandSearch = !state.query.isEmpty
         if state.searchExpanded != expandSearch { state.searchExpanded = expandSearch }
-        state.setCommandHeld(NSEvent.modifierFlags.contains(.command))
+        state.setCommandHeld(NSEvent.modifierFlags.contains(ClipboardPreferences.shared.quickModifier.flags))
         if wasVisible || !Self.animatesPanel {
             panel.setFrame(target, display: true)
             panel.makeKeyAndOrderFront(nil)
         } else {
-            // Fade in place, like Spotlight. The old slide animated the window
-            // frame from beneath the screen edge: that briefly drew the shelf
-            // on a display arranged below this one, and frame animations are
-            // driven by the main thread, so any work made them stutter.
-            // Window alpha is composited by the WindowServer instead.
+            var start = target
+            // Keep the complete window on its own display during animation.
+            start.origin.y = max(screen?.frame.minY ?? target.minY, target.minY - 28)
             panel.alphaValue = 0
-            panel.setFrame(target, display: true)
+            panel.setFrame(start, display: true)
             panel.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
+                context.duration = 0.15
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(target, display: true)
                 panel.animator().alphaValue = 1
             }
         }
@@ -689,7 +736,10 @@ final class ClipboardPanelController {
             completion()
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.1
+            context.duration = 0.20
+            var target = panel.frame
+            target.origin.y = max(panel.screen?.frame.minY ?? target.minY, target.minY - 28)
+            panel.animator().setFrame(target, display: true)
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
         } completionHandler: {
@@ -788,7 +838,10 @@ final class ClipboardPanelController {
             AnnotationEditorController.shared.open(capture: capture, url: nil, onApply: { [weak self] image in
                 self?.store.editImage(entryID: item.id, image: image)
             })
-        } else if let text = item.text, [.text, .link, .color].contains(item.kind) {
+        } else if item.kind == .color, let text = item.text {
+            closePreview()
+            ClipboardColorEditor.shared.show(hex: text) { [weak self] value in self?.store.editText(entryID: item.id, text: value) }
+        } else if let text = item.text, [.text, .link].contains(item.kind) {
             state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: text)
         } else { openPreview(item) }
     }
@@ -798,7 +851,7 @@ final class ClipboardPanelController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self, event.window === self.panel, self.state.editor == nil, self.state.preview == nil else { return event }
             if event.type == .flagsChanged {
-                self.state.setCommandHeld(event.modifierFlags.contains(.command))
+                self.state.setCommandHeld(event.modifierFlags.contains(ClipboardPreferences.shared.quickModifier.flags))
                 return event
             }
             if self.state.editingTitleID != nil { return event }
@@ -827,7 +880,7 @@ final class ClipboardPanelController {
                 let hasSelection = !self.state.selectedIDs(in: self.store).isEmpty
                 let command = event.modifierFlags.contains(.command)
                 let digit = Int(event.charactersIgnoringModifiers ?? "") ?? 0
-                let quickPaste = command && (1...9).contains(digit)
+                let quickPaste = ClipboardPreferences.shared.isQuick(event.modifierFlags) && (1...9).contains(digit)
                 let selectedAction = hasSelection && !self.state.searchFieldActive && (
                     [36, 76].contains(event.keyCode) ||
                     (command && event.keyCode == 8) ||
@@ -914,6 +967,7 @@ final class ClipboardPanelController {
     private func handleKey(_ event: NSEvent) -> Bool {
         let command = event.modifierFlags.contains(.command)
         let shift = event.modifierFlags.contains(.shift)
+        let plain = ClipboardPreferences.shared.isPlain(event.modifierFlags)
         if event.keyCode == 53 { hide(); return true }
         if command && event.keyCode == 3 { state.searchFocusToken = UUID(); return true }
         if command && !shift && event.keyCode == 6 {
@@ -936,7 +990,7 @@ final class ClipboardPanelController {
             let ids = state.selectedIDs(in: store)
             guard !ids.isEmpty else { return false }
             do {
-                _ = try store.write(entryIDs: ids, plainText: shift)
+                _ = try store.write(entryIDs: ids, plainText: plain)
                 state.status = "Copied \(ids.count == 1 ? "item" : "\(ids.count) items") to clipboard."
             } catch { state.status = error.localizedDescription }
             return true
@@ -987,11 +1041,11 @@ final class ClipboardPanelController {
         }
         let entries = state.displayedResults(in: store)
         let quickIDs = state.quickPasteIDs(in: store)
-        if command, let text = event.charactersIgnoringModifiers, let number = Int(text),
+        if ClipboardPreferences.shared.isQuick(event.modifierFlags), let text = event.charactersIgnoringModifiers, let number = Int(text),
            (1...9).contains(number), quickIDs.indices.contains(number - 1) {
-            paste(ids: [quickIDs[number - 1]], plainText: shift, dismissAfterCopy: true); return true
+            paste(ids: [quickIDs[number - 1]], plainText: plain, dismissAfterCopy: true); return true
         }
-        if event.keyCode == 36 || event.keyCode == 76 { pasteSelected(plainText: shift); return true }
+        if event.keyCode == 36 || event.keyCode == 76 { pasteSelected(plainText: plain); return true }
         let editingText = (panel?.firstResponder as? NSTextView)?.isEditable == true
         if !editingText && (event.keyCode == 123 || event.keyCode == 124),
            event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !entries.isEmpty {
@@ -1046,9 +1100,8 @@ struct ClipboardPanelView: View {
                 .frame(height: 4)
                 .help("Drag to resize · Double-click to reset")
             headerBar
-            // Only recent searches get a row; counts and syntax help live in
-            // the search capsule so the cards keep their size while typing.
-            if state.searchExpanded && state.query.isEmpty && !state.recentSearches.isEmpty {
+            // Active tokens stay in the search capsule; suggestions remain keyboard focusable below it.
+            if state.searchExpanded {
                 searchSuggestions
             }
             carouselContent
@@ -1148,19 +1201,38 @@ struct ClipboardPanelView: View {
         let boardsWidth = store.boards.reduce(CGFloat(170)) { total, board in
             total + min(CGFloat(190), CGFloat(board.name.count * 8 + 35))
         }
-        let available = containerWidth - (state.searchExpanded ? CGFloat(620) : CGFloat(160))
+        let available = containerWidth - (state.searchExpanded ? (ClipboardSearchQuery.filterTokens(in: state.query).isEmpty ? CGFloat(620) : CGFloat(810)) : CGFloat(160))
         return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
     }
 
     private var searchSuggestions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                Text("Recent").font(.caption).foregroundStyle(.secondary)
-                ForEach(state.recentSearches, id: \.self) { query in
-                    Button(query) { state.query = query }.buttonStyle(.bordered).controlSize(.mini)
+            HStack(spacing: 6) {
+                if let kind = state.kind { removableChip("Type: \(kind.displayName)") { state.kind = nil } }
+                if let source = state.source { removableChip("App: \(source)") { state.source = nil } }
+                if state.recentDays != 0 { removableChip(ClipboardPanelState.dateFilterTitle(state.recentDays)) { state.recentDays = 0 } }
+                ForEach(filterSuggestions, id: \.self) { token in
+                    Button("+ " + token) { state.query = ClipboardSearchQuery.inserting(token: token, into: state.query); state.searchFocusToken = UUID() }
+                        .buttonStyle(.bordered).controlSize(.mini)
+                }
+                if state.query.isEmpty {
+                    ForEach(state.recentSearches.prefix(3), id: \.self) { query in
+                        Button(query) { state.query = query }.buttonStyle(.bordered).controlSize(.mini)
+                    }
                 }
             }.padding(.horizontal, 24).padding(.bottom, 6)
         }.frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true)
+    }
+    private func removableChip(_ title: String, remove: @escaping () -> Void) -> some View {
+        Button(action: remove) { HStack(spacing: 4) { Text(title); Image(systemName: "xmark.circle.fill") } }
+            .buttonStyle(.borderedProminent).controlSize(.mini).help("Remove filter")
+    }
+    private var filterSuggestions: [String] {
+        let all = ClipboardEntry.Kind.allCases.map { "type:" + $0.rawValue }
+            + store.availableAppSources.prefix(6).map { "from:\"" + $0.name + "\"" }
+            + store.boards.prefix(6).map { "board:\"" + $0.name + "\"" }
+        let suffix = state.query.last?.isWhitespace == true ? "" : (ClipboardSearchQuery.editableText(in: state.query).split(separator: " ").last.map(String.init) ?? "")
+        return Array(all.filter { !state.query.contains($0) && (suffix.isEmpty || $0.localizedCaseInsensitiveContains(suffix)) }.prefix(7))
     }
 
     private var headerBar: some View {
@@ -1178,7 +1250,24 @@ struct ClipboardPanelView: View {
                 .help("Search Clipboard (⌘F)")
                 .accessibilityLabel("Search Clipboard")
                 if state.searchExpanded {
-                    TextField("Search Clipboard", text: $state.query)
+                    if !ClipboardSearchQuery.filterTokens(in: state.query).isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(ClipboardSearchQuery.filterTokens(in: state.query), id: \.self) { token in
+                                    ClipboardSearchTokenChip(token: token, update: { edited in
+                                        state.query = ClipboardSearchQuery.replacing(token: token, with: edited, in: state.query)
+                                        state.searchFocusToken = UUID()
+                                    }, remove: {
+                                        state.query = ClipboardSearchQuery.removing(token: token, from: state.query)
+                                        state.searchFocusToken = UUID()
+                                    })
+                                }
+                            }
+                        }.frame(maxWidth: 190)
+                    }
+                    TextField("Search Clipboard", text: Binding(
+                        get: { ClipboardSearchQuery.editableText(in: state.query) },
+                        set: { state.query = ClipboardSearchQuery.updatingEditableText($0, in: state.query) }))
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .focused($searchFocused)
@@ -1346,7 +1435,19 @@ struct ClipboardPanelView: View {
         .help(name)
         .accessibilityIdentifier("PasteStylePinboard_\(id?.uuidString ?? "clipboard-history")")
         .accessibilityAddTraits(state.board == id ? [.isSelected] : [])
-        .onDrop(of: [PasteClipboardDrag.entryType], isTargeted: nil) { providers in
+        .onDrag {
+            let provider = NSItemProvider()
+            if let id { provider.registerDataRepresentation(forTypeIdentifier: PasteClipboardDrag.boardType, visibility: .ownProcess) { done in done(Data(id.uuidString.utf8), nil); return nil } }
+            return provider
+        }
+        .onDrop(of: [PasteClipboardDrag.entryType, PasteClipboardDrag.boardType], isTargeted: nil) { providers in
+            if let id, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.boardType) }) {
+                provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.boardType) { data, _ in
+                    guard let data, let raw = String(data: data, encoding: .utf8), let moved = UUID(uuidString: raw) else { return }
+                    Task { @MainActor in store.moveBoard(moved, before: id) }
+                }
+                return true
+            }
             guard let id, let provider = providers.first(where: {
                 $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.entryType)
             }) else { return false }
@@ -1540,6 +1641,7 @@ struct ClipboardPanelView: View {
                                                       quickNumber: quickIDs.firstIndex(of: entry.id).map { $0 + 1 },
                                                       showsQuickNumber: state.commandHeld,
                                                       searchActive: state.searchFieldActive,
+                                                      searchQuery: state.query,
                                                       isPreviewing: state.preview?.id == entry.id,
                                                       isSuggested: suggested.contains(entry.id),
                                                       boards: boards,
@@ -1591,11 +1693,7 @@ struct ClipboardPanelView: View {
         switch kind { case .text: return "text.alignleft"; case .link: return "link"; case .image: return "photo"; case .file: return "doc"; case .color: return "paintpalette" }
     }
 
-    private func dragProvider(_ entry: ClipboardEntry) -> NSItemProvider {
-        if let url = entry.fileURLs.first { return NSItemProvider(object: url as NSURL) }
-        if let data = entry.imageData, let image = NSImage(data: data) { return NSItemProvider(object: image) }
-        return NSItemProvider(object: (entry.text ?? entry.previewText) as NSString)
-    }
+
 }
 
 // MARK: - App Metadata & Banner Color Cache
@@ -1735,27 +1833,8 @@ final class AppMetadataCache {
 
 private extension Color {
     init?(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-        var rgb: UInt64 = 0
-        guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else { return nil }
-        let length = hexSanitized.count
-        if length == 6 {
-            self.init(
-                red: Double((rgb & 0xFF0000) >> 16) / 255.0,
-                green: Double((rgb & 0x00FF00) >> 8) / 255.0,
-                blue: Double(rgb & 0x0000FF) / 255.0
-            )
-        } else if length == 8 {
-            self.init(
-                red: Double((rgb & 0xFF000000) >> 24) / 255.0,
-                green: Double((rgb & 0x00FF0000) >> 16) / 255.0,
-                blue: Double((rgb & 0x0000FF00) >> 8) / 255.0,
-                opacity: Double(rgb & 0x000000FF) / 255.0
-            )
-        } else {
-            return nil
-        }
+        guard let color = ClipboardColorEditor.color(hex) else { return nil }
+        self.init(nsColor: color)
     }
 }
 
@@ -1796,6 +1875,7 @@ private struct ClipboardCardView: View, Equatable {
     let quickNumber: Int?
     let showsQuickNumber: Bool
     let searchActive: Bool
+    let searchQuery: String
     let isPreviewing: Bool
     let isSuggested: Bool
     let boards: [ClipboardPinboard]
@@ -1819,7 +1899,7 @@ private struct ClipboardCardView: View, Equatable {
         lhs.entry.id == rhs.entry.id && lhs.revision == rhs.revision && lhs.number == rhs.number
             && lhs.compact == rhs.compact && lhs.side == rhs.side && lhs.isSelected == rhs.isSelected
             && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
-            && lhs.searchActive == rhs.searchActive && lhs.isPreviewing == rhs.isPreviewing
+            && lhs.searchActive == rhs.searchActive && lhs.searchQuery == rhs.searchQuery && lhs.isPreviewing == rhs.isPreviewing
             && lhs.isSuggested == rhs.isSuggested && lhs.boards == rhs.boards
     }
 
@@ -1886,9 +1966,18 @@ private struct ClipboardCardView: View, Equatable {
             .clipped()
 
             ZStack(alignment: .bottom) {
-                if entry.kind == .image { TransparencyGrid() }
+                if entry.kind == .image || entry.kind == .color { TransparencyGrid() }
                 else { Color(nsColor: .textBackgroundColor) }
                 previewContent
+                    .overlay(alignment: .bottomLeading) {
+                        if let ocr = entry.recognizedText, !searchQuery.isEmpty,
+                           ClipboardSearchQuery(searchQuery).highlightValues.contains(where: { ocr.localizedStandardContains($0) }) {
+                            Text(ClipboardSearchQuery(searchQuery).highlighted(ocr, limit: 220))
+                                .font(.system(size: 11)).lineLimit(3).padding(6)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                                .padding(6).allowsHitTesting(false)
+                        }
+                    }
                     .padding(entry.kind == .image || entry.kind == .color ? 0 : compact ? 9 : 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .clipped()
@@ -1930,13 +2019,21 @@ private struct ClipboardCardView: View, Equatable {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .onDrag { dragProvider(entry) }
+            .modifier(ClipboardCardDrag(entry: entry, provider: { dragProvider(entry) }))
+            .onDrop(of: [PasteClipboardDrag.entryType], isTargeted: nil) { providers in
+                guard let board = state.board, let provider = providers.first else { return false }
+                provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.entryType) { data, _ in
+                    guard let data, let raw = String(data: data, encoding: .utf8), let moved = UUID(uuidString: raw) else { return }
+                    Task { @MainActor in store.moveItem(moved, before: entry.id, in: board) }
+                }
+                return true
+            }
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if showsQuickNumber, let quickNumber {
-                Text("⌘\(quickNumber)").font(.system(size: 12, weight: .semibold, design: .rounded))
+                Text("\(ClipboardPreferences.shared.quickModifier.symbol)\(quickNumber)").font(.system(size: 12, weight: .semibold, design: .rounded))
                     .padding(.horizontal, 7).padding(.vertical, 4)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
                     .padding(8).allowsHitTesting(false)
@@ -2076,7 +2173,7 @@ private struct ClipboardCardView: View, Equatable {
         } else {
             // Lay out only what fits: a 4,000-character preview per card made
             // every scroll frame re-measure large text blocks.
-            Text(String(entry.previewText.prefix(cardTextBudget)))
+            Text(ClipboardSearchQuery(searchQuery).highlighted(entry.previewText, limit: cardTextBudget))
                 .font(.system(size: compact ? 11 : 14))
                 .lineSpacing(2)
                 .lineLimit(cardLineLimit)
@@ -2118,7 +2215,7 @@ private struct ClipboardCardView: View, Equatable {
     private func pasteByDoubleClick() {
         guard !isEditingTitle else { return }
         controller.paste(ids: [entry.id],
-                         plainText: NSEvent.modifierFlags.contains(.shift), dismissAfterCopy: true)
+                         plainText: ClipboardPreferences.shared.isPlain(NSEvent.modifierFlags), dismissAfterCopy: true)
     }
 
     private func beginTitleEdit() {
@@ -2162,7 +2259,7 @@ private struct ClipboardCardView: View, Equatable {
             controller.paste(ids: targets, dismissAfterCopy: true)
         }.keyboardShortcut(.return, modifiers: [])
         Button("Paste as Plain Text") { controller.paste(ids: targets, plainText: true, dismissAfterCopy: true) }
-            .keyboardShortcut(.return, modifiers: .shift)
+            .keyboardShortcut(.return, modifiers: ClipboardPreferences.shared.plainModifier.eventModifiers)
             .disabled(!many && entry.text == nil && entry.fileURLs.isEmpty)
         Button("Copy\(suffix)") {
             do { _ = try store.write(entryIDs: targets); state.status = many ? "Copied \(targets.count) items." : "Copied to clipboard." }
@@ -2243,9 +2340,7 @@ private struct ClipboardCardView: View, Equatable {
 
     private func dragProvider(_ entry: ClipboardEntry) -> NSItemProvider {
         let provider: NSItemProvider
-        if let url = entry.fileURLs.first {
-            provider = NSItemProvider(object: url as NSURL)
-        } else if let (type, data) = Self.imageRepresentation(entry) {
+        if let (type, data) = Self.imageRepresentation(entry) {
             // Hand over the stored bytes; decoding a large image with NSImage
             // on the main thread stalled the start of every drag.
             provider = NSItemProvider(item: data as NSData, typeIdentifier: type)
@@ -2329,11 +2424,13 @@ private struct ClipboardPreviewSheet: View {
     let controller: ClipboardPanelController
 
     @State private var content: ClipboardPreviewCache.Content?
+    @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var loadedVersion: UUID?
     private var currentContent: ClipboardPreviewCache.Content? { loadedVersion == current.contentVersion ? content : nil }
 
     private func beginEditing() {
         let item = current
+        if item.kind == .color { controller.editEntry(item); return }
         controller.closePreview()
         DispatchQueue.main.async {
             state.editor = .init(operation: .editEntry(item.id), title: "Edit Content", text: item.text ?? "")
@@ -2372,16 +2469,16 @@ private struct ClipboardPreviewSheet: View {
             }
             return true
         }
-        if (flags.isEmpty || flags == .shift), [36, 76].contains(event.keyCode) {
-            controller.paste(ids: [current.id], plainText: flags == .shift, dismissAfterCopy: true)
+        if (flags.isEmpty || flags == ClipboardPreferences.shared.plainModifier.flags), [36, 76].contains(event.keyCode) {
+            controller.paste(ids: [current.id], plainText: ClipboardPreferences.shared.isPlain(flags), dismissAfterCopy: true)
             return true
         }
-        if (flags == .command || flags == [.command, .shift]), event.keyCode == 8 {
+        if (flags == .command || flags == NSEvent.ModifierFlags.command.union(ClipboardPreferences.shared.plainModifier.flags)), event.keyCode == 8 {
             if flags == .command,
                let text = event.window?.firstResponder as? NSTextView,
                text.selectedRange().length > 0 { return false }
             do {
-                if try store.write(entryIDs: [current.id], plainText: flags.contains(.shift)) {
+                if try store.write(entryIDs: [current.id], plainText: ClipboardPreferences.shared.isPlain(flags)) {
                     state.status = "Copied to clipboard."
                 }
             } catch { state.status = error.localizedDescription }
@@ -2418,6 +2515,7 @@ private struct ClipboardPreviewSheet: View {
                     if store.boards.isEmpty { Text("Create a pinboard in the timeline") }
                 } label: { Image(systemName: current.pinboardIDs.isEmpty ? "pin" : "pin.fill") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Pinboard")
+                Button { controller.detachPreview(current) } label: { Image(systemName: "arrow.up.right.square") }.help("Detach Preview")
                 ClipboardPreviewShareButton(entry: current).frame(width: 24, height: 24)
                 if current.kind == .image || canEditText {
                     Button("Edit") {
@@ -2441,6 +2539,9 @@ private struct ClipboardPreviewSheet: View {
                         .background(TransparencyGrid())
                 } else if !current.fileURLs.isEmpty {
                     ClipboardFilesPreview(urls: current.fileURLs)
+                } else if preferences.networkPreviews, current.kind == .link,
+                          let url = URL(string: (current.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                    ClipboardPrivateLinkPreview(url: url)
                 } else {
                     ClipboardReadOnlyTextPreview(entry: current, prepared: currentContent?.attributedText)
                 }
@@ -2750,6 +2851,7 @@ private struct PastePanelResizeGrip: NSViewRepresentable {
 
 private enum PasteClipboardDrag {
     static let entryType = "com.kyw.allofmacos.clipboard-pinboard-entry"
+    static let boardType = "com.kyw.allofmacos.clipboard-pinboard"
 }
 
 /// Visible-card tracking for ⌘1–9. On macOS 15+ the indices come from the
@@ -2824,7 +2926,7 @@ private struct ClipboardVisibleCardsKey: PreferenceKey {
 /// Every referenced file gets the same Quick Look surface; multi-file clips
 /// retain their order and let the user navigate without leaving the preview.
 @MainActor
-private struct ClipboardFilesPreview: View {
+struct ClipboardFilesPreview: View {
     let urls: [URL]
     @State private var selected = 0
     private var current: URL? { urls.indices.contains(selected) ? urls[selected] : urls.first }

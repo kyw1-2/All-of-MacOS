@@ -314,6 +314,12 @@ class ActionExecutor {
             }
             return
         }
+        if [.pressAccessibilityElement, .setAccessibilityValue].contains(action.actionType) {
+            AccessibilityAutomation.perform(action, isCancelled: isCancelled, completion: completion); return
+        }
+        if action.actionType == .sendKeyStroke, action.parameters.targetApplicationBundleID?.isEmpty == false {
+            completion(AccessibilityAutomation.sendShortcut(action.parameters)); return
+        }
         if ExtendedActions.handles(action.actionType) {
             ExtendedActions.perform(action, isCancelled: isCancelled, completion: completion)
             return
@@ -341,9 +347,25 @@ class ActionExecutor {
             controlApplication(action.actionType, identifier: action.parameters.applicationName, completion: completion)
             return
         }
-        if [.runShellScript, .runAppleScript].contains(action.actionType) {
-            ScriptRunnerClient.shared.run(kind: action.actionType == .runShellScript ? "shell" : "applescript",
-                source: action.parameters.scriptContent ?? "", timeout: action.parameters.scriptTimeoutSeconds ?? 30) { code, _, timedOut in
+        if [.showFloatingMenu, .hideFloatingMenus, .editFloatingMenus].contains(action.actionType) {
+            switch action.actionType {
+            case .showFloatingMenu: completion(FloatingMenuController.shared.show(action.parameters.floatingMenuName ?? ""))
+            case .hideFloatingMenus: FloatingMenuController.shared.hideAll(); completion(true)
+            default: FloatingMenuController.shared.edit(); completion(true)
+            }
+            return
+        }
+        if [.runShellScript, .runAppleScript, .runJavaScript, .runSwiftScript].contains(action.actionType) {
+            let kind: String
+            switch action.actionType {
+            case .runShellScript: kind = "shell"
+            case .runAppleScript: kind = "applescript"
+            case .runSwiftScript: kind = "swift"
+            default: kind = "javascript"
+            }
+            ScriptRunnerClient.shared.run(kind: kind,
+                source: action.parameters.scriptContent ?? "", timeout: action.parameters.scriptTimeoutSeconds ?? 30) { code, output, timedOut in
+                    ScriptActionResults.record(name: action.parameters.scriptResultVariable, output: output, code: code, timedOut: timedOut)
                     GestureLog.shared.logFromAnyThread(timedOut ? "Script timed out" : "Script completed (exit \(code))", level: code == 0 && !timedOut ? .action : .error)
                     completion(code == 0 && !timedOut)
                 }
