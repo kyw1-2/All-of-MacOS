@@ -24,9 +24,7 @@ enum ShortcutConflicts {
     static func clipboardHistoryConflict(
         shortcut: KeyboardShortcut? = MainActor.assumeIsolated { ClipboardShortcuts.shared.shortcut(for: .history) },
         running: [NSRunningApplication] = NSWorkspace.shared.runningApplications,
-        preference: (String, String) -> Data? = { key, app in
-            CFPreferencesCopyAppValue(key as CFString, app as CFString) as? Data
-        }
+        preference: (String, String) -> Data? = ShortcutConflicts.readPreference
     ) -> Conflict? {
         guard let shortcut else { return nil }
         let mask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
@@ -38,6 +36,22 @@ enum ShortcutConflicts {
                other.modifiers.intersection(mask) == shortcut.modifiers.intersection(mask) {
                 return Conflict(appName: process.localizedName ?? "Paste", bundleID: app.bundleID, shortcut: shortcut)
             }
+        }
+        return nil
+    }
+
+    /// Sandboxed apps (Paste from the App Store) keep preferences inside
+    /// their container, which CFPreferences does not search for other apps.
+    static func readPreference(_ key: String, _ bundleID: String) -> Data? {
+        if let value = CFPreferencesCopyAppValue(key as CFString, bundleID as CFString) as? Data { return value }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let paths = [home.appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Preferences/\(bundleID).plist"),
+                     home.appendingPathComponent("Library/Preferences/\(bundleID).plist")]
+        for url in paths {
+            guard let data = try? Data(contentsOf: url),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let value = plist[key] as? Data else { continue }
+            return value
         }
         return nil
     }

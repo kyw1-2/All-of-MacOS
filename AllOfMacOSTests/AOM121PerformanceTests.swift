@@ -138,3 +138,14 @@ final class ShortcutConflictTests: XCTestCase {
         XCTAssertNil(ShortcutConflicts.decode(Data("{}".utf8)))
     }
 }
+
+@MainActor
+final class ShortcutConflictLiveTests: XCTestCase {
+    /// Reads the real Paste preferences when Paste is installed on this Mac.
+    func testReadsSandboxedPastePreferences() throws {
+        guard let data = ShortcutConflicts.readPreference("activationShortcut", "com.wiheads.paste") else {
+            throw XCTSkip("Paste is not installed")
+        }
+        XCTAssertNotNil(ShortcutConflicts.decode(data))
+    }
+}
