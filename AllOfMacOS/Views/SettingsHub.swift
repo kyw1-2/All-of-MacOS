@@ -103,6 +103,28 @@ func aomSettingInt(_ key: String, _ fallback: Int) -> Binding<Int> {
     )
 }
 
+struct ClipboardPreferenceRow: View {
+    @ObservedObject private var prefs = ClipboardPreferences.shared
+    let icon: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    let keyPath: ReferenceWritableKeyPath<ClipboardPreferences, Bool>
+
+    var body: some View {
+        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
+            Toggle("", isOn: Binding(
+                get: { prefs[keyPath: keyPath] },
+                set: { prefs[keyPath: keyPath] = $0; NotificationCenter.default.post(name: .aomSettingChanged, object: nil) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .accessibilityLabel(title)
+        }
+    }
+}
+
 // MARK: - Row chrome
 
 struct HubRowShell<Control: View>: View {
@@ -180,6 +202,32 @@ struct HubChoiceRow: View {
     var body: some View {
         HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
             Picker("", selection: aomSettingString(key, fallback)) {
+                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                    Text(option.label).tag(option.value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: width)
+            .accessibilityLabel(title)
+        }
+    }
+}
+
+struct HubIntChoiceRow: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    let subtitle: String
+    let key: String
+    let fallback: Int
+    let options: [(label: String, value: Int)]
+    var width: CGFloat = 130
+
+    var body: some View {
+        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
+            Picker("", selection: aomSettingInt(key, fallback)) {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                     Text(option.label).tag(option.value)
                 }
@@ -382,10 +430,10 @@ enum SettingsCatalog {
             item("crosshair", .capture, "Crosshair Mode", "영역 선택 가이드", ["십자", "가이드"], AnyView(HubChoiceRow(icon: "plus.viewfinder", tint: .indigo, title: "Crosshair Mode", subtitle: "영역 선택 가이드", key: "AOMCaptureCrosshairMode", fallback: CrosshairMode.always.rawValue, options: crosshairs, width: 200))),
             item("magnifier", .capture, "Show Magnifier", "포인터 옆 픽셀 돋보기", ["돋보기", "확대"], AnyView(HubToggleRow(icon: "magnifyingglass", tint: .teal, title: "Show Magnifier", subtitle: "포인터 옆 픽셀 돋보기 (⇧ 길게 눌러 표시)", key: "AOMCaptureShowsMagnifier", fallback: false))),
             item("playsSound", .capture, "Play Sound", "캡처할 때 시스템 소리 재생", ["소리", "사운드"], AnyView(HubToggleRow(icon: "speaker.wave.2", tint: .green, title: "Play Sound", subtitle: "캡처할 때 시스템 소리 재생", key: "AOMCapturePlaysSound", fallback: true))),
-            item("selfTimer", .capture, "Delay Every Capture", "모든 캡처 전 지연", ["타이머", "지연", "딜레이"], AnyView(HubChoiceRow(icon: "timer.circle", tint: .orange, title: "Delay Every Capture", subtitle: "모든 캡처 전 지연", key: "AOMCaptureSelfTimer", fallback: "0", options: [("Off", "0"), ("3 s", "3"), ("5 s", "5"), ("10 s", "10")], width: 100))),
-            item("historyCapacity", .capture, "History Capacity", "보관할 캡처 개수", ["히스토리", "개수"], AnyView(HubChoiceRow(icon: "tray.full", tint: .brown, title: "History Capacity", subtitle: "보관할 캡처 개수", key: "AOMCaptureHistoryCapacity", fallback: "40", options: [("20", "20"), ("40", "40"), ("100", "100"), ("200", "200")], width: 110))),
-            item("historyRetention", .capture, "Keep History For", "캡처 보관 기간", ["보관", "기간"], AnyView(HubChoiceRow(icon: "calendar", tint: .brown, title: "Keep History For", subtitle: "캡처 보관 기간", key: "AOMCaptureHistoryRetentionDays", fallback: "30", options: [("7 days", "7"), ("30 days", "30"), ("90 days", "90"), ("Forever", "0")], width: 130))),
-            item("recordingFPS", .capture, "Recording Frame Rate", "낮을수록 파일이 작음", ["녹화", "fps"], AnyView(HubChoiceRow(icon: "speedometer", tint: .indigo, title: "Recording Frame Rate", subtitle: "낮을수록 파일이 작음", key: "AOMCaptureRecordingFPS", fallback: "30", options: [("15 fps", "15"), ("30 fps", "30"), ("60 fps", "60")], width: 110))),
+            item("selfTimer", .capture, "Delay Every Capture", "모든 캡처 전 지연", ["타이머", "지연", "딜레이"], AnyView(HubIntChoiceRow(icon: "timer.circle", tint: .orange, title: "Delay Every Capture", subtitle: "모든 캡처 전 지연", key: "AOMCaptureSelfTimer", fallback: 0, options: [("Off", 0), ("3 s", 3), ("5 s", 5), ("10 s", 10)], width: 100))),
+            item("historyCapacity", .capture, "History Capacity", "보관할 캡처 개수", ["히스토리", "개수"], AnyView(HubIntChoiceRow(icon: "tray.full", tint: .brown, title: "History Capacity", subtitle: "보관할 캡처 개수", key: "AOMCaptureHistoryCapacity", fallback: 40, options: [("20", 20), ("40", 40), ("100", 100), ("200", 200)], width: 110))),
+            item("historyRetention", .capture, "Keep History For", "캡처 보관 기간", ["보관", "기간"], AnyView(HubIntChoiceRow(icon: "calendar", tint: .brown, title: "Keep History For", subtitle: "캡처 보관 기간", key: "AOMCaptureHistoryRetentionDays", fallback: 30, options: [("7 days", 7), ("30 days", 30), ("90 days", 90), ("Forever", 0)], width: 130))),
+            item("recordingFPS", .capture, "Recording Frame Rate", "낮을수록 파일이 작음", ["녹화", "fps"], AnyView(HubIntChoiceRow(icon: "speedometer", tint: .indigo, title: "Recording Frame Rate", subtitle: "낮을수록 파일이 작음", key: "AOMCaptureRecordingFPS", fallback: 30, options: [("15 fps", 15), ("30 fps", 30), ("60 fps", 60)], width: 110))),
             item("recordingFormat", .capture, "Recording Format", "GIF는 오디오가 없음", ["녹화", "gif", "mp4"], AnyView(HubChoiceRow(icon: "film", tint: .blue, title: "Recording Format", subtitle: "GIF는 오디오가 없음", key: "AOMCaptureRecordingOutputFormat", fallback: "mp4", options: [("MP4", "mp4"), ("GIF", "gif")], width: 110))),
             item("recordingAudio", .capture, "Audio Source", "컴퓨터 소리, 마이크 또는 둘 다", ["오디오", "마이크", "소리"], AnyView(HubChoiceRow(icon: "speaker.wave.2.fill", tint: .blue, title: "Audio Source", subtitle: "컴퓨터 소리, 마이크 또는 둘 다", key: "AOMCaptureRecordingAudioSource", fallback: RecordingAudioSource.off.rawValue, options: audio, width: 190))),
             item("clickIndicators", .capture, "Show Mouse Clicks", "녹화 중 클릭 강조", ["클릭", "마우스"], AnyView(HubToggleRow(icon: "cursorarrow.click.2", tint: .orange, title: "Show Mouse Clicks", subtitle: "녹화 중 클릭 강조", key: "AOMCaptureRecordingClickIndicators", fallback: false))),
@@ -399,9 +447,9 @@ enum SettingsCatalog {
     private static func clipboardItems(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         let modifiers = ClipboardPreferences.Modifier.allCases.map { (label: $0.symbol + " " + $0.rawValue.capitalized, value: $0.rawValue) }
         return [
-            item("clipboardCompact", .clipboard, "Compact Shelf", "클립보드 선반을 작게 표시", ["컴팩트", "선반", "shelf"], AnyView(HubToggleRow(icon: "rectangle.compress.vertical", tint: .blue, title: "Compact Shelf", subtitle: "클립보드 선반을 작게 표시", key: "AOMClipboardCompact", fallback: false))),
-            item("clipboardCapture", .clipboard, "Visible in Screen Capture", "화면 공유·녹화에 클립보드 창 포함", ["캡처", "공유", "녹화"], AnyView(HubToggleRow(icon: "eye", tint: .purple, title: "Visible in Screen Capture", subtitle: "화면 공유·녹화에 클립보드 창 포함", key: "AOMClipboardShowInScreenCapture", fallback: true))),
-            item("clipboardPreviews", .clipboard, "Link Previews", "링크 카드의 비공개 웹 미리보기", ["링크", "미리보기"], AnyView(HubToggleRow(icon: "link", tint: .teal, title: "Link Previews", subtitle: "링크 카드의 비공개 웹 미리보기 (기본 꺼짐)", key: "AOMClipboardNetworkPreviews", fallback: false))),
+            item("clipboardCompact", .clipboard, "Compact Shelf", "클립보드 선반을 작게 표시", ["컴팩트", "선반", "shelf"], AnyView(ClipboardPreferenceRow(icon: "rectangle.compress.vertical", tint: .blue, title: "Compact Shelf", subtitle: "클립보드 선반을 작게 표시", keyPath: \.compact))),
+            item("clipboardCapture", .clipboard, "Visible in Screen Capture", "화면 공유·녹화에 클립보드 창 포함", ["캡처", "공유", "녹화"], AnyView(ClipboardPreferenceRow(icon: "eye", tint: .purple, title: "Visible in Screen Capture", subtitle: "화면 공유·녹화에 클립보드 창 포함", keyPath: \.showInScreenCapture))),
+            item("clipboardPreviews", .clipboard, "Link Previews", "링크 카드의 비공개 웹 미리보기", ["링크", "미리보기"], AnyView(ClipboardPreferenceRow(icon: "link", tint: .teal, title: "Link Previews", subtitle: "링크 카드의 비공개 웹 미리보기 (기본 꺼짐)", keyPath: \.networkPreviews))),
             item("clipboardQuickModifier", .clipboard, "Quick Paste Modifier", "1–9 빠른 붙여넣기 보조키", ["붙여넣기", "단축키"], AnyView(HubChoiceRow(icon: "command", tint: .indigo, title: "Quick Paste Modifier", subtitle: "1–9 빠른 붙여넣기 보조키", key: "AOMClipboardQuickModifier", fallback: "command", options: modifiers, width: 150))),
             item("clipboardPlainModifier", .clipboard, "Plain Text Modifier", "서식 없이 붙여넣는 보조키", ["텍스트", "서식"], AnyView(HubChoiceRow(icon: "textformat", tint: .gray, title: "Plain Text Modifier", subtitle: "서식 없이 붙여넣는 보조키", key: "AOMClipboardPlainModifier", fallback: "shift", options: modifiers, width: 150))),
             item("clipboardStorage", .clipboard, "Storage & Retention", "보관 기간, 용량, 제외 앱 관리", ["저장", "용량", "보관", "히스토리"], AnyView(HubActionRow(icon: "externaldrive", tint: .brown, title: "Storage & Retention", subtitle: "보관 기간, 용량, 제외 앱 관리") {
