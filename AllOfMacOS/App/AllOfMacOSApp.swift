@@ -694,56 +694,8 @@ struct AppleSettingsRow<Trailing: View>: View {
 }
 
 struct SettingsView: View {
-    @EnvironmentObject var appState: AppState
-    @AppStorage("AOMAppearance") private var appearance = "system"
-    @State private var selection: SettingsSection? = .general
-
-    private enum SettingsSection: String, CaseIterable, Identifiable {
-        case general = "General", gestures = "Gestures", permissions = "Permissions"
-        case capture = "Capture", clipboard = "Clipboard", shortcuts = "Shortcuts"
-        case backups = "Backups", about = "About"
-        var id: Self { self }
-        var icon: String {
-            switch self {
-            case .general: "gearshape"
-            case .gestures: "hand.draw"
-            case .permissions: "checkmark.shield"
-            case .capture: "camera.viewfinder"
-            case .clipboard: "doc.on.clipboard"
-            case .shortcuts: "command"
-            case .backups: "externaldrive"
-            case .about: "info.circle"
-            }
-        }
-    }
-
     var body: some View {
-        NavigationSplitView {
-            List(SettingsSection.allCases, selection: $selection) { section in
-                Label(section.rawValue, systemImage: section.icon).tag(section)
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(180)
-        } detail: {
-            Group {
-                switch selection ?? .general {
-                case .general: GeneralSettingsView()
-                case .gestures: GestureSettingsView()
-                case .permissions: PermissionsSettingsView()
-                case .capture: CaptureSettingsView()
-                case .clipboard: ClipboardSettingsView()
-                case .shortcuts: ShortcutsSettingsView()
-                case .backups: BackupSettingsView()
-                case .about: AboutSettingsView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .navigationTitle((selection ?? .general).rawValue)
-        }
-        .frame(minWidth: 760, idealWidth: 880, maxWidth: .infinity, minHeight: 560, idealHeight: 680, maxHeight: .infinity)
-        .scrollIndicators(.hidden)
-        .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
+        SettingsHubView()
     }
 }
 
