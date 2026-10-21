@@ -2,6 +2,13 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.4.0
+
+Settings is now a single searchable surface: pinned search and category chips, one
+scrolling card list, and every control applies immediately with a "저장됨" confirmation
+instead of a separate apply step. Gestures, shortcut recording, permissions, backups and
+clipboard storage open as sheets over the hub.
+
 ## Version 1.3.1
 
 Capture visibility now applies to every AOM window: the annotation editor, recording export editor, expanded Quick Access preview and floating menus follow the same "Show in screen capture" switch as the clipboard surfaces. See [release notes](docs/1.3.1-release-notes.md).
