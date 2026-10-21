@@ -13,75 +13,29 @@ struct MainWindow: View {
     @AppStorage("AOMShowLog") private var showLog = false
     @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
     @State private var showingCommandPalette = false
-    @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "system"
-    @Environment(\.openSettings) private var openSettingsAction
-
-    private var isDark: Bool { appearance == "dark" }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $sidebarVisibility) {
-            ModernSidebarView()
-                .navigationSplitViewColumnWidth(min: 210, ideal: 244, max: 300)
-                .tutorialAnchor(.sidebar)
-        } detail: {
-            HStack(spacing: 0) {
-                Group {
-                    switch appState.selectedMainTab {
-                    case .home: HomeDashboardView()
-                    case .gestures:
-                        ModernGesturesWorkspace()
-                            .tutorialAnchor(.triggers)
-                            .tutorialAnchor(.actions)
-                    case .snapping: ModernWindowSnappingView()
-                    case .capture: CaptureStudioView()
-                    case .clipboard: ClipboardStudioView()
-                    case .insights: StatisticsView()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if showLog || showTouchVisualizer {
-                    Divider()
-                    DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+        AOMMainShell(showingCommandPalette: $showingCommandPalette,
+                     showLog: $showLog,
+                     showTouchVisualizer: $showTouchVisualizer,
+                     appearance: appearance) {
+            Group {
+                switch appState.selectedMainTab {
+                case .home: AOMHomeView()
+                case .gestures:
+                    ModernGesturesWorkspace()
+                        .tutorialAnchor(.triggers)
+                        .tutorialAnchor(.actions)
+                case .snapping: ModernWindowSnappingView()
+                case .capture: CaptureStudioView()
+                case .clipboard: ClipboardStudioView()
+                case .insights: StatisticsView()
                 }
             }
-            .background(AOMWorkspaceBackground())
-            .navigationTitle(appState.selectedMainTab.title)
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button { showingCommandPalette.toggle() } label: {
-                        Label("Commands", systemImage: "command")
-                    }
-                    .keyboardShortcut("k", modifiers: .command)
-                    .help("Commands (⌘K)")
-                    Menu {
-                        Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
-                        Toggle("Console", isOn: $showLog)
-                        Divider()
-                        Picker("Appearance", selection: $appearance) {
-                            Text("System").tag("system")
-                            Text("Light").tag("light")
-                            Text("Dark").tag("dark")
-                        }
-                        Divider()
-                        Button("Settings…") { openSettingsAction() }
-                    } label: {
-                        Label("View Options", systemImage: "ellipsis.circle")
-                    }
-                    .help("View options")
-                }
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
-        .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
-        .scrollIndicators(.hidden)
-        .onPreferenceChange(AOMTriggerPaneHeightKey.self) { paneHeight in
-            // Opt-in, single-value layout probe for diagnosing split view regressions.
-            if UserDefaults.standard.bool(forKey: "AOMLayoutProbeEnabled") {
-                UserDefaults.standard.set(Double(paneHeight), forKey: "AOMMeasuredTriggerPaneHeight")
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .coordinateSpace(name: "tutorialOverlay")
         .onPreferenceChange(TutorialFramePreferenceKey.self) { tutorialFrames = $0 }
@@ -104,12 +58,6 @@ struct MainWindow: View {
                 appState.showTutorialRequested = false
             }
         }
-
-        .preferredColorScheme(appearance == "system" ? nil : (isDark ? .dark : .light))
-    }
-
-    private func openSettings() {
-        openSettingsAction()
     }
 }
 

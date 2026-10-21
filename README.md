@@ -2,6 +2,13 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.5.0
+
+The main window is rebuilt around a single navigation rail and one stable page header:
+the split view, system toolbar and per-page titlebars are gone. The new home screen leads
+with two large actions (capture, clipboard), a status chip, three metric cards and a
+two-column activity layout.
+
 ## Version 1.4.0
 
 Settings is now a single searchable surface: pinned search and category chips, one

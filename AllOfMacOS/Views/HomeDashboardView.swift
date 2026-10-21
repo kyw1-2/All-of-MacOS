@@ -3,29 +3,22 @@ import SwiftUI
 
 /// The overview observes only preset state. High-frequency clipboard and
 /// capture updates stay inside their own sections, away from window chrome.
-struct HomeDashboardView: View {
+struct AOMHomeView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    welcome
-                    quickActions(columns: geometry.size.width >= 740 ? 4 : 2)
-                    overview
-                    if geometry.size.width >= 900 {
-                        HStack(alignment: .top, spacing: 22) {
-                            VStack(spacing: 22) { HomeStatusSection(); gesturesGroup }
-                            VStack(spacing: 22) { HomeClipboardSection(); HomeCapturesSection() }
-                        }
-                    } else {
-                        VStack(spacing: 22) {
-                            HomeStatusSection(); gesturesGroup; HomeClipboardSection(); HomeCapturesSection()
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 22) {
+                    hero
+                    primaryActions(wide: geometry.size.width >= 820)
+                    metrics
+                    columns(wide: geometry.size.width >= 980)
                 }
-                .padding(28)
-                .frame(maxWidth: 1220)
+                .padding(.horizontal, 26)
+                .padding(.top, 20)
+                .padding(.bottom, 28)
+                .frame(maxWidth: 1180)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .suppressScrollerReservation()
@@ -33,76 +26,222 @@ struct HomeDashboardView: View {
         .background(AOMWorkspaceBackground())
     }
 
-    private var welcome: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center) { heading; Spacer(minLength: 24); status }
-            VStack(alignment: .leading, spacing: 14) { heading; status }
+    // MARK: Hero
+
+    private var hero: some View {
+        HStack(alignment: .bottom, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(greeting)
+                    .font(.system(size: 27, weight: .bold))
+                    .tracking(-0.6)
+                Text("캡처하고, 자동화하고, 방금 한 작업을 이어서 하세요.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            statusChip
         }
     }
 
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Your workspace").font(.system(size: 32, weight: .bold)).tracking(-0.8)
-            Text("Capture, automate and pick up where you left off.")
-                .font(.callout).foregroundStyle(.secondary)
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 5..<12: return "좋은 아침이에요"
+        case 12..<18: return "안녕하세요"
+        case 18..<23: return "좋은 저녁이에요"
+        default: return "늦은 시간이네요"
         }
     }
 
-    private var status: some View {
+    private var statusChip: some View {
         Button { appState.toggleGlobalEnabled() } label: {
-            Label(appState.globalEnabled ? "Automation active" : "Automation paused",
-                  systemImage: appState.globalEnabled ? "checkmark.circle.fill" : "pause.circle.fill")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(appState.globalEnabled ? Color.green : .orange)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background((appState.globalEnabled ? Color.green : .orange).opacity(0.09), in: Capsule())
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(appState.globalEnabled ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text("\(appState.currentPreset.triggers.filter(\.isEnabled).count)개 제스처 동작")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: appState.globalEnabled ? "pause.fill" : "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(appState.globalEnabled ? "Pause automation" : "Resume automation")
     }
 
-    private func quickActions(columns: Int) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: columns), spacing: 12) {
-            AOMActionTile(title: "Capture Area", systemImage: "viewfinder", tint: .orange,
-                          subtitle: "Select any part of your screen") { CaptureCoordinator.shared.captureArea() }
-            AOMActionTile(title: "Capture Text", systemImage: "text.viewfinder", tint: .blue,
-                          subtitle: "Copy text from anywhere") { CaptureCoordinator.shared.captureText() }
-            AOMActionTile(title: "Record Screen", systemImage: "record.circle", tint: .red,
-                          subtitle: "Start a screen recording") { ScreenRecordingService.shared.promptAndStartRecording() }
-            AOMActionTile(title: "Clipboard", systemImage: "doc.on.clipboard", tint: .purple,
-                          subtitle: "Open your clipboard shelf") { ClipboardPanelController.shared.show() }
-        }
-    }
+    // MARK: Primary actions
 
-    private var overview: some View {
-        HStack(spacing: 0) {
-            summary("Active gestures", value: appState.currentPreset.triggers.filter(\.isEnabled).count,
-                    symbol: "hand.tap", tint: .cyan, tab: .gestures)
-            Divider().frame(height: 34)
-            summary("App profiles", value: appState.currentPreset.appTargets.filter { !$0.isGlobal }.count,
-                    symbol: "app.badge", tint: .blue, tab: .gestures)
-            Divider().frame(height: 34)
-            summary("Snap zones", value: appState.effectiveSnapZones.filter(\.isEnabled).count,
-                    symbol: "rectangle.split.2x2", tint: .indigo, tab: .snapping)
-        }
-        .padding(.vertical, 5)
-    }
-
-    private func summary(_ title: String, value: Int, symbol: String, tint: Color, tab: AOMMainTab) -> some View {
-        Button { appState.selectedMainTab = tab } label: {
+    private func primaryActions(wide: Bool) -> some View {
+        VStack(spacing: 12) {
+            if wide {
+                HStack(spacing: 12) {
+                    primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
+                                symbol: "viewfinder", tint: .orange, filled: true) {
+                        CaptureCoordinator.shared.captureArea()
+                    }
+                    primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
+                                symbol: "doc.on.clipboard", tint: .purple, filled: false) {
+                        ClipboardPanelController.shared.show()
+                    }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
+                                symbol: "viewfinder", tint: .orange, filled: true) {
+                        CaptureCoordinator.shared.captureArea()
+                    }
+                    primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
+                                symbol: "doc.on.clipboard", tint: .purple, filled: false) {
+                        ClipboardPanelController.shared.show()
+                    }
+                }
+            }
             HStack(spacing: 12) {
-                Image(systemName: symbol).font(.title2).foregroundStyle(tint).frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(value.formatted()).font(.title2.weight(.semibold)).monospacedDigit().foregroundStyle(.primary)
-                    Text(title).font(.caption).foregroundStyle(.secondary)
+                secondaryCard(title: "텍스트 추출", symbol: "text.viewfinder", tint: .blue) {
+                    CaptureCoordinator.shared.captureText()
+                }
+                secondaryCard(title: "화면 녹화", symbol: "record.circle", tint: .red) {
+                    ScreenRecordingService.shared.promptAndStartRecording()
+                }
+            }
+        }
+    }
+
+    private func primaryCard(title: String, subtitle: String, symbol: String, tint: Color,
+                             filled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: symbol)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(filled ? Color.white : tint)
+                    .frame(width: 44, height: 44)
+                    .background(filled ? Color.white.opacity(0.2) : tint.opacity(0.13),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 14.5, weight: .bold))
+                        .foregroundStyle(filled ? Color.white : Color.primary)
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(filled ? Color.white.opacity(0.8) : Color.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(filled ? Color.white.opacity(0.85) : Color.secondary)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 84)
+            .frame(maxWidth: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(filled ? AnyShapeStyle(LinearGradient(colors: [tint, tint.opacity(0.78)],
+                                                                startPoint: .topLeading, endPoint: .bottomTrailing))
+                          : AnyShapeStyle(Color(nsColor: .controlBackgroundColor)))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(filled ? 0 : 0.45), lineWidth: 0.6)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func secondaryCard(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 28, height: 28)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 13)
+            .frame(height: 48)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.6)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Metrics
+
+    private var metrics: some View {
+        HStack(spacing: 12) {
+            metricCard("제스처", value: appState.currentPreset.triggers.filter(\.isEnabled).count,
+                       symbol: "hand.tap", tint: .cyan, tab: .gestures)
+            metricCard("앱 프로필", value: appState.currentPreset.appTargets.filter { !$0.isGlobal }.count,
+                       symbol: "app.badge", tint: .blue, tab: .gestures)
+            metricCard("스냅 존", value: appState.effectiveSnapZones.filter(\.isEnabled).count,
+                       symbol: "rectangle.split.2x2", tint: .indigo, tab: .snapping)
+        }
+    }
+
+    private func metricCard(_ title: String, value: Int, symbol: String, tint: Color, tab: AOMMainTab) -> some View {
+        Button {
+            appState.selectedMainTab = tab
+        } label: {
+            HStack(spacing: 11) {
+                Image(systemName: symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 32, height: 32)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(value.formatted())
+                        .font(.system(size: 17, weight: .bold).monospacedDigit())
+                    Text(title)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 18).padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 13)
+            .frame(height: 58)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.6)
+            }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title): \(value). Open \(tab.title)")
+        .accessibilityLabel("\(title): \(value)")
+    }
+
+    // MARK: Columns
+
+    @ViewBuilder
+    private func columns(wide: Bool) -> some View {
+        if wide {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(spacing: 18) { gesturesGroup; HomeCapturesSection() }
+                VStack(spacing: 18) { HomeStatusSection(); HomeClipboardSection() }
+            }
+        } else {
+            VStack(spacing: 18) {
+                gesturesGroup
+                HomeStatusSection()
+                HomeClipboardSection()
+                HomeCapturesSection()
+            }
+        }
     }
 
     private var gesturesGroup: some View {
