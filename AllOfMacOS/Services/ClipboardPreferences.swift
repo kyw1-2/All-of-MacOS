@@ -205,3 +205,21 @@ struct ClipboardSearchTokenChip: View {
             .foregroundStyle(Color.accentColor).background(Color.accentColor.opacity(0.14), in: Capsule())
     }
 }
+
+
+// MARK: - Capture visibility
+
+/// Paste keeps its own UI out of screen capture; AOM exposes one switch for that
+/// and must honor it for every window the app presents, not only the clipboard.
+extension NSWindow {
+    /// Windows are always built on the main thread; the nonisolated entry point
+    /// lets plain NSObject controllers share the same policy.
+    nonisolated func applyCaptureVisibility(visible: Bool) {
+        MainActor.assumeIsolated { sharingType = visible ? .readOnly : .none }
+    }
+
+    nonisolated func applyCaptureVisibilityPreference() {
+        let visible = MainActor.assumeIsolated { ClipboardPreferences.shared.showInScreenCapture }
+        applyCaptureVisibility(visible: visible)
+    }
+}

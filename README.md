@@ -2,6 +2,10 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.3.1
+
+Capture visibility now applies to every AOM window: the annotation editor, recording export editor, expanded Quick Access preview and floating menus follow the same "Show in screen capture" switch as the clipboard surfaces. See [release notes](docs/1.3.1-release-notes.md).
+
 ## Version 1.3.0
 
 Local feature expansion based on the retained Oracle REA/Ghidra audits of CleanShot X, BetterTouchTool and Paste. Adds editable recording layers and ordered cuts, click-based zoom, output presets, clipboard ordering and native multiple-file dragging, private opt-in link previews, floating menus/widgets, scoped local automation MCP/CLI, MIDI/GameController/explicit HID inputs, resilient file triggers, and native Finder thumbnail/share extensions. Cloud, Magic Mouse and Stream Deck are excluded.

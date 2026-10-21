@@ -21,6 +21,7 @@ final class QuickAccessExpandedPreview: NSObject, NSWindowDelegate {
                               styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = entry.displayName
+        window.applyCaptureVisibilityPreference()
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.toolbarStyle = .unified

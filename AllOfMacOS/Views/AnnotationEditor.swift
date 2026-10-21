@@ -175,6 +175,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
                               styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "Annotate — \(capture.displayName)"
+        window.applyCaptureVisibilityPreference()
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified

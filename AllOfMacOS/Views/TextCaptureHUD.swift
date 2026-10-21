@@ -269,6 +269,7 @@ final class TextCaptureEditorWindowController: NSObject, NSWindowDelegate {
                                              styleMask: [.titled, .closable, .resizable, .miniaturizable],
                                              backing: .buffered, defer: false)
         window.title = "Recognized Text"
+        window.applyCaptureVisibilityPreference()
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: view)

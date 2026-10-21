@@ -78,6 +78,7 @@ final class FloatingMenuController {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: max(230, menu.columns * 150), height: 240),
                             styleMask: [.titled, .closable, .nonactivatingPanel, .resizable], backing: .buffered, defer: false)
         panel.title = menu.name; panel.level = .floating; panel.isReleasedWhenClosed = false
+        panel.applyCaptureVisibilityPreference()
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: FloatingMenuView(menu: menu, run: { [weak self] item in
             if !menu.staysOpen { self?.panels.removeValue(forKey: menu.id)?.close() }
@@ -102,6 +103,7 @@ final class FloatingMenuController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Floating Menus & Widgets"; window.isReleasedWhenClosed = false
+        window.applyCaptureVisibilityPreference()
         window.contentView = NSHostingView(rootView: FloatingMenuEditor())
         window.center(); editor = window; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }

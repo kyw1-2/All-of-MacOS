@@ -108,4 +108,21 @@ final class ClipboardLocalGapTests: XCTestCase {
         XCTAssertEqual(short.alphaComponent, 136.0 / 255, accuracy: 0.001)
         XCTAssertNil(ClipboardColorEditor.color("#oops"))
     }
+
+    func testCaptureVisibilityPreferenceAppliesToEveryOwnedWindow() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 40, height: 40),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.applyCaptureVisibility(visible: false)
+        XCTAssertEqual(window.sharingType, .none)
+        window.applyCaptureVisibility(visible: true)
+        XCTAssertEqual(window.sharingType, .readOnly)
+    }
+
+    func testCaptureVisibilityPreferenceDefaultsToVisible() throws {
+        let suite = "AOMCaptureVisibilityDefaults"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(ClipboardPreferences(defaults: defaults).showInScreenCapture)
+    }
 }

@@ -571,6 +571,7 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
         window.title = "Edit Recording — \(source.lastPathComponent)"
+        window.applyCaptureVisibilityPreference()
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = NSHostingView(rootView: RecordingExportEditor(source: source,
