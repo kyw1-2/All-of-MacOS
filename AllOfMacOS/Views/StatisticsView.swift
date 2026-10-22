@@ -13,7 +13,7 @@ struct StatisticsView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                    AOMPageHeader("Insights",
+                    AOMPageHeader("쌓여가는 나의 흐름",
                                   subtitle: "Tracking since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))",
                                   systemImage: "chart.xyaxis.line", tint: .green) {
                         Button { confirmingReset = true } label: {

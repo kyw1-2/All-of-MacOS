@@ -164,8 +164,8 @@ struct HubRowShell<Control: View>: View {
             control
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .frame(minHeight: 64)
+        .padding(.vertical, 20)
+        .frame(minHeight: 80)
         .contentShape(Rectangle())
     }
 }
@@ -367,11 +367,11 @@ struct SettingsSearchField: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 38)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .frame(height: 46)
+        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.7)
+                .strokeBorder(focused ? AOMTheme.blue : .clear, lineWidth: 1.5)
         }
     }
 }
@@ -554,11 +554,25 @@ struct SettingsHubView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().opacity(0.5)
-            content
-            footer
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("설정").font(.aomDisplay(28)).tracking(-0.7).padding(.horizontal, 12)
+                Text("내 Mac에 맞게").font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
+                    .padding(.horizontal, 12)
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(SettingsCategory.allCases) { cat in categoryChip(cat) }
+                    }
+                }.scrollIndicators(.hidden)
+            }
+            .padding(20).padding(.top, 12)
+            .frame(width: 206)
+            .background(AOMTheme.card)
+            VStack(spacing: 0) {
+                header
+                content
+                footer
+            }
         }
         .frame(minWidth: 780, idealWidth: 900, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
         .background(AOMTheme.canvas)
@@ -576,57 +590,40 @@ struct SettingsHubView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Settings")
-                    .font(.system(size: 28, weight: .bold))
-                    .tracking(-0.6)
-                    .foregroundStyle(AOMTheme.text)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(isSearching ? "검색 결과" : category.title)
+                        .font(.aomDisplay(28)).tracking(-0.7).foregroundStyle(AOMTheme.text)
+                    Text(isSearching ? "찾고 있는 설정을 빠르게 바꿔보세요." : category.blurb)
+                        .font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
+                }
                 Spacer()
                 if savedFlash {
-                    Label("저장됨", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    AOMChip(text: "저장됨", tint: AOMTheme.positive, symbol: "checkmark")
                 }
             }
-
             SettingsSearchField(text: $query)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(SettingsCategory.allCases) { cat in
-                        categoryChip(cat)
-                    }
-                }
-                .padding(.vertical, 1)
-            }
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 18)
-        .padding(.bottom, 12)
+        .padding(28)
+        .padding(.bottom, -10)
     }
 
     private func categoryChip(_ cat: SettingsCategory) -> some View {
         let selected = !isSearching && category == cat
         return Button {
-            withAnimation(.snappy(duration: 0.18)) {
-                query = ""
-                category = cat
-            }
+            query = ""
+            category = cat
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: cat.symbol).font(.system(size: 11, weight: .semibold))
-                Text(cat.title).font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 12) {
+                Image(systemName: cat.symbol).font(.system(size: 16, weight: .medium)).frame(width: 20)
+                Text(cat.title).font(.aomLabel(13))
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .foregroundStyle(selected ? Color.white : AOMTheme.textSecondary)
-            .background {
-                Capsule().fill(selected ? AOMTheme.blue : AOMTheme.card)
-            }
-            .shadow(color: selected ? AOMTheme.blue.opacity(0.25) : AOMTheme.cardShadow,
-                    radius: selected ? 8 : 5, y: 2)
+            .padding(.horizontal, 12).frame(height: 48)
+            .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
+            .background(selected ? AOMTheme.blue.opacity(0.10) : .clear,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -662,7 +659,7 @@ struct SettingsHubView: View {
                 }
                 .scrollIndicators(.hidden)
                 .onChange(of: category) { _, newValue in
-                    withAnimation(.snappy) { proxy.scrollTo(newValue.id, anchor: .top) }
+                    withAnimation(AOMDesign.animation()) { proxy.scrollTo(newValue.id, anchor: .top) }
                 }
             }
         }
@@ -688,13 +685,13 @@ struct SettingsHubView: View {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     row.content
                     if index < rows.count - 1 {
-                        Rectangle().fill(AOMTheme.divider).frame(height: 0.6).padding(.leading, 76)
+                        Rectangle().fill(AOMTheme.divider.opacity(0.5)).frame(height: 0.5).padding(.leading, 76)
                     }
                 }
             }
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
             .shadow(color: AOMTheme.cardShadow, radius: 12, y: 5)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
         }
     }
 

@@ -840,14 +840,27 @@ class ActionExecutor {
             completion(false); return
         }
         let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        let keyboardLayout = TextTypingKeyboardLayout()
         let session = TextTypingSession(text: text, intervalMs: intervalMs, environment: .init(
             isCancelled: isCancelled,
             targetIsReady: { !target.isTerminated && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier },
-            modifiersAreReleased: { CGEventSource.flagsState(.combinedSessionState).intersection(shortcutFlags).isEmpty },
+            // Only physical modifier state matters here. A suppressed shortcut key-up
+            // can leave the combined session state stuck even after release.
+            modifiersAreReleased: { CGEventSource.flagsState(.hidSystemState).intersection(shortcutFlags).isEmpty },
             now: { ProcessInfo.processInfo.systemUptime },
             send: { stroke in
-                guard let (down, up) = textEvents(stroke.units, keyCode: stroke.keyCode, shifted: stroke.shifted) else { return false }
-                down.postToPid(target.processIdentifier); up.postToPid(target.processIdentifier)
+                // Recheck focus immediately before global delivery. Never retry an
+                // uncertain delivery: a retry can duplicate password characters.
+                guard !isCancelled(), !target.isTerminated,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return false }
+                let key = keyboardLayout.key(for: stroke.units)
+                guard let (down, up) = textEvents(stroke.units, keyCode: key?.code ?? stroke.keyCode,
+                                                 shifted: key?.shifted ?? stroke.shifted) else { return false }
+                // Secure text controls need normal WindowServer keyboard routing;
+                // posting directly to a PID skips that route. Unicode still handles
+                // Hangul/emoji; layout-matched keycodes cover hardware-only controls.
+                down.post(tap: .cghidEventTap)
+                up.post(tap: .cghidEventTap)
                 return true
             },
             schedule: { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }), completion: completion)

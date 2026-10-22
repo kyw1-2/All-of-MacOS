@@ -43,7 +43,7 @@ struct CaptureStudioView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                    AOMPageHeader("Capture Studio", subtitle: subtitle, systemImage: "camera.viewfinder", tint: .orange) {
+                    AOMPageHeader("순간을 담는 작업실", subtitle: subtitle, systemImage: "camera.viewfinder", tint: .orange) {
                         headerControls
                     }
                     if recordingService.isRecording {
@@ -173,21 +173,21 @@ struct CaptureStudioView: View {
                       spacing: AOMDesign.gridSpacing) {
                 AOMActionTile(title: "All-In-One", systemImage: "rectangle.dashed.badge.record", tint: .orange,
                               subtitle: "Area, window, screen or video") { CaptureCoordinator.shared.captureAllInOne() }
-                AOMActionTile(title: "Area", systemImage: "viewfinder", tint: .blue,
+                AOMActionTile(title: "영역 캡처", systemImage: "viewfinder", tint: .blue,
                               subtitle: "Drag to select a region") { CaptureCoordinator.shared.captureArea() }
-                AOMActionTile(title: "Window", systemImage: "macwindow", tint: .indigo,
+                AOMActionTile(title: "창 캡처", systemImage: "macwindow", tint: .indigo,
                               subtitle: "Pick a window with shadow") { CaptureCoordinator.shared.captureWindowInteractive() }
-                AOMActionTile(title: "Fullscreen", systemImage: "display", tint: .purple,
+                AOMActionTile(title: "전체 화면", systemImage: "display", tint: .purple,
                               subtitle: "Every pixel of a display") { CaptureCoordinator.shared.captureFullscreen() }
-                AOMActionTile(title: "Scrolling", systemImage: "arrow.up.and.down.text.horizontal", tint: .teal,
+                AOMActionTile(title: "스크롤 캡처", systemImage: "arrow.up.and.down.text.horizontal", tint: .teal,
                               subtitle: "Stitch long pages") { CaptureCoordinator.shared.captureScrolling() }
-                AOMActionTile(title: "Record Screen", systemImage: "record.circle", tint: .red,
+                AOMActionTile(title: "화면 녹화", systemImage: "record.circle", tint: .red,
                               subtitle: "MP4 or GIF with audio") { recordingService.promptAndStartRecording() }
-                AOMActionTile(title: "Capture Text", systemImage: "text.viewfinder", tint: .green,
+                AOMActionTile(title: "텍스트 추출", systemImage: "text.viewfinder", tint: .green,
                               subtitle: "Instant OCR to clipboard") { CaptureCoordinator.shared.captureText() }
-                AOMActionTile(title: "Previous Area", systemImage: "arrow.uturn.backward.square", tint: .gray,
+                AOMActionTile(title: "이전 영역", systemImage: "arrow.uturn.backward.square", tint: .gray,
                               subtitle: "Repeat the last region") { CaptureCoordinator.shared.capturePreviousArea() }
-                AOMActionTile(title: "Self-Timer", systemImage: "timer", tint: .pink,
+                AOMActionTile(title: "타이머 캡처", systemImage: "timer", tint: .pink,
                               subtitle: "Countdown, then capture") { CaptureCoordinator.shared.captureWithSelfTimer() }
                 AOMActionTile(title: "QR / Barcode", systemImage: "qrcode.viewfinder", tint: .brown,
                               subtitle: "Read codes in a region") { CaptureCoordinator.shared.captureQRCode() }
@@ -199,7 +199,7 @@ struct CaptureStudioView: View {
 
     private var gallerySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Recent Captures", systemImage: "photo.stack") {
+            AOMSectionHeader("최근 캡처", systemImage: "photo.stack") {
                 Picker("Filter", selection: $selectedFilter) {
                     ForEach(CaptureFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
                 }
@@ -227,7 +227,7 @@ struct CaptureStudioView: View {
                 .frame(minHeight: 240)
                 .aomSurface(padding: nil)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 14)], spacing: 14) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 380), spacing: 18)], spacing: 18) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,

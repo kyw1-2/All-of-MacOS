@@ -30,7 +30,7 @@ struct AOMMainShell<Content: View>: View {
     var body: some View {
         HStack(spacing: 0) {
             AOMMainSidebar(appearance: appearance)
-                .frame(width: 236)
+                .frame(width: 224)
                 .tutorialAnchor(.sidebar)
 
             VStack(spacing: 0) {
@@ -84,7 +84,8 @@ struct AOMMainSidebar: View {
             Spacer(minLength: 0)
             footer
         }
-        .background(AOMTheme.canvas)
+        .background(AOMTheme.card)
+        .overlay(alignment: .trailing) { AOMTheme.divider.opacity(0.5).frame(width: 1) }
     }
 
     private var wordmark: some View {
@@ -135,7 +136,7 @@ struct AOMMainSidebar: View {
 
     private var navSection: some View {
         VStack(alignment: .leading, spacing: 3) {
-            sectionLabel("WORKSPACE")
+            sectionLabel("내 작업 공간")
             ForEach(AOMMainTab.allCases) { tab in
                 navRow(tab)
             }
@@ -145,7 +146,7 @@ struct AOMMainSidebar: View {
     private func navRow(_ tab: AOMMainTab) -> some View {
         let selected = appState.selectedMainTab == tab
         return Button {
-            withAnimation(.snappy(duration: 0.18)) { appState.selectedMainTab = tab }
+            withAnimation(AOMDesign.animation()) { appState.selectedMainTab = tab }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.iconName)
@@ -154,7 +155,7 @@ struct AOMMainSidebar: View {
                     .frame(width: 22)
                 Text(tab.title)
                     .font(.system(size: 13.5, weight: selected ? .bold : .medium))
-                    .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
+                    .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
                 Spacer(minLength: 0)
                 if tab == .gestures {
                     let count = appState.currentPreset.triggers.filter(\.isEnabled).count
@@ -166,7 +167,7 @@ struct AOMMainSidebar: View {
                 }
             }
             .padding(.horizontal, 12)
-            .frame(height: 42)
+            .frame(height: 48)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(hoveringTab == tab && !selected ? AOMTheme.divider.opacity(0.5) : .clear)
@@ -174,8 +175,7 @@ struct AOMMainSidebar: View {
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(AOMTheme.card)
-                        .shadow(color: AOMTheme.cardShadow, radius: 8, y: 3)
+                        .fill(AOMTheme.blue.opacity(0.10))
                 }
             }
         }
@@ -186,7 +186,7 @@ struct AOMMainSidebar: View {
 
     private var scopeSection: some View {
         VStack(alignment: .leading, spacing: 5) {
-            sectionLabel("SCOPE")
+            sectionLabel("자동화 적용 대상")
             Menu {
                 Button {
                     selectScope(group: nil, app: .allApps)
@@ -275,8 +275,8 @@ struct AOMMainSidebar: View {
     private var footer: some View {
         VStack(spacing: 2) {
             Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.4)).frame(height: 0.5)
-            footerRow("Settings…", symbol: "gearshape") { openSettingsAction() }
-            footerRow("Onboarding tour", symbol: "sparkles") { appState.showTutorialRequested = true }
+            footerRow("설정", symbol: "gearshape") { openSettingsAction() }
+            footerRow("사용 가이드", symbol: "sparkles") { appState.showTutorialRequested = true }
             HStack {
                 Text("Version \(appVersion)")
                     .font(.system(size: 9.5))
@@ -328,16 +328,13 @@ struct AOMMainTopBar: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(appState.selectedMainTab.title)
-                    .font(.system(size: 23, weight: .bold))
-                    .tracking(-0.4)
-                    .foregroundStyle(AOMTheme.text)
-                Text(appState.selectedMainTab.subtitle)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(AOMTheme.textSecondary)
-                    .lineLimit(1)
+            HStack(spacing: 8) {
+                Text("작업 공간").foregroundStyle(AOMTheme.textSecondary)
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AOMTheme.textTertiary)
+                Text(appState.selectedMainTab.title).foregroundStyle(AOMTheme.text)
             }
+            .font(.aomLabel(12))
             Spacer(minLength: 16)
 
             Button {
@@ -345,7 +342,7 @@ struct AOMMainTopBar: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold))
-                    Text("Search").font(.system(size: 11.5))
+                    Text("기능 검색").font(.system(size: 11.5))
                     Text("⌘K")
                         .font(.system(size: 9.5, weight: .semibold))
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
@@ -373,11 +370,11 @@ struct AOMMainTopBar: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .frame(width: 28)
+            .frame(width: 38)
             .help("Diagnostics")
         }
         .padding(.horizontal, 28)
-        .frame(height: 76)
+        .frame(height: 62)
         .background(AOMTheme.canvas)
     }
 
@@ -392,12 +389,12 @@ struct AOMMainTopBar: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "plus.viewfinder").font(.system(size: 11.5, weight: .semibold))
-                Text("Capture").font(.system(size: 11.5, weight: .semibold))
+                Text("빠른 실행").font(.system(size: 11.5, weight: .semibold))
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 15)
             .frame(height: 34)
-            .background(AOMTheme.blue, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .background(AOMTheme.actionBlue, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

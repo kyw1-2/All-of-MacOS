@@ -33,11 +33,12 @@ struct ClipboardStudioView: View {
         let entries = filteredEntries
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                AOMPageHeader("Clipboard", subtitle: subtitle, systemImage: "doc.on.clipboard.fill",
+                AOMPageHeader("복사한 모든 것", subtitle: subtitle, systemImage: "doc.on.clipboard.fill",
                               tint: store.paused ? .gray : .indigo) {
                     headerControls
                 }
-                HStack(spacing: 12) {
+                AOMSearchField(prompt: "텍스트, 링크, 파일 검색", text: $search.query)
+                VStack(alignment: .leading, spacing: 12) {
                     pinboardsBar
                     Picker("Type", selection: $search.kind) {
                         Text("All").tag(ClipboardEntry.Kind?.none)
@@ -56,8 +57,6 @@ struct ClipboardStudioView: View {
             .padding(.horizontal, AOMDesign.pagePadding)
             .padding(.top, AOMDesign.pagePadding)
             .padding(.bottom, 12)
-
-            Divider()
 
             if search.isSearchPending {
                 ProgressView("Searching clipboard…").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -79,7 +78,7 @@ struct ClipboardStudioView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 14)], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 380), spacing: 18)], spacing: 18) {
                         ForEach(entries) { entry in
                             ClipboardStudioCard(
                                 entry: entry,
@@ -104,7 +103,6 @@ struct ClipboardStudioView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMWorkspaceBackground())
-        .searchable(text: $search.query, placement: .toolbar, prompt: "Search Clipboard")
         .task(id: store.revision) {
             let entries = store.entries
             let counts = await Task.detached(priority: .userInitiated) {
@@ -205,7 +203,7 @@ struct ClipboardStudioView: View {
                 } label: {
                     Label("New Pinboard", systemImage: "plus")
                         .font(.callout)
-                        .padding(.horizontal, 10).frame(height: 26)
+                        .padding(.horizontal, 16).frame(height: 26)
                         .overlay(Capsule().strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3]))
                             .foregroundStyle(.secondary.opacity(0.6)))
                         .contentShape(Capsule())
@@ -229,7 +227,7 @@ struct ClipboardStudioView: View {
                 Text(title).font(.callout.weight(selected ? .semibold : .regular)).lineLimit(1)
                 Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 16)
             .frame(height: 26)
             .background(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05), in: Capsule())
             .overlay(Capsule().strokeBorder(selected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1))
@@ -353,13 +351,13 @@ private struct ClipboardStudioCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             preview
-                .frame(height: 120)
+                .frame(height: 150)
                 .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(AOMTheme.cardAlt)
                 .clipped()
 
             HStack(spacing: 6) {
@@ -367,7 +365,7 @@ private struct ClipboardStudioCard: View {
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if isHovered {
+                Group {
                     Group {
                         Button(action: onCopy) { Image(systemName: "doc.on.doc") }
                             .help("Copy")
@@ -398,8 +396,8 @@ private struct ClipboardStudioCard: View {
                     .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
+            .padding(.horizontal, 16)
+            .frame(height: 48)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
         .clipShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))

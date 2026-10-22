@@ -40,6 +40,8 @@ enum AOMTheme {
         light: NSColor(srgbRed: 0.192, green: 0.510, blue: 0.965, alpha: 1),
         dark: NSColor(srgbRed: 0.278, green: 0.573, blue: 0.980, alpha: 1)
     )
+    /// White labels need a deeper blue than small accent icons.
+    static let actionBlue = Color(red: 0.125, green: 0.424, blue: 0.90)
     static let positive = Color.aomDynamic(
         light: NSColor(srgbRed: 0.0, green: 0.706, blue: 0.478, alpha: 1),
         dark: NSColor(srgbRed: 0.235, green: 0.784, blue: 0.573, alpha: 1)
@@ -51,16 +53,16 @@ enum AOMTheme {
 
     // MARK: Geometry
 
-    static let cardRadius: CGFloat = 20
-    static let controlRadius: CGFloat = 12
-    static let pagePadding: CGFloat = 28
-    static let sectionSpacing: CGFloat = 24
+    static let cardRadius: CGFloat = 24
+    static let controlRadius: CGFloat = 14
+    static let pagePadding: CGFloat = 32
+    static let sectionSpacing: CGFloat = 28
 
     // MARK: Shadow
 
     static var cardShadow: Color {
-        Color.aomDynamic(light: NSColor.black.withAlphaComponent(0.055),
-                         dark: NSColor.black.withAlphaComponent(0.45))
+        Color.aomDynamic(light: NSColor.black.withAlphaComponent(0.025),
+                         dark: NSColor.black.withAlphaComponent(0.18))
     }
 }
 
@@ -80,11 +82,16 @@ struct AOMCard: ViewModifier {
     var radius: CGFloat = AOMTheme.cardRadius
     var padding: CGFloat? = 20
     var elevated = true
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
         content
             .padding(padding ?? 0)
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(contrast == .increased ? AOMTheme.textSecondary : .clear, lineWidth: 1)
+            }
             .shadow(color: elevated ? AOMTheme.cardShadow : .clear,
                     radius: elevated ? 14 : 0, x: 0, y: elevated ? 6 : 0)
     }
@@ -111,8 +118,9 @@ extension Font {
 
 /// Filled, full-width-when-asked primary action: tall, rounded, one colour.
 struct AOMFilledButtonStyle: ButtonStyle {
-    var tint: Color = AOMTheme.blue
+    var tint: Color = AOMTheme.actionBlue
     var height: CGFloat = 48
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.aomLabel(14.5))
@@ -122,7 +130,8 @@ struct AOMFilledButtonStyle: ButtonStyle {
             .background(tint.opacity(configuration.isPressed ? 0.82 : 1),
                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: configuration.isPressed)
     }
 }
 
@@ -130,6 +139,7 @@ struct AOMFilledButtonStyle: ButtonStyle {
 struct AOMTintedButtonStyle: ButtonStyle {
     var tint: Color = AOMTheme.blue
     var height: CGFloat = 44
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.aomLabel(14))
@@ -139,6 +149,7 @@ struct AOMTintedButtonStyle: ButtonStyle {
             .background(tint.opacity(configuration.isPressed ? 0.18 : 0.10),
                         in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
@@ -160,5 +171,50 @@ struct AOMChip: View {
         .padding(.horizontal, 9)
         .frame(height: 24)
         .background(background ?? tint.opacity(0.10), in: Capsule())
+    }
+}
+
+/// Compact controls share the same generous hit area without expanding a toolbar.
+struct AOMToolbarButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.aomLabel(13))
+            .foregroundStyle(configuration.role == .destructive ? Color.red : AOMTheme.text)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 38)
+            .background(configuration.isPressed ? AOMTheme.divider : AOMTheme.cardAlt,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .opacity(isEnabled ? 1 : 0.45)
+    }
+}
+
+struct AOMSearchField: View {
+    let prompt: String
+    @Binding var text: String
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(AOMTheme.textSecondary)
+            TextField(prompt, text: $text).textFieldStyle(.plain).font(.aomBody(14))
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).foregroundStyle(AOMTheme.textSecondary)
+                    .accessibilityLabel("검색 지우기")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+        .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// Press feedback is immediate; motion respects the system accessibility setting.
+struct AOMCardButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
+            .scaleEffect(configuration.isPressed && !AOMDesign.reduceMotion ? 0.985 : 1)
+            .animation(AOMDesign.animation(.easeOut(duration: 0.14)), value: configuration.isPressed)
     }
 }

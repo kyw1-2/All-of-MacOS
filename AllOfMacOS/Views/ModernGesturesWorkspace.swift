@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Gestures: a dense, sortable native table (like Mail rules or Finder) with
-/// the selected gesture's workflow in a trailing inspector. Category filter,
-/// search, scope and "New" live in the toolbar; the table owns the content.
+/// Automation cards with inline search and filters, an optional sortable table,
+/// and the selected workflow in a trailing editor.
 struct ModernGesturesWorkspace: View {
     @EnvironmentObject var appState: AppState
+    @AppStorage("AOMGesturesTableLayout") private var tableLayout = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
     @State private var testingTriggerID: UUID?
@@ -75,61 +75,66 @@ struct ModernGesturesWorkspace: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                Label(scopeTitle, systemImage: "square.stack.3d.up")
-                    .font(.callout.weight(.semibold))
-                Text("\(scopedTriggers.count) gestures")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text("Select a gesture to edit its workflow")
-                    .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-            }
-            .padding(.horizontal, 2)
-            Group {
-                if scopedTriggers.isEmpty { onboardingView }
-                else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
-                else { table }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .aomSurface(padding: 0)
-            .clipShape(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
-        }
-        .padding(18)
-        .background(AOMWorkspaceBackground())
-        .inspector(isPresented: $showsInspector) {
-            inspectorContent
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 560)
-        }
-        .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search Gestures")
-        .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                scopeMenu
-                Picker("Type", selection: $selectedDeviceCategory) {
-                    ForEach(TriggerCategory.allCases) { category in
-                        Label(category == .all ? "All" : category.rawValue, systemImage: category.iconName)
-                            .labelStyle(.iconOnly)
-                            .help("\(category == .all ? "All types" : category.rawValue) (\(count(category)))")
-                            .tag(category)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .help("Filter by trigger type")
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
+        VStack(alignment: .leading, spacing: 20) {
+            AOMPageHeader("나만의 자동화", subtitle: "작은 동작 하나로, 반복하던 일을 한 번에.",
+                          systemImage: "bolt", tint: AOMTheme.blue) {
                 Menu {
                     ForEach(TriggerCategory.inputCategories) { category in
                         Button { presentAddTrigger(category) } label: { Label(category.rawValue, systemImage: category.iconName) }
                     }
-                } label: {
-                    Label("New Gesture", systemImage: "plus")
-                } primaryAction: {
-                    presentAddTrigger(selectedDeviceCategory)
-                }
-                .help("New gesture (⌘N); hold for a trigger type")
-                Button { showsInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.trailing") }
-                    .help(showsInspector ? "Hide Inspector" : "Show Inspector")
+                } label: { Label("새 자동화", systemImage: "plus") }
+                primaryAction: { presentAddTrigger(selectedDeviceCategory) }
             }
+            VStack(spacing: 14) {
+                HStack(spacing: 12) {
+                    AOMSearchField(prompt: "이름, 동작으로 검색", text: $searchQuery)
+                    scopeMenu.fixedSize()
+                    Button { tableLayout.toggle() } label: {
+                        Image(systemName: tableLayout ? "square.grid.2x2" : "list.bullet")
+                    }.help(tableLayout ? "카드로 보기" : "표로 보기")
+                    Button { showsInspector.toggle() } label: { Image(systemName: "sidebar.trailing") }
+                        .help(showsInspector ? "편집 패널 닫기" : "편집 패널 열기")
+                }
+                .buttonStyle(AOMToolbarButtonStyle())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(TriggerCategory.allCases) { category in
+                            Button { selectedDeviceCategory = category } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: category.iconName)
+                                    Text(category == .all ? "전체" : category.rawValue)
+                                    Text("\(count(category))").monospacedDigit()
+                                }
+                                .font(.aomCaption(12))
+                                .foregroundStyle(selectedDeviceCategory == category ? AOMTheme.blue : AOMTheme.textSecondary)
+                                .padding(.horizontal, 12).frame(height: 34)
+                                .background(selectedDeviceCategory == category ? AOMTheme.blue.opacity(0.10) : AOMTheme.card,
+                                            in: Capsule())
+                            }.buttonStyle(.plain)
+                                .accessibilityAddTraits(selectedDeviceCategory == category ? [.isSelected] : [])
+                        }
+                    }
+                }
+            }
+            HStack {
+                Text(scopeTitle).font(.aomLabel(13))
+                Spacer()
+                Text("\(rows.count)개의 자동화").font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
+            }
+            Group {
+                if scopedTriggers.isEmpty { onboardingView }
+                else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
+                else if tableLayout { table.aomSurface(padding: 0) }
+                else { cards }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(AOMTheme.pagePadding)
+        .background(AOMWorkspaceBackground())
+        .inspector(isPresented: $showsInspector) {
+            inspectorContent
+                .background(AOMTheme.canvas)
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 560)
         }
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
@@ -169,6 +174,58 @@ struct ModernGesturesWorkspace: View {
             appState.selectedTrigger = filteredTriggers.first
             appState.selectedAction = nil
         }
+    }
+
+    private var cards: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(rows) { trigger in
+                    gestureCard(trigger)
+                }
+            }
+            .padding(2)
+        }
+        .suppressScrollerReservation()
+    }
+
+    private func gestureCard(_ trigger: Trigger) -> some View {
+        let selected = appState.selectedTrigger?.id == trigger.id
+        return HStack(spacing: 14) {
+            Button { selection.wrappedValue = trigger.id } label: {
+                HStack(spacing: 14) {
+                    AOMIconTile(systemImage: trigger.input.category.iconName,
+                                tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 46)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 7) {
+                            Text(trigger.displayName).font(.aomLabel(15)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                            if trigger.isFavorite { Image(systemName: "pin.fill").font(.caption).foregroundStyle(AOMTheme.blue) }
+                        }
+                        Text(trigger.actionSummary).font(.aomBody(12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
+                        Text(trigger.input.displayName).font(.aomCaption(11)).foregroundStyle(AOMTheme.blue)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
+                set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
+                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                .accessibilityLabel("\(trigger.displayName) 활성화")
+            Menu { triggerMenu(trigger) } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24)
+                .accessibilityLabel("\(trigger.displayName) 옵션")
+        }
+        .padding(20)
+        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(selected ? AOMTheme.blue : .clear, lineWidth: 1.5)
+                .allowsHitTesting(false)
+        }
+        .contextMenu { triggerMenu(trigger) }
+        .modifier(FiredFlash(triggerID: trigger.id))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: - Table
@@ -228,10 +285,9 @@ struct ModernGesturesWorkspace: View {
            let current = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    inspectorHeader(current)
-                    actionSequenceSection(current)
-                    Divider()
-                    triggerInspector(current)
+                    inspectorHeader(current).aomCard(padding: 18, elevated: false)
+                    actionSequenceSection(current).aomCard(padding: 18, elevated: false)
+                    triggerInspector(current).aomCard(padding: 18, elevated: false)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)

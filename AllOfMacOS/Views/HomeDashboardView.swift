@@ -1,24 +1,21 @@
 import AppKit
 import SwiftUI
 
-/// The overview observes only preset state. High-frequency clipboard and
-/// capture updates stay inside their own sections, away from window chrome.
+/// A calm launchpad; live history is observed only by its own section.
 struct AOMHomeView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 28) {
                     hero
-                    primaryActions(wide: geometry.size.width >= 820)
+                    launchpad
                     metrics
-                    columns(wide: geometry.size.width >= 980)
+                    columns(wide: geometry.size.width >= 940)
                 }
-                .padding(.horizontal, 26)
-                .padding(.top, 20)
-                .padding(.bottom, 28)
-                .frame(maxWidth: 1180)
+                .padding(AOMTheme.pagePadding)
+                .frame(maxWidth: 1240)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .suppressScrollerReservation()
@@ -26,201 +23,129 @@ struct AOMHomeView: View {
         .background(AOMWorkspaceBackground())
     }
 
-    // MARK: Hero
-
     private var hero: some View {
-        HStack(alignment: .bottom, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(greeting)
-                    .font(.system(size: 34, weight: .bold))
-                    .tracking(-1.0)
-                    .foregroundStyle(AOMTheme.text)
-                Text("캡처하고, 자동화하고, 방금 한 작업을 이어서 하세요.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(AOMTheme.textSecondary)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 24) {
+                welcome
+                Spacer(minLength: 16)
+                automationStatus.frame(width: 228)
             }
-            Spacer(minLength: 12)
-            statusChip
+            VStack(alignment: .leading, spacing: 20) { welcome; automationStatus }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var welcome: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("오늘도, 더 가볍게").font(.aomLabel(13)).foregroundStyle(AOMTheme.blue)
+            Text("Mac의 모든 일, 한곳에서")
+                .font(.aomDisplay(34)).tracking(-1.2).foregroundStyle(AOMTheme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("반복은 맡기고, 하던 일에 집중하세요.")
+                .font(.aomBody(15)).foregroundStyle(AOMTheme.textSecondary)
         }
     }
 
-    private var greeting: String {
-        switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: return "좋은 아침이에요"
-        case 12..<18: return "안녕하세요"
-        case 18..<23: return "좋은 저녁이에요"
-        default: return "늦은 시간이네요"
-        }
-    }
-
-    private var statusChip: some View {
+    private var automationStatus: some View {
         Button { appState.toggleGlobalEnabled() } label: {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
-                    .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
-                        .font(.system(size: 12.5, weight: .semibold))
-                    Text("\(appState.currentPreset.triggers.filter(\.isEnabled).count)개 제스처 동작")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(AOMTheme.textSecondary)
+            HStack(spacing: 12) {
+                Image(systemName: appState.globalEnabled ? "bolt.fill" : "pause.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(appState.globalEnabled ? AOMTheme.blue : AOMTheme.warning)
+                    .frame(width: 44, height: 44)
+                    .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 15))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(appState.globalEnabled ? "자동화가 켜져 있어요" : "자동화가 쉬고 있어요")
+                        .font(.aomLabel(13)).foregroundStyle(AOMTheme.text)
+                    Text(appState.globalEnabled ? "눌러서 잠시 멈추기" : "눌러서 다시 시작하기")
+                        .font(.aomCaption(11)).foregroundStyle(AOMTheme.textSecondary)
                 }
-                Image(systemName: appState.globalEnabled ? "pause.fill" : "play.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 2)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: AOMTheme.cardShadow, radius: 8, y: 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .aomCard(padding: 18, elevated: false)
         }
-        .buttonStyle(.plain)
-        .help(appState.globalEnabled ? "Pause automation" : "Resume automation")
+        .buttonStyle(AOMCardButtonStyle())
     }
 
-    // MARK: Primary actions
-
-    private func primaryActions(wide: Bool) -> some View {
-        VStack(spacing: 12) {
-            if wide {
-                HStack(spacing: 12) {
-                    primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
-                                symbol: "viewfinder", tint: AOMTheme.blue, filled: true) {
-                        CaptureCoordinator.shared.captureArea()
-                    }
-                    primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
-                                symbol: "doc.on.clipboard", tint: .purple, filled: false) {
-                        ClipboardPanelController.shared.show()
-                    }
-                }
-            } else {
-                VStack(spacing: 12) {
-                    primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
-                                symbol: "viewfinder", tint: AOMTheme.blue, filled: true) {
-                        CaptureCoordinator.shared.captureArea()
-                    }
-                    primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
-                                symbol: "doc.on.clipboard", tint: .purple, filled: false) {
-                        ClipboardPanelController.shared.show()
-                    }
-                }
+    private var launchpad: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("무엇을 할까요?").font(.aomTitle(20)).foregroundStyle(AOMTheme.text)
+                Spacer()
+                Text("자주 쓰는 기능").font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
             }
-            HStack(spacing: 12) {
-                secondaryCard(title: "텍스트 추출", symbol: "text.viewfinder", tint: .blue) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 16)], spacing: 16) {
+                launchCard("화면 캡처", detail: "필요한 영역만 깔끔하게", symbol: "viewfinder", tint: AOMTheme.blue, primary: true) {
+                    CaptureCoordinator.shared.captureArea()
+                }
+                launchCard("복사한 내용", detail: "방금 복사한 내용을 다시 꺼내요", symbol: "doc.on.clipboard", tint: .purple) {
+                    ClipboardPanelController.shared.show()
+                }
+                launchCard("텍스트 추출", detail: "이미지 속 글자도 바로 복사", symbol: "text.viewfinder", tint: .teal) {
                     CaptureCoordinator.shared.captureText()
                 }
-                secondaryCard(title: "화면 녹화", symbol: "record.circle", tint: .red) {
+                launchCard("화면 녹화", detail: "화면의 흐름을 영상으로", symbol: "record.circle", tint: .orange) {
                     ScreenRecordingService.shared.promptAndStartRecording()
                 }
             }
         }
     }
 
-    private func primaryCard(title: String, subtitle: String, symbol: String, tint: Color,
-                             filled: Bool, action: @escaping () -> Void) -> some View {
+    private func launchCard(_ title: String, detail: String, symbol: String, tint: Color,
+                            primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: symbol)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(filled ? Color.white : tint)
-                    .frame(width: 50, height: 50)
-                    .background(filled ? Color.white.opacity(0.22) : tint.opacity(0.13),
-                                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(filled ? Color.white : AOMTheme.text)
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(filled ? Color.white.opacity(0.85) : AOMTheme.textSecondary)
-                        .lineLimit(1)
+            VStack(alignment: .leading, spacing: 22) {
+                HStack {
+                    Image(systemName: symbol).font(.system(size: 27, weight: .medium))
+                        .foregroundStyle(primary ? Color.white : tint)
+                        .frame(width: 54, height: 54)
+                        .background(primary ? Color.white.opacity(0.16) : tint.opacity(0.10),
+                                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    Spacer()
+                    Image(systemName: "arrow.up.right").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(primary ? Color.white.opacity(0.8) : AOMTheme.textTertiary)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(filled ? Color.white.opacity(0.85) : Color.secondary)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(title).font(.aomTitle(19)).foregroundStyle(primary ? Color.white : AOMTheme.text)
+                    Text(detail).font(.aomBody(12.5))
+                        .foregroundStyle(primary ? Color.white.opacity(0.88) : AOMTheme.textSecondary)
+                        .lineLimit(2).frame(minHeight: 32, alignment: .topLeading)
+                }
             }
-            .padding(.horizontal, 20)
-            .frame(height: 100)
-            .frame(maxWidth: .infinity)
-            .background {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(filled ? AnyShapeStyle(LinearGradient(colors: [tint, tint.aomDarker(0.18)],
-                                                                startPoint: .topLeading, endPoint: .bottomTrailing))
-                          : AnyShapeStyle(AOMTheme.card))
-            }
-            .shadow(color: filled ? tint.opacity(0.28) : AOMTheme.cardShadow,
-                    radius: filled ? 16 : 12, x: 0, y: 7)
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(primary ? AOMTheme.actionBlue : AOMTheme.card,
+                        in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AOMCardButtonStyle())
     }
-
-    private func secondaryCard(title: String, symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 34, height: 34)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(AOMTheme.text)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(AOMTheme.textTertiary)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 62)
-            .frame(maxWidth: .infinity)
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .shadow(color: AOMTheme.cardShadow, radius: 10, y: 4)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: Metrics
 
     private var metrics: some View {
-        HStack(spacing: 12) {
-            metricCard("제스처", value: appState.currentPreset.triggers.filter(\.isEnabled).count,
-                       symbol: "hand.tap", tint: .cyan, tab: .gestures)
-            metricCard("앱 프로필", value: appState.currentPreset.appTargets.filter { !$0.isGlobal }.count,
-                       symbol: "app.badge", tint: .blue, tab: .gestures)
-            metricCard("스냅 존", value: appState.effectiveSnapZones.filter(\.isEnabled).count,
-                       symbol: "rectangle.split.2x2", tint: .indigo, tab: .snapping)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 20)], spacing: 16) {
+            metric("사용 중인 자동화", value: appState.currentPreset.triggers.filter(\.isEnabled).count,
+                   symbol: "bolt", tab: .gestures)
+            metric("나만의 앱 프로필", value: appState.currentPreset.appTargets.filter { !$0.isGlobal }.count,
+                   symbol: "square.stack", tab: .gestures)
+            metric("준비된 창 배치", value: appState.effectiveSnapZones.filter(\.isEnabled).count,
+                   symbol: "rectangle.split.2x2", tab: .snapping)
         }
+        .aomCard(padding: 24, elevated: false)
     }
 
-    private func metricCard(_ title: String, value: Int, symbol: String, tint: Color, tab: AOMMainTab) -> some View {
-        Button {
-            appState.selectedMainTab = tab
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 36, height: 36)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(value.formatted())
-                        .font(.system(size: 24, weight: .bold).monospacedDigit())
-                        .foregroundStyle(AOMTheme.text)
-                    Text(title)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(AOMTheme.textSecondary)
+    private func metric(_ title: String, value: Int, symbol: String, tab: AOMMainTab) -> some View {
+        Button { appState.selectedMainTab = tab } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(title, systemImage: symbol).font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(value.formatted()).font(.aomDisplay(30)).monospacedDigit().foregroundStyle(AOMTheme.text)
+                    Text("개").font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AOMTheme.textTertiary)
                 }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 74)
-            .frame(maxWidth: .infinity)
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .shadow(color: AOMTheme.cardShadow, radius: 10, y: 4)
+            }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title): \(value)")
+        .buttonStyle(AOMCardButtonStyle())
     }
 
     // MARK: Columns
@@ -245,8 +170,8 @@ struct AOMHomeView: View {
     private var gesturesGroup: some View {
         let triggers = appState.currentPreset.triggers
         // Stable partition of six visible rows; no sort of the entire preset.
-        let shown = Array((triggers.filter(\.isFavorite) + triggers.filter { !$0.isFavorite }).prefix(6))
-        return AOMGroup("Gestures", trailing: "\(triggers.filter(\.isEnabled).count) of \(triggers.count) on") {
+        let shown = Array((triggers.filter(\.isFavorite) + triggers.filter { !$0.isFavorite }).prefix(4))
+        return AOMGroup("내 자동화", trailing: "\(triggers.filter(\.isEnabled).count) of \(triggers.count) on") {
             if shown.isEmpty {
                 AOMRow(symbol: "hand.tap", tint: .cyan, title: "Make your first gesture", detail: "Give a shortcut or gesture something to do") {
                     Button("New Gesture…") { appState.selectedMainTab = .gestures; appState.showingAddTrigger = true }
@@ -263,7 +188,7 @@ struct AOMHomeView: View {
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
             }
-            AOMLinkRow(title: "All Gestures") { appState.selectedMainTab = .gestures }
+            AOMLinkRow(title: "자동화 전체 보기") { appState.selectedMainTab = .gestures }
         }
     }
 }
@@ -279,7 +204,7 @@ private struct HomeStatusSection: View {
     }
 
     var body: some View {
-        AOMGroup("System Status") {
+        AOMGroup("Mac 상태") {
             AOMRow(symbol: "rectangle.split.2x2.fill", tint: .indigo, title: "Drag to Snap",
                    detail: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones ready") {
                 Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
@@ -322,17 +247,17 @@ private struct HomeStatusSection: View {
 private struct HomeClipboardSection: View {
     @ObservedObject private var clipboard = ClipboardStore.shared
     var body: some View {
-        AOMGroup("Recent Clipboard", trailing: "Double-click to copy") {
+        AOMGroup("최근 복사한 내용", trailing: "두 번 눌러 복사") {
             if clipboard.entries.isEmpty {
                 AOMRow(symbol: "doc.on.clipboard", tint: .purple, title: "Nothing copied yet",
                        detail: "Your next copy will be right here") { EmptyView() }
             }
-            ForEach(clipboard.entries.prefix(5)) { entry in
+            ForEach(clipboard.entries.prefix(3)) { entry in
                 AOMRow(symbol: entry.kind.symbol, tint: .purple, title: entry.title,
                        detail: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                        onDoubleClick: { Task { _ = try? await clipboard.writeAsync(entryIDs: [entry.id]) } }) { EmptyView() }
             }
-            AOMLinkRow(title: "Open Clipboard Shelf", shortcut: "⇧⌘V") { ClipboardPanelController.shared.show() }
+            AOMLinkRow(title: "클립보드 열기", shortcut: "⇧⌘V") { ClipboardPanelController.shared.show() }
         }
     }
 }
@@ -341,7 +266,7 @@ private struct HomeCapturesSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject private var history = CaptureHistory.shared
     var body: some View {
-        AOMGroup("Recent Captures", trailing: history.entries.first.map { AOMRelativeTime.string($0.capturedAt) }) {
+        AOMGroup("최근 캡처", trailing: history.entries.first.map { AOMRelativeTime.string($0.capturedAt) }) {
             if history.entries.isEmpty {
                 AOMRow(symbol: "camera.viewfinder", tint: .orange, title: "Ready when you are",
                        detail: "Screenshots and recordings stay together") {
@@ -355,7 +280,7 @@ private struct HomeCapturesSection: View {
                            onDoubleClick: { AnnotationEditorController.shared.open(capture: entry, url: entry.fileURL) }) { EmptyView() }
                 }
             }
-            AOMLinkRow(title: "Open Capture Studio") { appState.selectedMainTab = .capture }
+            AOMLinkRow(title: "캡처 전체 보기") { appState.selectedMainTab = .capture }
         }
     }
 }
@@ -389,7 +314,7 @@ struct AOMGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.aomHeadline(17)).foregroundStyle(AOMTheme.text)
                 Spacer()
@@ -397,9 +322,9 @@ struct AOMGroup<Content: View>: View {
             }
             .padding(.horizontal, 2)
             VStack(spacing: 0) { content }
-                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
                 .shadow(color: AOMTheme.cardShadow, radius: 12, y: 5)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -453,14 +378,14 @@ struct AOMRow<Trailing: View>: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .frame(minHeight: 56)
+            .padding(.vertical, 16)
+            .frame(minHeight: 72)
             .background(hovering && interactive ? AOMTheme.cardAlt : .clear)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .gesture(TapGesture(count: 2).onEnded { onDoubleClick?() }, including: onDoubleClick == nil ? .subviews : .all)
             .simultaneousGesture(TapGesture().onEnded { onSelect?() }, including: onSelect == nil ? .subviews : .all)
-            if showsDivider { Rectangle().fill(AOMTheme.divider).frame(height: 0.6).padding(.leading, 62) }
+            if showsDivider { Rectangle().fill(AOMTheme.divider.opacity(0.5)).frame(height: 0.5).padding(.leading, 62) }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(onSelect != nil ? .isButton : [])
