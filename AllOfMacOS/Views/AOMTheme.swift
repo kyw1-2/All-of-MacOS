@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A single visual language for the whole app: a light grey canvas, white
-/// elevated cards with no hairline borders, large confident type and one vivid
+/// elevated cards with no hairline borders, compact system typography and one vivid
 /// blue accent. Modelled on consumer fintech apps (Toss) rather than the
 /// System Settings list idiom the app used before.
 enum AOMTheme {
@@ -53,10 +53,10 @@ enum AOMTheme {
 
     // MARK: Geometry
 
-    static let cardRadius: CGFloat = 24
-    static let controlRadius: CGFloat = 14
-    static let pagePadding: CGFloat = 32
-    static let sectionSpacing: CGFloat = 28
+    static let cardRadius: CGFloat = 12
+    static let controlRadius: CGFloat = 8
+    static let pagePadding: CGFloat = 18
+    static let sectionSpacing: CGFloat = 16
 
     // MARK: Shadow
 
@@ -80,7 +80,7 @@ extension Color {
 /// every page uses instead of System Settings' hairline-bordered boxes.
 struct AOMCard: ViewModifier {
     var radius: CGFloat = AOMTheme.cardRadius
-    var padding: CGFloat? = 20
+    var padding: CGFloat? = 12
     var elevated = true
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -93,12 +93,12 @@ struct AOMCard: ViewModifier {
                     .strokeBorder(contrast == .increased ? AOMTheme.textSecondary : .clear, lineWidth: 1)
             }
             .shadow(color: elevated ? AOMTheme.cardShadow : .clear,
-                    radius: elevated ? 14 : 0, x: 0, y: elevated ? 6 : 0)
+                    radius: elevated ? 4 : 0, x: 0, y: elevated ? 1 : 0)
     }
 }
 
 extension View {
-    func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = 20, elevated: Bool = true) -> some View {
+    func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = 12, elevated: Bool = true) -> some View {
         modifier(AOMCard(radius: radius, padding: padding, elevated: elevated))
     }
 }
@@ -119,17 +119,17 @@ extension Font {
 /// Filled, full-width-when-asked primary action: tall, rounded, one colour.
 struct AOMFilledButtonStyle: ButtonStyle {
     var tint: Color = AOMTheme.actionBlue
-    var height: CGFloat = 48
+    var height: CGFloat = 30
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.aomLabel(14.5))
+            .font(.aomLabel(12))
             .foregroundStyle(.white)
-            .padding(.horizontal, 22)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: height)
             .background(tint.opacity(configuration.isPressed ? 0.82 : 1),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .opacity(isEnabled ? 1 : 0.45)
             .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: configuration.isPressed)
     }
@@ -138,17 +138,17 @@ struct AOMFilledButtonStyle: ButtonStyle {
 /// Quiet secondary action on the grey canvas.
 struct AOMTintedButtonStyle: ButtonStyle {
     var tint: Color = AOMTheme.blue
-    var height: CGFloat = 44
+    var height: CGFloat = 30
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.aomLabel(14))
+            .font(.aomLabel(12))
             .foregroundStyle(tint)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: height)
             .background(tint.opacity(configuration.isPressed ? 0.18 : 0.10),
-                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .opacity(isEnabled ? 1 : 0.45)
     }
 }
@@ -182,9 +182,9 @@ struct AOMToolbarButtonStyle: ButtonStyle {
             .font(.aomLabel(13))
             .foregroundStyle(configuration.role == .destructive ? Color.red : AOMTheme.text)
             .padding(.horizontal, 14)
-            .frame(minHeight: 38)
+            .frame(minHeight: 28)
             .background(configuration.isPressed ? AOMTheme.divider : AOMTheme.cardAlt,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .opacity(isEnabled ? 1 : 0.45)
     }
 }
@@ -195,16 +195,16 @@ struct AOMSearchField: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(AOMTheme.textSecondary)
-            TextField(prompt, text: $text).textFieldStyle(.plain).font(.aomBody(14))
+            TextField(prompt, text: $text).textFieldStyle(.plain).font(.aomBody(13))
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain).foregroundStyle(AOMTheme.textSecondary)
-                    .accessibilityLabel("검색 지우기")
+                    .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 14)
-        .frame(height: 44)
-        .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(height: 30)
+        .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

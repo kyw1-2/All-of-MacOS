@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The main window chrome: a fixed navigation rail, a slim page header and the
-/// page canvas. Replaces the split view so navigation, page title and actions
-/// stay in one predictable place instead of a titlebar + sidebar + toolbar mix.
+/// Native split navigation and a system toolbar keep window chrome compact.
+/// Each workspace owns its title and content, with no duplicate custom top bar.
 struct AOMMainShell<Content: View>: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
@@ -28,28 +27,42 @@ struct AOMMainShell<Content: View>: View {
     private var isDark: Bool { appearance == "dark" }
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             AOMMainSidebar(appearance: appearance)
-                .frame(width: 224)
+                .navigationSplitViewColumnWidth(min: 176, ideal: 194, max: 240)
                 .tutorialAnchor(.sidebar)
-
-            VStack(spacing: 0) {
-                AOMMainTopBar(showingCommandPalette: $showingCommandPalette,
-                              showLog: $showLog,
-                              showTouchVisualizer: $showTouchVisualizer)
-                HStack(spacing: 0) {
-                    content
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if showLog || showTouchVisualizer {
-                        Rectangle()
-                            .fill(Color(nsColor: .separatorColor).opacity(0.4))
-                            .frame(width: 0.5)
-                        DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
-                            .frame(width: 340)
-                    }
+        } detail: {
+            HStack(spacing: 0) {
+                content.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showLog || showTouchVisualizer {
+                    Divider()
+                    DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                        .frame(width: 300)
+                }
+            }
+            .navigationTitle(appState.selectedMainTab.title)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { showingCommandPalette = true } label: {
+                        Label("Commands", systemImage: "magnifyingglass")
+                    }.help("Search commands (⌘K)")
+                    Menu {
+                        Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                        Button("Capture Full Screen") { CaptureCoordinator.shared.captureFullscreen() }
+                        Button("Capture Text") { CaptureCoordinator.shared.captureText() }
+                        Divider()
+                        Button("Record Screen") { ScreenRecordingService.shared.promptAndStartRecording() }
+                        Button("Open Clipboard") { ClipboardPanelController.shared.show() }
+                    } label: { Label("Capture", systemImage: "plus.viewfinder") }
+                    Menu {
+                        Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
+                        Toggle("Diagnostics Console", isOn: $showLog)
+                    } label: { Label("Diagnostics", systemImage: "waveform.path.ecg") }
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
+        .controlSize(.small)
         .background(AOMWorkspaceBackground())
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
         .preferredColorScheme(appearance == "system" ? nil : (isDark ? .dark : .light))
@@ -69,10 +82,10 @@ struct AOMMainSidebar: View {
             wordmark
             statusPill
                 .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.bottom, 10)
 
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     navSection
                     scopeSection
                 }
@@ -84,8 +97,7 @@ struct AOMMainSidebar: View {
             Spacer(minLength: 0)
             footer
         }
-        .background(AOMTheme.card)
-        .overlay(alignment: .trailing) { AOMTheme.divider.opacity(0.5).frame(width: 1) }
+        .background(.regularMaterial)
     }
 
     private var wordmark: some View {
@@ -107,7 +119,7 @@ struct AOMMainSidebar: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 18)
+        .padding(.top, 10)
         .padding(.bottom, 12)
     }
 
@@ -117,7 +129,7 @@ struct AOMMainSidebar: View {
                 Circle()
                     .fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
                     .frame(width: 7, height: 7)
-                Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
+                Text(appState.globalEnabled ? "Automation enabled" : "Automation paused")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(AOMTheme.text)
                 Spacer(minLength: 0)
@@ -136,7 +148,7 @@ struct AOMMainSidebar: View {
 
     private var navSection: some View {
         VStack(alignment: .leading, spacing: 3) {
-            sectionLabel("내 작업 공간")
+            sectionLabel("WORKSPACE")
             ForEach(AOMMainTab.allCases) { tab in
                 navRow(tab)
             }
@@ -154,7 +166,7 @@ struct AOMMainSidebar: View {
                     .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
                     .frame(width: 22)
                 Text(tab.title)
-                    .font(.system(size: 13.5, weight: selected ? .bold : .medium))
+                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
                 Spacer(minLength: 0)
                 if tab == .gestures {
@@ -167,14 +179,14 @@ struct AOMMainSidebar: View {
                 }
             }
             .padding(.horizontal, 12)
-            .frame(height: 48)
+            .frame(height: 32)
             .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(hoveringTab == tab && !selected ? AOMTheme.divider.opacity(0.5) : .clear)
             }
             .background {
                 if selected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(AOMTheme.blue.opacity(0.10))
                 }
             }
@@ -186,7 +198,7 @@ struct AOMMainSidebar: View {
 
     private var scopeSection: some View {
         VStack(alignment: .leading, spacing: 5) {
-            sectionLabel("자동화 적용 대상")
+            sectionLabel("SCOPE")
             Menu {
                 Button {
                     selectScope(group: nil, app: .allApps)
@@ -228,7 +240,7 @@ struct AOMMainSidebar: View {
                         .foregroundStyle(.tertiary)
                 }
                 .padding(.horizontal, 12)
-                .frame(height: 38)
+                .frame(height: 30)
                 .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .menuStyle(.borderlessButton)
@@ -275,8 +287,8 @@ struct AOMMainSidebar: View {
     private var footer: some View {
         VStack(spacing: 2) {
             Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.4)).frame(height: 0.5)
-            footerRow("설정", symbol: "gearshape") { openSettingsAction() }
-            footerRow("사용 가이드", symbol: "sparkles") { appState.showTutorialRequested = true }
+            footerRow("Settings…", symbol: "gearshape") { openSettingsAction() }
+            footerRow("Getting Started", symbol: "sparkles") { appState.showTutorialRequested = true }
             HStack {
                 Text("Version \(appVersion)")
                     .font(.system(size: 9.5))
@@ -319,86 +331,3 @@ struct AOMMainSidebar: View {
 }
 
 // MARK: - Top bar
-
-struct AOMMainTopBar: View {
-    @EnvironmentObject var appState: AppState
-    @Binding var showingCommandPalette: Bool
-    @Binding var showLog: Bool
-    @Binding var showTouchVisualizer: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            HStack(spacing: 8) {
-                Text("작업 공간").foregroundStyle(AOMTheme.textSecondary)
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(AOMTheme.textTertiary)
-                Text(appState.selectedMainTab.title).foregroundStyle(AOMTheme.text)
-            }
-            .font(.aomLabel(12))
-            Spacer(minLength: 16)
-
-            Button {
-                showingCommandPalette = true
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold))
-                    Text("기능 검색").font(.system(size: 11.5))
-                    Text("⌘K")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1.5)
-                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
-                }
-                .foregroundStyle(AOMTheme.textSecondary)
-                .padding(.horizontal, 13)
-                .frame(height: 34)
-                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("Open the command palette (⌘K)")
-
-            quickCapture
-
-            Menu {
-                Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
-                Toggle("Diagnostics Console", isOn: $showLog)
-            } label: {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(AOMTheme.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 38)
-            .help("Diagnostics")
-        }
-        .padding(.horizontal, 28)
-        .frame(height: 62)
-        .background(AOMTheme.canvas)
-    }
-
-    private var quickCapture: some View {
-        Menu {
-            Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
-            Button("Capture Full Screen") { CaptureCoordinator.shared.captureFullscreen() }
-            Button("Capture Text") { CaptureCoordinator.shared.captureText() }
-            Divider()
-            Button("Record Screen") { ScreenRecordingService.shared.promptAndStartRecording() }
-            Button("Open Clipboard") { ClipboardPanelController.shared.show() }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "plus.viewfinder").font(.system(size: 11.5, weight: .semibold))
-                Text("빠른 실행").font(.system(size: 11.5, weight: .semibold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 15)
-            .frame(height: 34)
-            .background(AOMTheme.actionBlue, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Start a capture or recording")
-    }
-}

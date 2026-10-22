@@ -243,6 +243,7 @@ class KeyboardMonitor: ObservableObject {
     private var sequenceDetector = KeySequenceDetector()
     private var pressed: [UInt16: [Trigger]] = [:]
     private static var activeMonitor: KeyboardMonitor?
+    private var secureHotKeys: SecureInputHotKeys?
 
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         unregisterAll()
@@ -254,6 +255,26 @@ class KeyboardMonitor: ObservableObject {
         let hasCaptureShortcuts = MainActor.assumeIsolated { CaptureShortcuts.shared.hasActiveShortcuts || ClipboardShortcuts.shared.hasActiveShortcuts }
         guard (!registeredTriggers.isEmpty || hasCaptureShortcuts), systemMonitoringEnabled else { return }
         KeyboardMonitor.activeMonitor = self
+        secureHotKeys = SecureInputHotKeys(shortcuts: { [weak self] in
+            guard let self, !self.isMonitoring, !Self.isRecordingShortcut,
+                  UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
+                  TriggerSuppression.shared.allows(kind: .keyboard) else { return [] }
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            let candidates = Set(self.registeredTriggers.compactMap { trigger -> KeyboardShortcut? in
+                if case .keyboardShortcut(let shortcut) = trigger.input { return shortcut }
+                return nil
+            })
+            return candidates.filter { shortcut in
+                !TriggerResolver.resolve(self.registeredTriggers, payload: shortcut, frontBundleID: front,
+                    payloadOf: { if case .keyboardShortcut(let value) = $0.input { return value }; return nil },
+                    appBundleIDOf: { $0.appBundleID }, groups: self.activationGroups,
+                    activationGroupIDOf: { $0.activationGroupID }).isEmpty
+            }
+        }, handle: { [weak self] shortcut, isDown in
+            guard let self else { return }
+            if isDown && ActionExecutor.activeTextTypingSessions > 0 { return }
+            _ = self.handleInput(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers, isDown: isDown)
+        }, cancel: { [weak self] in self?.releaseKeys() })
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
         triggerEventTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
             eventsOfInterest: mask, callback: { _, type, event, _ in
@@ -267,6 +288,10 @@ class KeyboardMonitor: ObservableObject {
                 if type == .flagsChanged {
                     monitor.handleSequenceModifierEvent(keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
                         flags: event.flags)
+                    return Unmanaged.passUnretained(event)
+                }
+                let eventCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                if monitor.secureHotKeys?.owns(keyCode: eventCode, flags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))) == true {
                     return Unmanaged.passUnretained(event)
                 }
                 let swallowed = monitor.handleInput(keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
@@ -457,6 +482,8 @@ class KeyboardMonitor: ObservableObject {
         for trigger in bindings { ActionExecutor.releaseHold(trigger.id) }
     }
     func unregisterAll() {
+        secureHotKeys?.stop()
+        secureHotKeys = nil
         registrationGeneration = UUID()
         releaseKeys()
         sequenceDetector.reset()

@@ -279,12 +279,16 @@ final class ClipboardPasteLog {
     private var writable = true
     private var canRetireLegacy = false
     private var legacyWarning: String?
+    private var loadingTask: Task<Void, Never>?
+    private var isLoading = false
+    private var loadGeneration = UUID()
 
     init(directory: URL, cipher: PasteLogCipher? = nil, saveDelay: UInt64 = 800_000_000,
          willPersist: (@Sendable () async -> Void)? = nil,
          didPersist: (@Sendable () async -> Void)? = nil) {
         self.directory = directory
         let isolated = PresetManager.isRunningTests || PresetManager.isUIPreview
+        let interactiveKeychain = cipher == nil && !isolated
         let cipher = cipher ?? (isolated ? .plaintext : .keychain)
         self.cipher = cipher
         self.primaryURL = directory.appendingPathComponent(cipher.isEncrypted ? "paste-events-v2.encrypted" : "paste-events.json")
@@ -292,66 +296,72 @@ final class ClipboardPasteLog {
         self.saveDelay = saveDelay
         self.willPersist = willPersist
         self.didPersist = didPersist
-        load()
-    }
-
-    deinit { saveTask?.cancel() }
-
-    private func load() {
-        if cipher.isEncrypted {
-            if FileManager.default.fileExists(atPath: primaryURL.path) {
-                guard let data = try? Data(contentsOf: primaryURL) else {
-                    writable = false
-                    lastError = "The encrypted paste log could not be read; it was left unchanged."
-                    return
-                }
-                do {
-                    events = try decode(cipher.open(data))
-                } catch {
-                    // Preserve the unreadable file; never fall back to plaintext.
-                    writable = false
-                    lastError = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription
-                        ?? "The encrypted paste log could not be read; it was left unchanged."
-                    return
-                }
-                mergeLegacyIfPresent()
-                return
+        if interactiveKeychain {
+            // SecItemCopyMatching may display SecurityAgent and block until the
+            // user authenticates. Never block the main run loop/gesture engine.
+            isLoading = true
+            let primary = primaryURL, legacy = legacyURL, generation = loadGeneration
+            loadingTask = Task { [weak self] in
+                guard let self else { return }
+                let snapshot = await self.onQueue { Self.readSnapshot(primary: primary, legacy: legacy, cipher: cipher) }
+                guard !Task.isCancelled, self.loadGeneration == generation else { return }
+                self.apply(snapshot)
             }
-            // First encrypted run: migrate the legacy plaintext log, if any.
-            if let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) {
-                events = decoded
-                canRetireLegacy = true
-                scheduleSave()
-            } else if FileManager.default.fileExists(atPath: legacyURL.path) {
-                legacyWarning = "The legacy paste log could not be read; its original file was preserved."
-                lastError = legacyWarning
+        } else {
+            // Isolated/injected ciphers cannot present a system prompt.
+            apply(Self.readSnapshot(primary: primaryURL, legacy: legacyURL, cipher: cipher))
+        }
+    }
+
+    deinit { saveTask?.cancel(); loadingTask?.cancel() }
+
+    private struct LoadSnapshot {
+        var events: [ClipboardPasteEvent] = []
+        var writable = true
+        var retireLegacy = false
+        var warning: String?
+    }
+
+    nonisolated private static func readSnapshot(primary: URL, legacy: URL, cipher: PasteLogCipher) -> LoadSnapshot {
+        var snapshot = LoadSnapshot()
+        func decode(_ data: Data) throws -> [ClipboardPasteEvent] {
+            Array(try JSONDecoder().decode([ClipboardPasteEvent].self, from: data).suffix(2_000))
+        }
+        if FileManager.default.fileExists(atPath: primary.path) {
+            do {
+                let bytes = try Data(contentsOf: primary)
+                snapshot.events = try decode(cipher.open(bytes))
+            } catch {
+                snapshot.writable = false
+                snapshot.warning = (error as? ClipboardArchiveEncryption.Failure)?.localizedDescription
+                    ?? "The paste log could not be read; it was left unchanged."
+                return snapshot
             }
-            return
         }
-        if let data = try? Data(contentsOf: primaryURL), let decoded = try? decode(data) {
-            events = decoded
+        if cipher.isEncrypted, FileManager.default.fileExists(atPath: legacy.path) {
+            do {
+                let decoded = try decode(Data(contentsOf: legacy))
+                let known = Set(snapshot.events)
+                snapshot.events = Array((snapshot.events + decoded.filter { !known.contains($0) }).suffix(2_000))
+                snapshot.retireLegacy = true
+            } catch {
+                snapshot.warning = "The legacy paste log could not be read; its original file was preserved."
+            }
         }
+        return snapshot
     }
 
-    /// Old plaintext events are folded into the encrypted log, then the
-    /// plaintext sibling is retired only after a successful encrypted write.
-    private func mergeLegacyIfPresent() {
-        guard FileManager.default.fileExists(atPath: legacyURL.path) else { return }
-        guard let data = try? Data(contentsOf: legacyURL), let decoded = try? decode(data) else {
-            legacyWarning = "The legacy paste log could not be read; its original file was preserved."
-            lastError = legacyWarning
-            return
-        }
-        canRetireLegacy = true
-        let known = Set(events)
-        let extra = decoded.filter { !known.contains($0) }
-        if !extra.isEmpty { events = Array((events + extra).suffix(Self.limit)) }
-        // Rewrite either way so the legacy file is retired.
-        scheduleSave()
-    }
-
-    private func decode(_ data: Data) throws -> [ClipboardPasteEvent] {
-        Array(try JSONDecoder().decode([ClipboardPasteEvent].self, from: data).suffix(Self.limit))
+    private func apply(_ snapshot: LoadSnapshot) {
+        let pending = events
+        isLoading = false
+        writable = snapshot.writable
+        canRetireLegacy = snapshot.retireLegacy
+        legacyWarning = snapshot.warning
+        lastError = snapshot.warning
+        // New events can arrive while the Keychain dialog is open. Merge them
+        // after the archive and never persist over an archive that failed to load.
+        events = Array((snapshot.events + pending).suffix(Self.limit))
+        if writable && (canRetireLegacy || !pending.isEmpty) { scheduleSave() }
     }
 
     func record(_ event: ClipboardPasteEvent) {
@@ -363,6 +373,7 @@ final class ClipboardPasteLog {
     /// Testing seam: cancel the debounce and write (and await) the current
     /// snapshot, then wait for any queued erase to finish.
     func flush() async {
+        await loadingTask?.value
         saveTask?.cancel()
         saveTask = nil
         if !events.isEmpty {
@@ -375,6 +386,14 @@ final class ClipboardPasteLog {
     }
 
     func erase() {
+        loadGeneration = UUID()
+        loadingTask?.cancel()
+        loadingTask = nil
+        isLoading = false
+        writable = true
+        canRetireLegacy = false
+        legacyWarning = nil
+        lastError = nil
         events.removeAll()
         saveTask?.cancel()
         saveTask = nil
@@ -391,7 +410,7 @@ final class ClipboardPasteLog {
     }
 
     private func scheduleSave() {
-        guard writable else { return }
+        guard !isLoading, writable else { return }
         saveTask?.cancel()
         let snapshot = events
         // Claim a fresh revision for this snapshot *before* the debounce runs,
@@ -407,7 +426,7 @@ final class ClipboardPasteLog {
     }
 
     private func persist(_ snapshot: [ClipboardPasteEvent], revision captured: Int) async {
-        guard writable else { return }
+        guard !isLoading, writable else { return }
         await willPersist?()
         let cipher = cipher, primary = primaryURL, legacy = legacyURL, directory = directory
         let revisionCounter = writeRevision

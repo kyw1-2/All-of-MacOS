@@ -5,7 +5,7 @@ import SwiftUI
 /// and the selected workflow in a trailing editor.
 struct ModernGesturesWorkspace: View {
     @EnvironmentObject var appState: AppState
-    @AppStorage("AOMGesturesTableLayout") private var tableLayout = false
+    @AppStorage("AOMAutomationCompactTable") private var tableLayout = true
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
     @State private var testingTriggerID: UUID?
@@ -75,25 +75,25 @@ struct ModernGesturesWorkspace: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AOMPageHeader("나만의 자동화", subtitle: "작은 동작 하나로, 반복하던 일을 한 번에.",
+        VStack(alignment: .leading, spacing: 12) {
+            AOMPageHeader("Automations", subtitle: "Shortcuts, gestures and workflows.",
                           systemImage: "bolt", tint: AOMTheme.blue) {
                 Menu {
                     ForEach(TriggerCategory.inputCategories) { category in
                         Button { presentAddTrigger(category) } label: { Label(category.rawValue, systemImage: category.iconName) }
                     }
-                } label: { Label("새 자동화", systemImage: "plus") }
+                } label: { Label("New Automation", systemImage: "plus") }
                 primaryAction: { presentAddTrigger(selectedDeviceCategory) }
             }
             VStack(spacing: 14) {
                 HStack(spacing: 12) {
-                    AOMSearchField(prompt: "이름, 동작으로 검색", text: $searchQuery)
+                    AOMSearchField(prompt: "Search names or actions", text: $searchQuery)
                     scopeMenu.fixedSize()
                     Button { tableLayout.toggle() } label: {
                         Image(systemName: tableLayout ? "square.grid.2x2" : "list.bullet")
-                    }.help(tableLayout ? "카드로 보기" : "표로 보기")
+                    }.help(tableLayout ? "Show cards" : "Show table")
                     Button { showsInspector.toggle() } label: { Image(systemName: "sidebar.trailing") }
-                        .help(showsInspector ? "편집 패널 닫기" : "편집 패널 열기")
+                        .help(showsInspector ? "Hide inspector" : "Show inspector")
                 }
                 .buttonStyle(AOMToolbarButtonStyle())
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -102,12 +102,12 @@ struct ModernGesturesWorkspace: View {
                             Button { selectedDeviceCategory = category } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: category.iconName)
-                                    Text(category == .all ? "전체" : category.rawValue)
+                                    Text(category == .all ? "All" : category.rawValue)
                                     Text("\(count(category))").monospacedDigit()
                                 }
                                 .font(.aomCaption(12))
                                 .foregroundStyle(selectedDeviceCategory == category ? AOMTheme.blue : AOMTheme.textSecondary)
-                                .padding(.horizontal, 12).frame(height: 34)
+                                .padding(.horizontal, 12).frame(height: 28)
                                 .background(selectedDeviceCategory == category ? AOMTheme.blue.opacity(0.10) : AOMTheme.card,
                                             in: Capsule())
                             }.buttonStyle(.plain)
@@ -119,7 +119,7 @@ struct ModernGesturesWorkspace: View {
             HStack {
                 Text(scopeTitle).font(.aomLabel(13))
                 Spacer()
-                Text("\(rows.count)개의 자동화").font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
+                Text("\(rows.count) automations").font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
             }
             Group {
                 if scopedTriggers.isEmpty { onboardingView }
@@ -194,10 +194,10 @@ struct ModernGesturesWorkspace: View {
             Button { selection.wrappedValue = trigger.id } label: {
                 HStack(spacing: 14) {
                     AOMIconTile(systemImage: trigger.input.category.iconName,
-                                tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 46)
+                                tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 30)
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 7) {
-                            Text(trigger.displayName).font(.aomLabel(15)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                            Text(trigger.displayName).font(.aomLabel(12.5)).foregroundStyle(AOMTheme.text).lineLimit(1)
                             if trigger.isFavorite { Image(systemName: "pin.fill").font(.caption).foregroundStyle(AOMTheme.blue) }
                         }
                         Text(trigger.actionSummary).font(.aomBody(12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
@@ -211,15 +211,15 @@ struct ModernGesturesWorkspace: View {
             Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
                 set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                .accessibilityLabel("\(trigger.displayName) 활성화")
+                .accessibilityLabel("Enable \(trigger.displayName)")
             Menu { triggerMenu(trigger) } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24)
-                .accessibilityLabel("\(trigger.displayName) 옵션")
+                .accessibilityLabel("Options for \(trigger.displayName)")
         }
-        .padding(20)
-        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(10)
+        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(selected ? AOMTheme.blue : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
         }
@@ -285,9 +285,9 @@ struct ModernGesturesWorkspace: View {
            let current = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    inspectorHeader(current).aomCard(padding: 18, elevated: false)
-                    actionSequenceSection(current).aomCard(padding: 18, elevated: false)
-                    triggerInspector(current).aomCard(padding: 18, elevated: false)
+                    inspectorHeader(current).aomCard(padding: 12, elevated: false)
+                    actionSequenceSection(current).aomCard(padding: 12, elevated: false)
+                    triggerInspector(current).aomCard(padding: 12, elevated: false)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)

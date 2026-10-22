@@ -41,7 +41,7 @@ struct ModernWindowSnappingView: View {
             let wide = geometry.size.width >= 900
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                    AOMPageHeader("딱 맞게 정리된 화면", subtitle: appState.snapStatus,
+                    AOMPageHeader("Window Tiling", subtitle: appState.snapStatus,
                                   systemImage: "rectangle.split.2x2.fill",
                                   tint: appState.currentPreset.snappingEnabled ? .blue : .gray) {
                         Toggle("Drag to Snap", isOn: Binding(

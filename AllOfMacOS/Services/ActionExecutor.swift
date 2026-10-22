@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Carbon
 
 class ActionExecutor {
     // Hook for testing — when set, actions call this instead of performing real work
@@ -822,14 +823,20 @@ class ActionExecutor {
         }
     }
 
-    static func textEvents(_ units: [UInt16], keyCode: CGKeyCode = 0, shifted: Bool = false) -> (CGEvent, CGEvent)? {
-        let source = CGEventSource(stateID: .privateState)
+    private(set) static var activeTextTypingSessions = 0
+
+    static func textEvents(_ units: [UInt16], keyCode: CGKeyCode = 0, shifted: Bool = false,
+                           hardwareOnly: Bool = false) -> (CGEvent, CGEvent)? {
+        let source = CGEventSource(stateID: hardwareOnly ? .hidSystemState : .privateState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { return nil }
         for event in [down, up] {
             event.flags = shifted ? .maskShift : []
             event.setIntegerValueField(.eventSourceUserData, value: 0x475454)
-            units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
+            event.setIntegerValueField(.keyboardEventKeyboardType, value: Int64(LMGetKbdType()))
+            if !hardwareOnly {
+                units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
+            }
         }
         return (down, up)
     }
@@ -840,10 +847,31 @@ class ActionExecutor {
             completion(false); return
         }
         let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        let secureInput = IsSecureEventInputEnabled()
         let keyboardLayout = TextTypingKeyboardLayout()
-        let session = TextTypingSession(text: text, intervalMs: intervalMs, environment: .init(
+        if secureInput {
+            // Validate the entire payload before delivering a partial password.
+            // Secure controls can ignore Unicode overrides; use only real keys.
+            var cursor = TextTypingCursor(text)
+            while let stroke = cursor.next() {
+                guard keyboardLayout.key(for: stroke.units) != nil else {
+                    GestureLog.shared.logFromAnyThread("Secure typing stopped: a character is unavailable in the current keyboard layout", level: .error)
+                    completion(false)
+                    return
+                }
+            }
+        }
+        activeTextTypingSessions += 1
+        let finish: (Bool) -> Void = { success in
+            activeTextTypingSessions = max(0, activeTextTypingSessions - 1)
+            completion(success)
+        }
+        let session = TextTypingSession(text: text, intervalMs: secureInput ? max(20, intervalMs ?? 20) : intervalMs, environment: .init(
             isCancelled: isCancelled,
-            targetIsReady: { !target.isTerminated && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier },
+            targetIsReady: {
+                !target.isTerminated && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
+                    && IsSecureEventInputEnabled() == secureInput
+            },
             // Only physical modifier state matters here. A suppressed shortcut key-up
             // can leave the combined session state stuck even after release.
             modifiersAreReleased: { CGEventSource.flagsState(.hidSystemState).intersection(shortcutFlags).isEmpty },
@@ -855,7 +883,7 @@ class ActionExecutor {
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return false }
                 let key = keyboardLayout.key(for: stroke.units)
                 guard let (down, up) = textEvents(stroke.units, keyCode: key?.code ?? stroke.keyCode,
-                                                 shifted: key?.shifted ?? stroke.shifted) else { return false }
+                                                 shifted: key?.shifted ?? stroke.shifted, hardwareOnly: secureInput) else { return false }
                 // Secure text controls need normal WindowServer keyboard routing;
                 // posting directly to a PID skips that route. Unicode still handles
                 // Hangul/emoji; layout-matched keycodes cover hardware-only controls.
@@ -863,7 +891,7 @@ class ActionExecutor {
                 up.post(tap: .cghidEventTap)
                 return true
             },
-            schedule: { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }), completion: completion)
+            schedule: { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }), completion: finish)
         DispatchQueue.main.async { session.start() }
     }
 

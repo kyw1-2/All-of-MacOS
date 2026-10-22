@@ -14,12 +14,12 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "홈"
-        case .gestures: return "자동화"
-        case .snapping: return "창 정리"
-        case .capture: return "캡처"
-        case .clipboard: return "클립보드"
-        case .insights: return "활동"
+        case .home: return "Home"
+        case .gestures: return "Automation"
+        case .snapping: return "Window Tiling"
+        case .capture: return "Capture"
+        case .clipboard: return "Clipboard"
+        case .insights: return "Insights"
         }
     }
 

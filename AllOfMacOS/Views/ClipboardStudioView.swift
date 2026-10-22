@@ -33,12 +33,12 @@ struct ClipboardStudioView: View {
         let entries = filteredEntries
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                AOMPageHeader("복사한 모든 것", subtitle: subtitle, systemImage: "doc.on.clipboard.fill",
+                AOMPageHeader("Clipboard", subtitle: subtitle, systemImage: "doc.on.clipboard.fill",
                               tint: store.paused ? .gray : .indigo) {
                     headerControls
                 }
-                AOMSearchField(prompt: "텍스트, 링크, 파일 검색", text: $search.query)
-                VStack(alignment: .leading, spacing: 12) {
+                AOMSearchField(prompt: "Search text, links and files", text: $search.query)
+                HStack(spacing: 12) {
                     pinboardsBar
                     Picker("Type", selection: $search.kind) {
                         Text("All").tag(ClipboardEntry.Kind?.none)
@@ -78,7 +78,7 @@ struct ClipboardStudioView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 380), spacing: 18)], spacing: 18) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 280), spacing: 10)], spacing: 10) {
                         ForEach(entries) { entry in
                             ClipboardStudioCard(
                                 entry: entry,
@@ -355,7 +355,7 @@ private struct ClipboardStudioCard: View {
             .padding(.vertical, 12)
 
             preview
-                .frame(height: 150)
+                .frame(height: 108)
                 .frame(maxWidth: .infinity)
                 .background(AOMTheme.cardAlt)
                 .clipped()
@@ -397,7 +397,7 @@ private struct ClipboardStudioCard: View {
                 }
             }
             .padding(.horizontal, 16)
-            .frame(height: 48)
+            .frame(height: 34)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
         .clipShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
