@@ -145,27 +145,27 @@ struct HubRowShell<Control: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 32, height: 32)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .frame(width: 40, height: 40)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                 if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(AOMTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 16)
             control
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .frame(minHeight: 56)
+        .frame(minHeight: 64)
         .contentShape(Rectangle())
     }
 }
@@ -561,7 +561,7 @@ struct SettingsHubView: View {
             footer
         }
         .frame(minWidth: 780, idealWidth: 900, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMTheme.canvas)
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
         .onReceive(NotificationCenter.default.publisher(for: .aomSettingChanged)) { _ in flashSaved() }
         .onReceive(NotificationCenter.default.publisher(for: .aomImportBTTPreset)) { _ in importBTTPreset() }
@@ -579,7 +579,9 @@ struct SettingsHubView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Settings")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 28, weight: .bold))
+                    .tracking(-0.6)
+                    .foregroundStyle(AOMTheme.text)
                 Spacer()
                 if savedFlash {
                     Label("저장됨", systemImage: "checkmark.circle.fill")
@@ -617,15 +619,14 @@ struct SettingsHubView: View {
                 Image(systemName: cat.symbol).font(.system(size: 11, weight: .semibold))
                 Text(cat.title).font(.system(size: 12, weight: .semibold))
             }
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.85))
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .foregroundStyle(selected ? Color.white : AOMTheme.textSecondary)
             .background {
-                Capsule().fill(selected ? appState.accentColorChoice.color : Color(nsColor: .controlBackgroundColor))
+                Capsule().fill(selected ? AOMTheme.blue : AOMTheme.card)
             }
-            .overlay {
-                Capsule().strokeBorder(Color(nsColor: .separatorColor).opacity(selected ? 0 : 0.5), lineWidth: 0.7)
-            }
+            .shadow(color: selected ? AOMTheme.blue.opacity(0.25) : AOMTheme.cardShadow,
+                    radius: selected ? 8 : 5, y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -671,10 +672,11 @@ struct SettingsHubView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(cat.title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(AOMTheme.text)
                 Text(cat.blurb)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(AOMTheme.textTertiary)
                 Spacer()
                 Text("\(rows.count)")
                     .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
@@ -686,15 +688,13 @@ struct SettingsHubView: View {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     row.content
                     if index < rows.count - 1 {
-                        Divider().opacity(0.45).padding(.leading, 62)
+                        Rectangle().fill(AOMTheme.divider).frame(height: 0.6).padding(.leading, 76)
                     }
                 }
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.7)
-            }
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: AOMTheme.cardShadow, radius: 12, y: 5)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 
@@ -702,7 +702,7 @@ struct SettingsHubView: View {
         HStack(spacing: 8) {
             Image(systemName: "bolt.horizontal.circle")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AOMTheme.textTertiary)
             Text("모든 변경은 즉시 적용되고 자동 저장됩니다.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -711,9 +711,9 @@ struct SettingsHubView: View {
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 12)
+        .background(AOMTheme.canvas)
     }
 
     private func flashSaved() {

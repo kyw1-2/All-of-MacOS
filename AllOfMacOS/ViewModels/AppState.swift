@@ -7,7 +7,7 @@ enum AccentColorChoice: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var color: Color {
         switch self {
-        case .blue: return Color(red: 0.0, green: 0.48, blue: 1.0)
+        case .blue: return Color(red: 0.192, green: 0.510, blue: 0.965)
         case .purple: return Color(red: 0.68, green: 0.32, blue: 0.88)
         case .pink: return Color(red: 1.0, green: 0.18, blue: 0.47)
         case .red: return Color(red: 1.0, green: 0.23, blue: 0.19)

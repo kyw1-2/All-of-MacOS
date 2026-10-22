@@ -8,13 +8,13 @@ import SwiftUI
 /// Apple-native app instead of five differently padded screens.
 enum AOMDesign {
     /// Outer page margin and the gap between sections.
-    static let pagePadding: CGFloat = 20
-    static let sectionSpacing: CGFloat = 18
-    static let gridSpacing: CGFloat = 12
+    static let pagePadding: CGFloat = AOMTheme.pagePadding
+    static let sectionSpacing: CGFloat = AOMTheme.sectionSpacing
+    static let gridSpacing: CGFloat = 14
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
-    static let surfaceRadius: CGFloat = 16
-    static let tileRadius: CGFloat = 12
-    static let controlRadius: CGFloat = 7
+    static let surfaceRadius: CGFloat = AOMTheme.cardRadius
+    static let tileRadius: CGFloat = 16
+    static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     static func animation(_ animation: Animation = .snappy(duration: 0.22)) -> Animation? {
@@ -24,19 +24,9 @@ enum AOMDesign {
 
 /// A static canvas: no live backdrop sampling, per-frame work or animated blur.
 struct AOMWorkspaceBackground: View {
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
-
     var body: some View {
-        Color(nsColor: .windowBackgroundColor)
-            .overlay(alignment: .top) {
-                if !reduceTransparency && contrast != .increased {
-                    LinearGradient(colors: [Color.accentColor.opacity(scheme == .dark ? 0.055 : 0.035), .clear],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .frame(height: 360)
-                }
-            }
+        AOMTheme.canvas
+            .ignoresSafeArea()
             .allowsHitTesting(false)
     }
 }
@@ -55,12 +45,12 @@ struct AOMSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(padding ?? 0)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? Color.accentColor.opacity(0.7) : Color(nsColor: .separatorColor).opacity(contrast == .increased ? 1 : 0.48),
-                                  lineWidth: highlighted ? 1.5 : (contrast == .increased ? 1 : 0.5))
+                    .strokeBorder(highlighted ? Color.accentColor : .clear, lineWidth: highlighted ? 2 : 0)
             }
+            .shadow(color: AOMTheme.cardShadow, radius: 14, x: 0, y: 6)
     }
 }
 
@@ -114,12 +104,12 @@ struct AOMSectionHeader<Accessory: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 if let systemImage {
-                    Label(title, systemImage: systemImage).font(.headline)
+                    Label(title, systemImage: systemImage).font(.aomHeadline(16))
                 } else {
-                    Text(title).font(.headline)
+                    Text(title).font(.aomHeadline(16))
                 }
                 if let caption {
-                    Text(caption).font(.caption).foregroundStyle(.secondary)
+                    Text(caption).font(.aomCaption(12.5)).foregroundStyle(AOMTheme.textSecondary)
                 }
             }
             Spacer(minLength: 8)
@@ -168,14 +158,14 @@ struct AOMPageHeader<Trailing: View>: View {
     private var heading: some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.system(size: 23, weight: .medium))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 44, height: 44)
-                .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .frame(width: 50, height: 50)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 24, weight: .bold)).tracking(-0.5)
-                Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.system(size: 28, weight: .bold)).tracking(-0.7).foregroundStyle(AOMTheme.text)
+                Text(subtitle).font(.aomBody(13.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
             }
         }
     }
@@ -185,14 +175,14 @@ struct AOMPageHeader<Trailing: View>: View {
 struct AOMIconTile: View {
     let systemImage: String
     var tint: Color = .accentColor
-    var size: CGFloat = 28
+    var size: CGFloat = 36
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: size * 0.46, weight: .semibold))
+            .font(.system(size: size * 0.44, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
-            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous))
             .accessibilityHidden(true)
     }
 }
@@ -211,7 +201,7 @@ struct AOMMetricTile: View {
             AOMIconTile(systemImage: systemImage, tint: tint, size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text(value)
-                    .font(.system(.title2, design: .rounded).weight(.semibold))
+                    .font(.system(size: 26, weight: .bold))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .lineLimit(1)
@@ -247,30 +237,29 @@ struct AOMActionTile: View {
             VStack(alignment: .leading, spacing: 15) {
                 HStack {
                     Image(systemName: systemImage)
-                        .font(.system(size: 23, weight: .medium)).foregroundStyle(tint)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 42, height: 42)
+                        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                     Spacer()
                     Image(systemName: "arrow.up.right")
                         .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                    if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                    Text(title).font(.aomLabel(15)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                    if let subtitle { Text(subtitle).font(.aomBody(12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2) }
                 }
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 122, alignment: .topLeading)
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(tint.opacity(hovering ? 0.09 : 0.035))
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(tint.opacity(hovering ? 0.07 : 0))
                     .allowsHitTesting(false)
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(hovering ? tint.opacity(0.35) : Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.5)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: AOMTheme.cardShadow, radius: hovering ? 18 : 12, x: 0, y: hovering ? 8 : 5)
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

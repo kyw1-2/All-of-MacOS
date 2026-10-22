@@ -32,11 +32,12 @@ struct AOMHomeView: View {
         HStack(alignment: .bottom, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(greeting)
-                    .font(.system(size: 27, weight: .bold))
-                    .tracking(-0.6)
+                    .font(.system(size: 34, weight: .bold))
+                    .tracking(-1.0)
+                    .foregroundStyle(AOMTheme.text)
                 Text("캡처하고, 자동화하고, 방금 한 작업을 이어서 하세요.")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14))
+                    .foregroundStyle(AOMTheme.textSecondary)
             }
             Spacer(minLength: 12)
             statusChip
@@ -56,23 +57,24 @@ struct AOMHomeView: View {
         Button { appState.toggleGlobalEnabled() } label: {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(appState.globalEnabled ? Color.green : Color.orange)
-                    .frame(width: 7, height: 7)
+                    .fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
+                    .frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
                     Text("\(appState.currentPreset.triggers.filter(\.isEnabled).count)개 제스처 동작")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(AOMTheme.textSecondary)
                 }
                 Image(systemName: appState.globalEnabled ? "pause.fill" : "play.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 2)
             }
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: AOMTheme.cardShadow, radius: 8, y: 3)
         }
         .buttonStyle(.plain)
         .help(appState.globalEnabled ? "Pause automation" : "Resume automation")
@@ -121,18 +123,18 @@ struct AOMHomeView: View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: symbol)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(filled ? Color.white : tint)
-                    .frame(width: 44, height: 44)
-                    .background(filled ? Color.white.opacity(0.2) : tint.opacity(0.13),
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
+                    .frame(width: 50, height: 50)
+                    .background(filled ? Color.white.opacity(0.22) : tint.opacity(0.13),
+                                in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 14.5, weight: .bold))
-                        .foregroundStyle(filled ? Color.white : Color.primary)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(filled ? Color.white : AOMTheme.text)
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(filled ? Color.white.opacity(0.8) : Color.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(filled ? Color.white.opacity(0.85) : AOMTheme.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -140,19 +142,17 @@ struct AOMHomeView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(filled ? Color.white.opacity(0.85) : Color.secondary)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 84)
+            .padding(.horizontal, 20)
+            .frame(height: 100)
             .frame(maxWidth: .infinity)
             .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(filled ? AnyShapeStyle(LinearGradient(colors: [tint, tint.opacity(0.78)],
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(filled ? AnyShapeStyle(LinearGradient(colors: [tint, tint.aomDarker(0.18)],
                                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
-                          : AnyShapeStyle(Color(nsColor: .controlBackgroundColor)))
+                          : AnyShapeStyle(AOMTheme.card))
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(filled ? 0 : 0.45), lineWidth: 0.6)
-            }
+            .shadow(color: filled ? tint.opacity(0.28) : AOMTheme.cardShadow,
+                    radius: filled ? 16 : 12, x: 0, y: 7)
         }
         .buttonStyle(.plain)
     }
@@ -161,21 +161,21 @@ struct AOMHomeView: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(tint)
-                    .frame(width: 28, height: 28)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                Text(title).font(.system(size: 12, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(AOMTheme.text)
                 Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AOMTheme.textTertiary)
             }
-            .padding(.horizontal, 13)
-            .frame(height: 48)
+            .padding(.horizontal, 16)
+            .frame(height: 62)
             .frame(maxWidth: .infinity)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.6)
-            }
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: AOMTheme.cardShadow, radius: 10, y: 4)
         }
         .buttonStyle(.plain)
     }
@@ -199,27 +199,25 @@ struct AOMHomeView: View {
         } label: {
             HStack(spacing: 11) {
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(tint)
-                    .frame(width: 32, height: 32)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
+                    .frame(width: 36, height: 36)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
                     Text(value.formatted())
-                        .font(.system(size: 17, weight: .bold).monospacedDigit())
+                        .font(.system(size: 24, weight: .bold).monospacedDigit())
+                        .foregroundStyle(AOMTheme.text)
                     Text(title)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(AOMTheme.textSecondary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 13)
-            .frame(height: 58)
+            .padding(.horizontal, 16)
+            .frame(height: 74)
             .frame(maxWidth: .infinity)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.6)
-            }
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: AOMTheme.cardShadow, radius: 10, y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title): \(value)")
@@ -393,15 +391,15 @@ struct AOMGroup<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.headline)
+                Text(title).font(.aomHeadline(17)).foregroundStyle(AOMTheme.text)
                 Spacer()
-                if let trailing { Text(trailing).font(.caption).foregroundStyle(.secondary) }
+                if let trailing { Text(trailing).font(.aomCaption(12)).foregroundStyle(AOMTheme.textTertiary) }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
             VStack(spacing: 0) { content }
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 0.5))
+                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: AOMTheme.cardShadow, radius: 12, y: 5)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -440,11 +438,12 @@ struct AOMRow<Trailing: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                AOMIconTile(systemImage: symbol, tint: dimmed ? .gray : tint, size: 24)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).lineLimit(1).foregroundStyle(dimmed ? .secondary : .primary)
+                AOMIconTile(systemImage: symbol, tint: dimmed ? .gray : tint, size: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.aomLabel(14)).lineLimit(1)
+                        .foregroundStyle(dimmed ? AOMTheme.textTertiary : AOMTheme.text)
                     if let detail, !detail.isEmpty {
-                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(detail).font(.aomBody(12)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
@@ -453,15 +452,15 @@ struct AOMRow<Trailing: View>: View {
                     Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .frame(minHeight: 40)
-            .background(hovering && interactive ? Color.primary.opacity(0.045) : .clear)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minHeight: 56)
+            .background(hovering && interactive ? AOMTheme.cardAlt : .clear)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .gesture(TapGesture(count: 2).onEnded { onDoubleClick?() }, including: onDoubleClick == nil ? .subviews : .all)
             .simultaneousGesture(TapGesture().onEnded { onSelect?() }, including: onSelect == nil ? .subviews : .all)
-            if showsDivider { Divider().padding(.leading, 46) }
+            if showsDivider { Rectangle().fill(AOMTheme.divider).frame(height: 0.6).padding(.leading, 62) }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(onSelect != nil ? .isButton : [])
@@ -478,14 +477,14 @@ struct AOMLinkRow: View {
     var body: some View {
         Button(action: action) {
             HStack {
-                Text(title).foregroundStyle(.tint)
+                Text(title).font(.aomLabel(13.5)).foregroundStyle(AOMTheme.blue)
                 Spacer()
                 if let shortcut { Text(shortcut).font(.caption).foregroundStyle(.secondary) }
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 36)
-            .background(hovering ? Color.primary.opacity(0.045) : .clear)
+            .padding(.horizontal, 16)
+            .frame(minHeight: 48)
+            .background(hovering ? AOMTheme.cardAlt : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

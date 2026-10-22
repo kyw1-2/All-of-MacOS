@@ -33,17 +33,10 @@ struct AOMMainShell<Content: View>: View {
                 .frame(width: 236)
                 .tutorialAnchor(.sidebar)
 
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.45))
-                .frame(width: 0.5)
-
             VStack(spacing: 0) {
                 AOMMainTopBar(showingCommandPalette: $showingCommandPalette,
                               showLog: $showLog,
                               showTouchVisualizer: $showTouchVisualizer)
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor).opacity(0.4))
-                    .frame(height: 0.5)
                 HStack(spacing: 0) {
                     content
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,23 +84,24 @@ struct AOMMainSidebar: View {
             Spacer(minLength: 0)
             footer
         }
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
+        .background(AOMTheme.canvas)
     }
 
     private var wordmark: some View {
         HStack(alignment: .center, spacing: 9) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(LinearGradient(colors: [appState.accentColorChoice.color, appState.accentColorChoice.color.opacity(0.65)],
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(LinearGradient(colors: [AOMTheme.blue, AOMTheme.blue.aomDarker(0.12)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 26, height: 26)
+                .frame(width: 30, height: 30)
                 .overlay {
                     Image(systemName: "square.stack.3d.up.fill")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 13.5, weight: .bold))
                         .foregroundStyle(.white)
                 }
-            VStack(alignment: .leading, spacing: 0) {
-                Text("All of MacOS").font(.system(size: 13.5, weight: .bold))
-                Text("AOM").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.tertiary)
+                .shadow(color: AOMTheme.blue.opacity(0.3), radius: 6, y: 2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("All of MacOS").font(.system(size: 15, weight: .bold)).foregroundStyle(AOMTheme.text)
+                Text("AOM").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
             }
             Spacer(minLength: 0)
         }
@@ -120,20 +114,20 @@ struct AOMMainSidebar: View {
         Button { appState.toggleGlobalEnabled() } label: {
             HStack(spacing: 7) {
                 Circle()
-                    .fill(appState.globalEnabled ? Color.green : Color.orange)
+                    .fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
                     .frame(width: 7, height: 7)
                 Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(appState.globalEnabled ? .primary : .secondary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AOMTheme.text)
                 Spacer(minLength: 0)
                 Image(systemName: appState.globalEnabled ? "pause.fill" : "play.fill")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AOMTheme.textSecondary)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background((appState.globalEnabled ? Color.green : Color.orange).opacity(0.1),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(AOMTheme.card,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(appState.globalEnabled ? "Pause automation" : "Resume automation")
@@ -155,12 +149,12 @@ struct AOMMainSidebar: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.iconName)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(selected ? appState.accentColorChoice.color : Color.secondary)
-                    .frame(width: 20)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
+                    .frame(width: 22)
                 Text(tab.title)
-                    .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.78))
+                    .font(.system(size: 13.5, weight: selected ? .bold : .medium))
+                    .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
                 Spacer(minLength: 0)
                 if tab == .gestures {
                     let count = appState.currentPreset.triggers.filter(\.isEnabled).count
@@ -171,12 +165,18 @@ struct AOMMainSidebar: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
+            .padding(.horizontal, 12)
+            .frame(height: 42)
             .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(selected ? appState.accentColorChoice.color.opacity(0.13)
-                          : (hoveringTab == tab ? Color.primary.opacity(0.055) : .clear))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(hoveringTab == tab && !selected ? AOMTheme.divider.opacity(0.5) : .clear)
+            }
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(AOMTheme.card)
+                        .shadow(color: AOMTheme.cardShadow, radius: 8, y: 3)
+                }
             }
         }
         .buttonStyle(.plain)
@@ -227,9 +227,9 @@ struct AOMMainSidebar: View {
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -306,9 +306,9 @@ struct AOMMainSidebar: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 9.5, weight: .semibold))
-            .tracking(0.6)
-            .foregroundStyle(.tertiary)
+            .font(.system(size: 10.5, weight: .bold))
+            .tracking(0.5)
+            .foregroundStyle(AOMTheme.textTertiary)
             .padding(.horizontal, 10)
             .padding(.bottom, 2)
     }
@@ -330,10 +330,12 @@ struct AOMMainTopBar: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(appState.selectedMainTab.title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 23, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(AOMTheme.text)
                 Text(appState.selectedMainTab.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(AOMTheme.textSecondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 16)
@@ -349,10 +351,10 @@ struct AOMMainTopBar: View {
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
                         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
                 }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(AOMTheme.textSecondary)
+                .padding(.horizontal, 13)
+                .frame(height: 34)
+                .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .buttonStyle(.plain)
             .help("Open the command palette (⌘K)")
@@ -364,17 +366,19 @@ struct AOMMainTopBar: View {
                 Toggle("Diagnostics Console", isOn: $showLog)
             } label: {
                 Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 28)
             .help("Diagnostics")
         }
-        .padding(.horizontal, 20)
-        .frame(height: 58)
-        .background(.bar)
+        .padding(.horizontal, 28)
+        .frame(height: 76)
+        .background(AOMTheme.canvas)
     }
 
     private var quickCapture: some View {
@@ -391,9 +395,9 @@ struct AOMMainTopBar: View {
                 Text("Capture").font(.system(size: 11.5, weight: .semibold))
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(appState.accentColorChoice.color, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 15)
+            .frame(height: 34)
+            .background(AOMTheme.blue, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

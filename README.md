@@ -2,6 +2,13 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.6.0
+
+A single app-wide visual language: light grey canvas, white borderless cards with soft
+elevation, big confident type and one vivid blue accent. Every page (Home, Gestures,
+Window Tiling, Capture, Clipboard, Insights, Settings) now shares the same tokens and
+reads as one product instead of a System Settings list.
+
 ## Version 1.5.0
 
 The main window is rebuilt around a single navigation rail and one stable page header:
