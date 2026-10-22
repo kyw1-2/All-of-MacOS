@@ -87,7 +87,7 @@ struct AOMHomeView: View {
             if wide {
                 HStack(spacing: 12) {
                     primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
-                                symbol: "viewfinder", tint: .orange, filled: true) {
+                                symbol: "viewfinder", tint: AOMTheme.blue, filled: true) {
                         CaptureCoordinator.shared.captureArea()
                     }
                     primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
@@ -98,7 +98,7 @@ struct AOMHomeView: View {
             } else {
                 VStack(spacing: 12) {
                     primaryCard(title: "화면 캡처", subtitle: "영역을 끌어 선택하거나 전체 화면을 찍어요",
-                                symbol: "viewfinder", tint: .orange, filled: true) {
+                                symbol: "viewfinder", tint: AOMTheme.blue, filled: true) {
                         CaptureCoordinator.shared.captureArea()
                     }
                     primaryCard(title: "클립보드", subtitle: "복사한 모든 것을 한 곳에서 다시 꺼내요",
