@@ -4,16 +4,16 @@ import SwiftUI
 // MARK: - Design tokens
 
 /// One set of spacing, radius and surface rules for every AOM page, so
-/// Gestures, Window Tiling, Capture, Clipboard and Insights read as one
+/// Automation, Window Tiling, Capture, Clipboard and Insights read as one
 /// Apple-native app instead of five differently padded screens.
 enum AOMDesign {
     /// Outer page margin and the gap between sections.
-    static let pagePadding: CGFloat = 24
+    static let pagePadding: CGFloat = AOMTheme.pagePadding
     static let sectionSpacing: CGFloat = AOMTheme.sectionSpacing
-    static let gridSpacing: CGFloat = 10
+    static let gridSpacing: CGFloat = 14
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
     static let surfaceRadius: CGFloat = AOMTheme.cardRadius
-    static let tileRadius: CGFloat = 10
+    static let tileRadius: CGFloat = 14
     static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -22,69 +22,71 @@ enum AOMDesign {
     }
 }
 
-/// A static canvas: no live backdrop sampling, per-frame work or animated blur.
+/// Pages draw no canvas of their own: the main shell owns one canvas, so every
+/// page sits on the same calm surface.
 struct AOMWorkspaceBackground: View {
-    var body: some View {
-        AOMAmbientBackground()
-    }
+    var body: some View { Color.clear }
+}
+
+private struct AOMHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 // MARK: - Surfaces
 
-/// Shared card surface with restrained elevation and an explicit outline
-/// when Increase Contrast is enabled.
+/// Shared paper surface; `highlighted` draws an accent outline.
 struct AOMSurface: ViewModifier {
     var radius: CGFloat = AOMDesign.surfaceRadius
-    var padding: CGFloat? = 14
+    var padding: CGFloat? = 16
     var highlighted = false
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         content
-            .padding(padding ?? 0)
-            .background {
-                if reduceTransparency {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(AOMTheme.card)
-                } else {
+            .aomCardStyle(.paper, radius: radius, padding: padding, hovering: highlighted)
+            .overlay {
+                if highlighted {
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                                .fill(scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.50))
-                        }
+                        .strokeBorder(AOMTheme.blue.opacity(0.85), lineWidth: 1.5)
+                        .allowsHitTesting(false)
                 }
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? AOMTheme.blue
-                                  : (contrast == .increased ? AOMTheme.textSecondary : Color.white.opacity(scheme == .dark ? 0.20 : 0.60)),
-                                  lineWidth: highlighted ? 1.5 : 0.9)
-            }
-            .shadow(color: AOMTheme.cardShadow, radius: 16, x: 0, y: 7)
     }
 }
 
 extension View {
-    func aomSurface(radius: CGFloat = AOMDesign.surfaceRadius, padding: CGFloat? = 14, highlighted: Bool = false) -> some View {
+    func aomSurface(radius: CGFloat = AOMDesign.surfaceRadius, padding: CGFloat? = 16, highlighted: Bool = false) -> some View {
         modifier(AOMSurface(radius: radius, padding: padding, highlighted: highlighted))
     }
 
-    /// Bottom floating confirmation, shared by every page (material capsule,
+    /// Reports this view's laid-out height, so a page can size its sheet to
+    /// end exactly at the bottom margin below a header of any height.
+    func aomReadHeight(_ height: Binding<CGFloat>) -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: AOMHeightPreferenceKey.self, value: proxy.size.height)
+            }
+        }
+        .onPreferenceChange(AOMHeightPreferenceKey.self) { value in
+            if abs(height.wrappedValue - value) > 0.5 { height.wrappedValue = value }
+        }
+    }
+
+    /// Bottom floating confirmation, shared by every page (glass capsule,
     /// readable in light and dark mode, announced to VoiceOver).
     func aomToast(_ message: String?) -> some View {
         overlay(alignment: .bottom) {
             if let message {
                 Label(message, systemImage: "checkmark.circle.fill")
-                    .font(.callout.weight(.medium))
+                    .font(.system(size: 13.5, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-                    .padding(.bottom, 18)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(AOMTheme.ink.opacity(0.94), in: Capsule())
+                    .overlay(Capsule().strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
+                    .shadow(color: .black.opacity(0.16), radius: 16, y: 6)
+                    .padding(.bottom, 20)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .accessibilityAddTraits(.updatesFrequently)
                     .onAppear { NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
@@ -95,27 +97,39 @@ extension View {
     }
 }
 
-/// Quiet toolbar button used by page headers: material pill, no accent fill.
+/// Toolbar button used by page headers: a white pill with a hairline.
 struct AOMToolbarButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
+        AOMToolbarButtonBody(configuration: configuration)
+    }
+}
+
+private struct AOMToolbarButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         configuration.label
-            .font(Font.aomLabel(12.5))
-            .foregroundStyle(AOMTheme.textSecondary)
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.8)
-            }
-            .opacity(configuration.isPressed ? 0.72 : (isEnabled ? 1 : 0.45))
+            .font(.system(size: 13.5, weight: .medium))
+            .foregroundStyle(AOMTheme.text)
+            .padding(.horizontal, 13)
+            .frame(height: 34)
+            .background(hovering ? AOMTheme.cardAlt : AOMTheme.paper, in: shape)
+            .overlay(shape.strokeBorder(AOMTheme.hairline, lineWidth: 0.75))
+            .contentShape(shape)
+            .opacity(isEnabled ? 1 : 0.45)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
+            .onHover { hovering = $0 }
     }
 }
 
 // MARK: - Section header
 
-/// Title + optional caption and trailing accessory, aligned to the grid.
+/// Section title with an optional caption and trailing accessory.
 struct AOMSectionHeader<Accessory: View>: View {
     let title: String
     var systemImage: String?
@@ -131,15 +145,18 @@ struct AOMSectionHeader<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let systemImage {
-                    Label(title, systemImage: systemImage).font(Font.aomHeadline(13))
-                } else {
-                    Text(title).font(Font.aomHeadline(13))
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    if let systemImage {
+                        Image(systemName: systemImage).font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AOMTheme.textSecondary)
+                    }
+                    Text(title).font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
                 }
+                .accessibilityAddTraits(.isHeader)
                 if let caption {
-                    Text(caption).font(Font.aomCaption(11)).foregroundStyle(AOMTheme.textSecondary)
+                    Text(caption).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
@@ -151,8 +168,8 @@ struct AOMSectionHeader<Accessory: View>: View {
 
 // MARK: - Page header
 
-/// A consistent page heading, live summary and native controls. Controls move
-/// below the title when a compact detail column needs more room.
+/// A page heading: squircle badge, 26 pt title, 14 pt subtitle and native
+/// controls. Controls move below the title when space is short.
 struct AOMPageHeader<Trailing: View>: View {
     let title: String
     let subtitle: String
@@ -181,22 +198,17 @@ struct AOMPageHeader<Trailing: View>: View {
                 trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
             }
         }
-        .padding(.bottom, 12)
-        .overlay(alignment: .bottom) { AOMTheme.divider.opacity(0.5).frame(height: 0.5) }
+        .padding(.bottom, 8)
         .accessibilityElement(children: .contain)
     }
 
     private var heading: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 50, height: 50)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 30, weight: .bold)).tracking(-0.8).foregroundStyle(AOMTheme.text)
-                Text(subtitle).font(Font.aomBody(13.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
+        HStack(spacing: 14) {
+            AOMIconBadge(systemImage: systemImage, tint: tint, size: 44, filled: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).aomPageTitle().lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
+                Text(subtitle).font(AOMType.subtitle).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
             }
         }
     }
@@ -209,12 +221,117 @@ struct AOMIconTile: View {
     var size: CGFloat = 36
 
     var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: size * 0.44, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: size, height: size)
+        AOMIconBadge(systemImage: systemImage, tint: tint, size: size)
+    }
+}
 
-            .accessibilityHidden(true)
+// MARK: - Stat strip
+
+/// One figure in an `AOMStatStrip`.
+struct AOMStatItem: Identifiable {
+    var id: String { title }
+    let title: String
+    let value: String
+    var unit: String?
+    var detail: String?
+    let systemImage: String
+    var tint: Color = AOMTheme.blue
+    var action: (() -> Void)?
+}
+
+/// Summary figures as one integrated band — equal columns divided by
+/// hairlines, the way Toss summarises assets and Screen Time heads its page —
+/// instead of a row of separate cards. Columns with an action are buttons.
+struct AOMStatStrip: View {
+    let items: [AOMStatItem]
+    /// Figures per row; `nil` keeps them all on one row.
+    var columns: Int?
+
+    var body: some View {
+        let perRow = max(1, columns ?? items.count)
+        let rows = stride(from: 0, to: items.count, by: perRow).map { Array(items[$0..<min($0 + perRow, items.count)]) }
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                if rowIndex > 0 {
+                    AOMDivider().padding(.horizontal, 14)
+                }
+                HStack(spacing: 0) {
+                    ForEach(Array(row.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            AOMDivider(axis: .vertical).padding(.vertical, 18)
+                        }
+                        AOMStatCell(item: item).padding(6)
+                    }
+                    // Keep column widths equal on a short last row.
+                    ForEach(0..<(perRow - row.count), id: \.self) { _ in
+                        Color.clear.frame(maxWidth: .infinity).padding(6)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct AOMStatCell: View {
+    let item: AOMStatItem
+
+    var body: some View {
+        if let action = item.action {
+            Button(action: action) { content(navigates: true) }
+                .buttonStyle(AOMRowButtonStyle(radius: 14))
+                .help("Open \(item.title)")
+        } else {
+            content(navigates: false)
+        }
+    }
+
+    private func content(navigates: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                AOMIconBadge(systemImage: item.systemImage, tint: item.tint, size: 24, filled: true)
+                Text(item.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .lineLimit(1)
+                if navigates {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(AOMTheme.textTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(item.value)
+                        .font(AOMType.metric(28))
+                        .tracking(-0.4)
+                        .monospacedDigit()
+                        .foregroundStyle(AOMTheme.text)
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if let unit = item.unit {
+                        Text(unit)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AOMTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+                if let detail = item.detail {
+                    Text(detail)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(AOMTheme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([item.title, item.value, item.unit, item.detail].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityAddTraits(navigates ? .isButton : [])
     }
 }
 
@@ -228,21 +345,25 @@ struct AOMMetricTile: View {
     var detail: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(AOMTheme.textSecondary)
-                Spacer(minLength: 4)
-                Image(systemName: systemImage).font(.system(size: 12)).foregroundStyle(AOMTheme.textTertiary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                AOMIconBadge(systemImage: systemImage, tint: tint, size: 32)
+                Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                Spacer(minLength: 0)
             }
-            Text(value).font(.system(size: 26, weight: .medium, design: .rounded))
-                .monospacedDigit().contentTransition(.numericText()).lineLimit(1)
+            Text(value)
+                .font(AOMType.metric(32))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .foregroundStyle(AOMTheme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             if let detail {
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(AOMTheme.cardAlt.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
+        .aomCardStyle(.paper, padding: 18)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value)")
     }
@@ -250,37 +371,30 @@ struct AOMMetricTile: View {
 
 // MARK: - Quick action tile
 
-/// A launch tile: icon, title, keyboard hint. Large hit target, hover
-/// feedback, and the standard focus ring through `.buttonStyle(.plain)`.
+/// A launch tile: squircle badge, title, hint. Large hit target, hover lift,
+/// spring press, standard focus ring.
 struct AOMActionTile: View {
     let title: String
     let systemImage: String
     var tint: Color = .accentColor
     var subtitle: String?
     let action: () -> Void
-    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 17, weight: .medium)).foregroundStyle(tint)
-                    .frame(width: 30, height: 30)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.text).lineLimit(1)
-                    if let subtitle { Text(subtitle).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1) }
+            HStack(spacing: 12) {
+                AOMIconBadge(systemImage: systemImage, tint: tint, size: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 0)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-            .background(hovering ? AOMTheme.cardAlt : AOMTheme.card,
-                        in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius))
-            .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius))
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
         }
-        .buttonStyle(AOMCardButtonStyle())
-        .onHover { hovering = $0 }
+        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMDesign.tileRadius, padding: 12))
         .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
     }
 }

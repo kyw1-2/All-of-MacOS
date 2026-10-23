@@ -825,59 +825,51 @@ class ActionExecutor {
 
     private(set) static var activeTextTypingSessions = 0
 
-    static func textEvents(_ units: [UInt16], keyCode: CGKeyCode = 0, shifted: Bool = false,
-                           hardwareOnly: Bool = false) -> (CGEvent, CGEvent)? {
-        let source = CGEventSource(stateID: hardwareOnly ? .hidSystemState : .privateState)
+    /// One key pair for a typed character. Always a private event source: a
+    /// `.hidSystemState` source carrying ⇧ or ⌘ flags latches that modifier in
+    /// the HID system state after the key-up (observed on macOS 27.2), which
+    /// then shifts or command-modifies the user's next physical keystrokes.
+    static func textEvents(_ units: [UInt16], keyCode: CGKeyCode = 0, shifted: Bool = false) -> (CGEvent, CGEvent)? {
+        let source = CGEventSource(stateID: .privateState)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { return nil }
         for event in [down, up] {
             event.flags = shifted ? .maskShift : []
             event.setIntegerValueField(.eventSourceUserData, value: 0x475454)
             event.setIntegerValueField(.keyboardEventKeyboardType, value: Int64(LMGetKbdType()))
-            if !hardwareOnly {
-                units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
-            }
+            units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
         }
         return (down, up)
     }
 
     private static func typeText(_ text: String, intervalMs: Int?, isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+        // Input-source lookups and the session counter belong to the main thread;
+        // trackpad and event-tap triggers arrive on their own threads.
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { typeText(text, intervalMs: intervalMs, isCancelled: isCancelled, completion: completion) }
+            return
+        }
         guard !text.isEmpty else { completion(true); return }
         guard AXIsProcessTrusted(), let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else {
             completion(false); return
         }
         let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        // Password fields, including the SecurityAgent authorization dialog,
+        // accept posted keystrokes while Secure Event Input is on (verified on
+        // macOS 27.2: every character lands, exactly). What they need is a clean
+        // delivery: the shortcut's own modifiers released first, a private event
+        // source so no modifier latches in the HID system state, and one session
+        // that stops rather than retries if focus moves. Nothing touches the
+        // pasteboard, so a password never reaches clipboard history or Handoff.
         let secureInput = IsSecureEventInputEnabled()
-        if secureInput {
-            // Password fields drop synthetic key events entirely (Secure Event
-            // Input). Paste is still accepted, so deliver the text through a
-            // concealed pasteboard round-trip instead of failing silently.
-            activeTextTypingSessions += 1
-            SecureTextPaste.deliver(text) { success in
-                activeTextTypingSessions = max(0, activeTextTypingSessions - 1)
-                if !success {
-                    GestureLog.shared.logFromAnyThread("Secure text delivery failed: the focused control rejected paste", level: .error)
-                }
-                completion(success)
-            }
-            return
-        }
         let keyboardLayout = TextTypingKeyboardLayout()
-        if secureInput {
-            // Validate the entire payload before delivering a partial password.
-            // Secure controls can ignore Unicode overrides; use only real keys.
-            var cursor = TextTypingCursor(text)
-            while let stroke = cursor.next() {
-                guard keyboardLayout.key(for: stroke.units) != nil else {
-                    GestureLog.shared.logFromAnyThread("Secure typing stopped: a character is unavailable in the current keyboard layout", level: .error)
-                    completion(false)
-                    return
-                }
-            }
-        }
         activeTextTypingSessions += 1
         let finish: (Bool) -> Void = { success in
             activeTextTypingSessions = max(0, activeTextTypingSessions - 1)
+            if !success && secureInput {
+                // Never log the payload; say only why delivery stopped.
+                GestureLog.shared.logFromAnyThread("Typing into the password field stopped: release the shortcut keys and keep the field focused", level: .error)
+            }
             completion(success)
         }
         let session = TextTypingSession(text: text, intervalMs: secureInput ? max(20, intervalMs ?? 20) : intervalMs, environment: .init(
@@ -897,10 +889,11 @@ class ActionExecutor {
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return false }
                 let key = keyboardLayout.key(for: stroke.units)
                 guard let (down, up) = textEvents(stroke.units, keyCode: key?.code ?? stroke.keyCode,
-                                                 shifted: key?.shifted ?? stroke.shifted, hardwareOnly: secureInput) else { return false }
+                                                 shifted: key?.shifted ?? stroke.shifted) else { return false }
                 // Secure text controls need normal WindowServer keyboard routing;
-                // posting directly to a PID skips that route. Unicode still handles
-                // Hangul/emoji; layout-matched keycodes cover hardware-only controls.
+                // posting directly to a PID skips that route. The Unicode payload
+                // is authoritative (Hangul, emoji, symbols); the layout-matched
+                // keycode serves receivers that read key codes.
                 down.post(tap: .cghidEventTap)
                 up.post(tap: .cghidEventTap)
                 return true

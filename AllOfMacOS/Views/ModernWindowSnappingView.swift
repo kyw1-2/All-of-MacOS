@@ -12,11 +12,21 @@ struct ModernWindowSnappingView: View {
     @State private var showingProfiles = false
     @State private var showingWindowLayouts = false
 
-    private let primaryLayouts: [CustomSnapZone.Layout] = [
-        .leftHalf, .rightHalf, .maximize, .center,
-        .topLeft, .topRight, .bottomLeft, .bottomRight,
-        .leftThird, .centerThird, .rightThird,
-        .leftTwoThirds, .rightTwoThirds, .topHalf, .bottomHalf, .nextDisplay
+    /// Layouts grouped the way the Window menu groups them, with short labels
+    /// (the full name stays in help and VoiceOver).
+    private struct LayoutGroup: Identifiable {
+        let title: String
+        let layouts: [(layout: CustomSnapZone.Layout, label: String)]
+        var id: String { title }
+    }
+
+    private let layoutGroups: [LayoutGroup] = [
+        LayoutGroup(title: "Halves", layouts: [(.leftHalf, "Left"), (.rightHalf, "Right"), (.topHalf, "Top"), (.bottomHalf, "Bottom")]),
+        LayoutGroup(title: "Quarters", layouts: [(.topLeft, "Top Left"), (.topRight, "Top Right"),
+                                                 (.bottomLeft, "Bottom Left"), (.bottomRight, "Bottom Right")]),
+        LayoutGroup(title: "Thirds", layouts: [(.leftThird, "Left"), (.centerThird, "Center"), (.rightThird, "Right")]),
+        LayoutGroup(title: "Two Thirds", layouts: [(.leftTwoThirds, "Left"), (.rightTwoThirds, "Right")]),
+        LayoutGroup(title: "Fill", layouts: [(.maximize, "Maximize"), (.center, "Center"), (.nextDisplay, "Next Display")])
     ]
 
     private var requiresOption: Bool {
@@ -36,34 +46,75 @@ struct ModernWindowSnappingView: View {
         }
     }
 
+    /// Page padding and spacing around the sheet (the header is measured).
+    static let chromeHeight: CGFloat = AOMDesign.pagePadding + 18 + 24
+    /// Everything in the sheet's left column except the stage: paddings, the
+    /// gap and the five rows of layout chips with their heading (≈245 pt, plus
+    /// a little slack so text metrics can never push the grid out of the sheet).
+    static let tileBlockHeight: CGFloat = 20 + 20 + 256 + 20
+    static let minimumStageHeight: CGFloat = 150
+    static let maximumStageHeight: CGFloat = 360
+    @State private var headerHeight: CGFloat = 59
+
     var body: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 720
+            let wide = geometry.size.width >= 820
+            // When the window is tall enough the sheet fills it exactly and the
+            // stage takes whatever height the tile grid leaves; otherwise the
+            // stage keeps its minimum and the page scrolls.
+            let sheetHeight = geometry.size.height - Self.chromeHeight - headerHeight
+            let fits = wide && sheetHeight - Self.tileBlockHeight >= Self.minimumStageHeight
+            let stageHeight = fits
+                ? min(Self.maximumStageHeight, sheetHeight - Self.tileBlockHeight)
+                : Self.minimumStageHeight
             ScrollView {
-                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
+                VStack(alignment: .leading, spacing: 18) {
                     AOMPageHeader("Window Tiling", subtitle: appState.snapStatus,
                                   systemImage: "rectangle.split.2x2.fill",
-                                  tint: appState.currentPreset.snappingEnabled ? .blue : .gray) {
+                                  tint: appState.currentPreset.snappingEnabled ? AOMTheme.indigo : .gray) {
                         Toggle("Drag to Snap", isOn: Binding(
                             get: { appState.currentPreset.snappingEnabled },
                             set: { appState.setSnappingEnabled($0) }
                         ))
                         .toggleStyle(.switch)
                     }
-                    if wide {
-                        HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
-                            stageSection.frame(maxWidth: .infinity)
-                            controlsColumn.frame(width: min(270, geometry.size.width * 0.36))
+                    .aomReadHeight($headerHeight)
+                    Group {
+                        if wide {
+                            HStack(alignment: .top, spacing: 0) {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    stageSection(height: stageHeight)
+                                    tileSection
+                                }
+                                .padding(20)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                AOMDivider(axis: .vertical)
+                                controlsColumn
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 14)
+                                    .frame(width: 330)
+                                    .frame(maxHeight: .infinity, alignment: .top)
+                            }
+                            .frame(height: fits ? sheetHeight : nil)
+                            .fixedSize(horizontal: false, vertical: !fits)
+                        } else {
+                            VStack(alignment: .leading, spacing: 20) {
+                                stageSection(height: stageHeight)
+                                tileSection
+                                AOMDivider()
+                                controlsColumn
+                            }
+                            .padding(20)
                         }
-                    } else {
-                        stageSection
-                        controlsColumn
                     }
-                    zonesGridSection
+                    .aomCardStyle(.paper, radius: 22, padding: 0)
                 }
-                .padding(AOMDesign.pagePadding)
+                .padding(.horizontal, AOMDesign.pagePadding)
+                .padding(.top, AOMDesign.pagePadding)
+                .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .scrollDisabled(fits)
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,132 +131,190 @@ struct ModernWindowSnappingView: View {
     // MARK: - Controls column
 
     private var controlsColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Snap Layouts", systemImage: "square.grid.2x2",
-                             caption: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones active")
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Collection", selection: Binding<CustomSnapZone.Collection?>(
-                    get: { currentCollection },
-                    set: { if let collection = $0 { applyCollection(collection) } }
-                )) {
-                    ForEach(CustomSnapZone.Collection.allCases) { collection in
-                        Text("\(collection.rawValue) (\(collection.layouts.count))").tag(Optional(collection))
-                    }
-                    if currentCollection == nil {
-                        Text("Custom").tag(CustomSnapZone.Collection?.none)
-                    }
-                }
-                .pickerStyle(.menu)
-                Divider()
-                switchRow("Hold ⌥ Option while dragging", isOn: Binding(
-                    get: { requiresOption },
-                    set: { updateBehavior(requiresOption: $0, showsPreview: showsPreview) }
-                ))
-                switchRow("Show snap preview", isOn: Binding(
-                    get: { showsPreview },
-                    set: { updateBehavior(requiresOption: requiresOption, showsPreview: $0) }
-                ))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Snap Layouts").font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text("\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones active")
+                    .font(.system(size: 13)).foregroundStyle(AOMTheme.textTertiary)
+                Spacer(minLength: 0)
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .aomSurface()
+            .padding(.horizontal, 8)
+            .frame(height: 40)
 
-            VStack(spacing: 8) {
-                AOMActionTile(title: "Edit Snap Zones", systemImage: "rectangle.split.3x3", tint: .blue,
-                              subtitle: "Draw custom zones and targets") { showingSnapZones = true }
-                AOMActionTile(title: "Display Profiles", systemImage: "display.2", tint: .teal,
-                              subtitle: appState.activeSnapProfile?.name ?? "Per-monitor layouts") { showingProfiles = true }
-                AOMActionTile(title: "Saved Windows", systemImage: "macwindow.on.rectangle", tint: .indigo,
-                              subtitle: "Window layouts and undo") { showingWindowLayouts = true }
+            VStack(spacing: 0) {
+                settingRow("Collection") {
+                    Picker("Collection", selection: Binding<CustomSnapZone.Collection?>(
+                        get: { currentCollection },
+                        set: { if let collection = $0 { applyCollection(collection) } }
+                    )) {
+                        ForEach(CustomSnapZone.Collection.allCases) { collection in
+                            Text("\(collection.rawValue) (\(collection.layouts.count))").tag(Optional(collection))
+                        }
+                        if currentCollection == nil {
+                            Text("Custom").tag(CustomSnapZone.Collection?.none)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                settingRow("Hold ⌥ Option while dragging") {
+                    Toggle("Hold ⌥ Option while dragging", isOn: Binding(
+                        get: { requiresOption },
+                        set: { updateBehavior(requiresOption: $0, showsPreview: showsPreview) }
+                    ))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                settingRow("Show snap preview", showsDivider: false) {
+                    Toggle("Show snap preview", isOn: Binding(
+                        get: { showsPreview },
+                        set: { updateBehavior(requiresOption: requiresOption, showsPreview: $0) }
+                    ))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+            }
+
+            AOMDivider().padding(.horizontal, 8).padding(.vertical, 8)
+
+            VStack(spacing: 2) {
+                navigationRow("Edit Snap Zones", detail: "Draw custom zones and targets",
+                              symbol: "rectangle.split.3x3", tint: AOMTheme.blue) { showingSnapZones = true }
+                navigationRow("Display Profiles", detail: appState.activeSnapProfile?.name ?? "Per-monitor layouts",
+                              symbol: "display.2", tint: .teal) { showingProfiles = true }
+                navigationRow("Saved Windows", detail: "Window layouts and undo",
+                              symbol: "macwindow.on.rectangle", tint: AOMTheme.purple) { showingWindowLayouts = true }
             }
         }
+    }
+
+    private func settingRow<Control: View>(_ title: String, showsDivider: Bool = true,
+                                           @ViewBuilder control: () -> Control) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text(title).font(.system(size: 14)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                Spacer(minLength: 8)
+                control()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 44)
+            Rectangle().fill(showsDivider ? AOMTheme.divider : .clear).frame(height: 1).padding(.horizontal, 8)
+        }
+    }
+
+    private func navigationRow(_ title: String, detail: String, symbol: String, tint: Color,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                AOMIconBadge(systemImage: symbol, tint: tint, size: 32, filled: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(AOMType.rowTitle).foregroundStyle(AOMTheme.text).lineLimit(1)
+                    Text(detail).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 52)
+        }
+        .buttonStyle(AOMRowButtonStyle())
+        .accessibilityLabel("\(title), \(detail)")
     }
 
     // MARK: - Interactive Desktop Stage
 
-    private var stageSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Preview", systemImage: "display",
-                             caption: "Hover a layout below to see where a window lands")
-            ZStack {
-                RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(red: 0.18, green: 0.22, blue: 0.29), Color(red: 0.10, green: 0.13, blue: 0.19)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "apple.logo").font(.system(size: 10))
-                        Text("Finder").font(.system(size: 10, weight: .semibold))
-                        Spacer()
-                        TimelineView(.everyMinute) { context in
-                            Text(context.date, format: .dateTime.weekday(.abbreviated).hour().minute())
-                                .font(.system(size: 10))
-                        }
+    private func stageSection(height: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(LinearGradient(colors: [Color(red: 0.20, green: 0.23, blue: 0.28), Color(red: 0.12, green: 0.14, blue: 0.18)],
+                                     startPoint: .top, endPoint: .bottom))
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "apple.logo").font(.system(size: 10))
+                    Text("Finder").font(.system(size: 10, weight: .semibold))
+                    Spacer()
+                    TimelineView(.everyMinute) { context in
+                        Text(context.date, format: .dateTime.weekday(.abbreviated).hour().minute())
+                            .font(.system(size: 10))
                     }
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(.horizontal, 12)
-                    .frame(height: 20)
-                    .background(.ultraThinMaterial.opacity(0.6))
-                    GeometryReader { geo in
-                        if let layout = hoveredLayout {
-                            let rect = snapRect(for: layout, in: geo.size).insetBy(dx: 4, dy: 4)
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(.regularMaterial)
-                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.85), lineWidth: 1.5))
-                                .overlay(Label(layout.rawValue, systemImage: layout.symbol)
-                                    .font(.callout.weight(.semibold)))
-                                .frame(width: max(0, rect.width), height: max(0, rect.height))
-                                .position(x: rect.midX, y: rect.midY)
-                                .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.85)), value: hoveredLayout)
-                        } else {
-                            VStack(spacing: 6) {
-                                Image(systemName: "cursorarrow.and.square.on.square.dashed").font(.system(size: 26))
-                                Text(requiresOption ? "Hold ⌥ and drag a window to an edge or corner" : "Drag a window to an edge or corner")
-                                    .font(.callout.weight(.medium))
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(.horizontal, 12)
+                .frame(height: 20)
+                .background(Color.white.opacity(0.08))
+                GeometryReader { geo in
+                    if let layout = hoveredLayout {
+                        let rect = snapRect(for: layout, in: geo.size).insetBy(dx: 5, dy: 5)
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(AOMTheme.blue.opacity(0.35))
+                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.9), lineWidth: 1.5))
+                            .overlay(Label(layout.rawValue, systemImage: layout.symbol)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(.white))
+                            .frame(width: max(0, rect.width), height: max(0, rect.height))
+                            .position(x: rect.midX, y: rect.midY)
+                            .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.85)), value: hoveredLayout)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "cursorarrow.and.square.on.square.dashed").font(.system(size: 26))
+                            Text(requiresOption ? "Hold ⌥ and drag a window to an edge or corner" : "Drag a window to an edge or corner")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("Point at a layout below to preview it")
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .foregroundStyle(.white.opacity(0.92))
+                        .frame(width: geo.size.width, height: geo.size.height)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(hoveredLayout.map { "Preview: \($0.rawValue)" } ?? "Layout preview")
+    }
+
+    // MARK: - Tile the front window
+
+    private var tileSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Tile the Front Window").font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Click a layout to move the frontmost window now")
+                    .font(.system(size: 13)).foregroundStyle(AOMTheme.textTertiary).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                ForEach(layoutGroups) { group in
+                    GridRow {
+                        Text(group.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AOMTheme.textTertiary)
+                            .frame(width: 84, alignment: .leading)
+                        ForEach(0..<4, id: \.self) { index in
+                            if index < group.layouts.count {
+                                let entry = group.layouts[index]
+                                SnapLayoutChip(
+                                    layout: entry.layout,
+                                    title: entry.label,
+                                    isHovered: hoveredLayout == entry.layout,
+                                    onHover: { hovering in
+                                        if hovering { hoveredLayout = entry.layout }
+                                        else if hoveredLayout == entry.layout { hoveredLayout = nil }
+                                    },
+                                    onExecute: { executeSnap(entry.layout) }
+                                )
+                            } else {
+                                Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                             }
-                            .foregroundStyle(.white.opacity(0.92))
-                            .frame(width: geo.size.width, height: geo.size.height)
                         }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 218)
-            .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(hoveredLayout.map { "Preview: \($0.rawValue)" } ?? "Layout preview")
-        }
-    }
-
-    // MARK: - Zones Grid Section
-
-    private var zonesGridSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Tile the Front Window", systemImage: "rectangle.split.3x3",
-                             caption: "Click a layout to move the frontmost window now")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 106), spacing: AOMDesign.gridSpacing)],
-                      spacing: AOMDesign.gridSpacing) {
-                ForEach(primaryLayouts) { layout in
-                    SnapLayoutTile(
-                        layout: layout,
-                        isHovered: hoveredLayout == layout,
-                        onHover: { hovering in
-                            if hovering { hoveredLayout = layout } else if hoveredLayout == layout { hoveredLayout = nil }
-                        },
-                        onExecute: { executeSnap(layout) }
-                    )
-                }
-            }
-        }
-    }
-
-    private func switchRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            Text(title)
-            Spacer(minLength: 8)
-            Toggle(title, isOn: isOn).labelsHidden()
         }
     }
 
@@ -310,34 +419,37 @@ struct ModernWindowSnappingView: View {
     private func showToast(_ message: String) { toast.show(message) }
 }
 
-private struct SnapLayoutTile: View {
+/// One layout in the tile grid: a grey well with the layout glyph and a short
+/// label; pointing at it previews the layout on the stage, clicking applies it.
+private struct SnapLayoutChip: View {
     let layout: CustomSnapZone.Layout
+    let title: String
     let isHovered: Bool
     let onHover: (Bool) -> Void
     let onExecute: () -> Void
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         Button(action: onExecute) {
-            VStack(spacing: 8) {
+            HStack(spacing: 8) {
                 Image(systemName: layout.symbol)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(isHovered ? Color.white : Color.accentColor)
-                    .frame(width: 40, height: 32)
-                    .background(isHovered ? Color.accentColor : Color.accentColor.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                Text(layout.rawValue)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AOMTheme.blue)
+                    .frame(width: 20)
+                Text(title)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(isHovered ? AOMTheme.blue : AOMTheme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 6)
-            .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
-            .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
+            .padding(.horizontal, 11)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .background(isHovered ? AOMTheme.blue.opacity(0.12) : AOMTheme.cardAlt, in: shape)
+            .overlay(shape.strokeBorder(isHovered ? AOMTheme.blue.opacity(0.45) : .clear, lineWidth: 1))
+            .contentShape(shape)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AOMCardButtonStyle())
         .onHover { onHover($0) }
         .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: isHovered)
         .help("Move the front window: \(layout.rawValue)")

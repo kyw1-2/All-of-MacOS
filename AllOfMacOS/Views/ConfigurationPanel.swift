@@ -636,8 +636,15 @@ struct ActionConfigView: View {
                             set: { value in saveAction { $0.parameters.typingIntervalMs = value } }), in: 0...500, step: 5) {
                             Text("Delay between characters: \(action.parameters.typingIntervalMs ?? 20) ms")
                         }
-                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return.")
+                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return. Works in password fields, including macOS authorization dialogs.")
                             .font(.caption).foregroundStyle(.secondary)
+                        if case .keyboardShortcut(let shortcut) = trigger.input,
+                           let alias = SecureInputHotKeys.secureAlias(for: shortcut) {
+                            Label("In password fields macOS keeps \(shortcut.displayString) for typing characters, so press \(alias.displayString) there instead.",
+                                  systemImage: "lock.shield")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .padding(8)
                 }

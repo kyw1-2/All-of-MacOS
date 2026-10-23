@@ -2,6 +2,14 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 1.9.0 — Unified sheets and password-field typing
+- Redesigned every page as one flat sheet on a neutral canvas: sections are separated by hairlines rather than separate cards, shadows are nearly invisible and colour is limited to small icons, state and one primary blue. Glass and ambient gradients are gone.
+- Rebuilt the Workspace to fit on one screen: a five-figure summary strip, the automation list with inline switches, and a This Mac column with permissions, Drag to Snap, clipboard history, password-field status and quick actions.
+- Moved the Automation editor inside the page sheet with a draggable divider, so it no longer covers the navigation row; dropped the redundant Type column.
+- Window Tiling, Capture, Clipboard and Insights now share the same sheet layout and fill the window height; Insights shows inputs and configuration side by side on wide windows.
+- Raised the type scale (14 pt body, 26 pt titles) and verified light and dark appearance.
+- Fixed Type Text in macOS password dialogs: ⌥ and ⌥⇧ hot keys are withheld by macOS during Secure Event Input, so AOM registers a ⌃-added alias (for example ⌃⌥P for ⌥P) only while Secure Input is active and never over an existing binding. Typing uses a private event source so modifiers cannot latch; the 1.8.0 pasteboard round-trip was removed.
+
 ## 1.6.0 — Unified visual design
 - Introduced a consistent app-wide design system with a light-gray canvas, borderless elevated cards, clearer typography and a single blue accent.
 - Refined navigation, page headers, controls and the Home dashboard for denser, more coherent presentation.

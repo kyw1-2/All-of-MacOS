@@ -558,7 +558,7 @@ struct AllOfMacOSApp: App {
                 }
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1180, height: 740)
         // aom:// links and opened files are handled by AppDelegate; without
         // this every link (Raycast, Shortcuts, Alfred) opened another window.

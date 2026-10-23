@@ -45,33 +45,45 @@ struct CaptureStudioView: View {
                 AOMPageHeader("Capture Library", subtitle: subtitle, systemImage: "camera.viewfinder", tint: AOMTheme.blue) {
                     headerControls
                 }.padding(.horizontal, AOMDesign.pagePadding).padding(.top, AOMDesign.pagePadding)
-                if recordingService.isRecording { activeRecordingBanner.padding(12) }
-                if geometry.size.width >= 760 {
-                    HStack(alignment: .top, spacing: 0) {
-                        ScrollView { launchpadSection.padding(14) }
-                            .frame(width: 180).background(AOMTheme.cardAlt.opacity(0.5))
-                        ScrollView { gallerySection.padding(AOMDesign.pagePadding) }
-                            .frame(maxWidth: .infinity).suppressScrollerReservation()
-                    }.padding(.top, 14)
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            Menu("Capture Tools", systemImage: "plus.viewfinder") {
-                                Button("All-in-One Capture") { CaptureCoordinator.shared.captureAllInOne() }
-                                Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
-                                Button("Capture Window") { CaptureCoordinator.shared.captureWindowInteractive() }
-                                Button("Full Screen") { CaptureCoordinator.shared.captureFullscreen() }
-                                Button("Scrolling Capture") { CaptureCoordinator.shared.captureScrolling() }
-                                Button("Record Screen") { recordingService.promptAndStartRecording() }
-                                Button("Extract Text") { CaptureCoordinator.shared.captureText() }
-                                Button("Previous Area") { CaptureCoordinator.shared.capturePreviousArea() }
-                                Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
-                                Button("QR / Barcode") { CaptureCoordinator.shared.captureQRCode() }
-                            }.controlSize(.small)
-                            gallerySection
-                        }.padding(AOMDesign.pagePadding)
-                    }.suppressScrollerReservation()
+                if recordingService.isRecording {
+                    activeRecordingBanner.padding(.horizontal, AOMDesign.pagePadding).padding(.top, 14)
                 }
+                Group {
+                    if geometry.size.width >= 760 {
+                        HStack(alignment: .top, spacing: 0) {
+                            ScrollView { launchpadSection.padding(12) }
+                                .frame(width: 220)
+                                .suppressScrollerReservation()
+                            AOMDivider(axis: .vertical)
+                            ScrollView { gallerySection.padding(20) }
+                                .frame(maxWidth: .infinity).suppressScrollerReservation()
+                        }
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 20) {
+                                Menu("Capture Tools", systemImage: "plus.viewfinder") {
+                                    Button("All-in-One Capture") { CaptureCoordinator.shared.captureAllInOne() }
+                                    Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                                    Button("Capture Window") { CaptureCoordinator.shared.captureWindowInteractive() }
+                                    Button("Full Screen") { CaptureCoordinator.shared.captureFullscreen() }
+                                    Button("Scrolling Capture") { CaptureCoordinator.shared.captureScrolling() }
+                                    Button("Record Screen") { recordingService.promptAndStartRecording() }
+                                    Button("Extract Text") { CaptureCoordinator.shared.captureText() }
+                                    Button("Previous Area") { CaptureCoordinator.shared.capturePreviousArea() }
+                                    Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
+                                    Button("QR / Barcode") { CaptureCoordinator.shared.captureQRCode() }
+                                }.controlSize(.small)
+                                gallerySection
+                            }.padding(20)
+                        }.suppressScrollerReservation()
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .aomCardStyle(.paper, radius: 22, padding: 0)
+                .padding(.horizontal, AOMDesign.pagePadding)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -183,14 +195,14 @@ struct CaptureStudioView: View {
 
     private var launchpadSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("CAPTURE").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(AOMTheme.textTertiary).padding(.bottom, 8)
+            Text("Capture").aomSectionCaps().padding(.leading, 12).padding(.bottom, 6)
             AOMToolButton(title: "All-in-One", systemImage: "viewfinder.circle", prominent: true) { CaptureCoordinator.shared.captureAllInOne() }
             AOMToolButton(title: "Area", systemImage: "viewfinder") { CaptureCoordinator.shared.captureArea() }
             AOMToolButton(title: "Window", systemImage: "macwindow") { CaptureCoordinator.shared.captureWindowInteractive() }
             AOMToolButton(title: "Full screen", systemImage: "display") { CaptureCoordinator.shared.captureFullscreen() }
             AOMToolButton(title: "Scrolling", systemImage: "arrow.up.and.down.text.horizontal") { CaptureCoordinator.shared.captureScrolling() }
             AOMToolButton(title: "Record screen", systemImage: "record.circle") { recordingService.promptAndStartRecording() }
-            Text("UTILITIES").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(AOMTheme.textTertiary).padding(.top, 18).padding(.bottom, 8)
+            Text("Utilities").aomSectionCaps().padding(.leading, 12).padding(.top, 18).padding(.bottom, 6)
             AOMToolButton(title: "Extract text", systemImage: "text.viewfinder") { CaptureCoordinator.shared.captureText() }
             AOMToolButton(title: "Previous area", systemImage: "arrow.uturn.backward.square") { CaptureCoordinator.shared.capturePreviousArea() }
             AOMToolButton(title: "Self-timer", systemImage: "timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
@@ -227,8 +239,7 @@ struct CaptureStudioView: View {
                     Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
                         .buttonStyle(.borderedProminent)
                 }
-                .frame(minHeight: 240)
-                .aomSurface(padding: nil)
+                .frame(minHeight: 320)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 10)], spacing: 10) {
                     ForEach(filteredEntries) { entry in

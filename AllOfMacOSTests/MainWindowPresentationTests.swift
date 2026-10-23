@@ -42,15 +42,23 @@ final class SidebarSummaryTests: XCTestCase {
 
 @MainActor
 final class MainWindowMaterialTests: XCTestCase {
-    func testMainChromeKeepsNativeToolbarAndMatchesExplicitAppearance() {
+    func testMainChromeIsAnOpaqueCanvasAndMatchesExplicitAppearance() {
         let host = NSHostingView(rootView: Color.clear.background(AOMMainWindowChrome(appearance: "dark")))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.contentView = nil; window.close() }
         window.contentView = host; host.layoutSubtreeIfNeeded()
-        XCTAssertFalse(window.isOpaque)
-        XCTAssertFalse(window.titlebarAppearsTransparent)
+        // The curated canvas is opaque so wallpaper never tints the UI.
+        XCTAssertTrue(window.isOpaque)
+        XCTAssertEqual(window.backgroundColor, AOMTheme.canvasNSColor)
+        // The navigation row is the title bar: full-size content, hidden title,
+        // and an empty unified toolbar that gives the bar its height.
+        XCTAssertTrue(window.titlebarAppearsTransparent)
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertEqual(window.titleVisibility, .hidden)
+        XCTAssertEqual(window.toolbar?.identifier, AOMMainWindowChrome.toolbarIdentifier)
+        XCTAssertEqual(window.toolbarStyle, .unified)
         XCTAssertEqual(window.appearance?.name, .darkAqua)
         host.rootView = Color.clear.background(AOMMainWindowChrome(appearance: "light"))
         host.layoutSubtreeIfNeeded()
@@ -58,6 +66,7 @@ final class MainWindowMaterialTests: XCTestCase {
         host.rootView = Color.clear.background(AOMMainWindowChrome(appearance: "system"))
         host.layoutSubtreeIfNeeded()
         XCTAssertNil(window.appearance)
+        XCTAssertEqual(window.toolbar?.identifier, AOMMainWindowChrome.toolbarIdentifier, "Reconfiguring keeps one toolbar")
     }
 
     func testWindowMaterialConfiguresWhenHostAttachesAndReattaches() {

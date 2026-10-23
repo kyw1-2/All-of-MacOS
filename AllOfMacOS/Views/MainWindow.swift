@@ -61,11 +61,15 @@ struct MainWindow: View {
     }
 }
 
-/// Keep the system toolbar's own material visible. A clear transparent titlebar
-/// without content beneath it can become a white strip in an explicitly dark
-/// SwiftUI window. Synchronize AppKit appearance rather than painting a toolbar.
+/// Turns the main window into AOM's canvas: an opaque window painted with the
+/// curated canvas colour (wallpaper never tints the UI), a transparent
+/// full-size title bar whose height comes from an empty unified toolbar
+/// (52 pt, traffic lights centred on the navigation row), and an AppKit
+/// appearance kept in sync with the in-app appearance choice.
 struct AOMMainWindowChrome: NSViewRepresentable {
     var appearance: String
+
+    static let toolbarIdentifier = NSToolbar.Identifier("com.kyw.allofmacos.main-chrome")
 
     private final class Probe: NSView {
         var appearanceChoice = "system"
@@ -75,17 +79,20 @@ struct AOMMainWindowChrome: NSViewRepresentable {
             let selected: NSAppearance? = appearanceChoice == "dark" ? NSAppearance(named: .darkAqua)
                 : appearanceChoice == "light" ? NSAppearance(named: .aqua) : nil
             if window.appearance?.name != selected?.name { window.appearance = selected }
-            // Opaque window base: materials must refract AOM's own surface, not
-            // whatever wallpaper happens to sit behind the window.
             if !window.isOpaque { window.isOpaque = true }
-            let base = NSColor(name: nil) { appearance in
-                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                    ? NSColor(srgbRed: 0.086, green: 0.086, blue: 0.078, alpha: 1)
-                    : NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1)
-            }
-            if window.backgroundColor != base { window.backgroundColor = base }
-            if window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = false }
+            if window.backgroundColor != AOMTheme.canvasNSColor { window.backgroundColor = AOMTheme.canvasNSColor }
+            // The navigation row is the title bar.
+            if !window.styleMask.contains(.fullSizeContentView) { window.styleMask.insert(.fullSizeContentView) }
+            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+            if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
             if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
+            if window.toolbar == nil {
+                let toolbar = NSToolbar(identifier: AOMMainWindowChrome.toolbarIdentifier)
+                toolbar.displayMode = .iconOnly
+                toolbar.allowsUserCustomization = false
+                window.toolbar = toolbar
+            }
+            if window.toolbarStyle != .unified { window.toolbarStyle = .unified }
         }
     }
     func makeNSView(context: Context) -> NSView {

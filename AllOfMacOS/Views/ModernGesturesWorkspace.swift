@@ -19,6 +19,11 @@ struct ModernGesturesWorkspace: View {
     @State private var addCategory: TriggerCategory = .trackpad
     @State private var pendingDeletion: Trigger?
     @AppStorage("AOMGesturesInspectorShown") private var showsInspector = true
+    @AppStorage("AOMGesturesInspectorWidth") private var inspectorWidth: Double = 320
+
+    /// The editor's resizable width, and the share of the sheet it may take.
+    static let inspectorWidthRange: ClosedRange<Double> = 280...480
+    static let inspectorMaximumShare: CGFloat = 0.45
 
     // MARK: Data
 
@@ -107,25 +112,43 @@ struct ModernGesturesWorkspace: View {
                             }
                         }
                     }
-                    Text("\(rows.count) items").font(.system(size: 10)).foregroundStyle(AOMTheme.textTertiary).fixedSize()
+                    Text("\(rows.count) items").font(.system(size: 12)).foregroundStyle(AOMTheme.textTertiary).fixedSize()
                 }
                 .overlay(alignment: .bottom) { AOMTheme.divider.opacity(0.5).frame(height: 0.5) }
             }
-            Group {
-                if scopedTriggers.isEmpty { onboardingView }
-                else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
-                else if tableLayout { table.scrollContentBackground(.hidden) }
-                else { cards }
+            // One sheet: the list and, behind a draggable hairline, the
+            // selected automation's editor. (SwiftUI's `.inspector` would
+            // become a full-height window column and cover the navigation row.)
+            GeometryReader { geometry in
+                let editorWidth = min(CGFloat(inspectorWidth),
+                                      max(CGFloat(Self.inspectorWidthRange.lowerBound) - 20,
+                                          geometry.size.width * Self.inspectorMaximumShare))
+                HStack(spacing: 0) {
+                    Group {
+                        if scopedTriggers.isEmpty { onboardingView }
+                        else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
+                        else if tableLayout { table.scrollContentBackground(.hidden).padding(.vertical, 4) }
+                        else { cards }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if showsInspector {
+                        AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorWidthRange)
+                        inspectorContent
+                            .frame(width: editorWidth)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .aomCardStyle(.paper, radius: 22, padding: 0)
+            .animation(AOMDesign.animation(), value: showsInspector)
         }
-        .padding(AOMTheme.pagePadding)
+        .padding(.horizontal, AOMTheme.pagePadding)
+        .padding(.top, AOMTheme.pagePadding)
+        .padding(.bottom, 24)
         .background(AOMWorkspaceBackground())
-        .inspector(isPresented: $showsInspector) {
-            inspectorContent
-                .background(AOMTheme.cardAlt.opacity(0.5))
-                .inspectorColumnWidth(min: 280, ideal: 310, max: 480)
-        }
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
         }
@@ -168,12 +191,12 @@ struct ModernGesturesWorkspace: View {
 
     private var cards: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: 8) {
                 ForEach(rows) { trigger in
                     gestureCard(trigger)
                 }
             }
-            .padding(2)
+            .padding(14)
         }
         .suppressScrollerReservation()
     }
@@ -206,11 +229,13 @@ struct ModernGesturesWorkspace: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 24)
                 .accessibilityLabel("Options for \(trigger.displayName)")
         }
-        .padding(10)
-        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(12)
+        // Grey wells on the white sheet; the selection is an accent edge.
+        .background(selected ? AOMTheme.blue.opacity(0.08) : AOMTheme.cardAlt,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(selected ? AOMTheme.blue : .clear, lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selected ? AOMTheme.blue.opacity(0.7) : .clear, lineWidth: 1.5)
                 .allowsHitTesting(false)
         }
         .contextMenu { triggerMenu(trigger) }
@@ -232,9 +257,13 @@ struct ModernGesturesWorkspace: View {
             .width(30)
             TableColumn("Name", value: \.displayName) { trigger in
                 HStack(spacing: 8) {
+                    // The glyph carries the input type (the filter tabs above
+                    // sort by it), so the table needs no separate Type column.
                     Image(systemName: trigger.input.category.iconName)
                         .foregroundStyle(trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .secondary)
                         .frame(width: 18)
+                        .help(trigger.input.category.rawValue)
+                        .accessibilityLabel(trigger.input.category.rawValue)
                     Text(trigger.displayName).foregroundStyle(trigger.isEnabled ? .primary : .secondary)
                     if trigger.isFavorite {
                         Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange).accessibilityLabel("Pinned")
@@ -242,20 +271,16 @@ struct ModernGesturesWorkspace: View {
                 }
                 .modifier(FiredFlash(triggerID: trigger.id))
             }
-            .width(min: 160, ideal: 240)
+            .width(min: 150, ideal: 190)
             TableColumn("Trigger", value: \.input.displayName) { trigger in
                 Text(trigger.requiredModifiers != nil ? "\(trigger.modifierLabel) \(trigger.input.displayName)" : trigger.input.displayName)
                     .foregroundStyle(.secondary)
             }
-            .width(min: 120, ideal: 190)
+            .width(min: 110, ideal: 150)
             TableColumn("Actions", value: \.actionSummary) { trigger in
                 Text(trigger.actionSummary).foregroundStyle(.secondary)
             }
-            .width(min: 140, ideal: 260)
-            TableColumn("Type", value: \.input.category.rawValue) { trigger in
-                Text(trigger.input.category.rawValue).foregroundStyle(.secondary)
-            }
-            .width(min: 70, ideal: 100)
+            .width(min: 130, ideal: 200)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
         .contextMenu(forSelectionType: UUID.self) { ids in
@@ -274,12 +299,13 @@ struct ModernGesturesWorkspace: View {
         if let trigger = appState.selectedTrigger,
            let current = appState.currentPreset.triggers.first(where: { $0.id == trigger.id }) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    inspectorHeader(current).aomCard(padding: 12, elevated: false)
-                    actionSequenceSection(current).aomCard(padding: 12, elevated: false)
-                    triggerInspector(current).aomCard(padding: 12, elevated: false)
+                VStack(alignment: .leading, spacing: 0) {
+                    inspectorHeader(current).padding(16)
+                    AOMDivider()
+                    actionSequenceSection(current).padding(16)
+                    AOMDivider()
+                    triggerInspector(current).padding(16)
                 }
-                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
@@ -416,7 +442,7 @@ struct ModernGesturesWorkspace: View {
             }
             .font(.callout)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .aomSurface()
+            .aomCardStyle(.well, radius: 12, padding: 12)
 
             DisclosureGroup(isExpanded: $showTriggerOptions) {
                 TriggerConfigView(trigger: trigger)
@@ -426,7 +452,7 @@ struct ModernGesturesWorkspace: View {
                     .font(.callout.weight(.medium))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .aomSurface()
+            .aomCardStyle(.well, radius: 12, padding: 12)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { inspectorButtons(trigger) }
@@ -452,7 +478,7 @@ struct ModernGesturesWorkspace: View {
     private func actionSequenceSection(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             AOMSectionHeader("Actions", systemImage: "bolt.fill",
-                             caption: "Run in order when the gesture is recognized") {
+                             caption: "Run top to bottom") {
                 if !trigger.actions.isEmpty {
                     let isTesting = testingTriggerID == trigger.id
                     Button {
@@ -469,9 +495,11 @@ struct ModernGesturesWorkspace: View {
                     .disabled(isTesting || ActionTree.problem(trigger.actions) != nil)
                     .help("Run this workflow now")
                 }
-                Button { addAction() } label: { Label("Add Action", systemImage: "plus") }
+                Button { addAction() } label: { Image(systemName: "plus") }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
+                    .help("Add an action")
+                    .accessibilityLabel("Add Action")
             }
 
             let rows = ActionTree.rows(trigger.actions)

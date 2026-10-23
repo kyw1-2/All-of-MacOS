@@ -4,18 +4,61 @@ import Carbon
 /// Carbon hot-key registration keeps explicit shortcuts available while a
 /// password field suppresses CGEventTap. It does not read password characters,
 /// change Secure Input, or register unmodified printable keys.
+///
+/// macOS withholds hot keys whose only modifiers are Option or Option-Shift
+/// while Secure Event Input is on, because those chords type characters
+/// (⌥P is "π") and a password field must keep them. Verified on macOS 27.2
+/// against the SecurityAgent authorization dialog: ⌥ and ⌥⇧ chords never
+/// arrive, while ⌃, ⌃⌥, ⌃⇧, ⌘⌥, ⌘⇧ and ⌃⌥⌘ do. Such a shortcut therefore
+/// also answers to a *secure alias* — the same key with Control added
+/// (⌥P → ⌃⌥P) — but only while Secure Input is active, and never when the
+/// alias is itself bound to another trigger.
 final class SecureInputHotKeys {
+    private struct Registration {
+        let physical: KeyboardShortcut
+        let target: KeyboardShortcut
+        let reference: EventHotKeyRef
+    }
+
     private let shortcuts: () -> Set<KeyboardShortcut>
     private let handle: (KeyboardShortcut, Bool) -> Void
     private let cancel: () -> Void
     private var timer: Timer?
     private var handler: EventHandlerRef?
-    private var registrations: [UInt32: (KeyboardShortcut, EventHotKeyRef)] = [:]
+    private var registrations: [UInt32: Registration] = [:]
     private var requested = Set<KeyboardShortcut>()
     private var held = Set<UInt32>()
     private var frontPID: pid_t?
     private var nextID: UInt32 = 1
     private static let signature: OSType = 0x414F4D53 // AOMS
+
+    // MARK: Pure rules (unit-tested)
+
+    /// True for chords macOS withholds from hot keys during Secure Event Input.
+    static func isWithheldDuringSecureInput(_ shortcut: KeyboardShortcut) -> Bool {
+        let modifiers = shortcut.modifiers.intersection([.command, .control, .option, .shift, .function])
+        return modifiers == [.option] || modifiers == [.option, .shift]
+    }
+
+    /// The chord that stands in for a withheld shortcut inside password fields.
+    static func secureAlias(for shortcut: KeyboardShortcut) -> KeyboardShortcut? {
+        guard isWithheldDuringSecureInput(shortcut) else { return nil }
+        return KeyboardShortcut(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers.union(.control))
+    }
+
+    /// Physical chord → trigger shortcut. Every requested shortcut keeps its own
+    /// chord; withheld ones add an alias unless an explicit binding owns it.
+    static func registrationPlan(for shortcuts: Set<KeyboardShortcut>) -> [KeyboardShortcut: KeyboardShortcut] {
+        var plan: [KeyboardShortcut: KeyboardShortcut] = [:]
+        for shortcut in shortcuts { plan[shortcut] = shortcut }
+        for shortcut in shortcuts.sorted(by: { ($0.keyCode, $0.modifiers.rawValue) < ($1.keyCode, $1.modifiers.rawValue) }) {
+            guard let alias = secureAlias(for: shortcut), plan[alias] == nil else { continue }
+            plan[alias] = shortcut
+        }
+        return plan
+    }
+
+    // MARK: Lifecycle
 
     init(shortcuts: @escaping () -> Set<KeyboardShortcut>,
          handle: @escaping (KeyboardShortcut, Bool) -> Void,
@@ -57,42 +100,44 @@ final class SecureInputHotKeys {
         guard wanted != requested else { return }
         unregister()
         requested = wanted
-        for shortcut in wanted {
+        for (physical, target) in Self.registrationPlan(for: wanted) {
             var flags: UInt32 = 0
-            if shortcut.modifiers.contains(.command) { flags |= UInt32(cmdKey) }
-            if shortcut.modifiers.contains(.option) { flags |= UInt32(optionKey) }
-            if shortcut.modifiers.contains(.control) { flags |= UInt32(controlKey) }
-            if shortcut.modifiers.contains(.shift) { flags |= UInt32(shiftKey) }
+            if physical.modifiers.contains(.command) { flags |= UInt32(cmdKey) }
+            if physical.modifiers.contains(.option) { flags |= UInt32(optionKey) }
+            if physical.modifiers.contains(.control) { flags |= UInt32(controlKey) }
+            if physical.modifiers.contains(.shift) { flags |= UInt32(shiftKey) }
             let id = nextID
             nextID &+= 1
             var reference: EventHotKeyRef?
-            let status = RegisterEventHotKey(UInt32(shortcut.keyCode), flags,
+            let status = RegisterEventHotKey(UInt32(physical.keyCode), flags,
                 EventHotKeyID(signature: Self.signature, id: id), GetApplicationEventTarget(), 0, &reference)
-            if status == noErr, let reference { registrations[id] = (shortcut, reference) }
+            if status == noErr, let reference {
+                registrations[id] = Registration(physical: physical, target: target, reference: reference)
+            }
         }
     }
 
     private func receive(_ id: UInt32, isDown: Bool) -> OSStatus {
-        guard let (shortcut, _) = registrations[id] else { return OSStatus(eventNotHandledErr) }
+        guard let registration = registrations[id] else { return OSStatus(eventNotHandledErr) }
         if isDown {
             guard IsSecureEventInputEnabled(), ActionExecutor.activeTextTypingSessions == 0,
-                  shortcuts().contains(shortcut), held.insert(id).inserted else { return noErr }
+                  shortcuts().contains(registration.target), held.insert(id).inserted else { return noErr }
         } else {
             guard held.remove(id) != nil else { return noErr }
         }
-        handle(shortcut, isDown)
+        handle(registration.target, isDown)
         return noErr
     }
 
     func owns(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
-        registrations.contains { id, value in
-            value.0.keyCode == keyCode && (held.contains(id) ||
-                value.0.modifiers == flags.intersection([.command, .control, .option, .shift, .function]))
+        registrations.contains { id, registration in
+            registration.physical.keyCode == keyCode && (held.contains(id) ||
+                registration.physical.modifiers == flags.intersection([.command, .control, .option, .shift, .function]))
         }
     }
 
     private func unregister() {
-        for (_, reference) in registrations.values { UnregisterEventHotKey(reference) }
+        for registration in registrations.values { UnregisterEventHotKey(registration.reference) }
         registrations.removeAll()
         requested.removeAll()
     }
