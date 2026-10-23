@@ -81,8 +81,8 @@ jobs:
           security find-certificate -c "AOM Dev" -p > "$cert"
           test -s "$cert"
           # Self-signed local code-signing certificates lack Apple's public CA chain.
-          # User-domain trust only, restricted to code signing; never log the private key.
-          perl -e 'alarm 20; exec @ARGV' security add-trusted-cert -r trustRoot -p codeSign "$cert"
+          # Ephemeral runner system trust via non-interactive sudo (code signing only).
+          perl -e 'alarm 20; exec @ARGV' sudo -n security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$cert"
           rm -f "$cert"
           bash scripts/resolve-signing-identity.sh AOM\ Dev >/dev/null
 
