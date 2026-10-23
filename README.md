@@ -1,65 +1,16 @@
 # All of MacOS
 
-All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
+All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
-## Version 1.6.0
+## Recent updates
 
-A single app-wide visual language: light grey canvas, white borderless cards with soft
-elevation, big confident type and one vivid blue accent. Every page (Home, Gestures,
-Window Tiling, Capture, Clipboard, Insights, Settings) now shares the same tokens and
-reads as one product instead of a System Settings list.
+- **1.6.0 — Unified design:** A consistent visual language with compact navigation, elevated cards, improved page hierarchy, and a streamlined dashboard.
+- **1.5.0 — Navigation and Home:** A persistent navigation rail, shared page header, responsive workspace, and quick access to common actions.
+- **1.4.0 — Settings:** A searchable, single-surface settings hub with instantly applied preferences.
+- **1.3.1 — Capture visibility:** A unified visibility preference for AOM-managed windows during screen capture.
+- **1.3.0 — Expanded local workflows:** More capable clipboard collections, editable recording workflows, floating controls, local automation inputs, and Finder integration.
 
-## Version 1.5.0
-
-The main window is rebuilt around a single navigation rail and one stable page header:
-the split view, system toolbar and per-page titlebars are gone. The new home screen leads
-with two large actions (capture, clipboard), a status chip, three metric cards and a
-two-column activity layout.
-
-## Version 1.4.0
-
-Settings is now a single searchable surface: pinned search and category chips, one
-scrolling card list, and every control applies immediately with a "저장됨" confirmation
-instead of a separate apply step. Gestures, shortcut recording, permissions, backups and
-clipboard storage open as sheets over the hub.
-
-## Version 1.3.1
-
-Capture visibility now applies to every AOM window: the annotation editor, recording export editor, expanded Quick Access preview and floating menus follow the same "Show in screen capture" switch as the clipboard surfaces. See [release notes](docs/1.3.1-release-notes.md).
-
-## Version 1.3.0
-
-Local feature expansion based on the retained Oracle REA/Ghidra audits of CleanShot X, BetterTouchTool and Paste. Adds editable recording layers and ordered cuts, click-based zoom, output presets, clipboard ordering and native multiple-file dragging, private opt-in link previews, floating menus/widgets, scoped local automation MCP/CLI, MIDI/GameController/explicit HID inputs, resilient file triggers, and native Finder thumbnail/share extensions. Cloud, Magic Mouse and Stream Deck are excluded.
-
-See [release details and validation](docs/1.3.0-release-notes.md) and the complete [CleanShot](docs/1.3.0-cleanshot-coverage.md), [BTT](docs/1.3.0-btt-coverage.md) and [Paste](docs/1.3.0-paste-coverage.md) coverage records. These distinguish implemented features from proprietary interoperability and physical-device checks that remain unsupported or unverified.
-
-## Version 1.2.8
-
-Redesigned main window with native translucent navigation, a responsive action dashboard, consistent page headings and inset gesture editing. Removes unnecessary window-wide log updates and moves library search/copy work off the UI thread. Type Text automation now types individual characters with an adjustable interval and preserves the clipboard. See [design references, performance scope and validation](docs/1.2.8-release-notes.md).
-
-## Version 1.2.7
-
-Improves clipboard responsiveness: background pasteboard payload reads, asynchronous rich-text preparation/search/previews, focus handoff before direct paste, and content-versioned image caches. See [findings, Paste 2 reference and verification](docs/1.2.7-release-notes.md).
-
-## Version 1.2.6
-
-Fixes capture workflow completion, per-action OCR options and macOS paste-log persistence. Moves gesture-statistics encoding, coalesced preset saves and Quick Access image transforms off the UI thread, with revision checks to preserve newer edits. See [audit, release notes and validation](docs/1.2.6-release-notes.md).
-
-## Version 1.2.5
-
-Faster clipboard collection, targeted direct paste, asynchronous capture output, and ordered/cancellable capture automation. See [release notes and comparison](docs/1.2.5-release-notes.md). The repository contains an automated `swift test` suite under `AllOfMacOSTests` and a CI workflow (`.github/workflows/tests.yml`), but they were not run for this release's commits at the user's request: the 1.2.5 release was built without functional or regression verification.
-
-## Version 1.2.2
-
-Native main window (grouped Home, sortable gesture table with inspector), clean ⇧⌘V shelf with shortcut-conflict detection, and a sweep of functional fixes. See [release notes](docs/1.2.2-release-notes.md).
-
-## Version 1.2.1
-
-Apple-native redesign of every page, a responsive ⇧⌘V clipboard shelf, and instant Capture Text. See [release notes](docs/1.2.1-release-notes.md).
-
-## Version 1.1.4
-
-Adds trigger organization, pause controls, global gesture settings, workflow variables, and expanded trigger/action catalogs. See [release notes](docs/1.1.4-release-notes.md) and [BTT catalog comparison and remaining gaps](docs/1.1.4-btt-catalog-comparison.md).
+**[Read the full English changelog](CHANGELOG.md)** for version-by-version changes. Individual [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases) retain their build numbers, source references, signing information, checksums, and verification limitations.
 
 ## Features
 
