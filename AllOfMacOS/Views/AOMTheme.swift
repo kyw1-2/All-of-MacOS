@@ -38,6 +38,8 @@ enum AOMTheme {
         light: NSColor(srgbRed: 0.184, green: 0.416, blue: 0.965, alpha: 1),
         dark: NSColor(srgbRed: 0.325, green: 0.514, blue: 0.996, alpha: 1)
     )
+    /// Alias kept for call sites that name the primary action colour.
+    static let actionBlue = blue
     static let indigo = Color.aomDynamic(
         light: NSColor(srgbRed: 0.404, green: 0.325, blue: 0.902, alpha: 1),
         dark: NSColor(srgbRed: 0.510, green: 0.443, blue: 0.960, alpha: 1)
