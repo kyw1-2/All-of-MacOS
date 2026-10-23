@@ -15,7 +15,7 @@ All of MacOS (AOM) is a native macOS productivity application for gestures, keyb
 ## Features
 
 - Trackpad, keyboard, window-management and automation controls
-- Clipboard history, pinboards, configurable double-click paste/copy
+- Clipboard history, pinboards, configurable double-click insertion and copying
 - Screen capture, OCR, QR recognition, annotation, scrolling screenshots
 - MP4 screen recording with optional audio, trimming and animated GIF export
 
