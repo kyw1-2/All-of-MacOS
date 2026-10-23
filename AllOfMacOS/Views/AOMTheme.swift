@@ -171,3 +171,83 @@ struct AOMCardButtonStyle: ButtonStyle {
             .animation(AOMDesign.animation(.easeOut(duration: 0.14)), value: configuration.isPressed)
     }
 }
+
+// MARK: - Typography
+
+extension Font {
+    static func aomDisplay(_ size: CGFloat = 32) -> Font { .system(size: size, weight: .bold) }
+    static func aomTitle(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .bold) }
+    static func aomHeadline(_ size: CGFloat = 17) -> Font { .system(size: size, weight: .bold) }
+    static func aomLabel(_ size: CGFloat = 14) -> Font { .system(size: size, weight: .semibold) }
+    static func aomBody(_ size: CGFloat = 14) -> Font { .system(size: size, weight: .regular) }
+    static func aomCaption(_ size: CGFloat = 12.5) -> Font { .system(size: size, weight: .medium) }
+}
+
+extension View {
+    func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = 20, elevated: Bool = true) -> some View {
+        modifier(AOMCard(radius: radius, padding: padding, elevated: elevated))
+    }
+}
+
+// MARK: - Buttons
+
+/// Filled primary action: tall, rounded, one colour.
+struct AOMFilledButtonStyle: ButtonStyle {
+    var tint: Color = AOMTheme.actionBlue
+    var height: CGFloat = 44
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Font.aomLabel(13.5))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, minHeight: height)
+            .background(tint.opacity(configuration.isPressed ? 0.82 : 1),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .opacity(isEnabled ? 1 : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+    }
+}
+
+/// Quiet secondary action on glass.
+struct AOMTintedButtonStyle: ButtonStyle {
+    var tint: Color = AOMTheme.actionBlue
+    var height: CGFloat = 40
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Font.aomLabel(13))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: height)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.8)
+            }
+            .opacity(configuration.isPressed ? 0.8 : (isEnabled ? 1 : 0.45))
+    }
+}
+
+/// Small pill for state and filters.
+struct AOMChip: View {
+    let text: String
+    var tint: Color = AOMTheme.textSecondary
+    var background: Color?
+    var symbol: String?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 10, weight: .bold))
+            }
+            Text(text).font(Font.aomCaption(12))
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(background ?? tint.opacity(0.10), in: Capsule())
+    }
+}
