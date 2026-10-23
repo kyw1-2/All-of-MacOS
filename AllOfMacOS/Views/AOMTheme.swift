@@ -82,21 +82,23 @@ struct AOMAmbientBackground: View {
         GeometryReader { geometry in
             ZStack {
                 AOMTheme.canvas
+                // Colour lives near the top edges, where the eye reads depth;
+                // the body of the page stays warm and neutral.
                 Circle()
-                    .fill(AOMTheme.blue.opacity(scheme == .dark ? 0.26 : 0.14))
-                    .frame(width: 620, height: 620)
-                    .blur(radius: 140)
-                    .offset(x: -geometry.size.width * 0.30, y: -geometry.size.height * 0.32)
+                    .fill(AOMTheme.blue.opacity(scheme == .dark ? 0.18 : 0.10))
+                    .frame(width: 560, height: 560)
+                    .blur(radius: 170)
+                    .offset(x: -geometry.size.width * 0.34, y: -geometry.size.height * 0.34)
                 Circle()
-                    .fill(AOMTheme.indigo.opacity(scheme == .dark ? 0.22 : 0.12))
-                    .frame(width: 520, height: 520)
-                    .blur(radius: 130)
-                    .offset(x: geometry.size.width * 0.32, y: -geometry.size.height * 0.08)
+                    .fill(AOMTheme.indigo.opacity(scheme == .dark ? 0.16 : 0.08))
+                    .frame(width: 480, height: 480)
+                    .blur(radius: 160)
+                    .offset(x: geometry.size.width * 0.30, y: -geometry.size.height * 0.20)
                 Circle()
-                    .fill(Color(red: 0.20, green: 0.72, blue: 0.86).opacity(scheme == .dark ? 0.14 : 0.08))
-                    .frame(width: 460, height: 460)
-                    .blur(radius: 130)
-                    .offset(x: geometry.size.width * 0.06, y: geometry.size.height * 0.44)
+                    .fill(Color(red: 0.20, green: 0.72, blue: 0.86).opacity(scheme == .dark ? 0.10 : 0.05))
+                    .frame(width: 420, height: 420)
+                    .blur(radius: 160)
+                    .offset(x: geometry.size.width * 0.10, y: geometry.size.height * 0.30)
             }
         }
         .ignoresSafeArea()
