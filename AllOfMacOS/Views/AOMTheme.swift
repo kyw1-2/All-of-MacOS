@@ -1,39 +1,37 @@
 import AppKit
 import SwiftUI
 
-/// A single visual language for the whole app: a light grey canvas, white
-/// elevated cards with no hairline borders, compact system typography and one vivid
-/// blue accent. Modelled on consumer fintech apps (Toss) rather than the
-/// System Settings list idiom the app used before.
+/// Neutral workspace surfaces with a single action accent. Shared by the
+/// main window, editors, settings and clipboard shelf in light and dark mode.
 enum AOMTheme {
     // MARK: Palette
 
     static let canvas = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1),
-        dark: NSColor(srgbRed: 0.063, green: 0.067, blue: 0.078, alpha: 1)
+        light: NSColor(srgbRed: 0.985, green: 0.985, blue: 0.981, alpha: 1),
+        dark: NSColor(srgbRed: 0.094, green: 0.094, blue: 0.102, alpha: 1)
     )
     static let card = Color.aomDynamic(
         light: .white,
-        dark: NSColor(srgbRed: 0.106, green: 0.110, blue: 0.125, alpha: 1)
+        dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.129, alpha: 1)
     )
     static let cardAlt = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1),
-        dark: NSColor(srgbRed: 0.141, green: 0.149, blue: 0.169, alpha: 1)
+        light: NSColor(srgbRed: 0.949, green: 0.949, blue: 0.945, alpha: 1),
+        dark: NSColor(srgbRed: 0.153, green: 0.153, blue: 0.165, alpha: 1)
     )
     static let text = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),
+        light: NSColor(srgbRed: 0.145, green: 0.145, blue: 0.165, alpha: 1),
         dark: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1)
     )
     static let textSecondary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.420, green: 0.463, blue: 0.518, alpha: 1),
+        light: NSColor(srgbRed: 0.427, green: 0.427, blue: 0.455, alpha: 1),
         dark: NSColor(srgbRed: 0.604, green: 0.639, blue: 0.682, alpha: 1)
     )
     static let textTertiary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.690, green: 0.722, blue: 0.757, alpha: 1),
+        light: NSColor(srgbRed: 0.520, green: 0.520, blue: 0.550, alpha: 1),
         dark: NSColor(srgbRed: 0.451, green: 0.478, blue: 0.514, alpha: 1)
     )
     static let divider = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.898, green: 0.910, blue: 0.922, alpha: 1),
+        light: NSColor(srgbRed: 0.875, green: 0.875, blue: 0.890, alpha: 1),
         dark: NSColor(srgbRed: 0.180, green: 0.192, blue: 0.216, alpha: 1)
     )
     static let blue = Color.aomDynamic(
@@ -53,10 +51,10 @@ enum AOMTheme {
 
     // MARK: Geometry
 
-    static let cardRadius: CGFloat = 12
-    static let controlRadius: CGFloat = 8
-    static let pagePadding: CGFloat = 18
-    static let sectionSpacing: CGFloat = 16
+    static let cardRadius: CGFloat = 9
+    static let controlRadius: CGFloat = 6
+    static let pagePadding: CGFloat = 20
+    static let sectionSpacing: CGFloat = 18
 
     // MARK: Shadow
 
@@ -76,8 +74,7 @@ extension Color {
 
 // MARK: - Card surface
 
-/// White, borderless, softly elevated card. The single container primitives
-/// every page uses instead of System Settings' hairline-bordered boxes.
+/// Quiet content surface with a fine outline and no elevation.
 struct AOMCard: ViewModifier {
     var radius: CGFloat = AOMTheme.cardRadius
     var padding: CGFloat? = 12
@@ -90,10 +87,9 @@ struct AOMCard: ViewModifier {
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(contrast == .increased ? AOMTheme.textSecondary : .clear, lineWidth: 1)
+                    .strokeBorder(contrast == .increased ? AOMTheme.textSecondary : AOMTheme.divider.opacity(0.55), lineWidth: 1)
             }
-            .shadow(color: elevated ? AOMTheme.cardShadow : .clear,
-                    radius: elevated ? 4 : 0, x: 0, y: elevated ? 1 : 0)
+
     }
 }
 

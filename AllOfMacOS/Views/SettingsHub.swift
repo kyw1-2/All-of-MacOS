@@ -146,9 +146,8 @@ struct HubRowShell<Control: View>: View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(tint)
-                .frame(width: 28, height: 28)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .foregroundStyle(AOMTheme.textSecondary)
+                .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -165,7 +164,7 @@ struct HubRowShell<Control: View>: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 9)
-        .frame(minHeight: 52)
+        .frame(minHeight: 46)
         .contentShape(Rectangle())
     }
 }
@@ -556,18 +555,18 @@ struct SettingsHubView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Settings").font(.aomDisplay(21)).tracking(-0.7).padding(.horizontal, 12)
-                Text("Make it yours").font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
+                Text("Settings").font(.system(size: 15, weight: .semibold)).tracking(-0.7).padding(.horizontal, 12)
+                Text("Preferences").font(.system(size: 11)).foregroundStyle(AOMTheme.textSecondary)
                     .padding(.horizontal, 12)
                 ScrollView {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 3) {
                         ForEach(SettingsCategory.allCases) { cat in categoryChip(cat) }
                     }
                 }.scrollIndicators(.hidden)
             }
             .padding(12).padding(.top, 6)
             .frame(width: 174)
-            .background(AOMTheme.card)
+            .background(AOMTheme.cardAlt.opacity(0.7))
             VStack(spacing: 0) {
                 header
                 content
@@ -616,14 +615,14 @@ struct SettingsHubView: View {
             category = cat
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: cat.symbol).font(.system(size: 16, weight: .medium)).frame(width: 20)
-                Text(cat.title).font(.aomLabel(13))
+                Image(systemName: cat.symbol).font(.system(size: 13, weight: .medium)).frame(width: 20)
+                Text(cat.title).font(.system(size: 12, weight: selected ? .semibold : .regular))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 12).frame(height: 32)
-            .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
-            .background(selected ? AOMTheme.blue.opacity(0.10) : .clear,
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
+            .background(selected ? AOMTheme.divider.opacity(0.6) : .clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -667,19 +666,9 @@ struct SettingsHubView: View {
 
     private func sectionView(_ cat: SettingsCategory, rows: [SettingItem]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(cat.title)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(AOMTheme.text)
-                Text(cat.blurb)
-                    .font(.system(size: 12))
-                    .foregroundStyle(AOMTheme.textTertiary)
-                Spacer()
-                Text("\(rows.count)")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+            if isSearching {
+                Text(cat.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
             }
-            .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -690,7 +679,7 @@ struct SettingsHubView: View {
                 }
             }
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
-            .shadow(color: AOMTheme.cardShadow, radius: 12, y: 5)
+            .overlay(RoundedRectangle(cornerRadius: AOMTheme.cardRadius).strokeBorder(AOMTheme.divider.opacity(0.5), lineWidth: 0.5))
             .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
         }
     }

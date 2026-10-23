@@ -38,7 +38,7 @@ struct ModernWindowSnappingView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 900
+            let wide = geometry.size.width >= 720
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
                     AOMPageHeader("Window Tiling", subtitle: appState.snapStatus,
@@ -53,7 +53,7 @@ struct ModernWindowSnappingView: View {
                     if wide {
                         HStack(alignment: .top, spacing: AOMDesign.sectionSpacing) {
                             stageSection.frame(maxWidth: .infinity)
-                            controlsColumn.frame(width: min(360, geometry.size.width * 0.34))
+                            controlsColumn.frame(width: min(270, geometry.size.width * 0.36))
                         }
                     } else {
                         stageSection
@@ -129,7 +129,7 @@ struct ModernWindowSnappingView: View {
                              caption: "Hover a layout below to see where a window lands")
             ZStack {
                 RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.55), Color.purple.opacity(0.45), Color.indigo.opacity(0.6)],
+                    .fill(LinearGradient(colors: [Color(red: 0.18, green: 0.22, blue: 0.29), Color(red: 0.10, green: 0.13, blue: 0.19)],
                                          startPoint: .topLeading, endPoint: .bottomTrailing))
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
@@ -171,7 +171,7 @@ struct ModernWindowSnappingView: View {
                 .clipShape(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 318)
+            .frame(height: 218)
             .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
             .accessibilityElement(children: .ignore)
@@ -185,7 +185,7 @@ struct ModernWindowSnappingView: View {
         VStack(alignment: .leading, spacing: 12) {
             AOMSectionHeader("Tile the Front Window", systemImage: "rectangle.split.3x3",
                              caption: "Click a layout to move the frontmost window now")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: AOMDesign.gridSpacing)],
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 106), spacing: AOMDesign.gridSpacing)],
                       spacing: AOMDesign.gridSpacing) {
                 ForEach(primaryLayouts) { layout in
                     SnapLayoutTile(

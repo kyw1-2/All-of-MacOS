@@ -85,8 +85,8 @@ struct ModernGesturesWorkspace: View {
                 } label: { Label("New Automation", systemImage: "plus") }
                 primaryAction: { presentAddTrigger(selectedDeviceCategory) }
             }
-            VStack(spacing: 14) {
-                HStack(spacing: 12) {
+            VStack(spacing: 4) {
+                HStack(spacing: 8) {
                     AOMSearchField(prompt: "Search names or actions", text: $searchQuery)
                     scopeMenu.fixedSize()
                     Button { tableLayout.toggle() } label: {
@@ -96,35 +96,25 @@ struct ModernGesturesWorkspace: View {
                         .help(showsInspector ? "Hide inspector" : "Show inspector")
                 }
                 .buttonStyle(AOMToolbarButtonStyle())
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(TriggerCategory.allCases) { category in
-                            Button { selectedDeviceCategory = category } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: category.iconName)
-                                    Text(category == .all ? "All" : category.rawValue)
-                                    Text("\(count(category))").monospacedDigit()
+                HStack(spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 18) {
+                            ForEach(TriggerCategory.allCases) { category in
+                                AOMUnderlineTab(title: "\(category == .all ? "All inputs" : category.rawValue)  \(count(category))",
+                                                selected: selectedDeviceCategory == category) {
+                                    selectedDeviceCategory = category
                                 }
-                                .font(.aomCaption(12))
-                                .foregroundStyle(selectedDeviceCategory == category ? AOMTheme.blue : AOMTheme.textSecondary)
-                                .padding(.horizontal, 12).frame(height: 28)
-                                .background(selectedDeviceCategory == category ? AOMTheme.blue.opacity(0.10) : AOMTheme.card,
-                                            in: Capsule())
-                            }.buttonStyle(.plain)
-                                .accessibilityAddTraits(selectedDeviceCategory == category ? [.isSelected] : [])
+                            }
                         }
                     }
+                    Text("\(rows.count) items").font(.system(size: 10)).foregroundStyle(AOMTheme.textTertiary).fixedSize()
                 }
-            }
-            HStack {
-                Text(scopeTitle).font(.aomLabel(13))
-                Spacer()
-                Text("\(rows.count) automations").font(.aomCaption()).foregroundStyle(AOMTheme.textSecondary)
+                .overlay(alignment: .bottom) { AOMTheme.divider.opacity(0.5).frame(height: 0.5) }
             }
             Group {
                 if scopedTriggers.isEmpty { onboardingView }
                 else if rows.isEmpty { ContentUnavailableView.search(text: searchQuery) }
-                else if tableLayout { table.aomSurface(padding: 0) }
+                else if tableLayout { table.scrollContentBackground(.hidden) }
                 else { cards }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -133,8 +123,8 @@ struct ModernGesturesWorkspace: View {
         .background(AOMWorkspaceBackground())
         .inspector(isPresented: $showsInspector) {
             inspectorContent
-                .background(AOMTheme.canvas)
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 560)
+                .background(AOMTheme.cardAlt.opacity(0.5))
+                .inspectorColumnWidth(min: 280, ideal: 310, max: 480)
         }
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
@@ -289,7 +279,7 @@ struct ModernGesturesWorkspace: View {
                     actionSequenceSection(current).aomCard(padding: 12, elevated: false)
                     triggerInspector(current).aomCard(padding: 12, elevated: false)
                 }
-                .padding(16)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
@@ -303,9 +293,9 @@ struct ModernGesturesWorkspace: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 AOMIconTile(systemImage: trigger.input.category.iconName,
-                            tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 40)
+                            tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 26)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(trigger.input.displayName).font(.headline).lineLimit(2)
+                    Text(trigger.input.displayName).font(.system(size: 13, weight: .semibold)).lineLimit(2)
                     Text(scopeDescription(trigger)).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
@@ -361,7 +351,7 @@ struct ModernGesturesWorkspace: View {
                           : appState.selectedAppTarget.isGlobal ? "globe" : "app.fill")
                         .foregroundStyle(.tint)
                 }
-                Text(scopeTitle).font(.headline).lineLimit(1)
+                Text(scopeTitle).font(.system(size: 11, weight: .medium)).lineLimit(1)
             }
         }
         .menuStyle(.borderlessButton)

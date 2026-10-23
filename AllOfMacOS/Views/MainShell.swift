@@ -28,8 +28,8 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView {
-            AOMMainSidebar(appearance: appearance)
-                .navigationSplitViewColumnWidth(min: 176, ideal: 194, max: 240)
+            AOMMainSidebar(appearance: appearance, showingCommandPalette: $showingCommandPalette)
+                .navigationSplitViewColumnWidth(min: 164, ideal: 180, max: 220)
                 .tutorialAnchor(.sidebar)
         } detail: {
             HStack(spacing: 0) {
@@ -75,14 +75,22 @@ struct AOMMainSidebar: View {
     @EnvironmentObject var appState: AppState
     var appearance: String
     @Environment(\.openSettings) private var openSettingsAction
+    @Binding var showingCommandPalette: Bool
     @State private var hoveringTab: AOMMainTab?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             wordmark
-            statusPill
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+            Button { showingCommandPalette = true } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                    Text("Search commands").lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("⌘K").font(.system(size: 9, design: .monospaced))
+                }.font(.system(size: 11)).foregroundStyle(AOMTheme.textSecondary)
+                    .padding(.horizontal, 9).frame(height: 29)
+                    .background(AOMTheme.card.opacity(0.65), in: RoundedRectangle(cornerRadius: 6))
+            }.buttonStyle(.plain).padding(.horizontal, 10).padding(.bottom, 20)
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -95,32 +103,24 @@ struct AOMMainSidebar: View {
             .suppressScrollerReservation()
 
             Spacer(minLength: 0)
+            statusPill.padding(.horizontal, 10).padding(.bottom, 8)
             footer
         }
-        .background(.regularMaterial)
+        .background(AOMTheme.cardAlt.opacity(0.7))
     }
 
     private var wordmark: some View {
-        HStack(alignment: .center, spacing: 9) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(LinearGradient(colors: [AOMTheme.blue, AOMTheme.blue.aomDarker(0.12)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 30, height: 30)
-                .overlay {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .font(.system(size: 13.5, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .shadow(color: AOMTheme.blue.opacity(0.3), radius: 6, y: 2)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("All of MacOS").font(.system(size: 15, weight: .bold)).foregroundStyle(AOMTheme.text)
-                Text("AOM").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
+        HStack(spacing: 8) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(AOMTheme.actionBlue, in: RoundedRectangle(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("All of MacOS").font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.text)
+                Text("Personal workspace").font(.system(size: 9)).foregroundStyle(AOMTheme.textSecondary)
             }
             Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        }.padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 18)
     }
 
     private var statusPill: some View {
@@ -129,8 +129,8 @@ struct AOMMainSidebar: View {
                 Circle()
                     .fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
                     .frame(width: 7, height: 7)
-                Text(appState.globalEnabled ? "Automation enabled" : "Automation paused")
-                    .font(.system(size: 12, weight: .semibold))
+                Text(appState.globalEnabled ? "Automations on" : "Automations paused")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AOMTheme.text)
                 Spacer(minLength: 0)
                 Image(systemName: appState.globalEnabled ? "pause.fill" : "play.fill")
@@ -149,9 +149,13 @@ struct AOMMainSidebar: View {
     private var navSection: some View {
         VStack(alignment: .leading, spacing: 3) {
             sectionLabel("WORKSPACE")
-            ForEach(AOMMainTab.allCases) { tab in
-                navRow(tab)
-            }
+            navRow(.home)
+            navRow(.gestures)
+            navRow(.snapping)
+            sectionLabel("LIBRARY").padding(.top, 16)
+            navRow(.capture)
+            navRow(.clipboard)
+            navRow(.insights)
         }
     }
 
@@ -162,12 +166,12 @@ struct AOMMainSidebar: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.iconName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
                     .frame(width: 22)
                 Text(tab.title)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? AOMTheme.blue : AOMTheme.textSecondary)
+                    .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
                 Spacer(minLength: 0)
                 if tab == .gestures {
                     let count = appState.currentPreset.triggers.filter(\.isEnabled).count
@@ -187,7 +191,7 @@ struct AOMMainSidebar: View {
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(AOMTheme.blue.opacity(0.10))
+                        .fill(AOMTheme.divider.opacity(0.6))
                 }
             }
         }
@@ -290,7 +294,7 @@ struct AOMMainSidebar: View {
             footerRow("Settings…", symbol: "gearshape") { openSettingsAction() }
             footerRow("Getting Started", symbol: "sparkles") { appState.showTutorialRequested = true }
             HStack {
-                Text("Version \(appVersion)")
+                Text("v\(appVersion) · Workspace")
                     .font(.system(size: 9.5))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -318,8 +322,8 @@ struct AOMMainSidebar: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 10.5, weight: .bold))
-            .tracking(0.5)
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(1)
             .foregroundStyle(AOMTheme.textTertiary)
             .padding(.horizontal, 10)
             .padding(.bottom, 2)

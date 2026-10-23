@@ -47,9 +47,8 @@ struct AOMSurface: ViewModifier {
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? AOMTheme.blue : (contrast == .increased ? AOMTheme.textSecondary : .clear), lineWidth: highlighted ? 2 : 1)
+                    .strokeBorder(highlighted ? AOMTheme.blue : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.divider.opacity(0.55)), lineWidth: highlighted ? 1.5 : 0.5)
             }
-            .shadow(color: AOMTheme.cardShadow, radius: 4, x: 0, y: 1)
     }
 }
 
@@ -150,13 +149,14 @@ struct AOMPageHeader<Trailing: View>: View {
                 trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
             }
         }
-        .padding(.vertical, 4)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) { AOMTheme.divider.opacity(0.5).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
     }
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 21, weight: .semibold)).tracking(-0.4).foregroundStyle(AOMTheme.text)
+            Text(title).font(.system(size: 20, weight: .semibold)).tracking(-0.4).foregroundStyle(AOMTheme.text)
             Text(subtitle).font(.system(size: 12)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
         }
     }
@@ -173,7 +173,7 @@ struct AOMIconTile: View {
             .font(.system(size: size * 0.44, weight: .semibold))
             .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous))
+
             .accessibilityHidden(true)
     }
 }
@@ -188,24 +188,21 @@ struct AOMMetricTile: View {
     var detail: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            AOMIconTile(systemImage: systemImage, tint: tint, size: 34)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(value)
-                    .font(.system(size: 21, weight: .semibold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text(title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if let detail {
-                    Text(detail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(AOMTheme.textSecondary)
+                Spacer(minLength: 4)
+                Image(systemName: systemImage).font(.system(size: 12)).foregroundStyle(AOMTheme.textTertiary)
             }
-            Spacer(minLength: 0)
+            Text(value).font(.system(size: 26, weight: .medium, design: .rounded))
+                .monospacedDigit().contentTransition(.numericText()).lineLimit(1)
+            if let detail {
+                Text(detail).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .aomSurface(radius: AOMDesign.tileRadius, padding: 12)
+        .padding(14)
+        .background(AOMTheme.cardAlt.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value)")
     }
@@ -229,7 +226,7 @@ struct AOMActionTile: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 17, weight: .medium)).foregroundStyle(tint)
                     .frame(width: 30, height: 30)
-                    .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.text).lineLimit(1)
                     if let subtitle { Text(subtitle).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1) }
@@ -237,7 +234,7 @@ struct AOMActionTile: View {
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
             .background(hovering ? AOMTheme.cardAlt : AOMTheme.card,
                         in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius))
             .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius))

@@ -14,7 +14,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "Home"
+        case .home: return "Workspace"
         case .gestures: return "Automation"
         case .snapping: return "Window Tiling"
         case .capture: return "Capture"
