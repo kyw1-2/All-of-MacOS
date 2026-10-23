@@ -20,7 +20,7 @@ jobs:
     # After trusted signing is enabled, main pushes use the signed workflow instead.
     # PRs and explicit CI requests stay ad-hoc and never receive signing secrets.
     if: github.event_name != 'push' || vars.AOM_SIGNING_READY != 'true'
-    runs-on: ${{ startsWith(github.ref, 'refs/heads/release/') && 'macos-14' || 'macos-15' }}
+    runs-on: ${{ startsWith(github.ref, 'refs/heads/release/') && 'macos-14' || 'xcode-27' }}
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
