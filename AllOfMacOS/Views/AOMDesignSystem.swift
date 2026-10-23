@@ -8,7 +8,7 @@ import SwiftUI
 /// Apple-native app instead of five differently padded screens.
 enum AOMDesign {
     /// Outer page margin and the gap between sections.
-    static let pagePadding: CGFloat = AOMTheme.pagePadding
+    static let pagePadding: CGFloat = 24
     static let sectionSpacing: CGFloat = AOMTheme.sectionSpacing
     static let gridSpacing: CGFloat = 14
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
@@ -164,7 +164,7 @@ struct AOMPageHeader<Trailing: View>: View {
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 28, weight: .bold)).tracking(-0.7).foregroundStyle(AOMTheme.text)
+                Text(title).font(.system(size: 30, weight: .bold)).tracking(-0.8).foregroundStyle(AOMTheme.text)
                 Text(subtitle).font(.aomBody(13.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
             }
         }

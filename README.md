@@ -2,6 +2,13 @@
 
 All of MacOS is a macOS productivity application with configurable gestures, keyboard actions, clipboard utilities, and screen capture.
 
+## Version 1.7.0
+
+Navigation moved from a left rail to one compact top bar with pill tabs, and the home
+screen became a bento grid: a gradient hero, a live summary card, four quick actions,
+three metrics and the activity groups below. Warm neutral palette, 22–26 pt corners,
+softer borders and hover lift throughout.
+
 ## Version 1.6.0
 
 A single app-wide visual language: light grey canvas, white borderless cards with soft

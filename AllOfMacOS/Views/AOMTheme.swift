@@ -9,37 +9,44 @@ enum AOMTheme {
     // MARK: Palette
 
     static let canvas = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1),
-        dark: NSColor(srgbRed: 0.063, green: 0.067, blue: 0.078, alpha: 1)
+        light: NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1),
+        dark: NSColor(srgbRed: 0.086, green: 0.086, blue: 0.078, alpha: 1)
     )
     static let card = Color.aomDynamic(
         light: .white,
-        dark: NSColor(srgbRed: 0.106, green: 0.110, blue: 0.125, alpha: 1)
+        dark: NSColor(srgbRed: 0.122, green: 0.118, blue: 0.106, alpha: 1)
     )
     static let cardAlt = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1),
-        dark: NSColor(srgbRed: 0.141, green: 0.149, blue: 0.169, alpha: 1)
+        light: NSColor(srgbRed: 0.945, green: 0.937, blue: 0.918, alpha: 1),
+        dark: NSColor(srgbRed: 0.161, green: 0.157, blue: 0.145, alpha: 1)
     )
     static let text = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),
-        dark: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1)
+        light: NSColor(srgbRed: 0.106, green: 0.102, blue: 0.090, alpha: 1),
+        dark: NSColor(srgbRed: 0.957, green: 0.953, blue: 0.937, alpha: 1)
     )
     static let textSecondary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.420, green: 0.463, blue: 0.518, alpha: 1),
-        dark: NSColor(srgbRed: 0.604, green: 0.639, blue: 0.682, alpha: 1)
+        light: NSColor(srgbRed: 0.431, green: 0.416, blue: 0.380, alpha: 1),
+        dark: NSColor(srgbRed: 0.659, green: 0.643, blue: 0.604, alpha: 1)
     )
     static let textTertiary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.690, green: 0.722, blue: 0.757, alpha: 1),
-        dark: NSColor(srgbRed: 0.451, green: 0.478, blue: 0.514, alpha: 1)
+        light: NSColor(srgbRed: 0.663, green: 0.645, blue: 0.604, alpha: 1),
+        dark: NSColor(srgbRed: 0.478, green: 0.463, blue: 0.431, alpha: 1)
     )
     static let divider = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.898, green: 0.910, blue: 0.922, alpha: 1),
-        dark: NSColor(srgbRed: 0.180, green: 0.192, blue: 0.216, alpha: 1)
+        light: NSColor(srgbRed: 0.902, green: 0.886, blue: 0.855, alpha: 1),
+        dark: NSColor(srgbRed: 0.196, green: 0.192, blue: 0.176, alpha: 1)
     )
     static let blue = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.192, green: 0.510, blue: 0.965, alpha: 1),
-        dark: NSColor(srgbRed: 0.278, green: 0.573, blue: 0.980, alpha: 1)
+        light: NSColor(srgbRed: 0.184, green: 0.416, blue: 0.965, alpha: 1),
+        dark: NSColor(srgbRed: 0.325, green: 0.514, blue: 0.996, alpha: 1)
     )
+    static let indigo = Color.aomDynamic(
+        light: NSColor(srgbRed: 0.404, green: 0.325, blue: 0.902, alpha: 1),
+        dark: NSColor(srgbRed: 0.510, green: 0.443, blue: 0.960, alpha: 1)
+    )
+    static var heroGradient: LinearGradient {
+        LinearGradient(colors: [blue, indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
     static let positive = Color.aomDynamic(
         light: NSColor(srgbRed: 0.0, green: 0.706, blue: 0.478, alpha: 1),
         dark: NSColor(srgbRed: 0.235, green: 0.784, blue: 0.573, alpha: 1)
@@ -51,7 +58,7 @@ enum AOMTheme {
 
     // MARK: Geometry
 
-    static let cardRadius: CGFloat = 20
+    static let cardRadius: CGFloat = 22
     static let controlRadius: CGFloat = 12
     static let pagePadding: CGFloat = 28
     static let sectionSpacing: CGFloat = 24
@@ -61,6 +68,28 @@ enum AOMTheme {
     static var cardShadow: Color {
         Color.aomDynamic(light: NSColor.black.withAlphaComponent(0.055),
                          dark: NSColor.black.withAlphaComponent(0.45))
+    }
+}
+
+/// Hover lift used by every interactive card: a small vertical translation and a
+/// deeper shadow, suppressed when Reduce Motion is on.
+struct AOMLift: ViewModifier {
+    var hovering: Bool
+    var radius: CGFloat = AOMTheme.cardRadius
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .shadow(color: hovering ? AOMTheme.cardShadow : AOMTheme.cardShadow,
+                    radius: hovering ? 22 : 12, x: 0, y: hovering ? 10 : 5)
+            .offset(y: hovering && !reduceMotion ? -1.5 : 0)
+            .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: hovering)
+    }
+}
+
+extension View {
+    func aomLift(_ hovering: Bool, radius: CGFloat = AOMTheme.cardRadius) -> some View {
+        modifier(AOMLift(hovering: hovering, radius: radius))
     }
 }
 
