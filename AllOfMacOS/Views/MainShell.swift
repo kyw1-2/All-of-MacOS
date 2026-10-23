@@ -82,7 +82,7 @@ struct AOMMainTopNav: View {
         }
         .padding(.horizontal, 20)
         .frame(height: 64)
-        .background(AOMTheme.canvas)
+        .background(.ultraThinMaterial)
     }
 
     // MARK: Brand
@@ -111,7 +111,7 @@ struct AOMMainTopNav: View {
                     .fixedSize()
             }
         }
-        .help(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
+        .help(appState.globalEnabled ? "Automation on" : "Automation paused")
         .onTapGesture { appState.toggleGlobalEnabled() }
     }
 
@@ -212,7 +212,7 @@ struct AOMMainTopNav: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("편집할 앱 프로필 또는 활성화 그룹")
+        .help("App profile or activation group")
     }
 
     private var scopeName: String {
@@ -253,22 +253,22 @@ struct AOMMainTopNav: View {
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help("명령 팔레트 (⌘K)")
+        .help("Command palette (⌘K)")
     }
 
     private var captureButton: some View {
         Menu {
-            Button("영역 캡처") { CaptureCoordinator.shared.captureArea() }
-            Button("전체 화면 캡처") { CaptureCoordinator.shared.captureFullscreen() }
-            Button("텍스트 추출") { CaptureCoordinator.shared.captureText() }
+            Button("Capture area") { CaptureCoordinator.shared.captureArea() }
+            Button("Capture full screen") { CaptureCoordinator.shared.captureFullscreen() }
+            Button("Capture text") { CaptureCoordinator.shared.captureText() }
             Divider()
-            Button("화면 녹화") { ScreenRecordingService.shared.promptAndStartRecording() }
-            Button("클립보드 열기") { ClipboardPanelController.shared.show() }
+            Button("Record screen") { ScreenRecordingService.shared.promptAndStartRecording() }
+            Button("Open clipboard") { ClipboardPanelController.shared.show() }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "plus.viewfinder").font(.system(size: 12, weight: .bold))
                 if !compact {
-                    Text("캡처").font(.system(size: 12.5, weight: .semibold))
+                    Text("Capture").font(.system(size: 12.5, weight: .semibold))
                 }
             }
             .foregroundStyle(.white)
@@ -280,16 +280,16 @@ struct AOMMainTopNav: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("캡처 · 녹화 · 클립보드")
+        .help("Capture, record, clipboard")
     }
 
     private var diagnosticsMenu: some View {
         Menu {
-            Toggle("터치 시각화", isOn: $showTouchVisualizer)
-            Toggle("진단 콘솔", isOn: $showLog)
+            Toggle("Touch visualizer", isOn: $showTouchVisualizer)
+            Toggle("Diagnostics console", isOn: $showLog)
             Divider()
-            Button("설정…") { openSettingsAction() }
-            Button("온보딩 다시 보기") { appState.showTutorialRequested = true }
+            Button("Settings…") { openSettingsAction() }
+            Button("Show onboarding again") { appState.showTutorialRequested = true }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .bold))
@@ -300,6 +300,6 @@ struct AOMMainTopNav: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: 32)
-        .help("더 보기")
+        .help("More")
     }
 }

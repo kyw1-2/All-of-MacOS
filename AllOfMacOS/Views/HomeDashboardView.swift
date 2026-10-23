@@ -55,7 +55,7 @@ struct AOMHomeView: View {
                 Circle()
                     .fill(appState.globalEnabled ? Color.white.opacity(0.95) : Color.white.opacity(0.4))
                     .frame(width: 7, height: 7)
-                Text(appState.globalEnabled ? "자동화 실행 중" : "자동화 일시정지")
+                Text(appState.globalEnabled ? "Automation on" : "Automation paused")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.9))
                 Spacer(minLength: 0)
@@ -67,7 +67,7 @@ struct AOMHomeView: View {
                 .font(.system(size: 32, weight: .bold))
                 .tracking(-1.0)
                 .foregroundStyle(.white)
-            Text("캡처하고, 자동화하고, 방금 한 작업을 이어서 하세요.")
+            Text("Capture, automate, and pick up right where you left off.")
                 .font(.system(size: 13))
                 .foregroundStyle(Color.white.opacity(0.82))
                 .padding(.top, 4)
@@ -80,7 +80,7 @@ struct AOMHomeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "viewfinder").font(.system(size: 12, weight: .bold))
-                        Text("지금 캡처").font(.system(size: 12.5, weight: .bold))
+                        Text("Capture now").font(.system(size: 12.5, weight: .bold))
                     }
                     .foregroundStyle(AOMTheme.text)
                     .padding(.horizontal, 15)
@@ -94,7 +94,7 @@ struct AOMHomeView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "doc.on.clipboard").font(.system(size: 12, weight: .semibold))
-                        Text("클립보드").font(.system(size: 12.5, weight: .semibold))
+                        Text("Clipboard").font(.system(size: 12.5, weight: .semibold))
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 15)
@@ -122,10 +122,10 @@ struct AOMHomeView: View {
 
     private var greeting: String {
         switch Calendar.current.component(.hour, from: Date()) {
-        case 5..<12: return "좋은 아침이에요"
-        case 12..<18: return "안녕하세요"
-        case 18..<23: return "좋은 저녁이에요"
-        default: return "늦은 시간이네요"
+        case 5..<12: return "Good morning"
+        case 12..<18: return "Hello"
+        case 18..<23: return "Good evening"
+        default: return "Working late"
         }
     }
 
@@ -134,10 +134,10 @@ struct AOMHomeView: View {
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("오늘의 요약").font(.aomHeadline(15))
+                Text("Today").font(.aomHeadline(15))
                 Spacer()
                 Button { appState.toggleGlobalEnabled() } label: {
-                    AOMChip(text: appState.globalEnabled ? "실행 중" : "정지",
+                    AOMChip(text: appState.globalEnabled ? "On" : "Paused",
                             tint: appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning,
                             symbol: appState.globalEnabled ? "play.fill" : "pause.fill")
                 }
@@ -146,11 +146,11 @@ struct AOMHomeView: View {
 
             Spacer(minLength: 12)
 
-            summaryRow("제스처", "\(appState.currentPreset.triggers.filter(\.isEnabled).count)개 동작",
+            summaryRow("Gestures", "\(appState.currentPreset.triggers.filter(\.isEnabled).count) active",
                        symbol: "hand.tap", tint: .cyan)
-            summaryRow("앱 프로필", "\(appState.currentPreset.appTargets.filter { !$0.isGlobal }.count)개 앱",
+            summaryRow("App profiles", "\(appState.currentPreset.appTargets.filter { !$0.isGlobal }.count) apps",
                        symbol: "app.badge", tint: .blue)
-            summaryRow("스냅 존", "\(appState.effectiveSnapZones.filter(\.isEnabled).count)개 영역",
+            summaryRow("Snap zones", "\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones",
                        symbol: "rectangle.split.2x2", tint: .indigo)
 
             Spacer(minLength: 0)
@@ -180,10 +180,10 @@ struct AOMHomeView: View {
     private func quickActions(wide: Bool) -> some View {
         let columns = wide ? 4 : 2
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: columns), spacing: 14) {
-            quickTile("영역 캡처", "viewfinder", .orange) { CaptureCoordinator.shared.captureArea() }
-            quickTile("텍스트 추출", "text.viewfinder", .blue) { CaptureCoordinator.shared.captureText() }
-            quickTile("화면 녹화", "record.circle", .red) { ScreenRecordingService.shared.promptAndStartRecording() }
-            quickTile("클립보드", "doc.on.clipboard", .purple) { ClipboardPanelController.shared.show() }
+            quickTile("Capture area", "viewfinder", .orange) { CaptureCoordinator.shared.captureArea() }
+            quickTile("Text capture", "text.viewfinder", .blue) { CaptureCoordinator.shared.captureText() }
+            quickTile("Record screen", "record.circle", .red) { ScreenRecordingService.shared.promptAndStartRecording() }
+            quickTile("Clipboard", "doc.on.clipboard", .purple) { ClipboardPanelController.shared.show() }
         }
     }
 
@@ -214,9 +214,9 @@ struct AOMHomeView: View {
 
     private var metrics: some View {
         HStack(spacing: 14) {
-            metric("제스처", appState.currentPreset.triggers.filter(\.isEnabled).count, "hand.tap", .cyan, .gestures)
-            metric("앱 프로필", appState.currentPreset.appTargets.filter { !$0.isGlobal }.count, "app.badge", .blue, .gestures)
-            metric("스냅 존", appState.effectiveSnapZones.filter(\.isEnabled).count, "rectangle.split.2x2", .indigo, .snapping)
+            metric("Gestures", appState.currentPreset.triggers.filter(\.isEnabled).count, "hand.tap", .cyan, .gestures)
+            metric("Profiles", appState.currentPreset.appTargets.filter { !$0.isGlobal }.count, "app.badge", .blue, .gestures)
+            metric("Snap zones", appState.effectiveSnapZones.filter(\.isEnabled).count, "rectangle.split.2x2", .indigo, .snapping)
         }
         .padding(.vertical, 3)
     }

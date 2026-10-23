@@ -848,6 +848,20 @@ class ActionExecutor {
         }
         let shortcutFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
         let secureInput = IsSecureEventInputEnabled()
+        if secureInput {
+            // Password fields drop synthetic key events entirely (Secure Event
+            // Input). Paste is still accepted, so deliver the text through a
+            // concealed pasteboard round-trip instead of failing silently.
+            activeTextTypingSessions += 1
+            SecureTextPaste.deliver(text) { success in
+                activeTextTypingSessions = max(0, activeTextTypingSessions - 1)
+                if !success {
+                    GestureLog.shared.logFromAnyThread("Secure text delivery failed: the focused control rejected paste", level: .error)
+                }
+                completion(success)
+            }
+            return
+        }
         let keyboardLayout = TextTypingKeyboardLayout()
         if secureInput {
             // Validate the entire payload before delivering a partial password.

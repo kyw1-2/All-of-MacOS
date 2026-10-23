@@ -25,9 +25,7 @@ enum AOMDesign {
 /// A static canvas: no live backdrop sampling, per-frame work or animated blur.
 struct AOMWorkspaceBackground: View {
     var body: some View {
-        AOMTheme.canvas
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        AOMAmbientBackground()
     }
 }
 
@@ -40,15 +38,21 @@ struct AOMSurface: ViewModifier {
     var padding: CGFloat? = 14
     var highlighted = false
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         content
             .padding(padding ?? 0)
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.50),
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? AOMTheme.blue : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.divider.opacity(0.55)), lineWidth: highlighted ? 1.5 : 0.5)
+                    .strokeBorder(highlighted ? AOMTheme.blue
+                                  : (contrast == .increased ? AOMTheme.textSecondary : Color.white.opacity(scheme == .dark ? 0.20 : 0.60)),
+                                  lineWidth: highlighted ? 1.5 : 0.9)
             }
+            .shadow(color: AOMTheme.cardShadow, radius: 16, x: 0, y: 7)
     }
 }
 

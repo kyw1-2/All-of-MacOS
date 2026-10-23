@@ -2,6 +2,12 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 1.8.0
+
+Glass surfaces over an ambient gradient window, one language across the app (English),
+and a real fix for text expansion in password fields: macOS Secure Event Input drops
+synthetic keystrokes, so AOM now delivers through a concealed pasteboard round-trip.
+
 ## Version 1.7.0
 
 Navigation moved from a left rail to one compact top bar with pill tabs, and the home
