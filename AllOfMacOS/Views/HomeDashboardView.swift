@@ -12,7 +12,7 @@ struct AOMHomeView: View {
             let wide = geometry.size.width >= 1000
             ScrollView {
                 VStack(spacing: 18) {
-                    HStack(alignment: .stretch, spacing: 18) {
+                    HStack(alignment: .top, spacing: 18) {
                         hero
                             .frame(maxWidth: .infinity)
                             .frame(height: 208)

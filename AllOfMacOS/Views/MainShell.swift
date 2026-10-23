@@ -65,7 +65,6 @@ struct AOMMainTopNav: View {
     @Binding var showTouchVisualizer: Bool
     var compact: Bool
     @Environment(\.openSettings) private var openSettingsAction
-    @Binding var showingCommandPalette: Bool
     @State private var hoveringTab: AOMMainTab?
 
     var body: some View {
