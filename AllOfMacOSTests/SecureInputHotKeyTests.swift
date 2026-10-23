@@ -48,6 +48,27 @@ final class SecureInputHotKeyTests: XCTestCase {
         XCTAssertEqual(plan[password], password)
     }
 
+    func testHotKeysAreHeldOnlyForModifiedChordsDuringSecureInput() {
+        let password = KeyboardShortcut(keyCode: p, modifiers: [.option])
+        let kakao = KeyboardShortcut(keyCode: 40, modifiers: [.command])
+        let shiftOnly = KeyboardShortcut(keyCode: p, modifiers: [.shift])
+        let function = KeyboardShortcut(keyCode: 0, modifiers: [.function, .control])
+        let all: Set<KeyboardShortcut> = [password, kakao, shiftOnly, function]
+        XCTAssertEqual(SecureInputHotKeys.wantedShortcuts(secureInput: true, screenLocked: false) { all }, [password, kakao])
+        var evaluated = false
+        XCTAssertEqual(SecureInputHotKeys.wantedShortcuts(secureInput: false, screenLocked: false) { evaluated = true; return all }, [])
+        XCTAssertFalse(evaluated, "Outside Secure Input the trigger list is not even consulted")
+    }
+
+    func testNothingIsRegisteredWhileTheScreenIsLocked() {
+        // The lock screen holds Secure Input itself; a password shortcut there
+        // would type into the lock-screen field.
+        let password = KeyboardShortcut(keyCode: p, modifiers: [.option])
+        var evaluated = false
+        XCTAssertEqual(SecureInputHotKeys.wantedShortcuts(secureInput: true, screenLocked: true) { evaluated = true; return [password] }, [])
+        XCTAssertFalse(evaluated)
+    }
+
     func testTypedCharactersUseAPrivateSourceAndKeepTheirUnicodePayload() throws {
         for (units, shifted) in [(Array("A".utf16), true), (Array("한".utf16), false), (Array("!".utf16), true)] {
             let (down, up) = try XCTUnwrap(ActionExecutor.textEvents(units, keyCode: 0, shifted: shifted))

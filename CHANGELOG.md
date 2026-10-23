@@ -2,6 +2,10 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 1.9.2 — No password typing at the lock screen
+- Type Text refuses to run while the screen is locked, and stops if the screen locks mid-way. The lock screen also turns on Secure Event Input, so 1.9.0 and 1.9.1 registered their secure-input shortcuts (including the ⌃ alias) there as well; nothing is registered while locked now.
+- Documented the one-time Keychain prompt each new build triggers for clipboard history.
+
 ## 1.9.1 — Sheet polish
 - The Automation editor fits shorter windows: its header shows the scope and holds pin, duplicate and delete in a ⋯ menu, and the input type moved into the Trigger section, replacing the separate Details box.
 - Capture Library thumbnails use the sheet's light inset grey instead of a dark backdrop; cards are wider so the kind, size and time caption is never cut off, and the kind is omitted when the title already states it.

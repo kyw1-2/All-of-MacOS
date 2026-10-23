@@ -1,6 +1,16 @@
 import AppKit
 import Carbon
 
+/// The login session's lock state. While the lock screen is up it owns Secure
+/// Event Input and every keystroke lands in its password field, so nothing
+/// that types — least of all a stored password — may run then.
+enum ScreenLock {
+    /// `CGSSessionScreenIsLocked` is present (and true) only while locked.
+    static var isLocked: Bool {
+        (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+}
+
 /// Carbon hot-key registration keeps explicit shortcuts available while a
 /// password field suppresses CGEventTap. It does not read password characters,
 /// change Secure Input, or register unmodified printable keys.
@@ -12,7 +22,9 @@ import Carbon
 /// arrive, while ⌃, ⌃⌥, ⌃⇧, ⌘⌥, ⌘⇧ and ⌃⌥⌘ do. Such a shortcut therefore
 /// also answers to a *secure alias* — the same key with Control added
 /// (⌥P → ⌃⌥P) — but only while Secure Input is active, and never when the
-/// alias is itself bound to another trigger.
+/// alias is itself bound to another trigger. Nothing is registered while the
+/// screen is locked: the lock screen is a Secure Input owner too, and a
+/// shortcut must never type into the lock-screen password field.
 final class SecureInputHotKeys {
     private struct Registration {
         let physical: KeyboardShortcut
@@ -58,6 +70,17 @@ final class SecureInputHotKeys {
         return plan
     }
 
+    /// Shortcuts to hold as hot keys right now: modified, non-Fn chords during
+    /// Secure Input, and none at all outside it or while the screen is locked.
+    /// `shortcuts` is only evaluated when something may be registered.
+    static func wantedShortcuts(secureInput: Bool, screenLocked: Bool,
+                                shortcuts: () -> Set<KeyboardShortcut>) -> Set<KeyboardShortcut> {
+        guard secureInput, !screenLocked else { return [] }
+        return shortcuts().filter {
+            !$0.modifiers.intersection([.command, .control, .option]).isEmpty && !$0.modifiers.contains(.function)
+        }
+    }
+
     // MARK: Lifecycle
 
     init(shortcuts: @escaping () -> Set<KeyboardShortcut>,
@@ -94,9 +117,9 @@ final class SecureInputHotKeys {
         }
         // Retain registrations through key-up if the action changes secure state.
         guard held.isEmpty else { return }
-        let wanted = IsSecureEventInputEnabled() ? Set(shortcuts().filter {
-            !$0.modifiers.intersection([.command, .control, .option]).isEmpty && !$0.modifiers.contains(.function)
-        }) : []
+        let secureInput = IsSecureEventInputEnabled()
+        let wanted = Self.wantedShortcuts(secureInput: secureInput, screenLocked: secureInput && ScreenLock.isLocked,
+                                          shortcuts: shortcuts)
         guard wanted != requested else { return }
         unregister()
         requested = wanted
@@ -120,7 +143,8 @@ final class SecureInputHotKeys {
     private func receive(_ id: UInt32, isDown: Bool) -> OSStatus {
         guard let registration = registrations[id] else { return OSStatus(eventNotHandledErr) }
         if isDown {
-            guard IsSecureEventInputEnabled(), ActionExecutor.activeTextTypingSessions == 0,
+            // The lock can engage between refreshes; never act for it.
+            guard IsSecureEventInputEnabled(), !ScreenLock.isLocked, ActionExecutor.activeTextTypingSessions == 0,
                   shortcuts().contains(registration.target), held.insert(id).inserted else { return noErr }
         } else {
             guard held.remove(id) != nil else { return noErr }

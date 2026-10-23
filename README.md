@@ -2,6 +2,18 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 1.9.2
+
+Password typing never reaches the lock screen. The lock screen turns on Secure Input too, so
+AOM no longer registers its password-field shortcuts while the screen is locked, and Type Text
+refuses to run (or stops) until you unlock.
+
+After installing a new build, macOS asks once for your login keychain password: "All of
+MacOS wants to access key 'All of MacOS Clipboard History'". AOM is signed with its own
+certificate rather than an Apple Developer ID, so every build is a new identity to the
+keychain. Choose Always Allow; clipboard history stays empty, but intact, until you do. A
+Type Text shortcut works in that dialog like in any other password field (⌥P answers as ⌃⌥P).
+
 ## Version 1.9.1
 
 Polish from checking 1.9.0 on a real setup: the Automation editor fits a 734 pt window

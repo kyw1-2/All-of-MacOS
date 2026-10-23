@@ -850,6 +850,12 @@ class ActionExecutor {
             return
         }
         guard !text.isEmpty else { completion(true); return }
+        // The lock screen owns keyboard focus while it is up: typed text, and a
+        // stored password above all, would land in its password field.
+        guard !ScreenLock.isLocked else {
+            GestureLog.shared.logFromAnyThread("Type Text skipped: the screen is locked", level: .error)
+            completion(false); return
+        }
         guard AXIsProcessTrusted(), let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else {
             completion(false); return
         }
@@ -876,7 +882,7 @@ class ActionExecutor {
             isCancelled: isCancelled,
             targetIsReady: {
                 !target.isTerminated && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier
-                    && IsSecureEventInputEnabled() == secureInput
+                    && IsSecureEventInputEnabled() == secureInput && !ScreenLock.isLocked
             },
             // Only physical modifier state matters here. A suppressed shortcut key-up
             // can leave the combined session state stuck even after release.
