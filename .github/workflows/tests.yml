@@ -40,9 +40,9 @@ jobs:
         run: |
           brew list webp >/dev/null 2>&1 || brew install webp
           echo "CI limitation: skipping 15 OCR tests requiring an interactive macOS text-recognition service."
-          swift test -j 2 \\
-            --skip 'AOM121PerformanceTests/(testEnglishCaptureUsesSinglePass|testFastPathCanBeTurnedOff|testKoreanUnderEnglishFirstSystemStaysFast)' \\
-            --skip 'TextCaptureInstantTests/(testCaptureLatencyComparison|testEnglishCaptureUsesOneVisionPass|testKoreanCaptureUsesOnlyLiveTextAndPreservesSpacing)' \\
+          swift test -j 2 \
+            --skip 'AOM121PerformanceTests/(testEnglishCaptureUsesSinglePass|testFastPathCanBeTurnedOff|testKoreanUnderEnglishFirstSystemStaysFast)' \
+            --skip 'TextCaptureInstantTests/(testCaptureLatencyComparison|testEnglishCaptureUsesOneVisionPass|testKoreanCaptureUsesOnlyLiveTextAndPreservesSpacing)' \
             --skip 'TextSniperParityTests/(testChineseRecognition|testDarkModeWhiteOnBlack|testEnglishRecognitionKeepsLines|testJapaneseRecognition|testJoinLinesModeReflowsParagraph|testKoreanRecognition|testLegacyAPIStillWorks|testMixedScriptRecognition|testTinyTextIsUpscaled)'
       - name: Build test application
         env:
