@@ -1,0 +1,111 @@
+name: Publish verified AOM CI testing prerelease
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-verified-ci-testing-prerelease.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: aom-ci-testing-prerelease-1fffbecf3453
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_RUN_ID: "39885075955"
+      SOURCE_SHA: "1fffbecf3453df8ed3f0feba15121526a8b3c7af"
+      ARTIFACT_NAME: "All-of-MacOS-ci-testing-only"
+      RELEASE_TAG: "aom-ci-v1.6.0-b2026102202-g1fffbecf3453"
+    steps:
+      - name: Validate the exact successful source CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID")"
+          echo "$run_json" | jq -e --arg sha "$SOURCE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .status == "completed" and .conclusion == "success"
+            and .head_sha == $sha and .head_branch == "main"
+            and .event == "push" and .name == "All of MacOS macOS CI"
+            and .head_repository.full_name == $repo
+          ' > /dev/null
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts")"
+          echo "$artifacts" | jq -e --arg name "$ARTIFACT_NAME" '
+            [.artifacts[] | select(.name == $name and .expired == false)] | length == 1
+          ' > /dev/null
+          echo "Verified CI run, source SHA, successful conclusion and immutable artifact."
+
+      - name: Download, verify and identify the testing DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/verified-aom"
+          mkdir -p "$source_dir"
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" -n "$ARTIFACT_NAME" -D "$source_dir"
+          count="$(find "$source_dir" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          test "$count" = 1
+          source_dmg="$(find "$source_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -s "$source_dmg"
+          hdiutil verify "$source_dmg"
+          mount="$RUNNER_TEMP/aom-ci-volume"
+          mkdir -p "$mount"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mount" "$source_dmg"
+          trap 'hdiutil detach -quiet "$mount" || true' EXIT
+          app="$mount/All of MacOS.app"
+          test -d "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = 'com.kyw.allofmacos'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.6.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = '2026102202'
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -F 'Signature=adhoc'
+          hdiutil detach -quiet "$mount"
+          trap - EXIT
+          out="$RUNNER_TEMP/All-of-MacOS-1.6.0-b2026102202-CI-Testing-g1fffbecf3453.dmg"
+          cp "$source_dmg" "$out"
+          checksum="$(shasum -a 256 "$out" | awk '{print $1}')"
+          echo "DMG_PATH=$out" >> "$GITHUB_ENV"
+          echo "DMG_SHA256=$checksum" >> "$GITHUB_ENV"
+
+      - name: Publish CI testing prerelease without changing Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+            test "$existing" = "$SOURCE_SHA"
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx "$(basename "$DMG_PATH")"
+            echo "Existing prerelease matches exact source and asset name; leaving it unchanged."
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/aom-ci-prerelease-notes.md"
+          cat > "$notes" <<EOF
+          ## All of MacOS 1.6.0 — CI-verified testing build
+
+          This is a **testing-only prerelease** of the existing 1.6.0 app, built from source commit $SOURCE_SHA. It is not a new feature release.
+
+          ### Verification
+          - GitHub Actions macOS CI: [successful run #$CI_RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID)
+          - Xcode 27: compiled successfully.
+          - Swift tests: 917 executed; 2 skipped; 0 failures.
+          - 15 end-to-end OCR tests were excluded only in the headless runner because its text-recognition service is unavailable. They remain enabled for local testing.
+          - App identity and deep code-signing verification: passed.
+          - DMG disk-image integrity verification: passed.
+          - DMG SHA-256: $DMG_SHA256
+
+          ### Important signing limitation
+          **This DMG is ad-hoc signed, not signed with the persistent AOM Dev certificate, and not Apple notarized.** It is intended only for testing. It may be blocked by Gatekeeper and is **not recommended as an upgrade over an installed AOM Dev-signed build**. The existing signed 1.6.0 Release remains the Latest public distribution.
+          EOF
+          gh release create "$RELEASE_TAG" "$DMG_PATH" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "All of MacOS 1.6.0 — CI Verified Testing Build (1fffbecf)" --notes-file "$notes" --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,isPrerelease,tagName,targetCommitish,assets --jq '{url,isPrerelease,tagName,targetCommitish,assets:[.assets[].name]}'
