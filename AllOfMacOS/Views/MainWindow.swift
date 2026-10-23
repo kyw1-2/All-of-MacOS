@@ -75,8 +75,15 @@ struct AOMMainWindowChrome: NSViewRepresentable {
             let selected: NSAppearance? = appearanceChoice == "dark" ? NSAppearance(named: .darkAqua)
                 : appearanceChoice == "light" ? NSAppearance(named: .aqua) : nil
             if window.appearance?.name != selected?.name { window.appearance = selected }
-            if window.isOpaque { window.isOpaque = false }
-            if window.backgroundColor != .clear { window.backgroundColor = .clear }
+            // Opaque window base: materials must refract AOM's own surface, not
+            // whatever wallpaper happens to sit behind the window.
+            if !window.isOpaque { window.isOpaque = true }
+            let base = NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                    ? NSColor(srgbRed: 0.086, green: 0.086, blue: 0.078, alpha: 1)
+                    : NSColor(srgbRed: 0.969, green: 0.965, blue: 0.953, alpha: 1)
+            }
+            if window.backgroundColor != base { window.backgroundColor = base }
             if window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = false }
             if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
         }
