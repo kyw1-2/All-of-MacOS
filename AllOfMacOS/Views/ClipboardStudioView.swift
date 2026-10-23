@@ -8,6 +8,8 @@ import SwiftUI
 struct ClipboardStudioView: View {
     @ObservedObject private var store = ClipboardStore.shared
     @StateObject private var search = ClipboardPanelState()
+    @AppStorage("AOMClipboardGridLayout") private var gridLayout = false
+    @State private var selectedEntryID: UUID?
     @State private var boardCounts: [UUID: Int] = [:]
     @State private var hoveredCardID: UUID? = nil
     @State private var showingSettings = false
@@ -37,6 +39,13 @@ struct ClipboardStudioView: View {
                               tint: store.paused ? .gray : .indigo) {
                     headerControls
                 }
+                HStack(spacing: 8) {
+                    AOMSearchField(prompt: "Search text, links and files", text: $search.query)
+                    Picker("Layout", selection: $gridLayout) {
+                        Image(systemName: "list.bullet").tag(false).help("List and preview")
+                        Image(systemName: "square.grid.2x2").tag(true).help("Gallery")
+                    }.pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
                 HStack(spacing: 12) {
                     pinboardsBar
                     Picker("Type", selection: $search.kind) {
@@ -57,8 +66,6 @@ struct ClipboardStudioView: View {
             .padding(.top, AOMDesign.pagePadding)
             .padding(.bottom, 12)
 
-            Divider()
-
             if search.isSearchPending {
                 ProgressView("Searching clipboard…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if entries.isEmpty {
@@ -78,33 +85,11 @@ struct ClipboardStudioView: View {
                     }
                 }
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 14)], spacing: 14) {
-                        ForEach(entries) { entry in
-                            ClipboardStudioCard(
-                                entry: entry,
-                                isHovered: hoveredCardID == entry.id,
-                                boards: store.boards,
-                                onCopy: { copy(entry) },
-                                onTogglePin: { board in togglePin(entry, board) },
-                                onDelete: {
-                                    withAnimation(AOMDesign.animation()) { store.delete(entryID: entry.id) }
-                                    showToast("Deleted item")
-                                }
-                            )
-                            .onHover { isHovering in
-                                if isHovering { hoveredCardID = entry.id } else if hoveredCardID == entry.id { hoveredCardID = nil }
-                            }
-                        }
-                    }
-                    .padding(AOMDesign.pagePadding)
-                }
-                .suppressScrollerReservation()
+                library(entries)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMWorkspaceBackground())
-        .searchable(text: $search.query, placement: .toolbar, prompt: "Search Clipboard")
         .task(id: store.revision) {
             let entries = store.entries
             let counts = await Task.detached(priority: .userInitiated) {
@@ -126,6 +111,88 @@ struct ClipboardStudioView: View {
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
         .aomToast(toast.message)
+    }
+
+    private func library(_ entries: [ClipboardEntry]) -> some View {
+        GeometryReader { geometry in
+            if gridLayout {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 280), spacing: 12)], spacing: 12) {
+                        ForEach(entries) { entry in libraryCard(entry) }
+                    }.padding(AOMDesign.pagePadding)
+                }.suppressScrollerReservation()
+            } else {
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Text("CONTENT")
+                            Spacer()
+                            Text("\(entries.count) ITEMS")
+                        }.font(.system(size: 9, weight: .semibold)).tracking(0.8).foregroundStyle(AOMTheme.textTertiary)
+                            .padding(.horizontal, 20).frame(height: 30)
+                        List(selection: $selectedEntryID) {
+                            ForEach(entries) { entry in
+                                libraryRow(entry)
+                            }
+                        }.listStyle(.inset).scrollContentBackground(.hidden)
+                    }.frame(maxWidth: .infinity)
+                    if geometry.size.width >= 660, let entry = entries.first(where: { $0.id == selectedEntryID }) ?? entries.first {
+                        Rectangle().fill(AOMTheme.divider.opacity(0.6)).frame(width: 0.5)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text("PREVIEW").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(AOMTheme.textTertiary)
+                                libraryCard(entry).id(entry.id)
+                                if let text = entry.text, !text.isEmpty {
+                                    Text(String(text.prefix(16000))).font(.system(size: 12)).textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    if text.count > 16000 {
+                                        Text("Preview shortened. Copy includes the full text.")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }.padding(16)
+                        }.frame(width: min(320, geometry.size.width * 0.4))
+                            .background(AOMTheme.cardAlt.opacity(0.4))
+                    }
+                }
+            }
+        }
+    }
+
+    private func libraryRow(_ entry: ClipboardEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: entry.kind.symbol).font(.system(size: 14))
+                .foregroundStyle(AOMTheme.textSecondary).frame(width: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text([entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if !entry.pinboardIDs.isEmpty { Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary) }
+            Button { copy(entry) } label: { Image(systemName: "doc.on.doc").font(.system(size: 12)) }
+                .buttonStyle(.borderless).help("Copy item").accessibilityLabel("Copy \(entry.title)")
+        }
+        .frame(minHeight: 40).contentShape(Rectangle()).tag(entry.id)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { copy(entry) })
+        .contextMenu {
+            Button("Copy") { copy(entry) }
+            Menu("Pinboards") {
+                ForEach(store.boards) { board in
+                    Button(entry.pinboardIDs.contains(board.id) ? "Unpin from \(board.name)" : "Pin to \(board.name)") { togglePin(entry, board) }
+                }
+            }
+            Button("Delete", role: .destructive) { store.delete(entryID: entry.id) }
+        }
+    }
+
+    private func libraryCard(_ entry: ClipboardEntry) -> some View {
+        ClipboardStudioCard(entry: entry, isHovered: hoveredCardID == entry.id, boards: store.boards,
+            onCopy: { copy(entry) }, onTogglePin: { board in togglePin(entry, board) },
+            onDelete: { store.delete(entryID: entry.id); showToast("Deleted item") })
+            .onHover { hovering in
+                if hovering { hoveredCardID = entry.id } else if hoveredCardID == entry.id { hoveredCardID = nil }
+            }
     }
 
     // MARK: - Header
@@ -226,13 +293,13 @@ struct ClipboardStudioView: View {
             HStack(spacing: 6) {
                 if let color { Circle().fill(color).frame(width: 8, height: 8) }
                 if let symbol { Image(systemName: symbol).font(.caption) }
-                Text(title).font(.callout.weight(selected ? .semibold : .regular)).lineLimit(1)
+                Text(title).font(.system(size: 11, weight: selected ? .semibold : .regular)).lineLimit(1)
                 Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 10)
             .frame(height: 26)
-            .background(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05), in: Capsule())
-            .overlay(Capsule().strokeBorder(selected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1))
+            .background(selected ? AOMTheme.cardAlt : .clear, in: RoundedRectangle(cornerRadius: 5))
+
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -353,13 +420,13 @@ private struct ClipboardStudioCard: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             preview
-                .frame(height: 120)
+                .frame(height: 108)
                 .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
+                .background(AOMTheme.cardAlt)
                 .clipped()
 
             HStack(spacing: 6) {
@@ -367,7 +434,7 @@ private struct ClipboardStudioCard: View {
                     .font(.callout.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if isHovered {
+                Group {
                     Group {
                         Button(action: onCopy) { Image(systemName: "doc.on.doc") }
                             .help("Copy")
@@ -398,7 +465,7 @@ private struct ClipboardStudioCard: View {
                     .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 16)
             .frame(height: 34)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)

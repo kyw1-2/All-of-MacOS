@@ -24,7 +24,7 @@ struct MainWindow: View {
                      appearance: appearance) {
             Group {
                 switch appState.selectedMainTab {
-                case .home: AOMHomeView()
+                case .home: AOMHomeView(showingCommandPalette: $showingCommandPalette)
                 case .gestures:
                     ModernGesturesWorkspace()
                         .tutorialAnchor(.triggers)

@@ -48,6 +48,8 @@ struct AOMMainShell<Content: View>: View {
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
+        .controlSize(.small)
         .background(AOMWorkspaceBackground())
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
@@ -63,6 +65,7 @@ struct AOMMainTopNav: View {
     @Binding var showTouchVisualizer: Bool
     var compact: Bool
     @Environment(\.openSettings) private var openSettingsAction
+    @Binding var showingCommandPalette: Bool
     @State private var hoveringTab: AOMMainTab?
 
     var body: some View {
@@ -128,7 +131,7 @@ struct AOMMainTopNav: View {
     private func tabButton(_ tab: AOMMainTab) -> some View {
         let selected = appState.selectedMainTab == tab
         return Button {
-            withAnimation(.snappy(duration: 0.18)) { appState.selectedMainTab = tab }
+            withAnimation(AOMDesign.animation()) { appState.selectedMainTab = tab }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: tab.iconName)

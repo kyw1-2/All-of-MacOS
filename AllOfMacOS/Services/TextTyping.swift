@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// A visible character is one keystroke, including composed Hangul, combining
 /// marks and ordinary emoji clusters. Very long clusters are bounded at scalar
@@ -108,5 +109,42 @@ final class TextTypingSession {
         guard environment.send(stroke) else { finish(false); return }
         guard let next = cursor.next() else { finish(true); return }
         environment.schedule(interval) { self.post(next) }
+    }
+}
+
+/// Snapshot the current hardware layout once per typing session. Secure input
+/// uses an ASCII-capable layout even when the user's active source is an IME.
+/// No keyboard source is changed and no input text is logged or copied.
+struct TextTypingKeyboardLayout {
+    struct Key { let code: CGKeyCode; let shifted: Bool }
+    private var keys: [String: Key] = [:]
+
+    init() {
+        let source = IsSecureEventInputEnabled()
+            ? TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
+            : TISCopyCurrentKeyboardLayoutInputSource().takeRetainedValue()
+        guard let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return }
+        let data = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(data) else { return }
+        let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+        for shifted in [false, true] {
+            for code in UInt16(0)..<UInt16(128) {
+                var deadKey: UInt32 = 0
+                var length = 0
+                var output = [UniChar](repeating: 0, count: 8)
+                let status = output.withUnsafeMutableBufferPointer { buffer in
+                    UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), shifted ? UInt32(shiftKey >> 8) : 0,
+                                   UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                                   &deadKey, buffer.count, &length, buffer.baseAddress!)
+                }
+                guard status == noErr, length > 0 else { continue }
+                let text = String(utf16CodeUnits: output, count: length)
+                if keys[text] == nil { keys[text] = Key(code: code, shifted: shifted) }
+            }
+        }
+    }
+
+    func key(for units: [UInt16]) -> Key? {
+        keys[String(utf16CodeUnits: units, count: units.count)]
     }
 }

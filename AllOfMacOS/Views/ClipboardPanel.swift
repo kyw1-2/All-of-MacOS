@@ -637,7 +637,7 @@ final class ClipboardPanelController {
         installMonitors()
     }
 
-    static let defaultHeight: CGFloat = 332
+    static let defaultHeight: CGFloat = 280
     static let minimumHeight: CGFloat = 175
     static func clampedHeight(_ height: CGFloat, visibleHeight: CGFloat) -> CGFloat {
         min(max(height, minimumHeight), max(120, (visibleHeight - 36) / 2))
@@ -1609,7 +1609,7 @@ struct ClipboardPanelView: View {
         GeometryReader { geometry in
             let _ = entries // Start a pending search before choosing its progress state.
             let compact = geometry.size.height < 205
-            let cardSide = min(300, max(100, geometry.size.height - (compact ? 24 : 44)))
+            let cardSide = min(240, max(100, geometry.size.height - (compact ? 24 : 44)))
             Group {
                 if state.isSearchPending {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1627,7 +1627,7 @@ struct ClipboardPanelView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     let entries = self.entries
-                    let spacing: CGFloat = compact ? 14 : 24
+                    let spacing: CGFloat = compact ? 10 : 14
                     let quickIDs = state.quickPasteIDs(in: store)
                     let suggested = Set(state.suggestedIDs)
                     let boards = store.boards
@@ -1676,7 +1676,7 @@ struct ClipboardPanelView: View {
         }
     }
 
-    static let shelfInset: CGFloat = 24
+    static let shelfInset: CGFloat = 18
 
     private var isFiltering: Bool { !state.query.isEmpty || hasFilters }
     private var emptyTitle: String {
@@ -1891,7 +1891,7 @@ private struct ClipboardCardView: View, Equatable {
     @State private var characterCount: Int?
     @FocusState private var titleFocused: Bool
 
-    static let radius: CGFloat = 16
+    static let radius: CGFloat = 10
 
     /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
     /// cards alone instead of re-running every visible card body.
@@ -1941,7 +1941,7 @@ private struct ClipboardCardView: View, Equatable {
                                     .help("Suggested for the app you are pasting into")
                                     .accessibilityLabel("Suggested")
                             }
-                            Text(headerTitle).font(.system(size: compact ? 12 : 15, weight: .semibold)).lineLimit(1)
+                            Text(headerTitle).font(.system(size: compact ? 11 : 12, weight: .semibold)).lineLimit(1)
                         }
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
@@ -1953,14 +1953,14 @@ private struct ClipboardCardView: View, Equatable {
                 .padding(.leading, 12).padding(.top, compact ? 6 : 8)
                 Spacer(minLength: compact ? 38 : 52)
             }
-            .foregroundStyle(.white)
-            .frame(height: compact ? 38 : 48, alignment: .top)
-            .background(accent)
+            .foregroundStyle(AOMTheme.text)
+            .frame(height: compact ? 38 : 42, alignment: .top)
+            .background(AOMTheme.cardAlt)
             .overlay(alignment: .trailing) {
                 if let appIcon {
                     Image(nsImage: appIcon).resizable().scaledToFill()
-                        .frame(width: compact ? 43 : 56, height: compact ? 43 : 56)
-                        .offset(x: 3).help(entry.sourceName ?? "Source App")
+                        .frame(width: 22, height: 22)
+                        .padding(.trailing, 10).help(entry.sourceName ?? "Source App")
                 }
             }
             .clipped()
@@ -2049,8 +2049,8 @@ private struct ClipboardCardView: View, Equatable {
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
-                    .strokeBorder(searchActive ? Color.secondary.opacity(0.7) : Color.accentColor, lineWidth: 4)
-                    .padding(-4)
+                    .strokeBorder(searchActive ? Color.secondary.opacity(0.7) : Color.accentColor, lineWidth: 2)
+                    .padding(-2)
                     .allowsHitTesting(false)
             }
         }

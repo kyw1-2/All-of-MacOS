@@ -10,10 +10,10 @@ enum AOMDesign {
     /// Outer page margin and the gap between sections.
     static let pagePadding: CGFloat = 24
     static let sectionSpacing: CGFloat = AOMTheme.sectionSpacing
-    static let gridSpacing: CGFloat = 14
+    static let gridSpacing: CGFloat = 10
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
     static let surfaceRadius: CGFloat = AOMTheme.cardRadius
-    static let tileRadius: CGFloat = 16
+    static let tileRadius: CGFloat = 10
     static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -33,9 +33,8 @@ struct AOMWorkspaceBackground: View {
 
 // MARK: - Surfaces
 
-/// A grouped surface (System Settings / Finder inspector style): content
-/// background, hairline separator, no decorative shadow. Adapts to light,
-/// dark and Increase Contrast.
+/// Shared card surface with restrained elevation and an explicit outline
+/// when Increase Contrast is enabled.
 struct AOMSurface: ViewModifier {
     var radius: CGFloat = AOMDesign.surfaceRadius
     var padding: CGFloat? = 14
@@ -48,9 +47,8 @@ struct AOMSurface: ViewModifier {
             .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(highlighted ? Color.accentColor : .clear, lineWidth: highlighted ? 2 : 0)
+                    .strokeBorder(highlighted ? AOMTheme.blue : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.divider.opacity(0.55)), lineWidth: highlighted ? 1.5 : 0.5)
             }
-            .shadow(color: AOMTheme.cardShadow, radius: 14, x: 0, y: 6)
     }
 }
 
@@ -104,12 +102,12 @@ struct AOMSectionHeader<Accessory: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 if let systemImage {
-                    Label(title, systemImage: systemImage).font(.aomHeadline(16))
+                    Label(title, systemImage: systemImage).font(.aomHeadline(13))
                 } else {
-                    Text(title).font(.aomHeadline(16))
+                    Text(title).font(.aomHeadline(13))
                 }
                 if let caption {
-                    Text(caption).font(.aomCaption(12.5)).foregroundStyle(AOMTheme.textSecondary)
+                    Text(caption).font(.aomCaption(11)).foregroundStyle(AOMTheme.textSecondary)
                 }
             }
             Spacer(minLength: 8)
@@ -144,14 +142,15 @@ struct AOMPageHeader<Trailing: View>: View {
             HStack(alignment: .center, spacing: 16) {
                 heading
                 Spacer(minLength: 12)
-                trailing.controlSize(.regular)
+                trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
             }
             VStack(alignment: .leading, spacing: 14) {
                 heading
-                trailing.controlSize(.regular)
+                trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
             }
         }
-        .padding(.vertical, 4)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) { AOMTheme.divider.opacity(0.5).frame(height: 0.5) }
         .accessibilityElement(children: .contain)
     }
 
@@ -171,7 +170,7 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 }
 
-/// Rounded, colour-filled SF Symbol tile in the System Settings style.
+/// Soft tinted symbol tile shared by cards and editors.
 struct AOMIconTile: View {
     let systemImage: String
     var tint: Color = .accentColor
@@ -180,9 +179,9 @@ struct AOMIconTile: View {
     var body: some View {
         Image(systemName: systemImage)
             .font(.system(size: size * 0.44, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(tint.gradient, in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous))
+
             .accessibilityHidden(true)
     }
 }
@@ -197,24 +196,21 @@ struct AOMMetricTile: View {
     var detail: String?
 
     var body: some View {
-        HStack(spacing: 12) {
-            AOMIconTile(systemImage: systemImage, tint: tint, size: 34)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(value)
-                    .font(.system(size: 26, weight: .bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text(title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                if let detail {
-                    Text(detail).font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(AOMTheme.textSecondary)
+                Spacer(minLength: 4)
+                Image(systemName: systemImage).font(.system(size: 12)).foregroundStyle(AOMTheme.textTertiary)
             }
-            Spacer(minLength: 0)
+            Text(value).font(.system(size: 26, weight: .medium, design: .rounded))
+                .monospacedDigit().contentTransition(.numericText()).lineLimit(1)
+            if let detail {
+                Text(detail).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .aomSurface(radius: AOMDesign.tileRadius, padding: 12)
+        .padding(14)
+        .background(AOMTheme.cardAlt.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value)")
     }
@@ -234,34 +230,24 @@ struct AOMActionTile: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 15) {
-                HStack {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 42, height: 42)
-                        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .medium)).foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                    if let subtitle { Text(subtitle).font(.system(size: 10.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1) }
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.aomLabel(15)).foregroundStyle(AOMTheme.text).lineLimit(1)
-                    if let subtitle { Text(subtitle).font(.aomBody(12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2) }
-                }
+                Spacer(minLength: 0)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, minHeight: 122, alignment: .topLeading)
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(tint.opacity(hovering ? 0.07 : 0))
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: AOMTheme.cardShadow, radius: hovering ? 18 : 12, x: 0, y: hovering ? 8 : 5)
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+            .background(hovering ? AOMTheme.cardAlt : AOMTheme.card,
+                        in: RoundedRectangle(cornerRadius: AOMDesign.tileRadius))
+            .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AOMCardButtonStyle())
         .onHover { hovering = $0 }
         .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
     }

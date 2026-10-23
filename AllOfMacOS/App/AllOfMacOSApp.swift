@@ -552,14 +552,14 @@ struct AllOfMacOSApp: App {
                 .environmentObject(appState)
                 .accentColor(appState.accentColorChoice.color)
                 .tint(appState.accentColorChoice.color)
-                .frame(minWidth: 1040, minHeight: 650)
+                .frame(minWidth: 980, minHeight: 600)
                 .task {
                     appDelegate.appState = appState
                 }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
-        .defaultSize(width: 1320, height: 820)
+        .defaultSize(width: 1180, height: 740)
         // aom:// links and opened files are handled by AppDelegate; without
         // this every link (Raycast, Shortcuts, Alfred) opened another window.
         .handlesExternalEvents(matching: [])

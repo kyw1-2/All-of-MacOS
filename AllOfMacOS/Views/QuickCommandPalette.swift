@@ -215,7 +215,7 @@ struct QuickCommandPalette: View {
     var body: some View {
         ZStack {
             // Dismiss background overlay
-            Color.black.opacity(0.4)
+            Color.black.opacity(0.24)
                 .ignoresSafeArea()
                 .onTapGesture {
                     isPresented = false
@@ -247,7 +247,7 @@ struct QuickCommandPalette: View {
                         .buttonStyle(.plain)
                     }
 
-                    Text("esc to close")
+                    Text("esc")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
@@ -284,18 +284,18 @@ struct QuickCommandPalette: View {
                                         HStack(spacing: 12) {
                                             ZStack {
                                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                                    .fill(item.iconColor.opacity(0.15))
+                                                    .fill(Color.clear)
                                                     .frame(width: 28, height: 28)
 
                                                 Image(systemName: item.icon)
                                                     .font(.system(size: 13, weight: .semibold))
-                                                    .foregroundStyle(item.iconColor)
+                                                    .foregroundStyle(AOMTheme.textSecondary)
                                             }
 
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(item.title)
                                                     .font(.system(size: 13, weight: isSelected ? .bold : .medium))
-                                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                                    .foregroundStyle(AOMTheme.text)
                                                     .lineLimit(1)
 
                                                 Text(item.subtitle)
@@ -327,7 +327,7 @@ struct QuickCommandPalette: View {
                                         .padding(.vertical, 6)
                                         .background(
                                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+                                                .fill(isSelected ? AOMTheme.cardAlt : Color.clear)
                                         )
                                         .contentShape(Rectangle())
                                     }
@@ -370,7 +370,7 @@ struct QuickCommandPalette: View {
                 .background(.background.opacity(0.4))
             }
             .frame(width: 580, height: 420)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(Color.primary.opacity(0.12), lineWidth: 1)

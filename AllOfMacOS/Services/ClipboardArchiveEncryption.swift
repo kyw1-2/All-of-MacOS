@@ -7,6 +7,8 @@ import Security
 enum ClipboardArchiveEncryption {
     private static let service = "com.kyw.allofmacos.clipboard-history"
     private static let account = "history-v2-aes256"
+    private static let keyLock = NSRecursiveLock()
+    private static var cachedKey: SymmetricKey?
 
     enum Failure: LocalizedError {
         case keychain(OSStatus), invalidKey, missingKey
@@ -30,6 +32,9 @@ enum ClipboardArchiveEncryption {
     }
 
     private static func loadKey(createIfMissing: Bool) throws -> SymmetricKey {
+        keyLock.lock()
+        defer { keyLock.unlock() }
+        if let cachedKey { return cachedKey }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -41,7 +46,9 @@ enum ClipboardArchiveEncryption {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess {
             guard let data = result as? Data, data.count == 32 else { throw Failure.invalidKey }
-            return SymmetricKey(data: data)
+            let key = SymmetricKey(data: data)
+            cachedKey = key
+            return key
         }
         guard status == errSecItemNotFound else { throw Failure.keychain(status) }
         guard createIfMissing else { throw Failure.missingKey }
@@ -58,6 +65,7 @@ enum ClipboardArchiveEncryption {
         let added = SecItemAdd(create as CFDictionary, nil)
         if added == errSecDuplicateItem { return try loadKey(createIfMissing: false) }
         guard added == errSecSuccess else { throw Failure.keychain(added) }
+        cachedKey = key
         return key
     }
 }

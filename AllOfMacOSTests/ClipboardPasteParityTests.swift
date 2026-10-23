@@ -113,7 +113,7 @@ final class ClipboardPasteParityTests: XCTestCase {
     }
 
     func testPanelHeightClamp() {
-        XCTAssertEqual(ClipboardPanelController.defaultHeight, 332)
+        XCTAssertEqual(ClipboardPanelController.defaultHeight, 280)
         XCTAssertEqual(ClipboardPanelController.clampedHeight(50, visibleHeight: 1000), 175)
         XCTAssertEqual(ClipboardPanelController.clampedHeight(900, visibleHeight: 1000), 482)
     }

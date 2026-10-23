@@ -41,23 +41,38 @@ struct CaptureStudioView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMDesign.sectionSpacing) {
-                    AOMPageHeader("Capture Studio", subtitle: subtitle, systemImage: "camera.viewfinder", tint: .orange) {
-                        headerControls
-                    }
-                    if recordingService.isRecording {
-                        activeRecordingBanner
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                    launchpadSection
-                    gallerySection
-                        .frame(maxHeight: .infinity, alignment: .top)
+            VStack(alignment: .leading, spacing: 0) {
+                AOMPageHeader("Capture Library", subtitle: subtitle, systemImage: "camera.viewfinder", tint: AOMTheme.blue) {
+                    headerControls
+                }.padding(.horizontal, AOMDesign.pagePadding).padding(.top, AOMDesign.pagePadding)
+                if recordingService.isRecording { activeRecordingBanner.padding(12) }
+                if geometry.size.width >= 760 {
+                    HStack(alignment: .top, spacing: 0) {
+                        ScrollView { launchpadSection.padding(14) }
+                            .frame(width: 180).background(AOMTheme.cardAlt.opacity(0.5))
+                        ScrollView { gallerySection.padding(AOMDesign.pagePadding) }
+                            .frame(maxWidth: .infinity).suppressScrollerReservation()
+                    }.padding(.top, 14)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            Menu("Capture Tools", systemImage: "plus.viewfinder") {
+                                Button("All-in-One Capture") { CaptureCoordinator.shared.captureAllInOne() }
+                                Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                                Button("Capture Window") { CaptureCoordinator.shared.captureWindowInteractive() }
+                                Button("Full Screen") { CaptureCoordinator.shared.captureFullscreen() }
+                                Button("Scrolling Capture") { CaptureCoordinator.shared.captureScrolling() }
+                                Button("Record Screen") { recordingService.promptAndStartRecording() }
+                                Button("Extract Text") { CaptureCoordinator.shared.captureText() }
+                                Button("Previous Area") { CaptureCoordinator.shared.capturePreviousArea() }
+                                Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
+                                Button("QR / Barcode") { CaptureCoordinator.shared.captureQRCode() }
+                            }.controlSize(.small)
+                            gallerySection
+                        }.padding(AOMDesign.pagePadding)
+                    }.suppressScrollerReservation()
                 }
-                .padding(AOMDesign.pagePadding)
-                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
-            .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AOMWorkspaceBackground())
@@ -167,31 +182,19 @@ struct CaptureStudioView: View {
     // MARK: - Launchpad Section
 
     private var launchpadSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Capture", systemImage: "sparkles", caption: "Start any capture; results open in Quick Access")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 196), spacing: AOMDesign.gridSpacing)],
-                      spacing: AOMDesign.gridSpacing) {
-                AOMActionTile(title: "All-In-One", systemImage: "rectangle.dashed.badge.record", tint: .orange,
-                              subtitle: "Area, window, screen or video") { CaptureCoordinator.shared.captureAllInOne() }
-                AOMActionTile(title: "Area", systemImage: "viewfinder", tint: .blue,
-                              subtitle: "Drag to select a region") { CaptureCoordinator.shared.captureArea() }
-                AOMActionTile(title: "Window", systemImage: "macwindow", tint: .indigo,
-                              subtitle: "Pick a window with shadow") { CaptureCoordinator.shared.captureWindowInteractive() }
-                AOMActionTile(title: "Fullscreen", systemImage: "display", tint: .purple,
-                              subtitle: "Every pixel of a display") { CaptureCoordinator.shared.captureFullscreen() }
-                AOMActionTile(title: "Scrolling", systemImage: "arrow.up.and.down.text.horizontal", tint: .teal,
-                              subtitle: "Stitch long pages") { CaptureCoordinator.shared.captureScrolling() }
-                AOMActionTile(title: "Record Screen", systemImage: "record.circle", tint: .red,
-                              subtitle: "MP4 or GIF with audio") { recordingService.promptAndStartRecording() }
-                AOMActionTile(title: "Capture Text", systemImage: "text.viewfinder", tint: .green,
-                              subtitle: "Instant OCR to clipboard") { CaptureCoordinator.shared.captureText() }
-                AOMActionTile(title: "Previous Area", systemImage: "arrow.uturn.backward.square", tint: .gray,
-                              subtitle: "Repeat the last region") { CaptureCoordinator.shared.capturePreviousArea() }
-                AOMActionTile(title: "Self-Timer", systemImage: "timer", tint: .pink,
-                              subtitle: "Countdown, then capture") { CaptureCoordinator.shared.captureWithSelfTimer() }
-                AOMActionTile(title: "QR / Barcode", systemImage: "qrcode.viewfinder", tint: .brown,
-                              subtitle: "Read codes in a region") { CaptureCoordinator.shared.captureQRCode() }
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Text("CAPTURE").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(AOMTheme.textTertiary).padding(.bottom, 8)
+            AOMToolButton(title: "All-in-One", systemImage: "viewfinder.circle", prominent: true) { CaptureCoordinator.shared.captureAllInOne() }
+            AOMToolButton(title: "Area", systemImage: "viewfinder") { CaptureCoordinator.shared.captureArea() }
+            AOMToolButton(title: "Window", systemImage: "macwindow") { CaptureCoordinator.shared.captureWindowInteractive() }
+            AOMToolButton(title: "Full screen", systemImage: "display") { CaptureCoordinator.shared.captureFullscreen() }
+            AOMToolButton(title: "Scrolling", systemImage: "arrow.up.and.down.text.horizontal") { CaptureCoordinator.shared.captureScrolling() }
+            AOMToolButton(title: "Record screen", systemImage: "record.circle") { recordingService.promptAndStartRecording() }
+            Text("UTILITIES").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(AOMTheme.textTertiary).padding(.top, 18).padding(.bottom, 8)
+            AOMToolButton(title: "Extract text", systemImage: "text.viewfinder") { CaptureCoordinator.shared.captureText() }
+            AOMToolButton(title: "Previous area", systemImage: "arrow.uturn.backward.square") { CaptureCoordinator.shared.capturePreviousArea() }
+            AOMToolButton(title: "Self-timer", systemImage: "timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
+            AOMToolButton(title: "QR / Barcode", systemImage: "qrcode.viewfinder") { CaptureCoordinator.shared.captureQRCode() }
         }
     }
 
@@ -199,7 +202,7 @@ struct CaptureStudioView: View {
 
     private var gallerySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Recent Captures", systemImage: "photo.stack") {
+            AOMSectionHeader("Library") {
                 Picker("Filter", selection: $selectedFilter) {
                     ForEach(CaptureFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
                 }
@@ -227,7 +230,7 @@ struct CaptureStudioView: View {
                 .frame(minHeight: 240)
                 .aomSurface(padding: nil)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 210, maximum: 320), spacing: 14)], spacing: 14) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 10)], spacing: 10) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,

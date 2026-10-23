@@ -1,0 +1,120 @@
+name: Publish verified AOM CI testing prerelease
+
+on:
+  workflow_run:
+    workflows: ["All of MacOS macOS CI"]
+    types: [completed]
+
+# This workflow never receives signing credentials. An unsigned/ad-hoc build is
+# deliberately a testing prerelease, not an update to the installed AOM Dev app.
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: aom-ci-testing-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      ARTIFACT_NAME: All-of-MacOS-ci-testing-only
+    steps:
+      - name: Verify successful trusted main-branch CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID")"
+          echo "$run_json" | jq -e --arg sha "$SOURCE_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .status == "completed" and .conclusion == "success"
+            and .head_sha == $sha and .head_branch == "main"
+            and .event == "push" and .name == "All of MacOS macOS CI"
+            and .head_repository.full_name == $repo
+          ' >/dev/null
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/artifacts")"
+          echo "$artifacts" | jq -e --arg name "$ARTIFACT_NAME" '
+            [.artifacts[] | select(.name == $name and .expired == false)] | length == 1
+          ' >/dev/null
+
+      - name: Verify CI DMG, source identity, and ad-hoc signature
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/verified-aom"
+          mkdir -p "$source_dir"
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" -n "$ARTIFACT_NAME" -D "$source_dir"
+          test "$(find "$source_dir" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = 1
+          source_dmg="$(find "$source_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -s "$source_dmg"
+          hdiutil verify "$source_dmg"
+          mount="$RUNNER_TEMP/aom-ci-volume"
+          mkdir -p "$mount"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mount" "$source_dmg"
+          trap 'hdiutil detach -quiet "$mount" || true' EXIT
+          app="$mount/All of MacOS.app"
+          test -d "$app"
+          info="$app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")" = 'com.kyw.allofmacos'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :AOMSourceRevision' "$info")" = "$SOURCE_SHA"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :AOMSourceDirty' "$info")" = 'false'
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -F 'Signature=adhoc'
+          version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")"
+          build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]
+          [[ "$build" =~ ^[0-9A-Za-z._-]+$ ]]
+          hdiutil detach -quiet "$mount"
+          trap - EXIT
+          short="${SOURCE_SHA:0:12}"
+          out="$RUNNER_TEMP/All-of-MacOS-${version}-b${build}-CI-Testing-g${short}.dmg"
+          cp "$source_dmg" "$out"
+          echo "DMG_PATH=$out" >> "$GITHUB_ENV"
+          echo "DMG_SHA256=$(shasum -a 256 "$out" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=aom-ci-v${version}-b${build}-g${short}" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_BUILD=$build" >> "$GITHUB_ENV"
+
+      - name: Publish a testing-only prerelease, never GitHub Latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish,isPrerelease --jq '[.targetCommitish,.isPrerelease] | @tsv')"
+            test "$existing" = "$(printf '%s\ttrue' "$SOURCE_SHA")"
+            if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx "$(basename "$DMG_PATH")" >/dev/null; then
+              gh release upload "$RELEASE_TAG" "$DMG_PATH" --repo "$GITHUB_REPOSITORY"
+            fi
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<EOF
+          ## All of MacOS $RELEASE_VERSION ($RELEASE_BUILD) — CI testing build
+
+          Automatically packaged after successful macOS CI for commit $SOURCE_SHA.
+          - Successful CI run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID
+          - Code signature and DMG integrity verified; SHA-256: $DMG_SHA256
+          - Headless CI excludes 15 end-to-end OCR cases requiring an interactive macOS text recognition service.
+
+          **Testing only. Ad-hoc signature, no persistent AOM Dev identity or Apple notarization.**
+          Do not use this DMG to replace an installed AOM Dev-signed release.
+          Signed releases are handled separately when GitHub signing is securely configured.
+          EOF
+          gh release create "$RELEASE_TAG" "$DMG_PATH" --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "All of MacOS $RELEASE_VERSION ($RELEASE_BUILD) - CI Testing" \
+            --notes-file "$notes" --prerelease --latest=false
