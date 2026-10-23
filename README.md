@@ -2,6 +2,11 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 1.8.1
+
+Opaque canvas under the ambient field, so window chrome stays calm over a colourful
+wallpaper instead of picking it up.
+
 ## Version 1.8.0
 
 Glass surfaces over an ambient gradient window, one language across the app (English),

@@ -81,19 +81,19 @@ struct AOMAmbientBackground: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                AOMTheme.canvas.opacity(0.94)
+                AOMTheme.canvas
                 Circle()
-                    .fill(AOMTheme.blue.opacity(scheme == .dark ? 0.30 : 0.20))
+                    .fill(AOMTheme.blue.opacity(scheme == .dark ? 0.26 : 0.14))
                     .frame(width: 620, height: 620)
                     .blur(radius: 140)
                     .offset(x: -geometry.size.width * 0.30, y: -geometry.size.height * 0.32)
                 Circle()
-                    .fill(AOMTheme.indigo.opacity(scheme == .dark ? 0.26 : 0.16))
+                    .fill(AOMTheme.indigo.opacity(scheme == .dark ? 0.22 : 0.12))
                     .frame(width: 520, height: 520)
                     .blur(radius: 130)
                     .offset(x: geometry.size.width * 0.32, y: -geometry.size.height * 0.08)
                 Circle()
-                    .fill(Color(red: 0.20, green: 0.72, blue: 0.86).opacity(scheme == .dark ? 0.16 : 0.10))
+                    .fill(Color(red: 0.20, green: 0.72, blue: 0.86).opacity(scheme == .dark ? 0.14 : 0.08))
                     .frame(width: 460, height: 460)
                     .blur(radius: 130)
                     .offset(x: geometry.size.width * 0.06, y: geometry.size.height * 0.44)
