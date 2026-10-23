@@ -39,13 +39,23 @@ struct AOMSurface: ViewModifier {
     var highlighted = false
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         content
             .padding(padding ?? 0)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .background(scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.50),
-                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background {
+                if reduceTransparency {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(AOMTheme.card)
+                } else {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.50))
+                        }
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(highlighted ? AOMTheme.blue

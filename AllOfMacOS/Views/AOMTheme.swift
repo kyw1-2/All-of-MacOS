@@ -143,13 +143,23 @@ struct AOMCard: ViewModifier {
     var elevated = true
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         content
             .padding(padding ?? 0)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .background(scheme == .dark ? Color.black.opacity(0.30) : Color.white.opacity(0.52),
-                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background {
+                if reduceTransparency {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(AOMTheme.card)
+                } else {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(scheme == .dark ? Color.black.opacity(0.30) : Color.white.opacity(0.52))
+                        }
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(contrast == .increased
@@ -169,6 +179,35 @@ struct AOMCardButtonStyle: ButtonStyle {
             .opacity(isEnabled ? (configuration.isPressed ? 0.78 : 1) : 0.45)
             .scaleEffect(configuration.isPressed && !AOMDesign.reduceMotion ? 0.985 : 1)
             .animation(AOMDesign.animation(.easeOut(duration: 0.14)), value: configuration.isPressed)
+    }
+}
+
+/// Search field on the same glass language as cards.
+struct AOMSearchField: View {
+    let prompt: String
+    @Binding var text: String
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AOMTheme.textSecondary)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .font(Font.aomBody(13))
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AOMTheme.textTertiary)
+                    .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.8)
+        }
     }
 }
 
