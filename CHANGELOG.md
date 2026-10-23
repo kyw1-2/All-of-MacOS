@@ -2,6 +2,11 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 1.9.1 — Sheet polish
+- The Automation editor fits shorter windows: its header shows the scope and holds pin, duplicate and delete in a ⋯ menu, and the input type moved into the Trigger section, replacing the separate Details box.
+- Capture Library thumbnails use the sheet's light inset grey instead of a dark backdrop; cards are wider so the kind, size and time caption is never cut off, and the kind is omitted when the title already states it.
+- Insights' most-used rows use the 1.9 type scale (14.5 pt titles, 12 pt details).
+
 ## 1.9.0 — Unified sheets and password-field typing
 - Redesigned every page as one flat sheet on a neutral canvas: sections are separated by hairlines rather than separate cards, shadows are nearly invisible and colour is limited to small icons, state and one primary blue. Glass and ambient gradients are gone.
 - Rebuilt the Workspace to fit on one screen: a five-figure summary strip, the automation list with inline switches, and a This Mac column with permissions, Drag to Snap, clipboard history, password-field status and quick actions.

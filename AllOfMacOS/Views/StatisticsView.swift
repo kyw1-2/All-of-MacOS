@@ -223,37 +223,38 @@ private struct GestureStatRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("\(rank)")
-                .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 22, alignment: .trailing)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Text(entry.gesture).font(.callout.weight(.medium)).lineLimit(1)
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(AOMTheme.textTertiary)
+                .frame(width: 24, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(entry.gesture).font(AOMType.rowTitle).foregroundStyle(AOMTheme.text).lineLimit(1)
                     Spacer()
                     if entry.firedCount > 0 {
                         Text("\(entry.firedCount) fired")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.green)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(AOMTheme.positive)
                     }
                     Text("\(entry.totalCount)")
-                        .font(.callout.monospacedDigit().weight(.semibold))
+                        .font(.system(size: 14.5, weight: .bold).monospacedDigit())
+                        .foregroundStyle(AOMTheme.text)
                 }
                 GeometryReader { geo in
                     let fraction = CGFloat(entry.totalCount) / CGFloat(maxCount)
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.primary.opacity(0.06))
-                        Capsule().fill(accentColor.gradient).frame(width: max(4, geo.size.width * fraction))
+                        Capsule().fill(AOMTheme.track)
+                        Capsule().fill(accentColor).frame(width: max(4, geo.size.width * fraction))
                     }
                 }
                 .frame(height: 6)
                 if let last = entry.lastDetected {
                     Text("Last used \(last, style: .relative) ago")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(AOMTheme.textTertiary)
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
     }
 }

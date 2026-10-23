@@ -36,7 +36,7 @@ struct CaptureStudioView: View {
     private var subtitle: String {
         guard let latest = history.entries.first else { return "Screenshots, recordings, annotation and text recognition" }
         let count = history.entries.count
-        return "\(count) capture\(count == 1 ? "" : "s") in history · last \(AOMRelativeTime.string(latest.capturedAt))"
+        return "\(count) capture\(count == 1 ? "" : "s") in history · last \(AOMRelativeTime.string(latest.capturedAt).lowercased())"
     }
 
     var body: some View {
@@ -241,7 +241,8 @@ struct CaptureStudioView: View {
                 }
                 .frame(minHeight: 320)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: 10)], spacing: 10) {
+                // Wide enough that the caption (kind, size, time) never truncates.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 12)], spacing: 12) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,
@@ -307,12 +308,13 @@ private struct CaptureCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
-                Color(nsColor: .underPageBackgroundColor)
+                // A quiet well like every other inset surface on the sheet.
+                AOMTheme.cardAlt
                 Image(nsImage: entry.thumbnail)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .padding(6)
+                    .padding(8)
             }
             .aspectRatio(16 / 10, contentMode: .fit)
             .overlay(alignment: .topLeading) {
@@ -342,21 +344,25 @@ private struct CaptureCard: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.displayName)
-                    .font(.callout.weight(.semibold))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AOMTheme.text)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(entry.kind.displayName)
-                    Text("·")
+                    // The kind only when the title does not already say it.
+                    if entry.kind.displayName != entry.displayName {
+                        Text(entry.kind.displayName)
+                        Text("·")
+                    }
                     Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))").monospacedDigit()
                     Spacer(minLength: 4)
                     Text(AOMRelativeTime.string(entry.capturedAt))
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+                .foregroundStyle(AOMTheme.textTertiary)
                 .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
         .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: isHovered)

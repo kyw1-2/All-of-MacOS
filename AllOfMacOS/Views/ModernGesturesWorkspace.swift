@@ -318,16 +318,24 @@ struct ModernGesturesWorkspace: View {
     private func inspectorHeader(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                AOMIconTile(systemImage: trigger.input.category.iconName,
-                            tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .gray, size: 26)
+                AOMIconBadge(systemImage: trigger.input.category.iconName,
+                             tint: trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : AOMTheme.textTertiary,
+                             size: 32, filled: trigger.isEnabled)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(trigger.input.displayName).font(.system(size: 13, weight: .semibold)).lineLimit(2)
-                    Text(scopeDescription(trigger)).font(.caption).foregroundStyle(.secondary)
+                    Text(trigger.input.displayName).font(AOMType.rowTitle).foregroundStyle(AOMTheme.text).lineLimit(2)
+                    Text(scopeDescription(trigger)).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
                                                 set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
-                    .labelsHidden().toggleStyle(.switch)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Menu { triggerMenu(trigger) } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Pin, duplicate or delete")
+                    .accessibilityLabel("Options for \(trigger.displayName)")
             }
             TextField("Name (optional)", text: Binding(
                 get: { trigger.name },
@@ -434,44 +442,18 @@ struct ModernGesturesWorkspace: View {
 
     private func triggerInspector(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Details", systemImage: "info.circle")
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Trigger", value: trigger.input.category == .all ? "Any" : trigger.input.category.rawValue)
-                LabeledContent("Applies to", value: scopeDescription(trigger))
-                LabeledContent("Status", value: trigger.isEnabled ? "Enabled" : "Disabled")
-            }
-            .font(.callout)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .aomCardStyle(.well, radius: 12, padding: 12)
-
+            // The input type the old Details box listed, as the caption.
+            AOMSectionHeader("Trigger", systemImage: "hand.point.up.left",
+                             caption: trigger.input.category == .all ? "Any input" : trigger.input.category.rawValue)
             DisclosureGroup(isExpanded: $showTriggerOptions) {
                 TriggerConfigView(trigger: trigger)
                     .padding(.top, 8)
             } label: {
                 Label("Sensitivity & Timing", systemImage: "slider.horizontal.3")
-                    .font(.callout.weight(.medium))
+                    .font(.system(size: 13.5, weight: .medium))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .aomCardStyle(.well, radius: 12, padding: 12)
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { inspectorButtons(trigger) }
-                VStack(alignment: .leading, spacing: 6) { inspectorButtons(trigger) }
-            }
-            .controlSize(.small)
-            .buttonStyle(.bordered)
-        }
-    }
-
-    @ViewBuilder private func inspectorButtons(_ trigger: Trigger) -> some View {
-        Button { appState.toggleFavorite(trigger) } label: {
-            Label(trigger.isFavorite ? "Unpin" : "Pin to Top", systemImage: trigger.isFavorite ? "pin.slash" : "pin")
-        }
-        Button { appState.addTrigger(TriggerClipboard.duplicate(trigger)) } label: {
-            Label("Duplicate", systemImage: "plus.square.on.square")
-        }
-        Button(role: .destructive) { pendingDeletion = trigger } label: {
-            Label("Delete…", systemImage: "trash")
         }
     }
 

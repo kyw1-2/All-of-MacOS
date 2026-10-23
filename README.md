@@ -2,6 +2,13 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 1.9.1
+
+Polish from checking 1.9.0 on a real setup: the Automation editor fits a 734 pt window
+(pin, duplicate and delete moved into its ⋯ menu), capture thumbnails sit on the same quiet
+grey as the rest of the sheet with captions that no longer truncate, and Insights' most-used
+list uses the larger type scale.
+
 ## Version 1.9.0
 
 A flat, unified redesign in the Apple and Toss manner. One neutral canvas, and each page is
