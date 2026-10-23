@@ -85,6 +85,24 @@ extension View {
     }
 }
 
+/// Quiet toolbar button used by page headers: material pill, no accent fill.
+struct AOMToolbarButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Font.aomLabel(12.5))
+            .foregroundStyle(AOMTheme.textSecondary)
+            .padding(.horizontal, 11)
+            .frame(height: 30)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.8)
+            }
+            .opacity(configuration.isPressed ? 0.72 : (isEnabled ? 1 : 0.45))
+    }
+}
+
 // MARK: - Section header
 
 /// Title + optional caption and trailing accessory, aligned to the grid.
@@ -106,12 +124,12 @@ struct AOMSectionHeader<Accessory: View>: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 if let systemImage {
-                    Label(title, systemImage: systemImage).font(.aomHeadline(13))
+                    Label(title, systemImage: systemImage).font(Font.aomHeadline(13))
                 } else {
-                    Text(title).font(.aomHeadline(13))
+                    Text(title).font(Font.aomHeadline(13))
                 }
                 if let caption {
-                    Text(caption).font(.aomCaption(11)).foregroundStyle(AOMTheme.textSecondary)
+                    Text(caption).font(Font.aomCaption(11)).foregroundStyle(AOMTheme.textSecondary)
                 }
             }
             Spacer(minLength: 8)
@@ -168,7 +186,7 @@ struct AOMPageHeader<Trailing: View>: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 5) {
                 Text(title).font(.system(size: 30, weight: .bold)).tracking(-0.8).foregroundStyle(AOMTheme.text)
-                Text(subtitle).font(.aomBody(13.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
+                Text(subtitle).font(Font.aomBody(13.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(2)
             }
         }
     }
