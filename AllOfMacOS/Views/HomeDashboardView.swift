@@ -3,29 +3,32 @@ import SwiftUI
 
 // MARK: - Workspace
 
-/// The Workspace: what you do every day, first.
+/// The Workspace: today on this Mac, one card per tool.
 ///
-/// Problems that need you (permissions, paused engine, a taken shortcut,
-/// clipboard storage) appear at the top only while they exist. Then the three
-/// everyday entry points, your pinned and recently used automations, and the
-/// latest captures and clipboard items. Counts are one line at the bottom;
-/// the full figures live in Insights. (Things for structure, TDS ListRow for
-/// rows, Linear for visual weight.)
+/// Problems that need you (permissions, a paused engine, a taken shortcut,
+/// clipboard storage) and work in progress (a running recording) sit on top
+/// only while they exist. Below, each tool shows its live state and its one
+/// everyday action — capture modes and the latest shots, the newest clipboard
+/// items, your pinned or recent automations, and how windows snap — with a
+/// link into the full page. Counts are one line at the bottom; the figures
+/// live in Insights. (Things "Today", CleanMyMac's tool tiles, Raycast's root
+/// favourites; WWDC25 "Design foundations": where am I, what can I do.)
 struct AOMHomeView: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
     @ObservedObject private var stats = GestureStatistics.shared
     @ObservedObject private var clipboard = ClipboardStore.shared
     @ObservedObject private var history = CaptureHistory.shared
+    @ObservedObject private var recording = ScreenRecordingService.shared
     @StateObject private var toast = AOMToastModel()
     @State private var permissions: [(AOMPermission, AOMPermissionStatus)] = []
     @State private var shortcutConflict: ShortcutConflicts.Conflict?
     @State private var runStates: [UUID: AOMRunState] = [:]
 
-    /// Below this width the recent column moves under the automations.
-    static let wideWidth: CGFloat = 820
-    static let maximumContentWidth: CGFloat = 1120
-    static let rowsPerSection = 6
+    /// Two card columns from this width.
+    static let wideWidth: CGFloat = 760
+    static let maximumContentWidth: CGFloat = 1180
+    static let rowsPerSection = 4
 
     private var triggers: [Trigger] { appState.currentPreset.triggers }
     private var pinned: [Trigger] { triggers.filter(\.isFavorite) }
@@ -49,29 +52,31 @@ struct AOMHomeView: View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= Self.wideWidth
             ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.l) {
-                    workspaceHeading
+                VStack(alignment: .leading, spacing: AOMSpace.m) {
                     notices
-                    quickActions
                     if wide {
-                        HStack(alignment: .top, spacing: AOMSpace.xl) {
-                            automations(lastRuns: lastRuns)
-                                .aomCardStyle(.paper, padding: 20, elevated: false)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                            recent
-                                .frame(width: min(380, max(300, geometry.size.width * 0.36)), alignment: .topLeading)
+                        Grid(alignment: .topLeading, horizontalSpacing: AOMSpace.m, verticalSpacing: AOMSpace.m) {
+                            GridRow {
+                                captureCard
+                                clipboardCard
+                            }
+                            GridRow {
+                                automationCard(lastRuns: lastRuns)
+                                tilingCard
+                            }
                         }
                     } else {
-                        automations(lastRuns: lastRuns)
-                            .aomCardStyle(.paper, padding: 20, elevated: false)
-                        recent
+                        captureCard
+                        clipboardCard
+                        automationCard(lastRuns: lastRuns)
+                        tilingCard
                     }
                     summaryLine
                 }
                 .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
-                .padding(.horizontal, wide ? AOMSpace.xl : AOMSpace.l)
-                .padding(.top, AOMSpace.l)
-                .padding(.bottom, AOMSpace.xl)
+                .padding(.horizontal, wide ? AOMSpace.l : AOMSpace.m)
+                .padding(.top, AOMSpace.m)
+                .padding(.bottom, AOMSpace.l)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -104,13 +109,12 @@ struct AOMHomeView: View {
     private func subtitle(lastRuns: [UUID: Date]) -> String {
         let date = Date().formatted(.dateTime.weekday(.wide).month(.wide).day())
         guard appState.globalEnabled else { return "\(date) · Automation paused" }
-        let on = triggers.filter(\.isEnabled).count
-        var parts = [date, "\(on) of \(triggers.count) on"]
+        var parts = [date]
         if let latest = lastRuns.values.max() { parts.append("last run \(AOMRelativeTime.string(latest).lowercased())") }
         return parts.joined(separator: " · ")
     }
 
-    // MARK: Notices (only when something is wrong)
+    // MARK: Notices (only when something needs you)
 
     private var missingPermissions: [AOMPermission] {
         permissions.filter { $0.1 != .granted && $0.1 != .manualReview }.map(\.0)
@@ -118,8 +122,22 @@ struct AOMHomeView: View {
 
     @ViewBuilder private var notices: some View {
         let missing = missingPermissions
-        if !appState.globalEnabled || !missing.isEmpty || shortcutConflict != nil || clipboard.storageWarning != nil {
+        if recording.isRecording || !appState.globalEnabled || !missing.isEmpty || shortcutConflict != nil
+            || clipboard.storageWarning != nil {
             VStack(spacing: AOMSpace.xs) {
+                if recording.isRecording {
+                    AOMNotice(.error, recording.isPaused ? "Recording paused" : "Recording your screen",
+                              detail: Self.elapsed(recording.elapsedSeconds)) {
+                        Button(recording.isPaused ? "Resume" : "Pause") { recording.togglePause() }
+                        Button("Stop") {
+                            Task {
+                                _ = try? await recording.stopRecording()
+                                toast.show("Recording saved")
+                            }
+                        }
+                        .buttonStyle(AOMTintedButtonStyle(tint: AOMTheme.danger))
+                    }
+                }
                 if !appState.globalEnabled {
                     AOMNotice(.warning, "Automation is paused",
                               detail: "Gestures and shortcuts pass straight through to your apps.") {
@@ -151,172 +169,105 @@ struct AOMHomeView: View {
         }
     }
 
-    // MARK: Quick actions
-
-    private var workspaceHeading: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom) {
-                workspaceTitle
-                Spacer(minLength: 20)
-                engineStatus
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                workspaceTitle
-                engineStatus
-            }
-        }
+    static func elapsed(_ seconds: Int) -> String {
+        String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
-    private var workspaceTitle: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Your workspace")
-                .font(.system(size: 30, weight: .semibold)).tracking(-0.8)
-                .foregroundStyle(AOMTheme.text)
-                .accessibilityAddTraits(.isHeader)
-            Text("Capture a moment. Keep an idea. Automate the rest.")
-                .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-        }
+    // MARK: Capture
+
+    private func captureKeys(_ action: CaptureShortcutAction) -> String? {
+        CaptureShortcuts.shared.shortcut(for: action)?.displayString
     }
 
-    private var engineStatus: some View {
-        Label {
-            Text(appState.globalEnabled
-                 ? "\(triggers.filter(\.isEnabled).count) automations enabled"
-                 : "Automation paused")
-        } icon: {
-            Circle().fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
-                .frame(width: 6, height: 6)
-        }
-        .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(AOMTheme.paper, in: Capsule())
-    }
-
-    private var quickActions: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
-            AOMLaunchTile("Capture Area", detail: "Save what's on your screen", symbol: "viewfinder", tint: .blue,
-                          shortcut: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString) {
-                CaptureCoordinator.shared.captureArea()
-            }
-            AOMLaunchTile("Clipboard Shelf", detail: "Pick up anything you copied", symbol: "doc.on.clipboard", tint: .purple,
-                          shortcut: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString) {
-                ClipboardPanelController.shared.show()
-            }
-            AOMLaunchTile("Find Anything", detail: "Commands, automations and more", symbol: "magnifyingglass", tint: .teal,
-                          shortcut: AOMPaletteShortcut.current(appState.currentPreset).displayString) {
-                showingCommandPalette = true
-            }
-        }
-    }
-
-    // MARK: Automations
-
-    @ViewBuilder private func automations(lastRuns: [UUID: Date]) -> some View {
-        if triggers.isEmpty {
+    private var captureCard: some View {
+        let latest = history.entries.first.map { "last \(AOMRelativeTime.string($0.capturedAt).lowercased())" }
+        return AOMSectionCard("Capture", fillsHeight: true, symbol: "camera.viewfinder", tint: AOMMainTab.capture.accentColor,
+                              detail: history.entries.isEmpty ? nil : latest) {
+            AOMCardLink("Library") { appState.selectedMainTab = .capture }
+        } content: {
             VStack(alignment: .leading, spacing: AOMSpace.s) {
-                AOMHeading("Automations")
-                Text("Connect a trackpad gesture, a key or a mouse button to the actions you repeat.")
-                    .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-                Button("Create an Automation") {
-                    appState.selectedMainTab = .gestures
-                    appState.showingAddTrigger = true
-                }
-                .buttonStyle(AOMFilledButtonStyle())
-            }
-        } else {
-            let recent = triggers
-                .filter { !$0.isFavorite && lastRuns[$0.id] != nil }
-                .sorted { (lastRuns[$0.id] ?? .distantPast) > (lastRuns[$1.id] ?? .distantPast) }
-            // Without any history, the enabled automations stand in.
-            let rest = recent.isEmpty ? triggers.filter { !$0.isFavorite }.sorted { $0.isEnabled && !$1.isEnabled } : recent
-            VStack(alignment: .leading, spacing: AOMSpace.l) {
-                if !pinned.isEmpty {
-                    section("Pinned", rows: pinned, lastRuns: lastRuns)
-                }
-                if !rest.isEmpty {
-                    section(recent.isEmpty ? "Automations" : "Recently Used", rows: Array(rest.prefix(Self.rowsPerSection)),
-                            lastRuns: lastRuns)
-                }
-                VStack(alignment: .leading, spacing: AOMSpace.xs) {
-                    Button("Show All \(triggers.count) in Automation") { appState.selectedMainTab = .gestures }
-                        .buttonStyle(.link)
-                    if pinned.isEmpty {
-                        Text("Pin an automation from its ⋯ menu to keep it here.")
-                            .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                HStack(spacing: 2) {
+                    AOMModeButton("Area", symbol: "viewfinder", shortcut: captureKeys(.captureArea)) {
+                        CaptureCoordinator.shared.captureArea()
                     }
+                    AOMModeButton("Window", symbol: "macwindow", shortcut: captureKeys(.captureWindow)) {
+                        CaptureCoordinator.shared.captureWindowInteractive()
+                    }
+                    AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: captureKeys(.captureFullscreen)) {
+                        CaptureCoordinator.shared.captureFullscreen()
+                    }
+                    AOMModeButton("Text", symbol: "text.viewfinder", shortcut: captureKeys(.ocr)) {
+                        CaptureCoordinator.shared.captureText()
+                    }
+                    AOMModeButton(recording.isRecording ? "Recording" : "Record", symbol: "record.circle",
+                                  tint: AOMTheme.danger, shortcut: captureKeys(.recordScreen)) {
+                        recording.promptAndStartRecording()
+                    }
+                    .disabled(recording.isRecording)
                 }
-                .font(AOMType.body)
-            }
-        }
-    }
-
-    private func section(_ title: String, rows: [Trigger], lastRuns: [UUID: Date]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            AOMHeading(title, count: "\(rows.count)")
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, trigger in
-                    HomeAutomationRow(trigger: trigger, lastRun: lastRuns[trigger.id],
-                                      runState: runStates[trigger.id] ?? .idle) { run(trigger) }
-                    if index < rows.count - 1 { AOMDivider().padding(.leading, 38) }
-                }
-            }
-        }
-    }
-
-    private func run(_ trigger: Trigger) {
-        runStates[trigger.id] = .running
-        ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
-                                      triggerID: trigger.id) { ok in
-            DispatchQueue.main.async {
-                runStates[trigger.id] = ok ? .succeeded(Date()) : .failed(Date())
-                toast.show(ok ? "Ran “\(trigger.displayName)”" : "“\(trigger.displayName)” failed or was stopped")
-            }
-        }
-    }
-
-    // MARK: Recent
-
-    private var recent: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.l) {
-            VStack(alignment: .leading, spacing: AOMSpace.xs) {
-                AOMHeading("Recent Captures") {
-                    Button("Library") { appState.selectedMainTab = .capture }.buttonStyle(.link).font(AOMType.body)
-                }
+                .padding(.horizontal, -AOMSpace.xxs)
                 if history.entries.isEmpty {
-                    Text("Screenshots and recordings appear here, ready to copy, edit or drag.")
+                    Text("Your screenshots and recordings appear here, ready to copy, edit or drag into any app.")
                         .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.xs), GridItem(.flexible(), spacing: AOMSpace.xs)],
-                              spacing: AOMSpace.xs) {
-                        ForEach(history.entries.prefix(2)) { entry in
+                    HStack(spacing: AOMSpace.xs) {
+                        ForEach(history.entries.prefix(3)) { entry in
                             HomeCaptureThumb(entry: entry) {
                                 CaptureItemActions.copy(entry)
                                 toast.show("Copied capture")
                             }
                         }
-                    }
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                AOMHeading("Recent Clipboard") {
-                    Button("Open Shelf") { ClipboardPanelController.shared.show() }.buttonStyle(.link).font(AOMType.body)
-                }
-                if clipboard.isLoading && clipboard.entries.isEmpty {
-                    Text("Unlocking clipboard history…").font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
-                        .padding(.top, 4)
-                } else if clipboard.entries.isEmpty {
-                    Text(clipboard.paused ? "Clipboard history is paused." : "Copied text, links, images and files appear here.")
-                        .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
-                        .padding(.top, 4)
-                } else {
-                    let entries = Array(clipboard.entries.prefix(3))
-                    VStack(spacing: 0) {
-                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                            HomeClipboardRow(entry: entry) { copy(entry) }
-                            if index < entries.count - 1 { AOMDivider().padding(.leading, 38) }
+                        ForEach(0..<max(0, 3 - min(3, history.entries.count)), id: \.self) { _ in
+                            Color.clear.frame(maxWidth: .infinity)
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: Clipboard
+
+    private var clipboardCard: some View {
+        let count = clipboard.entries.count
+        return AOMSectionCard("Clipboard", fillsHeight: true, symbol: "doc.on.clipboard", tint: AOMMainTab.clipboard.accentColor,
+                              detail: count == 0 ? nil : "\(count.formatted()) item\(count == 1 ? "" : "s")") {
+            AOMCardLink("Library") { appState.selectedMainTab = .clipboard }
+        } content: {
+            if clipboard.isLoading && clipboard.entries.isEmpty {
+                Text("Unlocking clipboard history…").font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+            } else if clipboard.entries.isEmpty {
+                Text(clipboard.paused ? "Clipboard history is paused. Nothing you copy is kept until you resume."
+                     : "Copied text, links, images and files appear here — searchable and kept on this Mac.")
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let entries = Array(clipboard.entries.prefix(Self.rowsPerSection))
+                VStack(spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        HomeClipboardRow(entry: entry) { copy(entry) }
+                        if index < entries.count - 1 { AOMDivider().padding(.leading, 38) }
+                    }
+                }
+                .padding(.horizontal, -AOMSpace.xs)
+            }
+        } footer: {
+            AOMCardFooter {
+                Button { ClipboardPanelController.shared.show() } label: {
+                    Label("Open Shelf", systemImage: "rectangle.bottomthird.inset.filled")
+                }
+                .buttonStyle(AOMTintedButtonStyle())
+                if let keys = ClipboardShortcuts.shared.shortcut(for: .history)?.displayString {
+                    AOMKeycap(text: keys)
+                }
+            } trailing: {
+                Button(clipboard.paused ? "Resume" : "Pause") {
+                    if clipboard.paused { clipboard.resume() } else { clipboard.pause() }
+                }
+                .buttonStyle(.borderless)
+                .font(AOMType.caption)
+                .help(clipboard.paused ? "Resume clipboard history" : "Stop recording what you copy until you resume")
             }
         }
     }
@@ -332,15 +283,125 @@ struct AOMHomeView: View {
         }
     }
 
+    // MARK: Automation
+
+    private func automationCard(lastRuns: [UUID: Date]) -> some View {
+        let on = triggers.filter(\.isEnabled).count
+        return AOMSectionCard("Automation", fillsHeight: true, symbol: "bolt", tint: AOMMainTab.gestures.accentColor,
+                              detail: triggers.isEmpty ? nil : "\(on) of \(triggers.count) on") {
+            AOMCardLink("All") { appState.selectedMainTab = .gestures }
+        } content: {
+            if triggers.isEmpty {
+                Text("Connect a trackpad gesture, a key or a mouse button to the actions you repeat.")
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let rows = automationRows(lastRuns: lastRuns)
+                VStack(alignment: .leading, spacing: 4) {
+                    if rows.title != "Automations" { Text(rows.title).aomSectionCaps() }
+                    VStack(spacing: 0) {
+                        ForEach(Array(rows.triggers.enumerated()), id: \.element.id) { index, trigger in
+                            HomeAutomationRow(trigger: trigger, lastRun: lastRuns[trigger.id],
+                                              runState: runStates[trigger.id] ?? .idle) { run(trigger) }
+                            if index < rows.triggers.count - 1 { AOMDivider().padding(.leading, 38) }
+                        }
+                    }
+                    .padding(.horizontal, -AOMSpace.xs)
+                }
+            }
+        } footer: {
+            AOMCardFooter {
+                Button {
+                    appState.selectedMainTab = .gestures
+                    appState.showingAddTrigger = true
+                } label: {
+                    Label("New Automation", systemImage: "plus")
+                }
+                .buttonStyle(AOMTintedButtonStyle())
+            } trailing: {
+                if pinned.isEmpty && !triggers.isEmpty {
+                    Text("Pin from ⋯ to keep one here")
+                        .font(AOMType.micro).foregroundStyle(AOMTheme.textTertiary).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// Pinned first; then what ran most recently; without history, the
+    /// enabled automations stand in.
+    private func automationRows(lastRuns: [UUID: Date]) -> (title: String, triggers: [Trigger]) {
+        if !pinned.isEmpty { return ("Pinned", Array(pinned.prefix(Self.rowsPerSection))) }
+        let recent = triggers
+            .filter { lastRuns[$0.id] != nil }
+            .sorted { (lastRuns[$0.id] ?? .distantPast) > (lastRuns[$1.id] ?? .distantPast) }
+        if !recent.isEmpty { return ("Recently Used", Array(recent.prefix(Self.rowsPerSection))) }
+        return ("Automations", Array(triggers.sorted { $0.isEnabled && !$1.isEnabled }.prefix(Self.rowsPerSection)))
+    }
+
+    private func run(_ trigger: Trigger) {
+        runStates[trigger.id] = .running
+        ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
+                                      triggerID: trigger.id) { ok in
+            DispatchQueue.main.async {
+                runStates[trigger.id] = ok ? .succeeded(Date()) : .failed(Date())
+                toast.show(ok ? "Ran “\(trigger.displayName)”" : "“\(trigger.displayName)” failed or was stopped")
+            }
+        }
+    }
+
+    // MARK: Window Tiling
+
+    private var tilingCard: some View {
+        let zones = appState.effectiveSnapZones.filter(\.isEnabled)
+        let shown = Array(zones.prefix(8))
+        return AOMSectionCard("Window Tiling", fillsHeight: true, symbol: "rectangle.split.2x2", tint: AOMMainTab.snapping.accentColor,
+                              detail: "\(zones.count) snap zone\(zones.count == 1 ? "" : "s")") {
+            AOMCardLink("Layouts") { appState.selectedMainTab = .snapping }
+        } content: {
+            VStack(alignment: .leading, spacing: AOMSpace.s) {
+                HStack(spacing: AOMSpace.s) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Drag to Snap").font(AOMType.rowTitle)
+                        Text(appState.currentPreset.snappingEnabled
+                             ? (appState.currentPreset.snappingRequiresOption ? "Hold ⌥ while dragging a window to an edge or zone"
+                                : "Drag a window to an edge, corner or zone")
+                             : "Off — windows move freely")
+                            .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                    }
+                    Spacer(minLength: AOMSpace.xs)
+                    Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
+                                                         set: { appState.setSnappingEnabled($0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                if !shown.isEmpty {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.xs), count: 4),
+                              spacing: AOMSpace.xs) {
+                        ForEach(shown) { zone in
+                            AOMLayoutDiagram(zone: zone, highlighted: appState.currentPreset.snappingEnabled)
+                                .frame(maxWidth: 76)
+                                .help(zone.name)
+                        }
+                    }
+                    .opacity(appState.currentPreset.snappingEnabled ? 1 : 0.55)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Snap zones: \(shown.map(\.name).joined(separator: ", "))")
+                }
+            }
+        }
+    }
+
     // MARK: Summary
 
     private var summaryLine: some View {
-        let zones = appState.effectiveSnapZones.filter(\.isEnabled).count
+        let today = Calendar.current.startOfDay(for: Date())
+        let runsToday = stats.events.filter { $0.fired && $0.timestamp >= today }.count
+        let capturesToday = history.entries.filter { $0.capturedAt >= today }.count
         let parts = [
-            "\(zones) snap zone\(zones == 1 ? "" : "s")\(appState.currentPreset.snappingEnabled ? "" : " (Drag to Snap off)")",
-            "\(clipboard.entries.count) clipboard item\(clipboard.entries.count == 1 ? "" : "s")",
-            "\(history.entries.count) capture\(history.entries.count == 1 ? "" : "s")",
-            "\(stats.totalFired.formatted()) run\(stats.totalFired == 1 ? "" : "s") recorded"
+            "\(runsToday.formatted()) run\(runsToday == 1 ? "" : "s") today",
+            "\(capturesToday) capture\(capturesToday == 1 ? "" : "s") today",
+            "\(stats.totalFired.formatted()) runs recorded"
         ]
         return HStack(spacing: AOMSpace.xs) {
             Text(parts.joined(separator: " · "))
@@ -351,7 +412,8 @@ struct AOMHomeView: View {
                 .buttonStyle(.link)
                 .font(AOMType.caption)
         }
-        .padding(.top, AOMSpace.xs)
+        .padding(.top, AOMSpace.xxs)
+        .padding(.horizontal, AOMSpace.xxs)
     }
 }
 
@@ -541,67 +603,6 @@ enum CaptureItemActions {
 
 // MARK: - Shared row components
 
-/// Underlined filter tab used by the Automation page.
-struct AOMUnderlineTab: View {
-    let title: String
-    let selected: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 14, weight: selected ? .semibold : .medium))
-                .foregroundStyle(selected || hovering ? AOMTheme.text : AOMTheme.textSecondary)
-                .padding(.vertical, 10)
-                .overlay(alignment: .bottom) {
-                    if selected { Capsule().fill(AOMTheme.blue).frame(height: 2.5) }
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-}
-
-/// A launcher row used by the Capture page's tool column.
-struct AOMToolButton: View {
-    let title: String
-    let systemImage: String
-    var prominent = false
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .frame(width: 20)
-                Text(title).font(.system(size: 14, weight: prominent ? .semibold : .medium))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(prominent ? Color.white : AOMTheme.text)
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background {
-                let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
-                if prominent {
-                    shape.fill(AOMTheme.blue.aomDarker(hovering ? 0.06 : 0))
-                } else if hovering {
-                    shape.fill(AOMTheme.cardAlt)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(AOMCardButtonStyle())
-        .onHover { hovering = $0 }
-    }
-}
-
 /// Category colours shared by gesture rows and icons.
 enum GestureVisual {
     static func tint(_ category: TriggerCategory) -> Color {
@@ -613,125 +614,5 @@ enum GestureVisual {
         case .otherTriggers: return .gray
         case .all: return AOMTheme.blue
         }
-    }
-}
-
-/// A titled inset group on a sheet: the grouped `Form` look for custom
-/// layouts.
-struct AOMGroup<Content: View>: View {
-    let title: String?
-    let trailing: String?
-    @ViewBuilder var content: Content
-
-    init(_ title: String?, trailing: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.trailing = trailing
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if title != nil || trailing != nil {
-                HStack(alignment: .firstTextBaseline) {
-                    if let title { Text(title).aomSectionCaps() }
-                    Spacer()
-                    if let trailing { Text(trailing).font(.system(size: 12)).foregroundStyle(AOMTheme.textTertiary) }
-                }
-                .padding(.horizontal, 4)
-            }
-            VStack(spacing: 0) { content }
-                .aomCardStyle(.paper, radius: AOMTheme.cardRadius, padding: 6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// One settings-style row: squircle symbol, title, secondary detail and a
-/// trailing control. Optional single/double-click actions, hover highlight.
-struct AOMRow<Trailing: View>: View {
-    let symbol: String
-    let tint: Color
-    let title: String
-    var detail: String?
-    var dimmed = false
-    var showsDivider = true
-    var onSelect: (() -> Void)?
-    var onDoubleClick: (() -> Void)?
-    @ViewBuilder var trailing: Trailing
-    @State private var hovering = false
-
-    init(symbol: String, tint: Color, title: String, detail: String? = nil, dimmed: Bool = false,
-         showsDivider: Bool = true, onSelect: (() -> Void)? = nil, onDoubleClick: (() -> Void)? = nil,
-         @ViewBuilder trailing: () -> Trailing) {
-        self.symbol = symbol
-        self.tint = tint
-        self.title = title
-        self.detail = detail
-        self.dimmed = dimmed
-        self.showsDivider = showsDivider
-        self.onSelect = onSelect
-        self.onDoubleClick = onDoubleClick
-        self.trailing = trailing()
-    }
-
-    private var interactive: Bool { onSelect != nil || onDoubleClick != nil }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                AOMIconBadge(systemImage: symbol, tint: dimmed ? AOMTheme.textTertiary : tint, size: 32, filled: !dimmed)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(AOMType.rowTitle).lineLimit(1)
-                        .foregroundStyle(dimmed ? AOMTheme.textTertiary : AOMTheme.text)
-                    if let detail, !detail.isEmpty {
-                        Text(detail).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                trailing
-                if onSelect != nil {
-                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(minHeight: 52)
-            .background(hovering && interactive ? AOMTheme.cardAlt : .clear,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .gesture(TapGesture(count: 2).onEnded { onDoubleClick?() }, including: onDoubleClick == nil ? .subviews : .all)
-            .simultaneousGesture(TapGesture().onEnded { onSelect?() }, including: onSelect == nil ? .subviews : .all)
-            if showsDivider {
-                Rectangle().fill(AOMTheme.divider).frame(height: 1).padding(.leading, 54)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(onSelect != nil ? .isButton : [])
-    }
-}
-
-/// Footer link inside a group ("Show All …").
-struct AOMLinkRow: View {
-    let title: String
-    var shortcut: String?
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(AOMTheme.blue)
-                Spacer()
-                if let shortcut { AOMKeycap(text: shortcut) }
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 36)
-            .background(hovering ? AOMTheme.cardAlt : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
     }
 }

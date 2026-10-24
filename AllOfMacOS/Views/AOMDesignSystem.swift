@@ -1,51 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// A compact launch surface. The entire tile is a native focusable button;
-/// the shortcut is a hint, never a second competing action.
-struct AOMLaunchTile: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let tint: Color
-    var shortcut: String?
-    let action: () -> Void
-
-    init(_ title: String, detail: String, symbol: String, tint: Color,
-         shortcut: String? = nil, action: @escaping () -> Void) {
-        self.title = title; self.detail = detail; self.symbol = symbol
-        self.tint = tint; self.shortcut = shortcut; self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 15) {
-                HStack(alignment: .top) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 23, weight: .regular))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(tint)
-                    Spacer(minLength: 4)
-                    if let shortcut { AOMKeycap(text: shortcut) }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AOMTheme.text)
-                    Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                        .lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
-            .padding(16)
-            .background(tint.opacity(0.045), in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
-        }
-        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMTheme.cardRadius, padding: 0))
-        .help(shortcut.map { "\(title) (\($0))" } ?? title)
-        .accessibilityLabel(title)
-        .accessibilityHint(detail)
-    }
-}
-
 // MARK: - Design tokens
 
 /// One set of spacing, radius and surface rules for every AOM page, so
@@ -58,7 +13,7 @@ enum AOMDesign {
     static let gridSpacing: CGFloat = AOMSpace.s
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
     static let surfaceRadius: CGFloat = AOMTheme.cardRadius
-    static let tileRadius: CGFloat = 14
+    static let tileRadius: CGFloat = AOMRadius.card
     static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -171,103 +126,6 @@ private struct AOMToolbarButtonBody: View {
     }
 }
 
-// MARK: - Section header
-
-/// Section title with an optional caption and trailing accessory.
-struct AOMSectionHeader<Accessory: View>: View {
-    let title: String
-    var systemImage: String?
-    var caption: String?
-    @ViewBuilder var accessory: Accessory
-
-    init(_ title: String, systemImage: String? = nil, caption: String? = nil,
-         @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
-        self.title = title
-        self.systemImage = systemImage
-        self.caption = caption
-        self.accessory = accessory()
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    if let systemImage {
-                        Image(systemName: systemImage).font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(AOMTheme.textSecondary)
-                    }
-                    Text(title).font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
-                }
-                .accessibilityAddTraits(.isHeader)
-                if let caption {
-                    Text(caption).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
-            accessory
-        }
-        .accessibilityElement(children: .contain)
-    }
-}
-
-// MARK: - Page header
-
-/// A page heading: squircle badge, 26 pt title, 14 pt subtitle and native
-/// controls. Controls move below the title when space is short.
-struct AOMPageHeader<Trailing: View>: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    @ViewBuilder var trailing: Trailing
-
-    init(_ title: String, subtitle: String, systemImage: String, tint: Color,
-         @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
-        self.title = title
-        self.subtitle = subtitle
-        self.systemImage = systemImage
-        self.tint = tint
-        self.trailing = trailing()
-    }
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 16) {
-                heading
-                Spacer(minLength: 12)
-                trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
-            }
-            VStack(alignment: .leading, spacing: 14) {
-                heading
-                trailing.controlSize(.regular).buttonStyle(AOMToolbarButtonStyle())
-            }
-        }
-        .padding(.bottom, 8)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var heading: some View {
-        HStack(spacing: AOMSpace.s) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).aomPageTitle().lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                Text(subtitle).font(AOMType.subtitle).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-            }
-        }
-    }
-}
-
-/// Soft tinted symbol tile shared by cards and editors.
-struct AOMIconTile: View {
-    let systemImage: String
-    var tint: Color = .accentColor
-    var size: CGFloat = 36
-
-    var body: some View {
-        AOMIconBadge(systemImage: systemImage, tint: tint, size: size)
-    }
-}
-
 // MARK: - Stat strip
 
 /// One figure in an `AOMStatStrip`.
@@ -374,40 +232,6 @@ private struct AOMStatCell: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([item.title, item.value, item.unit, item.detail].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(navigates ? .isButton : [])
-    }
-}
-
-// MARK: - Metric tile
-
-struct AOMMetricTile: View {
-    let title: String
-    let value: String
-    let systemImage: String
-    var tint: Color = .accentColor
-    var detail: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                AOMIconBadge(systemImage: systemImage, tint: tint, size: 32)
-                Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            Text(value)
-                .font(AOMType.metric(32))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .foregroundStyle(AOMTheme.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            if let detail {
-                Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .aomCardStyle(.paper, padding: 18)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title): \(value)")
     }
 }
 

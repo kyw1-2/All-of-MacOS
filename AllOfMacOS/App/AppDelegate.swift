@@ -181,6 +181,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow = window
                 window.delegate = self
             }
+            // Isolated previews can be reviewed as the active app, so window
+            // chrome, selection and glass render in their key-window state.
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-activate") {
+                NSApp.setActivationPolicy(.regular)
+                NSApp.activate(ignoringOtherApps: true)
+                mainWindow?.makeKeyAndOrderFront(nil)
+            }
         }
     }
 
@@ -435,100 +442,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// The status menu, grouped by tool with the most-used block first
+    /// (CleanShot leads with its capture modes; HIG: verbs, sections, toggles
+    /// that show their state, one level of submenus). The version lives in
+    /// Settings › About instead of heading the menu.
     @objc private func statusItemClicked() {
-        let menu = NSMenu()
-
-        // Version header
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let versionItem = NSMenuItem(title: "All of MacOS v\(version)", action: nil, keyEquivalent: "")
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
-        menu.addItem(NSMenuItem.separator())
-
-        // Toggle ON/OFF
-        let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
-        let toggleItem = NSMenuItem(title: enabled ? "Disable Gestures" : "Enable Gestures", action: #selector(toggleEnabled), keyEquivalent: "")
-        toggleItem.target = self
-        toggleItem.image = NSImage(systemSymbolName: enabled ? "hand.raised.fill" : "hand.raised.slash.fill", accessibilityDescription: nil)
-        menu.addItem(toggleItem)
-        let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
-        let snapItem = NSMenuItem(title: "Drag to Snap", action: #selector(toggleSnapping), keyEquivalent: "")
-        snapItem.state = snapping ? .on : .off; snapItem.target = self
-        snapItem.image = NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: nil)
-        menu.addItem(snapItem)
-        menu.addItem(pauseMenuItem())
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Captures are a separate concern from gesture bindings, so they get
-        // their own submenu rather than competing for space in the top level.
-        if let capture = MainActor.assumeIsolated({ CaptureMenu.build() }) {
-            menu.addItem(capture)
-            menu.addItem(NSMenuItem.separator())
-        }
-
-        let clipboard = NSMenuItem(title: "Clipboard", action: nil, keyEquivalent: "")
-        let clipboardMenu = NSMenu()
-        for (title, selector) in [("Clipboard History", #selector(showClipboard)), ("Paste Stack", #selector(showClipboardStack)),
-                                  ("Paste Next in Stack", #selector(pasteNextClipboard))] {
-            let item = NSMenuItem(title: title, action: selector, keyEquivalent: ""); item.target = self; clipboardMenu.addItem(item)
-        }
-        let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
-        let pauseClipboard = NSMenuItem(title: paused ? "Resume Clipboard Recording" : "Pause Clipboard Recording", action: #selector(toggleClipboardPause), keyEquivalent: "")
-        pauseClipboard.target = self; clipboardMenu.addItem(pauseClipboard)
-        clipboard.submenu = clipboardMenu; menu.addItem(clipboard); menu.addItem(.separator())
-
-        // Displays are settings you adjust directly rather than gestures you
-        // bind, so they live here permanently instead of in the action list.
-        if let displays = MainActor.assumeIsolated({ DisplayMenu.build() }) {
-            menu.addItem(displays)
-            menu.addItem(NSMenuItem.separator())
-        }
-
-        // What is bound to the app in front of you, without opening a window.
-        if let appState = MainActor.assumeIsolated({ self.appState }),
-           let triggers = MainActor.assumeIsolated({ TriggerMenu.build(from: appState) }) {
-            menu.addItem(triggers)
-            menu.addItem(NSMenuItem.separator())
-        }
-
-        // Open main window
-        let openItem = NSMenuItem(title: "Open Main Window", action: #selector(showMainWindow), keyEquivalent: "")
-        openItem.target = self
-        openItem.image = NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil)
-        menu.addItem(openItem)
-
-        // Settings
-        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        menu.addItem(settingsItem)
-        let menusItem = NSMenuItem(title: "Floating Menus & Widgets…", action: #selector(editFloatingMenus), keyEquivalent: "")
-        menusItem.target = self
-        menu.addItem(menusItem)
-        let cheatSheetItem = NSMenuItem(title: "Show Cheat Sheet", action: #selector(showCheatSheet), keyEquivalent: "")
-        cheatSheetItem.target = self; menu.addItem(cheatSheetItem)
-        let hudItem = NSMenuItem(title: "Gesture HUD", action: #selector(toggleHUD), keyEquivalent: "")
-        hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
-        hudItem.target = self; menu.addItem(hudItem)
-        let testHudItem = NSMenuItem(title: "Test HUD Overlay", action: #selector(testHUD), keyEquivalent: "")
-        testHudItem.target = self
-        testHudItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
-        menu.addItem(testHudItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Restart
-        let restartItem = NSMenuItem(title: "Restart", action: #selector(restartApp), keyEquivalent: "")
-        restartItem.target = self
-        restartItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
-        menu.addItem(restartItem)
-
-        // Quit
-        let quitItem = NSMenuItem(title: "Quit All of MacOS", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
-        menu.addItem(quitItem)
-
+        let menu = makeStatusMenu()
         // Show the menu
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
@@ -536,6 +455,83 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             self.statusItem?.menu = nil
         }
+    }
+
+    /// Builds the status menu fresh for each click (state, frontmost app).
+    func makeStatusMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        func entry(_ title: String, _ symbol: String?, _ selector: Selector, key: String = "") -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
+            item.target = self
+            if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+            return item
+        }
+
+        // Capture — the everyday modes, then every tool one level down.
+        menu.addItem(.sectionHeader(title: "Capture"))
+        for item in MainActor.assumeIsolated({ CaptureMenu.quickItems() }) { menu.addItem(item) }
+        if let capture = MainActor.assumeIsolated({ CaptureMenu.build() }) {
+            capture.title = "All Capture Tools"
+            capture.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+            menu.addItem(capture)
+        }
+        menu.addItem(.separator())
+
+        // Clipboard
+        menu.addItem(.sectionHeader(title: "Clipboard"))
+        menu.addItem(entry("Clipboard Shelf", "rectangle.bottomthird.inset.filled", #selector(showClipboard)))
+        menu.addItem(entry("Paste Stack", "square.stack.3d.down.right", #selector(showClipboardStack)))
+        menu.addItem(entry("Paste Next in Stack", "arrow.down.doc", #selector(pasteNextClipboard)))
+        let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
+        menu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
+                           paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
+        menu.addItem(.separator())
+
+        // Automation — the engine, snapping, pausing and what the app in front
+        // of you has bound.
+        menu.addItem(.sectionHeader(title: "Automation"))
+        let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
+        let engine = entry("Gestures & Shortcuts", "bolt", #selector(toggleEnabled))
+        engine.state = enabled ? .on : .off
+        menu.addItem(engine)
+        let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
+        let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
+        snapItem.state = snapping ? .on : .off
+        menu.addItem(snapItem)
+        menu.addItem(pauseMenuItem())
+        if let appState = MainActor.assumeIsolated({ self.appState }),
+           let triggers = MainActor.assumeIsolated({ TriggerMenu.build(from: appState) }) {
+            menu.addItem(triggers)
+        }
+        // Displays are settings you adjust directly rather than gestures you
+        // bind, so they live here permanently instead of in the action list.
+        if let displays = MainActor.assumeIsolated({ DisplayMenu.build() }) {
+            menu.addItem(displays)
+        }
+        menu.addItem(.separator())
+
+        menu.addItem(entry("Open All of MacOS", "macwindow", #selector(showMainWindow)))
+        menu.addItem(entry("Settings…", "gearshape", #selector(openSettings), key: ","))
+        let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
+        more.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
+        let moreMenu = NSMenu(title: "More")
+        moreMenu.addItem(entry("Floating Menus & Widgets…", "square.grid.2x2", #selector(editFloatingMenus)))
+        moreMenu.addItem(entry("Show Cheat Sheet", "list.bullet.rectangle", #selector(showCheatSheet)))
+        let hudItem = entry("Gesture HUD", "rectangle.on.rectangle", #selector(toggleHUD))
+        hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
+        moreMenu.addItem(hudItem)
+        moreMenu.addItem(entry("Test HUD Overlay", "sparkles", #selector(testHUD)))
+        moreMenu.addItem(.separator())
+        moreMenu.addItem(entry("Restart All of MacOS", "arrow.clockwise", #selector(restartApp)))
+        more.submenu = moreMenu
+        menu.addItem(more)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit All of MacOS", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
+        menu.addItem(quitItem)
+        return menu
     }
 
     // MARK: - Actions

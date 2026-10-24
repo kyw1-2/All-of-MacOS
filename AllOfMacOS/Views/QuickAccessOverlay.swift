@@ -1123,9 +1123,9 @@ private struct QuickAccessOverlayView: View {
         }
         .padding(4)
         .frame(width: width)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5))
+        // The shared floating material (glass on macOS 26+), so the card
+        // matches the shelf, history and HUDs.
+        .aomFloatingSurface(.hud, radius: 13)
         .help("Double-click to \(isVideo ? "edit" : "annotate") · Drag to export · Right-click for more")
         .onHover { state in
             onHoverChange(state)

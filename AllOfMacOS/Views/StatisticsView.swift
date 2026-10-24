@@ -70,74 +70,42 @@ struct StatisticsView: View {
         }
     }
 
-    /// Page padding and spacing around the sheet (the header is measured);
-    /// the sheet takes the rest of the window height so the page reads as one
-    /// surface.
-    static let chromeHeight: CGFloat = 0
-    private let headerHeight: CGFloat = 0
-
     var body: some View {
         GeometryReader { geometry in
             let layout = Layout(width: geometry.size.width)
-            let sheetMinHeight = layout == .stacked ? 0 : max(0, geometry.size.height - Self.chromeHeight - headerHeight)
             let figures = figures
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(spacing: 0) {
-                        overviewStrip(figures, columns: geometry.size.width >= 760 ? nil : 2)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                        AOMDivider()
-                        switch layout {
-                        case .threeColumns:
-                            HStack(alignment: .top, spacing: 0) {
-                                gestureBreakdown(figures)
-                                    .padding(20)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                AOMDivider(axis: .vertical)
-                                VStack(alignment: .leading, spacing: 12) {
-                                    AOMSectionHeader("Inputs", caption: "Automations on, by input")
-                                    inputsList
-                                }
-                                .padding(20)
-                                .frame(width: 280)
-                                .frame(maxHeight: .infinity, alignment: .top)
-                                AOMDivider(axis: .vertical)
-                                VStack(alignment: .leading, spacing: 12) {
-                                    AOMSectionHeader("Configuration")
-                                    configurationList
-                                }
-                                .padding(20)
-                                .frame(width: 280)
-                                .frame(maxHeight: .infinity, alignment: .top)
+                VStack(alignment: .leading, spacing: AOMSpace.m) {
+                    overviewStrip(figures, columns: geometry.size.width >= 760 ? nil : 2)
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 2)
+                        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 4, elevated: false)
+                    switch layout {
+                    case .threeColumns, .twoColumns:
+                        HStack(alignment: .top, spacing: AOMSpace.m) {
+                            mostUsedCard(figures)
+                            VStack(alignment: .leading, spacing: AOMSpace.m) {
+                                inputsCard
+                                configurationCard
                             }
-                            .frame(maxHeight: .infinity)
-                        case .twoColumns:
-                            HStack(alignment: .top, spacing: 0) {
-                                gestureBreakdown(figures)
-                                    .padding(20)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                AOMDivider(axis: .vertical)
-                                configurationSummary
-                                    .padding(20)
-                                    .frame(width: min(360, geometry.size.width * 0.36))
-                                    .frame(maxHeight: .infinity, alignment: .top)
-                            }
-                            .frame(maxHeight: .infinity)
-                        case .stacked:
-                            gestureBreakdown(figures).padding(20)
-                            AOMDivider()
-                            configurationSummary.padding(20)
+                            .frame(width: layout == .threeColumns ? 320 : 290)
                         }
+                    case .stacked:
+                        mostUsedCard(figures)
+                        inputsCard
+                        configurationCard
                     }
-                    .frame(minHeight: sheetMinHeight, alignment: .top)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, layout == .stacked ? AOMSpace.m : AOMSpace.l)
+                .padding(.top, AOMSpace.m)
+                .padding(.bottom, AOMSpace.l)
+                .frame(maxWidth: 1180, alignment: .topLeading)
+                .frame(maxWidth: .infinity)
             }
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .aomPane()
+        .background(AOMTheme.workspace)
         .navigationTitle("Insights")
         .navigationSubtitle("Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))")
         .toolbar {
@@ -161,6 +129,32 @@ struct StatisticsView: View {
         }
     }
 
+    private func mostUsedCard(_ figures: Figures) -> some View {
+        AOMSectionCard("Most Used", symbol: "chart.bar.fill", tint: AOMMainTab.insights.accentColor,
+                       detail: figures.entries.isEmpty ? nil
+                       : "\(figures.entries.count) inputs · \(period.rawValue.lowercased())") {
+            EmptyView()
+        } content: {
+            gestureBreakdown(figures)
+        }
+    }
+
+    private var inputsCard: some View {
+        AOMSectionCard("Inputs", symbol: "hand.point.up.left", detail: "Automations on, by input") {
+            EmptyView()
+        } content: {
+            inputsList
+        }
+    }
+
+    private var configurationCard: some View {
+        AOMSectionCard("Configuration", symbol: "slider.horizontal.3") {
+            EmptyView()
+        } content: {
+            configurationList
+        }
+    }
+
     // MARK: - Overview Cards
 
     private func overviewStrip(_ figures: Figures, columns: Int?) -> some View {
@@ -181,8 +175,6 @@ struct StatisticsView: View {
 
     private func gestureBreakdown(_ figures: Figures) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Most Used", caption: figures.entries.isEmpty ? nil
-                             : "\(figures.entries.count) inputs · \(period.rawValue.lowercased())")
             if figures.entries.isEmpty {
                 AOMEmptyState(period == .all ? "No Gestures Recorded Yet" : "Nothing in the \(period.rawValue)", systemImage: "hand.tap",
                               message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.") {
@@ -203,17 +195,6 @@ struct StatisticsView: View {
     }
 
     // MARK: - Configuration summary
-
-    /// "Your Setup": inputs then configuration, for the narrower layouts.
-    private var configurationSummary: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AOMSectionHeader("Your Setup")
-            Text("Inputs").aomSectionCaps().padding(.top, 2)
-            inputsList
-            Text("Configuration").aomSectionCaps().padding(.top, 10)
-            configurationList
-        }
-    }
 
     /// Enabled automations per input device.
     private var inputsList: some View {

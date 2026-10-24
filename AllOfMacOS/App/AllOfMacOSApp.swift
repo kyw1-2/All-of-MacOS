@@ -622,6 +622,8 @@ struct AllOfMacOSApp: App {
 
 // MARK: - Apple System Settings Components
 
+/// A titled group of settings rows: the same inset card and heading as the
+/// Settings window's own groups, so every pane and sheet reads alike.
 struct AppleSettingsGroup<Content: View>: View {
     let title: String?
     @ViewBuilder let content: Content
@@ -635,22 +637,21 @@ struct AppleSettingsGroup<Content: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             if let title {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 8)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .padding(.leading, 4)
+                    .accessibilityAddTraits(.isHeader)
             }
             VStack(spacing: 0) {
                 content
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-            }
+            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
         }
     }
 }
 
+/// One settings row: a System Settings squircle, title over an optional
+/// detail line, and a trailing control.
 struct AppleSettingsRow<Trailing: View>: View {
     let icon: String
     let iconColor: Color
@@ -670,38 +671,35 @@ struct AppleSettingsRow<Trailing: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                // Apple Control Center / Settings icon badge with soft depth
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(iconColor)
-                        .frame(width: 26, height: 26)
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
+            HStack(spacing: AOMSpace.s) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(iconColor.gradient, in: RoundedRectangle(cornerRadius: 5.5, style: .continuous))
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(AOMType.body)
+                        .foregroundStyle(AOMTheme.text)
                     if let subtitle {
                         Text(subtitle)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(AOMType.caption)
+                            .foregroundStyle(AOMTheme.textSecondary)
                     }
                 }
 
-                Spacer(minLength: 12)
+                Spacer(minLength: AOMSpace.s)
 
                 trailing
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
+            .frame(minHeight: 44)
 
             if showDivider {
-                Divider()
-                    .opacity(0.3)
-                    .padding(.leading, 52)
+                AOMDivider().padding(.leading, 48)
             }
         }
     }

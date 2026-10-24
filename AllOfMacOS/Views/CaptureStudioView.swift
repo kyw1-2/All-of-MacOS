@@ -39,6 +39,20 @@ struct CaptureStudioView: View {
         return "\(count) capture\(count == 1 ? "" : "s") in history · last \(AOMRelativeTime.string(latest.capturedAt).lowercased())"
     }
 
+    /// Library thumbnail size: 0 small, 1 medium, 2 large (Bear, Nova).
+    @AppStorage("AOMCaptureGridDensity") private var density = 1
+
+    private var gridMinimum: CGFloat { [168, 220, 300][min(2, max(0, density))] }
+
+    private func count(_ filter: CaptureFilter) -> Int {
+        switch filter {
+        case .all: return history.entries.count
+        case .screenshots: return history.entries.filter { $0.kind != .videoRecording }.count
+        case .recordings: return history.entries.filter { $0.kind == .videoRecording }.count
+        case .pinned: return history.entries.filter(\.isPinned).count
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if recordingService.isRecording {
@@ -46,20 +60,14 @@ struct CaptureStudioView: View {
                 AOMDivider()
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: AOMSpace.m) {
                     captureLaunchpad
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("Your captures").font(.system(size: 22, weight: .semibold)).tracking(-0.4)
-                                .accessibilityAddTraits(.isHeader)
-                            Text("\(filteredEntries.count)").font(AOMType.body).foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                        }
-                        filterBar
-                        gallerySection
-                    }
+                    filterBar
+                    gallerySection
                 }
-                .padding(24)
+                .padding(.horizontal, AOMSpace.l)
+                .padding(.top, AOMSpace.m)
+                .padding(.bottom, AOMSpace.l)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -150,39 +158,69 @@ struct CaptureStudioView: View {
         }
     }
 
+    private func shortcut(_ action: CaptureShortcutAction) -> String? {
+        CaptureShortcuts.shared.shortcut(for: action)?.displayString
+    }
+
+    /// Every capture mode one click away, in CleanShot's order, the way the
+    /// system screenshot toolbar lays them out: glyph, name, shortcut.
     private var captureLaunchpad: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
-            AOMLaunchTile("Screenshot", detail: "Select an area to capture", symbol: "viewfinder", tint: .blue,
-                          shortcut: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString) {
+        HStack(spacing: 2) {
+            AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne)) {
+                CaptureCoordinator.shared.captureAllInOne()
+            }
+            AOMModeButton("Area", symbol: "viewfinder", shortcut: shortcut(.captureArea)) {
                 CaptureCoordinator.shared.captureArea()
             }
-            AOMLaunchTile("Record Screen", detail: "Capture your screen in motion", symbol: "record.circle", tint: .red,
-                          shortcut: CaptureShortcuts.shared.shortcut(for: .recordScreen)?.displayString) {
+            AOMModeButton("Window", symbol: "macwindow", shortcut: shortcut(.captureWindow)) {
+                CaptureCoordinator.shared.captureWindowInteractive()
+            }
+            AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: shortcut(.captureFullscreen)) {
+                CaptureCoordinator.shared.captureFullscreen()
+            }
+            AOMModeButton("Scrolling", symbol: "arrow.up.and.down.text.horizontal", shortcut: shortcut(.scrollingCapture)) {
+                CaptureCoordinator.shared.captureScrolling()
+            }
+            AOMModeButton("Self-Timer", symbol: "timer") {
+                CaptureCoordinator.shared.captureWithSelfTimer()
+            }
+            Divider().frame(height: 44).padding(.horizontal, AOMSpace.xxs)
+            AOMModeButton(recordingService.isRecording ? "Recording" : "Record", symbol: "record.circle",
+                          tint: AOMTheme.danger, shortcut: shortcut(.recordScreen)) {
                 recordingService.promptAndStartRecording()
             }
             .disabled(recordingService.isRecording)
-            AOMLaunchTile("Extract Text", detail: "Copy text from anywhere", symbol: "text.viewfinder", tint: .orange,
-                          shortcut: CaptureShortcuts.shared.shortcut(for: .ocr)?.displayString) {
+            Divider().frame(height: 44).padding(.horizontal, AOMSpace.xxs)
+            AOMModeButton("Text", symbol: "text.viewfinder", shortcut: shortcut(.ocr)) {
                 CaptureCoordinator.shared.captureText()
             }
+            AOMModeButton("QR Code", symbol: "qrcode.viewfinder") {
+                CaptureCoordinator.shared.captureQRCode()
+            }
         }
+        .padding(.horizontal, AOMSpace.xs)
+        .padding(.vertical, AOMSpace.xxs)
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
     }
 
     private var filterBar: some View {
         HStack(spacing: AOMSpace.s) {
-            Picker("Show", selection: $selectedFilter) {
-                ForEach(CaptureFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
+            AOMScopeBar(items: CaptureFilter.allCases.map { filter in
+                AOMScopeItem(id: filter, title: filter.rawValue, count: count(filter))
+            }, selection: $selectedFilter, accessibilityLabel: "Show")
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: AOMSpace.xs)
+            Picker("Thumbnail Size", selection: $density) {
+                Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
+                Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
+                Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            Spacer(minLength: 0)
-            Text("Drag a capture into any app · double-click to edit")
-                .font(AOMType.caption)
-                .foregroundStyle(AOMTheme.textTertiary)
-                .lineLimit(1)
+            .controlSize(.small)
         }
-        .frame(minHeight: 30)
+        .frame(minHeight: 28)
     }
 
     // MARK: - Active Recording Banner
@@ -244,7 +282,8 @@ struct CaptureStudioView: View {
                 .frame(minHeight: 320)
             } else {
                 // Wide enough that the caption (kind, size, time) never truncates.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 16)], spacing: 20) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum, maximum: gridMinimum * 1.6), spacing: AOMSpace.m)],
+                          spacing: AOMSpace.m) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,
@@ -272,6 +311,11 @@ struct CaptureStudioView: View {
                         }
                     }
                 }
+                Text("Drag a capture into any app · double-click to edit · right-click for more")
+                    .font(AOMType.caption)
+                    .foregroundStyle(AOMTheme.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, AOMSpace.xs)
             }
         }
     }

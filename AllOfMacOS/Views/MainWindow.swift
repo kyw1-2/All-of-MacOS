@@ -47,8 +47,11 @@ struct MainWindow: View {
         }
         .animation(AOMMotion.quick, value: appState.showingCommandPalette)
         .onAppear {
-            // Isolated previews can open Settings for review (`--aom-preview-settings`).
-            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-settings") { openSettings() }
+            // Isolated previews can open Settings for review (`--aom-preview-settings`),
+            // once the main window is on screen — the way a person would.
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-settings") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { openSettings() }
+            }
         }
         .onChange(of: appState.showTutorialRequested) { _, requested in
             if requested {

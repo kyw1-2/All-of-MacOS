@@ -95,10 +95,7 @@ struct ClipboardStackView: View {
         }
         .onChange(of: state.stack.count) { _, _ in controller.fitStackPanel() }
         .frame(width: 264)
-        .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
-            .allowsHitTesting(false))
+        .aomFloatingSurface(.panel, radius: AOMRadius.hud)
     }
 
     private func stackRow(_ entry: ClipboardEntry, position index: Int, ordinal: Int) -> some View {

@@ -790,9 +790,7 @@ private struct ScreenRecordingBarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(VisualEffectBackground(material: .hudWindow, state: .active))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+        .aomFloatingSurface(.hud, radius: 22)
         .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
     }
 }

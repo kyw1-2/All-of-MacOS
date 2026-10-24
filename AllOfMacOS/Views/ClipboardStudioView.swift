@@ -35,7 +35,6 @@ struct ClipboardStudioView: View {
     var body: some View {
         let entries = filteredEntries
         VStack(spacing: 0) {
-            libraryHeading
             filterBar
             AOMDivider()
             Group {
@@ -121,6 +120,9 @@ struct ClipboardStudioView: View {
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: false))
                     .scrollContentBackground(.hidden)
+                    // Rows are always two lines. A floor keeps rows inserted at
+                    // the top (new copies) from being measured short.
+                    .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
                     .frame(maxWidth: .infinity)
                     .onKeyPress(.return) {
                         guard let entry = entries.first(where: { $0.id == selectedEntryID }) else { return .ignored }
@@ -232,27 +234,24 @@ struct ClipboardStudioView: View {
             }
             .pickerStyle(.segmented)
             .help("List with preview, or a gallery of cards")
-            if store.paused {
-                Button {
-                    store.resume()
-                    showToast("Clipboard recording resumed")
-                } label: {
-                    Label("Resume", systemImage: "play.fill")
-                }
-                .help("Resume recording copied items")
-            } else {
-                Menu {
-                    Button("For 5 Minutes") { store.pause(for: 300) }
-                    Button("For 15 Minutes") { store.pause(for: 900) }
-                    Button("For 1 Hour") { store.pause(for: 3600) }
-                    Divider()
-                    Button("Until Resumed") { store.pause() }
-                } label: {
-                    Label("Pause", systemImage: "pause")
-                }
-                .help("Temporarily stop recording copied items")
-            }
+            // Pause lives with the other history commands; while paused the
+            // filter bar and the sidebar say so, with Resume one click away.
             Menu {
+                if store.paused {
+                    Button("Resume Recording") {
+                        store.resume()
+                        showToast("Clipboard recording resumed")
+                    }
+                } else {
+                    Menu("Pause Recording") {
+                        Button("For 5 Minutes") { store.pause(for: 300) }
+                        Button("For 15 Minutes") { store.pause(for: 900) }
+                        Button("For 1 Hour") { store.pause(for: 3600) }
+                        Divider()
+                        Button("Until Resumed") { store.pause() }
+                    }
+                }
+                Divider()
                 // Erase never touches pinned items (the old "Clear All History"
                 // deleted pinboard items too, without asking).
                 Button("Erase History…", role: .destructive) { showingEraseConfirmation = true }
@@ -262,7 +261,7 @@ struct ClipboardStudioView: View {
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
-            .help("Clear history and clipboard settings")
+            .help("Pause recording, erase history and clipboard settings")
         }
         ToolbarItem(placement: .primaryAction) {
             Button {
@@ -276,25 +275,18 @@ struct ClipboardStudioView: View {
 
     // MARK: - Filter bar (pinboards and kinds — this page's own navigation)
 
-    private var libraryHeading: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(search.board.flatMap { id in store.boards.first { $0.id == id }?.name } ?? "Your clipboard")
-                .font(.system(size: 24, weight: .semibold)).tracking(-0.5)
-                .lineLimit(1).accessibilityAddTraits(.isHeader)
-            Text("\(filteredEntries.count) items")
-                .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-            Spacer(minLength: 0)
-            if store.paused {
-                Label("Paused", systemImage: "pause.circle")
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.warning)
-            }
-        }
-        .padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 14)
-    }
-
     private var filterBar: some View {
         HStack(spacing: AOMSpace.s) {
             pinboardsBar
+            if store.paused {
+                Button { store.resume() } label: {
+                    Label("Paused", systemImage: "pause.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .font(AOMType.caption.weight(.semibold))
+                .foregroundStyle(AOMTheme.warning)
+                .help("Clipboard history is paused — click to resume")
+            }
             Picker("Type", selection: $search.kind) {
                 Text("All").tag(ClipboardEntry.Kind?.none)
                 ForEach(ClipboardEntry.Kind.allCases) { kind in
@@ -307,10 +299,11 @@ struct ClipboardStudioView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .controlSize(.small)
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 12)
-        .frame(minHeight: 40)
+        .padding(.horizontal, AOMSpace.m)
+        .padding(.vertical, AOMSpace.xs)
+        .frame(minHeight: 42)
     }
 
     private var pinboardsBar: some View {
@@ -337,8 +330,8 @@ struct ClipboardStudioView: View {
                     showingNewBoardSheet = true
                 } label: {
                     Label("New Pinboard", systemImage: "plus")
-                        .font(AOMType.body)
-                        .padding(.horizontal, 8).frame(height: 24)
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 8).frame(height: 26)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -352,22 +345,22 @@ struct ClipboardStudioView: View {
 
     private func chip(title: String, count: Int, color: Color?, symbol: String?, selected: Bool,
                       action: @escaping () -> Void) -> some View {
-        let accent = Color.accentColor
-        return Button {
+        Button {
             withAnimation(AOMMotion.quick) { action() }
         } label: {
             HStack(spacing: 5) {
                 if let color { Circle().fill(color).frame(width: 7, height: 7) }
                 if let symbol { Image(systemName: symbol).font(.system(size: 11, weight: .medium)) }
-                Text(title).font(AOMType.body.weight(selected ? .semibold : .regular)).lineLimit(1)
-                Text("\(count)").font(AOMType.caption.monospacedDigit())
-                    .foregroundStyle(selected ? AOMTheme.onAccent(accent).opacity(0.75) : AOMTheme.textTertiary)
+                Text(title).lineLimit(1)
+                Text("\(count)").monospacedDigit()
+                    .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMTheme.textTertiary)
             }
-            .foregroundStyle(selected ? AOMTheme.onAccent(accent) : AOMTheme.textSecondary)
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(selected ? accent : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
+            .font(.system(size: 12, weight: selected ? .semibold : .medium))
+            .foregroundStyle(selected ? Color.accentColor : AOMTheme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(selected ? Color.accentColor.opacity(0.13) : .clear, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])

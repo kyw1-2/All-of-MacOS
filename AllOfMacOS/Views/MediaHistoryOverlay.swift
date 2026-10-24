@@ -315,9 +315,8 @@ struct MediaHistoryOverlayView: View {
             footerBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(Color.primary.opacity(0.10)))
+        // Same material and corner as the clipboard shelf below it.
+        .aomFloatingSurface(.panel, radius: 24)
         .sheet(item: $previewEntry) { entry in
             CapturePreviewSheet(entry: entry)
         }

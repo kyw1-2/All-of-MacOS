@@ -6,6 +6,8 @@ import AppKit
 /// Provides interactive keyboard shortcut configuration for all capture tools,
 /// allowing individual hotkey recording, clearing, and restoring CleanShot X defaults.
 struct ShortcutsSettingsView: View {
+    /// The decorative banner; Settings' own pane header names the page.
+    var showsBanner = true
     @ObservedObject private var shortcuts = CaptureShortcuts.shared
     @State private var recordingAction: CaptureShortcutAction? = nil
     @State private var eventMonitor: Any? = nil
@@ -29,7 +31,7 @@ struct ShortcutsSettingsView: View {
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
-                headerBanner
+                if showsBanner { headerBanner }
 
                 // Screen Capture Group
                 AppleSettingsGroup("Screen Capture") {
@@ -93,14 +95,7 @@ struct ShortcutsSettingsView: View {
             Spacer()
         }
         .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.75)
-        )
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
     }
 
     // MARK: - Shortcut Row

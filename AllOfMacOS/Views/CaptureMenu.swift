@@ -125,6 +125,28 @@ enum CaptureMenu {
         return root
     }
 
+    /// The everyday capture commands for the top level of the status menu,
+    /// in CleanShot's order (its menu leads with the capture modes). The full
+    /// set stays one level down in `build()`.
+    static func quickItems() -> [NSMenuItem] {
+        let shortcuts = CaptureShortcuts.shared
+        let recording = ScreenRecordingService.shared
+        var items: [NSMenuItem] = []
+        for command in [CaptureMenuCommand.captureArea, .captureWindow, .captureFullscreen, .captureText, .recordScreen] {
+            items.append(action(command.title(isRecording: recording.isRecording,
+                                              desktopIconsVisible: CaptureCoordinator.shared.desktopIconsVisible),
+                                command.symbol,
+                                shortcut: command.shortcutAction.flatMap { shortcuts.shortcut(for: $0) }) {
+                perform(command)
+            })
+        }
+        if recording.isRecording {
+            items.append(action(recording.isPaused ? "Resume Recording" : "Pause Recording", "pause.circle",
+                                shortcut: shortcuts.shortcut(for: .pauseRecording)) { recording.togglePause() })
+        }
+        return items
+    }
+
     private static func perform(_ command: CaptureMenuCommand) {
         let coordinator = CaptureCoordinator.shared
         switch command {

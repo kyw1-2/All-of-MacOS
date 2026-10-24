@@ -38,12 +38,12 @@ struct ActionCardView: View {
                 }
 
                 Image(systemName: action.actionType.iconName)
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(categoryColor)
-                    .frame(width: 36, height: 36)
-                    .background(categoryColor.opacity(0.09),
-                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(width: 32, height: 32)
+                    .background(categoryColor.opacity(0.10),
+                                in: RoundedRectangle(cornerRadius: AOMRadius.well + 1, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -96,8 +96,8 @@ struct ActionCardView: View {
                 .help(isExpanded ? "Hide options" : "Show options")
                 .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, AOMSpace.s)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
             .onTapGesture { onToggleExpand() }
 

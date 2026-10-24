@@ -71,16 +71,10 @@ final class TextCaptureHUDController {
         let frame = NSRect(origin: .zero, size: NSSize(width: 380, height: max(96, size.height)))
         hosting.frame = frame
 
-        let effect = NSVisualEffectView(frame: frame)
-        effect.material = .hudWindow
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 14
-        effect.layer?.masksToBounds = true
+        // The view draws the shared floating material itself (glass on
+        // macOS 26+), like the Quick Access card and the recording bar.
         hosting.autoresizingMask = [.width, .height]
-        effect.addSubview(hosting)
-        panel.contentView = effect
+        panel.contentView = hosting
         panel.setContentSize(frame.size)
         panel.setFrameOrigin(Self.origin(for: frame.size, anchor: anchor))
 
@@ -236,6 +230,7 @@ struct TextCaptureHUDView: View {
         }
         .padding(12)
         .frame(width: 380)
+        .aomFloatingSurface(.hud, radius: AOMRadius.hud)
         .onHover(perform: onHover)
     }
 

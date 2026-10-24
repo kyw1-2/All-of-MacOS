@@ -6,10 +6,11 @@ import SwiftUI
 /// toolbar (title, view switch, search, create), and the optional diagnostics
 /// drawer. Global navigation and page tools no longer share one row.
 ///
-/// 2.2: the window itself is glass — a behind-window sidebar blur shows the
-/// desktop through the chrome (sidebar, toolbar) while the page floats as an
-/// inset opaque card, the System Settings / Things arrangement. Transparency
-/// and contrast accessibility settings restore the opaque window.
+/// AOM 3: the shell is the system's. macOS 26+ floats the sidebar as Liquid
+/// Glass over the page and the toolbar picks up the scroll edge effect, so
+/// AOM draws no window material of its own (HIG Sidebars/Toolbars, WWDC25
+/// "Build a SwiftUI app with the new design"). Each page paints its canvas
+/// edge to edge, under the toolbar.
 struct AOMMainShell<Content: View>: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
@@ -20,8 +21,6 @@ struct AOMMainShell<Content: View>: View {
     /// The sidebar is collapsible (toolbar button, View ▸ Hide Sidebar) and
     /// remembers its state.
     @AppStorage("AOMSidebarVisible") private var sidebarVisible = true
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
 
     init(showingCommandPalette: Binding<Bool>,
          showLog: Binding<Bool>,
@@ -39,10 +38,6 @@ struct AOMMainShell<Content: View>: View {
         Binding(get: { sidebarVisible ? .all : .detailOnly },
                 set: { sidebarVisible = $0 != .detailOnly })
     }
-
-    /// Glass chrome needs the window non-opaque; accessibility settings
-    /// substitute the plain opaque window.
-    private var wantsGlass: Bool { !reduceTransparency && contrast != .increased }
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
@@ -64,30 +59,10 @@ struct AOMMainShell<Content: View>: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AOMTheme.pane)
-            // The page floats as an inset card on the glass: rounded, edged
-            // and softly lifted, with the toolbar left on the material above.
-            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.windowContentRadius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: AOMTheme.windowContentRadius, style: .continuous)
-                    .strokeBorder(AOMTheme.hairline, lineWidth: 0.5)
-            }
-            .shadow(color: .black.opacity(0.06), radius: 16, y: 4)
-            .padding([.leading, .bottom, .trailing], AOMSpace.xs + 2)
+            .background(AOMTheme.workspace)
             .navigationTitle(appState.selectedMainTab.title)
         }
         .navigationSplitViewStyle(.balanced)
-        .background {
-            if wantsGlass {
-                // Behind-window blur under the whole window: the sidebar and
-                // the toolbar pick it up; the opaque page card sits on top.
-                VisualEffectBackground(material: .sidebar, blendingMode: .behindWindow)
-                    .ignoresSafeArea()
-                TranslucentWindow().frame(width: 0, height: 0)
-            } else {
-                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
-            }
-        }
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
     }
@@ -95,15 +70,19 @@ struct AOMMainShell<Content: View>: View {
 
 // MARK: - Sidebar
 
-/// Navigation only: search at the top, the six places, and the engine switch
-/// with Settings and Help at the bottom. Scopes, filters and pinboards live
-/// inside the page they filter.
+/// Navigation only: search at the top, the six places with live state where
+/// it needs attention (a paused engine, a running recording, paused clipboard
+/// history), and the engine switch with Settings and Help at the bottom.
+/// Scopes, filters and pinboards live inside the page they filter. No brand
+/// block: the window title and toolbar say where you are (HIG Sidebars).
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
     @Binding var showLog: Bool
     @Binding var showTouchVisualizer: Bool
     @Environment(\.openSettings) private var openSettings
+    @ObservedObject private var recording = ScreenRecordingService.shared
+    @ObservedObject private var clipboard = ClipboardStore.shared
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -124,37 +103,43 @@ struct AOMSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 9) {
-                    Image(systemName: "square.stack.3d.up.fill")
-                        .font(.system(size: 19, weight: .medium))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(AOMTheme.text)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("AOM").font(.system(size: 18, weight: .semibold)).tracking(-0.6)
-                        Text("All of MacOS").font(.system(size: 10.5)).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                searchButton
-            }
-        }
+        .safeAreaInset(edge: .top, spacing: 0) { searchButton }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .accessibilityElement(children: .contain)
     }
 
-    private func navigationItem(_ tab: AOMMainTab) -> some View {
-        Label {
-            Text(tab.title).font(.system(size: 13, weight: .medium))
-                .padding(.leading, 3)
-        } icon: {
-            Image(systemName: tab.sidebarSymbol)
-                .font(.system(size: 15, weight: .regular))
-                .symbolRenderingMode(.hierarchical)
+    /// Live state that needs attention, shown at the trailing edge of a row.
+    private func status(for tab: AOMMainTab) -> (text: String, tint: Color)? {
+        switch tab {
+        case .gestures where !appState.globalEnabled: return ("Paused", AOMTheme.warning)
+        case .capture where recording.isRecording: return (recording.isPaused ? "Paused" : "REC", AOMTheme.danger)
+        case .clipboard where clipboard.paused: return ("Paused", AOMTheme.warning)
+        default: return nil
         }
-        .frame(minHeight: 28)
+    }
+
+    private func navigationItem(_ tab: AOMMainTab) -> some View {
+        HStack(spacing: 0) {
+            Label {
+                Text(tab.title).font(.system(size: 13, weight: .medium))
+                    .padding(.leading, 2)
+            } icon: {
+                Image(systemName: tab.sidebarSymbol)
+                    .font(.system(size: 14, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+            }
+            Spacer(minLength: 4)
+            if let status = status(for: tab) {
+                Text(status.text)
+                    .font(AOMType.micro.weight(.semibold))
+                    .foregroundStyle(status.tint)
+                    .padding(.horizontal, 6)
+                    .frame(height: 17)
+                    .background(status.tint.opacity(0.14), in: Capsule())
+                    .accessibilityLabel(status.text)
+            }
+        }
+        .frame(minHeight: 26)
         .tag(tab)
         .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
     }
@@ -169,18 +154,18 @@ struct AOMSidebar: View {
             }
             .foregroundStyle(AOMTheme.textSecondary)
             .padding(.horizontal, 8)
-            .frame(height: 30)
-            .background(AOMTheme.track.opacity(0.7), in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
+            .frame(height: 28)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.top, 4)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
         .help("Search commands, automations, clipboard and captures")
         .accessibilityLabel("Search")
     }
@@ -201,7 +186,7 @@ struct AOMSidebar: View {
                                                set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .accessibilityLabel("Automation engine")
                 .help(on ? "Pause every gesture and shortcut" : "Resume automation")
             Menu {
@@ -211,7 +196,7 @@ struct AOMSidebar: View {
                 Toggle("Diagnostics Console", isOn: $showLog)
                 Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
                 Divider()
-                Button("Show Onboarding Again") { appState.showTutorialRequested = true }
+                Button("Show Welcome Again") { appState.showTutorialRequested = true }
             } label: {
                 Image(systemName: "gearshape")
             }
@@ -221,8 +206,8 @@ struct AOMSidebar: View {
             .help("Settings, diagnostics and help")
             .accessibilityLabel("Settings and Help")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 }
 

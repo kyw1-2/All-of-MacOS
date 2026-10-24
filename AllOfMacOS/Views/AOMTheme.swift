@@ -96,10 +96,12 @@ enum AOMTheme {
 
     // MARK: Geometry
 
-    /// Cards for discrete items (captures, clipboard cards, notices).
-    static let cardRadius: CGFloat = 16
+    /// Cards for discrete items (captures, clipboard cards, notices). AOM 3
+    /// steps every radius down so nested corners stay concentric inside the
+    /// macOS 26 window corner (see `AOMRadius`).
+    static let cardRadius: CGFloat = AOMRadius.card
     static let windowContentRadius: CGFloat = 18
-    static let controlRadius: CGFloat = 7
+    static let controlRadius: CGFloat = AOMRadius.control
     static let pagePadding: CGFloat = 20
     static let sectionSpacing: CGFloat = 18
 
@@ -154,6 +156,10 @@ enum AOMSize {
     /// One- and two-line rows (2.2 compact density).
     static let rowSingle: CGFloat = 30
     static let rowDouble: CGFloat = 44
+    /// A two-line row inside a `List`, including the list's own insets. Used
+    /// as the list's minimum row height so rows inserted at the top (a new
+    /// copy, a new automation) are never measured short.
+    static let listRowDouble: CGFloat = 50
     /// Readable line length for editors and forms.
     static let readableWidth: CGFloat = 760
 }
@@ -168,9 +174,21 @@ enum AOMMotion {
 
 // MARK: - Typography
 
-/// The desktop type scale. Sizes track the macOS text styles (13 pt body),
-/// one step larger only for titles that name what you are editing.
+/// The desktop type scale. Sizes track the macOS text styles (HIG: Title 1
+/// 22, Title 2 17, Title 3 15, Headline/Body 13, Callout 12, Subheadline 11),
+/// one step larger only for titles that name what you are editing. Section
+/// pages take their title from the toolbar; content never repeats it.
 enum AOMType {
+    /// Title 1: the name of the thing being edited.
+    static let title1 = Font.system(size: 22, weight: .semibold)
+    /// Title 2: an empty state or a sheet's heading.
+    static let title2 = Font.system(size: 17, weight: .semibold)
+    /// Title 3: a group heading inside a page.
+    static let title3 = Font.system(size: 15, weight: .semibold)
+    /// Headline: card titles and emphasised row titles.
+    static let headline = Font.system(size: 13, weight: .semibold)
+    /// Badges, key hints and tertiary metadata (never body text).
+    static let micro = Font.system(size: 10.5, weight: .regular)
     /// Screen title in content (the name of the thing being edited).
     static let pageTitle = Font.system(size: 22, weight: .semibold)
     static let pageTracking: CGFloat = -0.2

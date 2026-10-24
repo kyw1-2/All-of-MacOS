@@ -30,6 +30,18 @@ echo "==> Assembling app bundle at $APP"
 rm -rf "$APP"
 mkdir -p "$MACOS"
 cp "$BIN" "$MACOS/$BINARY_NAME"
+# SwiftPM's build records the deployment target (14.0) as the SDK version, so
+# macOS 26 and later ran AOM in its compatibility appearance: no Liquid Glass
+# toolbar, sidebar or controls. Record the SDK the binary was built with; the
+# minimum system version stays the Info.plist's.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+MIN_SYSTEM="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' AllOfMacOS/App/Info.plist 2>/dev/null || echo 14.0)"
+if [ -n "$SDK_VERSION" ]; then
+    xcrun vtool -set-build-version macos "$MIN_SYSTEM" "$SDK_VERSION" -replace \
+        -output "$MACOS/$BINARY_NAME.sdk" "$MACOS/$BINARY_NAME" 2>/dev/null
+    mv "$MACOS/$BINARY_NAME.sdk" "$MACOS/$BINARY_NAME"
+    echo "==> Recorded build SDK macOS $SDK_VERSION (minimum $MIN_SYSTEM)"
+fi
 cp AllOfMacOS/App/Info.plist "$CONTENTS/Info.plist"
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
     SOURCE_REVISION="$(git rev-parse HEAD)"

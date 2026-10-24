@@ -947,7 +947,9 @@ private struct AnnotationEditorView: View {
                 AnnotationShareButton(image: renderedImage(), scale: scale).frame(width: 38, height: 32)
             }
         }
-        .padding(.horizontal, 14).frame(height: 44)
+        // macOS 26 rounds windows more: keep the end controls clear of the
+        // bottom corners.
+        .padding(.horizontal, 20).frame(height: 44)
         .background(.regularMaterial)
     }
 

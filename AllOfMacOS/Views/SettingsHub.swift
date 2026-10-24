@@ -5,7 +5,7 @@ import SwiftUI
 // MARK: - Categories
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
-    case general, capture, clipboard, automation, permissions, data, about
+    case general, capture, clipboard, automation, shortcuts, permissions, data, about
     var id: String { rawValue }
 
     var title: String {
@@ -14,6 +14,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .capture: "Capture"
         case .clipboard: "Clipboard"
         case .automation: "Automation"
+        case .shortcuts: "Shortcuts"
         case .permissions: "Permissions"
         case .data: "Data"
         case .about: "About"
@@ -26,19 +27,40 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .capture: "camera.viewfinder"
         case .clipboard: "doc.on.clipboard"
         case .automation: "hand.draw"
+        case .shortcuts: "command"
         case .permissions: "checkmark.shield"
         case .data: "externaldrive"
         case .about: "info.circle"
         }
     }
 
+    /// The squircle colour behind the category glyph in the sidebar; the
+    /// tool categories share their sidebar colour in the main window.
+    var tint: Color {
+        switch self {
+        case .general: Color(nsColor: .systemGray)
+        case .capture: AOMMainTab.capture.accentColor
+        case .clipboard: AOMMainTab.clipboard.accentColor
+        case .automation: Color(nsColor: .systemBlue)
+        case .shortcuts: Color(nsColor: .systemIndigo)
+        case .permissions: Color(nsColor: .systemGreen)
+        case .data: Color(nsColor: .systemBrown)
+        case .about: Color(nsColor: .systemTeal)
+        }
+    }
+
+    /// Panes that are a complete view of their own (live status, recorders)
+    /// rather than a list of rows; their rows still answer search.
+    var isDashboard: Bool { self == .shortcuts || self == .permissions }
+
     var blurb: String {
         switch self {
         case .general: "Startup, appearance and feedback"
         case .capture: "Screenshot and recording defaults"
         case .clipboard: "History and pasting behavior"
-        case .automation: "Gestures, shortcuts and presets"
-        case .permissions: "macOS permissions"
+        case .automation: "Gestures, triggers and presets"
+        case .shortcuts: "Keyboard shortcuts for every capture tool"
+        case .permissions: "What macOS lets AOM do, and how to fix what's missing"
         case .data: "Backups, export and reset"
         case .about: "Version and help"
         }
@@ -71,6 +93,8 @@ struct SettingItem: Identifiable {
     let subtitle: String
     let keywords: [String]
     let content: AnyView
+    /// The titled group inside the category ("Screenshots", "Recording").
+    var group: String?
 }
 
 // MARK: - Bindings that write immediately
@@ -112,15 +136,17 @@ struct ClipboardPreferenceRow: View {
     let keyPath: ReferenceWritableKeyPath<ClipboardPreferences, Bool>
 
     var body: some View {
-        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
-            Toggle("", isOn: Binding(
-                get: { prefs[keyPath: keyPath] },
-                set: { prefs[keyPath: keyPath] = $0; NotificationCenter.default.post(name: .aomSettingChanged, object: nil) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .accessibilityLabel(title)
+        let value = Binding(
+            get: { prefs[keyPath: keyPath] },
+            set: { prefs[keyPath: keyPath] = $0; NotificationCenter.default.post(name: .aomSettingChanged, object: nil) }
+        )
+        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle,
+                    onLabelTap: { value.wrappedValue.toggle() }) {
+            Toggle("", isOn: value)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityLabel(title)
         }
     }
 }
@@ -132,40 +158,58 @@ struct HubRowShell<Control: View>: View {
     let tint: Color
     let title: String
     let subtitle: String
+    /// Clicking the label side performs this (a switch row flips its switch).
+    var onLabelTap: (() -> Void)?
     let control: Control
 
-    init(icon: String, tint: Color, title: String, subtitle: String, @ViewBuilder control: () -> Control) {
+    init(icon: String, tint: Color, title: String, subtitle: String, onLabelTap: (() -> Void)? = nil,
+         @ViewBuilder control: () -> Control) {
         self.icon = icon
         self.tint = tint
         self.title = title
         self.subtitle = subtitle
+        self.onLabelTap = onLabelTap
         self.control = control()
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(tint)
-                .frame(width: 20, height: 20)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(AOMTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .center, spacing: AOMSpace.s) {
+            HStack(alignment: .center, spacing: AOMSpace.s) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(tint)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(AOMType.body)
+                        .foregroundStyle(AOMTheme.text)
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(AOMType.caption)
+                            .foregroundStyle(AOMTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                Spacer(minLength: AOMSpace.m)
             }
-            Spacer(minLength: 16)
+            .contentShape(Rectangle())
+            .onTapGesture { onLabelTap?() }
             control
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .frame(minHeight: 46)
-        .contentShape(Rectangle())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+    }
+}
+
+/// Choices with a few short labels read better side by side than behind a
+/// pop-up (the CleanShot 5 settings critique): up to four options of up to
+/// eight characters become a segmented control.
+enum HubChoiceStyle {
+    static func segmented(_ labels: [String]) -> Bool {
+        labels.count >= 2 && labels.count <= 4 && labels.allSatisfy { $0.count <= 8 }
     }
 }
 
@@ -178,8 +222,11 @@ struct HubToggleRow: View {
     let fallback: Bool
 
     var body: some View {
-        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
-            Toggle("", isOn: aomSettingBool(key, fallback))
+        let value = aomSettingBool(key, fallback)
+        // The label is part of the control: clicking it flips the switch.
+        HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle,
+                    onLabelTap: { value.wrappedValue.toggle() }) {
+            Toggle("", isOn: value)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
@@ -200,19 +247,21 @@ struct HubChoiceRow: View {
 
     var body: some View {
         HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
-            Picker("", selection: aomSettingString(key, fallback)) {
+            let picker = Picker("", selection: aomSettingString(key, fallback)) {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                     Text(option.label).tag(option.value)
                 }
             }
             .labelsHidden()
-            .pickerStyle(.menu)
             .controlSize(.small)
-            // Menus size to their content: a fixed width truncates long or
-            // localized labels ("Microphone + System Audio").
-            .frame(minWidth: width, alignment: .trailing)
-            .fixedSize()
             .accessibilityLabel(title)
+            if HubChoiceStyle.segmented(options.map(\.label)) {
+                picker.pickerStyle(.segmented).fixedSize()
+            } else {
+                // Menus size to their content: a fixed width truncates long or
+                // localized labels ("Microphone + System Audio").
+                picker.pickerStyle(.menu).frame(minWidth: width, alignment: .trailing).fixedSize()
+            }
         }
     }
 }
@@ -229,17 +278,19 @@ struct HubIntChoiceRow: View {
 
     var body: some View {
         HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
-            Picker("", selection: aomSettingInt(key, fallback)) {
+            let picker = Picker("", selection: aomSettingInt(key, fallback)) {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                     Text(option.label).tag(option.value)
                 }
             }
             .labelsHidden()
-            .pickerStyle(.menu)
             .controlSize(.small)
-            .frame(minWidth: width, alignment: .trailing)
-            .fixedSize()
             .accessibilityLabel(title)
+            if HubChoiceStyle.segmented(options.map(\.label)) {
+                picker.pickerStyle(.segmented).fixedSize()
+            } else {
+                picker.pickerStyle(.menu).frame(minWidth: width, alignment: .trailing).fixedSize()
+            }
         }
     }
 }
@@ -298,7 +349,7 @@ struct LaunchAtLoginRow: View {
 
     var body: some View {
         HubRowShell(icon: "power", tint: .blue, title: "Launch at Login",
-                    subtitle: "Start All of MacOS when you sign in") {
+                    subtitle: "Start All of MacOS when you sign in", onLabelTap: { enabled.toggle() }) {
             Toggle("", isOn: $enabled)
                 .labelsHidden()
                 .toggleStyle(.switch)
@@ -349,11 +400,11 @@ struct SettingsSearchField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-            TextField("Search settings", text: $text)
+            TextField("Search", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($focused)
@@ -369,12 +420,12 @@ struct SettingsSearchField: View {
                 .accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 30)
-        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(focused ? AOMTheme.blue : .clear, lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(focused ? Color.accentColor.opacity(0.8) : Color.primary.opacity(0.06), lineWidth: focused ? 1.5 : 0.5)
         }
     }
 }
@@ -382,7 +433,7 @@ struct SettingsSearchField: View {
 // MARK: - Catalog
 
 enum AdvancedSheet: String, Identifiable {
-    case gestures, shortcuts, permissions, backups, clipboardDetail
+    case gestures, shortcuts, permissions, backups, clipboardDetail, captureDetail
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -391,6 +442,7 @@ enum AdvancedSheet: String, Identifiable {
         case .permissions: "Permissions"
         case .backups: "Backups"
         case .clipboardDetail: "Clipboard Storage"
+        case .captureDetail: "Capture Options"
         }
     }
 }
@@ -404,8 +456,31 @@ enum SettingsCatalog {
 
     private static func item(_ id: String, _ category: SettingsCategory, _ title: String,
                              _ subtitle: String, _ keywords: [String], _ content: AnyView) -> SettingItem {
-        SettingItem(id: id, category: category, title: title, subtitle: subtitle, keywords: keywords, content: content)
+        SettingItem(id: id, category: category, title: title, subtitle: subtitle, keywords: keywords, content: content,
+                    group: groups[id])
     }
+
+    /// Groups inside each category, in display order of first appearance.
+    private static let groups: [String: String] = [
+        "launchAtLogin": "Startup", "showMenuBarIcon": "Startup",
+        "appearance": "Appearance", "accentColor": "Appearance",
+        "hud": "Feedback", "hudOpacity": "Feedback",
+        "groupByFolder": "Automation List",
+        "captureFormat": "Screenshots", "captureQuality": "Screenshots", "showsCursor": "Screenshots",
+        "windowShadow": "Screenshots", "playsSound": "Screenshots", "selfTimer": "Screenshots",
+        "pixelSnap": "Selecting", "snapSelection": "Selecting", "freezeScreen": "Selecting",
+        "crosshair": "Selecting", "magnifier": "Selecting",
+        "overlay": "After Capture", "ocrLineBreaks": "After Capture", "captureDetail": "After Capture",
+        "historyCapacity": "History", "historyRetention": "History",
+        "recordingFPS": "Recording", "recordingFormat": "Recording", "recordingAudio": "Recording",
+        "clickIndicators": "Recording", "cameraOverlay": "Recording", "keystrokeOverlay": "Recording",
+        "clipboardCompact": "Shelf", "clipboardCapture": "Shelf", "clipboardPreviews": "Shelf",
+        "clipboardQuickModifier": "Pasting", "clipboardPlainModifier": "Pasting",
+        "clipboardStorage": "History",
+        "gestures": "Automations", "bttPreset": "Import",
+        "permissions": "Access", "privacySettings": "Access",
+        "backups": "Your Data", "reset": "Your Data", "tutorial": "Help",
+    ]
 
     private static func generalItems() -> [SettingItem] {
         [
@@ -445,6 +520,12 @@ enum SettingsCatalog {
             item("keystrokeOverlay", .capture, "Show Keystrokes", "Display keystrokes in recordings", ["키보드", "단축키", "녹화", "키스트로크"], AnyView(HubToggleRow(icon: "keyboard", tint: .purple, title: "Show Keystrokes", subtitle: "Display keystrokes in recordings", key: "AOMCaptureRecordingKeystrokeOverlay", fallback: false))),
             item("overlay", .capture, "Floating Overlay", "Show a preview after capturing", ["오버레이", "미리보기"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle.angled", tint: .purple, title: "Floating Overlay", subtitle: "Show a preview after capturing", key: "AOMCaptureOverlayEnabled", fallback: true))),
             item("ocrLineBreaks", .capture, "Keep OCR Line Breaks", "Preserve line breaks in recognized text", ["ocr", "텍스트"], AnyView(HubToggleRow(icon: "text.viewfinder", tint: .teal, title: "Keep OCR Line Breaks", subtitle: "Preserve line breaks in recognized text", key: "AOMOCRKeepsLineBreaks", fallback: true))),
+            item("captureDetail", .capture, "All Capture Options", "Quick Access, save location, file names, text recognition and shortcuts",
+                 ["quick access", "저장", "위치", "파일", "이름", "ocr", "언어", "after capture", "단축키", "오버레이"],
+                 AnyView(HubActionRow(icon: "ellipsis.circle", tint: .gray, title: "All Capture Options",
+                                      subtitle: "Quick Access, save location, file names, text recognition and shortcuts") {
+                Button("Open…") { NotificationCenter.default.post(name: .aomOpenCaptureOptions, object: nil) }.controlSize(.small)
+            })),
         ]
     }
 
@@ -468,8 +549,8 @@ enum SettingsCatalog {
             item("gestures", .automation, "Gestures & Triggers", "Edit gestures, actions and profiles", ["제스처", "트리거", "동작"], AnyView(HubActionRow(icon: "hand.draw", tint: .orange, title: "Gestures & Triggers", subtitle: "Edit gestures, actions and profiles") {
                 Button("Edit") { sheet.wrappedValue = .gestures }.controlSize(.small)
             })),
-            item("shortcutRecorder", .automation, "Keyboard Shortcuts", "Record and change global shortcuts", ["단축키", "키보드"], AnyView(HubActionRow(icon: "command", tint: .indigo, title: "Keyboard Shortcuts", subtitle: "Record and change global shortcuts") {
-                Button("Edit") { sheet.wrappedValue = .shortcuts }.controlSize(.small)
+            item("shortcutRecorder", .shortcuts, "Capture Shortcuts", "Record and change the keys for every capture tool", ["단축키", "키보드", "hotkey", "shortcut"], AnyView(HubActionRow(icon: "command", tint: .indigo, title: "Capture Shortcuts", subtitle: "Record and change the keys for every capture tool") {
+                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.shortcuts.rawValue) }.controlSize(.small)
             })),
             item("bttPreset", .automation, "Import BTT Preset", "Import BetterTouchTool JSON presets", ["btt", "프리셋", "Import"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT Preset", subtitle: "Import BetterTouchTool JSON presets") {
                 Button("Import") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }.controlSize(.small)
@@ -481,7 +562,7 @@ enum SettingsCatalog {
         [
             item("permissions", .permissions, "Permission Dashboard", "Accessibility, Screen Recording and Input Monitoring", ["권한", "개인정보", "접근성"], AnyView(HubActionRow(icon: "checkmark.shield", tint: .green, title: "Permission Dashboard", subtitle: "Accessibility, Screen Recording and Input Monitoring") {
                 PermissionSummaryBadge()
-                Button("Review") { sheet.wrappedValue = .permissions }.controlSize(.small)
+                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.permissions.rawValue) }.controlSize(.small)
             })),
             item("privacySettings", .permissions, "Open System Settings", "Open macOS privacy settings", ["시스템 설정", "개인정보"], AnyView(HubActionRow(icon: "gearshape.2", tint: .gray, title: "Open System Settings", subtitle: "Open macOS privacy settings") {
                 Button("Open") {
@@ -519,6 +600,8 @@ enum SettingsCatalog {
 }
 
 extension Notification.Name {
+    static let aomOpenCaptureOptions = Notification.Name("AOMSettingsOpenCaptureOptions")
+    static let aomShowSettingsCategory = Notification.Name("AOMSettingsShowCategory")
     static let aomImportBTTPreset = Notification.Name("AOMSettingsImportBTTPreset")
     static let aomRestartTutorial = Notification.Name("AOMSettingsRestartTutorial")
     static let aomResetPreferences = Notification.Name("AOMSettingsResetPreferences")
@@ -528,17 +611,31 @@ extension Notification.Name {
 /// Quiet live summary beside the permission dashboard's Review action, so a
 /// search hit shows the state without opening the sheet.
 struct PermissionSummaryBadge: View {
+    /// The sidebar form: only a warning dot while something is missing.
+    var compact = false
+    /// Drawn on the selected (accent) sidebar row.
+    var onAccent = false
     @State private var granted: Int?
 
     var body: some View {
         Group {
             if let granted {
                 let complete = granted == AOMPermission.required.count
-                Label(complete ? "All granted" : "\(granted) of \(AOMPermission.required.count)",
-                      systemImage: complete ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(complete ? AOMTheme.positive : AOMTheme.warning)
-                    .fixedSize()
+                if compact {
+                    if !complete {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(onAccent ? Color.white : AOMTheme.warning)
+                            .help("\(AOMPermission.required.count - granted) permission(s) need attention")
+                            .accessibilityLabel("Permissions need attention")
+                    }
+                } else {
+                    Label(complete ? "All granted" : "\(granted) of \(AOMPermission.required.count)",
+                          systemImage: complete ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(complete ? AOMTheme.positive : AOMTheme.warning)
+                        .fixedSize()
+                }
             }
         }
         // Read-only status queries, deferred off the catalog build; the
@@ -584,35 +681,51 @@ struct SettingsHubView: View {
         }
     }
 
+    /// The category's rows in their groups, in catalog order.
+    private func groups(_ rows: [SettingItem]) -> [(title: String?, rows: [SettingItem])] {
+        var result: [(title: String?, rows: [SettingItem])] = []
+        for row in rows {
+            if let index = result.firstIndex(where: { $0.title == row.group }) {
+                result[index].rows.append(row)
+            } else {
+                result.append((row.group, [row]))
+            }
+        }
+        return result
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Settings").font(.system(size: 15, weight: .semibold)).tracking(-0.7).padding(.horizontal, 12)
-                Text("Preferences").font(.system(size: 11)).foregroundStyle(AOMTheme.textSecondary)
-                    .padding(.horizontal, 12)
-                ScrollView {
-                    VStack(spacing: 3) {
-                        ForEach(SettingsCategory.allCases) { cat in categoryChip(cat) }
-                    }
-                }.scrollIndicators(.hidden)
-            }
-            .padding(12).padding(.top, 6)
-            .frame(width: 174)
-            .background(AOMTheme.cardAlt.opacity(0.7))
+            sidebar
+            AOMDivider(axis: .vertical)
             VStack(spacing: 0) {
                 header
                 content
-                footer
             }
+            .background(AOMTheme.workspace)
         }
         .frame(minWidth: 780, idealWidth: 900, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
-        .background(AOMTheme.pane)
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
         .onReceive(NotificationCenter.default.publisher(for: .aomSettingChanged)) { _ in flashSaved() }
         .onReceive(NotificationCenter.default.publisher(for: .aomImportBTTPreset)) { _ in importBTTPreset() }
         .onReceive(NotificationCenter.default.publisher(for: .aomRestartTutorial)) { _ in startTutorial() }
         .onReceive(NotificationCenter.default.publisher(for: .aomResetPreferences)) { _ in confirmReset() }
         .onReceive(NotificationCenter.default.publisher(for: .aomOpenReleaseNotes)) { _ in openReleaseNotes() }
+        .onReceive(NotificationCenter.default.publisher(for: .aomOpenCaptureOptions)) { _ in sheet = .captureDetail }
+        .onReceive(NotificationCenter.default.publisher(for: .aomShowSettingsCategory)) { note in
+            if let raw = note.object as? String, let target = SettingsCategory(rawValue: raw) {
+                query = ""
+                category = target
+            }
+        }
+        .onAppear {
+            // Isolated previews can open one pane for review (`--aom-preview-settings-pane permissions`).
+            let args = ProcessInfo.processInfo.arguments
+            if PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-settings-pane"),
+               args.indices.contains(index + 1), let pane = SettingsCategory(rawValue: args[index + 1]) {
+                category = pane
+            }
+        }
         .sheet(item: $sheet) { sheet in
             SettingsSheetHost(sheet: sheet)
                 .environmentObject(appState)
@@ -620,24 +733,44 @@ struct SettingsHubView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(isSearching ? "Search Results" : category.title)
-                        .font(AOMType.pageTitle).foregroundStyle(AOMTheme.text)
-                    Text(isSearching ? "Settings matching your search" : category.blurb)
-                        .font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
-                }
-                Spacer()
-                if savedFlash {
-                    AOMChip(text: "Saved", tint: AOMTheme.positive, symbol: "checkmark")
+    /// Search on top, then the categories with their coloured glyphs — the
+    /// System Settings sidebar, which macOS users already read without help.
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.s) {
+            SettingsSearchField(text: $query)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(SettingsCategory.allCases) { cat in categoryChip(cat) }
                 }
             }
-            SettingsSearchField(text: $query)
+            .scrollIndicators(.hidden)
         }
-        .padding(18)
-        .padding(.bottom, -10)
+        .padding(.horizontal, 10)
+        .padding(.top, AOMSpace.s)
+        .frame(width: 210)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: AOMSpace.s) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isSearching ? "Search Results" : category.title)
+                    .font(AOMType.title2).foregroundStyle(AOMTheme.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text(isSearching ? "Settings matching “\(query.trimmingCharacters(in: .whitespaces))”" : category.blurb)
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if savedFlash {
+                AOMChip(text: "Saved", tint: AOMTheme.positive, symbol: "checkmark")
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, AOMSpace.l)
+        .padding(.top, AOMSpace.m + 2)
+        .padding(.bottom, AOMSpace.xs)
     }
 
     private func categoryChip(_ cat: SettingsCategory) -> some View {
@@ -646,21 +779,22 @@ struct SettingsHubView: View {
             query = ""
             category = cat
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: cat.symbol).font(.system(size: 13, weight: .medium)).frame(width: 20)
-                Text(cat.title).font(.system(size: 12, weight: selected ? .semibold : .regular))
+            HStack(spacing: 9) {
+                Image(systemName: cat.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(cat.tint.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                Text(cat.title)
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? AOMTheme.onAccent(.accentColor) : AOMTheme.text)
                 Spacer(minLength: 0)
+                if cat == .permissions { PermissionSummaryBadge(compact: true, onAccent: selected) }
             }
-            .padding(.horizontal, 12).frame(height: 32)
-            .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
-            .background(selected ? AOMTheme.blue.opacity(0.13) : .clear,
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay {
-                if selected {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(AOMTheme.blue.opacity(0.35), lineWidth: 1)
-                }
-            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -668,76 +802,72 @@ struct SettingsHubView: View {
 
     @ViewBuilder
     private var content: some View {
-        if visibleSections.isEmpty {
-            VStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 26, weight: .light))
-                    .foregroundStyle(.tertiary)
-                Text("No settings found for “\(query)”")
-                    .font(.system(size: 13, weight: .medium))
-                Text("Try another keyword or browse a category.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                Button("Clear Search") { query = "" }
-                    .controlSize(.small)
+        if !isSearching && category.isDashboard {
+            Group {
+                switch category {
+                case .shortcuts: ShortcutsSettingsView(showsBanner: false)
+                default: PermissionsSettingsView()
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, AOMSpace.xxs)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        } else if visibleSections.isEmpty {
+            ContentUnavailableView.search(text: query)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(visibleSections) { section in
-                            sectionView(section.category, rows: section.items)
-                                .id(section.category.id)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AOMSpace.m) {
+                    ForEach(visibleSections) { section in
+                        if isSearching {
+                            groupView(section.category.title, rows: section.items)
+                        } else {
+                            ForEach(Array(groups(section.items).enumerated()), id: \.offset) { _, group in
+                                groupView(group.title, rows: group.rows)
+                            }
                         }
                     }
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
                 }
-                .scrollIndicators(.hidden)
-                .onChange(of: category) { _, newValue in
-                    withAnimation(AOMDesign.animation()) { proxy.scrollTo(newValue.id, anchor: .top) }
-                }
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(.horizontal, AOMSpace.l)
+                .padding(.top, AOMSpace.xs)
+                footer
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .padding(.horizontal, AOMSpace.l)
+                    .padding(.bottom, AOMSpace.m)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.hidden)
+            .id(isSearching ? "search" : category.id)
         }
     }
 
-    private func sectionView(_ cat: SettingsCategory, rows: [SettingItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if isSearching {
-                Text(cat.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
+    private func groupView(_ title: String?, rows: [SettingItem]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .padding(.leading, 4)
+                    .accessibilityAddTraits(.isHeader)
             }
-
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     row.content
                     if index < rows.count - 1 {
-                        Rectangle().fill(AOMTheme.divider.opacity(0.5)).frame(height: 0.5).padding(.leading, 60)
+                        AOMDivider().padding(.leading, 44)
                     }
                 }
             }
-            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: AOMTheme.cardRadius).strokeBorder(AOMTheme.divider.opacity(0.5), lineWidth: 0.5))
-            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
+            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
         }
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bolt.horizontal.circle")
-                .font(.system(size: 11))
-                .foregroundStyle(AOMTheme.textTertiary)
-            Text("Changes are applied and saved automatically.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text("⌘F Search")
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 12)
-        .background(AOMTheme.pane)
+        Label("Changes are applied and saved automatically.", systemImage: "checkmark.circle")
+            .font(AOMType.caption)
+            .foregroundStyle(AOMTheme.textTertiary)
+            .padding(.leading, 4)
+            .padding(.top, AOMSpace.xs)
     }
 
     private func flashSaved() {
@@ -822,6 +952,7 @@ struct SettingsSheetHost: View {
         case .permissions: PermissionsSettingsView()
         case .backups: BackupSettingsView()
         case .clipboardDetail: ClipboardSettingsView()
+        case .captureDetail: CaptureSettingsView()
         }
     }
 }

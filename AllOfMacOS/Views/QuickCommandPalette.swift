@@ -229,23 +229,32 @@ struct QuickCommandPalette: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(AOMTheme.textSecondary)
                     TextField("Search commands, automations, clipboard and captures", text: $query)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 16))
+                        .font(.system(size: 17))
                         .focused($isFieldFocused)
                         .onChange(of: query) { _, _ in selectedID = nil }
                         .accessibilityLabel("Search")
+                    if isSearching {
+                        Text("\(items.count) result\(items.count == 1 ? "" : "s")")
+                            .font(AOMType.caption.monospacedDigit())
+                            .foregroundStyle(AOMTheme.textTertiary)
+                    }
                 }
-                .padding(.horizontal, AOMSpace.m)
-                .frame(height: 50)
+                .padding(.horizontal, AOMSpace.m + 2)
+                .frame(height: 54)
 
                 AOMDivider()
 
                 if items.isEmpty {
                     VStack(spacing: 6) {
-                        Text("No Results for “\(query)”").font(AOMType.bodyEmphasis)
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 26, weight: .light))
+                            .foregroundStyle(AOMTheme.textTertiary)
+                            .padding(.bottom, 4)
+                        Text("No Results for “\(query)”").font(AOMType.headline)
                         Text("Try an automation name, an app or a word you copied.")
                             .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
                         // The empty state needs a mouse-reachable way out too.
@@ -265,10 +274,12 @@ struct QuickCommandPalette: View {
                                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                                     if !isSearching, index == 0 || items[index - 1].section != item.section {
                                         Text(item.section.rawValue)
-                                            .font(AOMType.caption.weight(.semibold))
+                                            .font(AOMType.micro.weight(.semibold))
+                                            .textCase(.uppercase)
+                                            .tracking(0.4)
                                             .foregroundStyle(AOMTheme.textTertiary)
                                             .padding(.horizontal, 10)
-                                            .padding(.top, index == 0 ? 4 : 10)
+                                            .padding(.top, index == 0 ? 6 : 12)
                                             .padding(.bottom, 4)
                                             .accessibilityAddTraits(.isHeader)
                                     }
@@ -287,10 +298,8 @@ struct QuickCommandPalette: View {
                 AOMDivider()
                 actionBar(selected)
             }
-            .frame(width: 640, height: 440)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
+            .frame(width: 680, height: 460)
+            .aomFloatingSurface(.panel, radius: AOMRadius.panel, inWindow: true)
             .shadow(color: .black.opacity(0.22), radius: 30, y: 14)
         }
         .onAppear { isFieldFocused = true }
@@ -328,9 +337,12 @@ struct QuickCommandPalette: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
-                    .frame(width: 20)
+                    .font(.system(size: 12, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(selected ? Color.accentColor : AOMTheme.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(selected ? Color.accentColor.opacity(0.14) : AOMTheme.track,
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 Text(item.title)
                     .font(AOMType.body.weight(.medium))
                     .foregroundStyle(AOMTheme.text)
@@ -345,9 +357,9 @@ struct QuickCommandPalette: View {
                 }
                 if let keys = item.shortcut { AOMKeycap(text: keys) }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.horizontal, 8)
+            .frame(height: 38)
+            .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -373,8 +385,9 @@ struct QuickCommandPalette: View {
                 if isSearching { query = "" } else { close() }
             }
         }
-        .padding(.horizontal, AOMSpace.s)
-        .frame(height: 38)
+        .padding(.horizontal, AOMSpace.m)
+        .frame(height: 40)
+        .background(Color.primary.opacity(0.03))
     }
 
     private func actionHint(_ title: String, keys: String, prominent: Bool, action: @escaping () -> Void) -> some View {

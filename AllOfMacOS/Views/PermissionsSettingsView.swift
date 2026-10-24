@@ -88,7 +88,7 @@ struct PermissionsSettingsView: View {
             .controlSize(.small)
         }
         .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
     }
 
     private func permissionRow(_ permission: AOMPermission, showDivider: Bool) -> some View {

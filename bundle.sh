@@ -29,6 +29,14 @@ mkdir -p "$BUNDLE_DIR/Contents/Resources"
 cp AllOfMacOS/App/Info.plist "$BUNDLE_DIR/Contents/Info.plist"
 cp AllOfMacOS/AllOfMacOS.entitlements "$BUNDLE_DIR/Contents/Resources/AllOfMacOS.entitlements"
 cp "$EXEC_PATH" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS"
+# Record the real build SDK (SwiftPM writes the deployment target), so
+# macOS 26+ draws the current system design instead of the compatibility one.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+if [ -n "$SDK_VERSION" ]; then
+    xcrun vtool -set-build-version macos 14.0 "$SDK_VERSION" -replace \
+        -output "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS.sdk" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS" 2>/dev/null
+    mv "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS.sdk" "$BUNDLE_DIR/Contents/MacOS/AllOfMacOS"
+fi
 
 echo "→ Signing with explicitly configured All of MacOS identity…"
 SIGN_FLAG="${ALLOFMACOS_SIGN_ID:-AOM Dev}"

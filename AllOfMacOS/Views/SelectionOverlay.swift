@@ -1163,9 +1163,7 @@ private struct AllInOneToolbar: View {
                                   action: onCancel)
             }
             .padding(6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            .aomFloatingSurface(.bar, radius: 14)
             .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
             // Overlaid so opening the list never moves the toolbar itself.
             .overlay(alignment: opensUpward ? .bottomTrailing : .topTrailing) {
@@ -1328,9 +1326,7 @@ private struct SelectionRatioList: View {
         }
         .padding(6)
         .frame(width: 184)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        .aomFloatingSurface(.bar, radius: 12)
         .shadow(color: .black.opacity(0.35), radius: 10, y: 3)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Aspect ratio list")
