@@ -117,6 +117,21 @@ extension ClipboardSearchQuery {
             return replacement.trimmingCharacters(in: .whitespacesAndNewlines)
         }.joined(separator: " ")
     }
+    /// Complete, positive `type:`, `from:`/`app:` and `board:` tokens that the
+    /// filter chips can represent. The panel moves them out of the query into
+    /// the chips (typing `type:image` lights the Image chip); everything else
+    /// — excluded terms, dates, partial tokens — stays as typed.
+    static func chipFilters(in query: String) -> [(token: String, field: String, value: String)] {
+        filterTokens(in: query).compactMap { token in
+            guard !token.hasPrefix("-") else { return nil }
+            let pieces = token.split(separator: ":", maxSplits: 1).map(String.init)
+            guard pieces.count == 2 else { return nil }
+            let field = pieces[0].lowercased() == "app" ? "from" : pieces[0].lowercased()
+            guard ["type", "from", "board"].contains(field) else { return nil }
+            return (token, field, pieces[1].replacingOccurrences(of: "\"", with: ""))
+        }
+    }
+
     static func removing(token: String, from query: String) -> String { tokens(in: query).filter { $0 != token }.joined(separator: " ") }
     static func inserting(token: String, into query: String) -> String {
         var existing = tokens(in: query)

@@ -930,6 +930,23 @@ final class ClipboardPanelController {
         return selected.contains(entry.id) ? selected : [entry.id]
     }
 
+    /// Paste's "Erase History": unpinned items go, pinboards stay; asks first.
+    func confirmEraseHistory() {
+        let unpinned = store.entries.filter { $0.pinboardIDs.isEmpty }.count
+        guard unpinned > 0 else { return }
+        let alert = NSAlert()
+        alert.messageText = "Erase clipboard history?"
+        alert.informativeText = ClipboardEraseCopy.message(unpinned: unpinned)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Erase History")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        store.eraseHistory()
+        state.selected.removeAll()
+        state.status = "History erased. Pinned items were kept — Undo Delete brings the rest back."
+    }
+
     private var pauseTask: Task<Void, Never>?
     func togglePause() {
         pauseTask?.cancel()
@@ -1182,7 +1199,10 @@ struct ClipboardPanelView: View {
                 state.searchFieldActive = false
             }
         }
-        .onChange(of: state.query) { _, _ in state.clearSelection() }
+        .onChange(of: state.query) { _, _ in
+            absorbChipTokens()
+            state.clearSelection()
+        }
         .onChange(of: state.kind) { _, _ in state.clearSelection() }
         .onChange(of: state.source) { _, _ in state.clearSelection() }
         .onChange(of: state.recentDays) { _, _ in state.clearSelection() }
@@ -1211,12 +1231,61 @@ struct ClipboardPanelView: View {
         return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
     }
 
+    /// Typed `type:`/`from:`/`board:` tokens become chip selections, so the
+    /// chips and the query never disagree. Unknown apps or boards stay typed.
+    private func absorbChipTokens() {
+        var query = state.query
+        for filter in ClipboardSearchQuery.chipFilters(in: query) {
+            switch filter.field {
+            case "type":
+                guard let kind = ClipboardEntry.Kind(rawValue: filter.value.lowercased()) else { continue }
+                state.kind = kind
+            case "from":
+                guard let source = sources.first(where: { $0.name.caseInsensitiveCompare(filter.value) == .orderedSame
+                    || $0.bundleID?.caseInsensitiveCompare(filter.value) == .orderedSame }) else { continue }
+                state.source = source.filterValue
+            case "board":
+                guard let board = store.boards.first(where: { $0.name.caseInsensitiveCompare(filter.value) == .orderedSame }) else { continue }
+                state.selectBoard(board.id)
+            default: continue
+            }
+            query = ClipboardSearchQuery.removing(token: filter.token, from: query)
+        }
+        if query != state.query { state.query = query.isEmpty ? "" : query + " " }
+    }
+
+    /// Paste-style filter chips under the search field: kind, date and the
+    /// apps you copy from most. Selecting a chip and typing its token are the
+    /// same filter.
     private var searchSuggestions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                if let kind = state.kind { removableChip("Type: \(kind.displayName)") { state.kind = nil } }
-                if let source = state.source { removableChip("App: \(source)") { state.source = nil } }
-                if state.recentDays != 0 { removableChip(ClipboardPanelState.dateFilterTitle(state.recentDays)) { state.recentDays = 0 } }
+                ForEach(ClipboardEntry.Kind.allCases) { kind in
+                    quickChip(kind.displayName, icon: symbol(kind), selected: state.kind == kind,
+                              help: "Only \(kind.displayName.lowercased()) items (type:\(kind.rawValue))") {
+                        state.kind = state.kind == kind ? nil : kind
+                    }
+                }
+                Divider().frame(height: 14)
+                ForEach([1, -7, 30], id: \.self) { code in
+                    quickChip(ClipboardPanelState.dateFilterTitle(code), icon: "calendar", selected: state.recentDays == code,
+                              help: "Copied \(ClipboardPanelState.dateFilterTitle(code).lowercased())") {
+                        state.recentDays = state.recentDays == code ? 0 : code
+                    }
+                }
+                if state.recentDays != 0, ![1, -7, 30].contains(state.recentDays) {
+                    quickChip(ClipboardPanelState.dateFilterTitle(state.recentDays), icon: "calendar", selected: true, help: "Date filter") {
+                        state.recentDays = 0
+                    }
+                }
+                if !sources.isEmpty { Divider().frame(height: 14) }
+                ForEach(chipSources) { source in
+                    quickChip(source.name, icon: nil, appIcon: AppMetadataCache.shared.icon(for: source.bundleID),
+                              selected: state.source == source.filterValue,
+                              help: "Copied from \(source.name) (from:\"\(source.name)\")") {
+                        state.source = state.source == source.filterValue ? nil : source.filterValue
+                    }
+                }
                 ForEach(filterSuggestions, id: \.self) { token in
                     Button("+ " + token) { state.query = ClipboardSearchQuery.inserting(token: token, into: state.query); state.searchFocusToken = UUID() }
                         .buttonStyle(.bordered).controlSize(.mini)
@@ -1229,16 +1298,49 @@ struct ClipboardPanelView: View {
             }.padding(.horizontal, 24).padding(.bottom, 6)
         }.frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true)
     }
+    /// The three most-used apps, plus the selected one if it is not among them.
+    private var chipSources: [ClipboardStore.AppSource] {
+        var top = Array(sources.prefix(3))
+        if let selected = state.source, !top.contains(where: { $0.filterValue == selected }),
+           let source = sources.first(where: { $0.filterValue == selected }) { top.append(source) }
+        return top
+    }
+
+    private func quickChip(_ title: String, icon: String?, appIcon: NSImage? = nil, selected: Bool,
+                           help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let appIcon {
+                    Image(nsImage: appIcon).resizable().scaledToFit().frame(width: 13, height: 13).accessibilityHidden(true)
+                } else if let icon {
+                    Image(systemName: icon).font(.system(size: 10, weight: .medium))
+                }
+                Text(title).lineLimit(1)
+                if selected { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .padding(.horizontal, 8).frame(height: 22)
+            .foregroundStyle(selected ? AOMTheme.onAccent(Color.accentColor) : Color.primary)
+            .background(selected ? Color.accentColor : Color.primary.opacity(0.07), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
     private func removableChip(_ title: String, remove: @escaping () -> Void) -> some View {
         Button(action: remove) { HStack(spacing: 4) { Text(title); Image(systemName: "xmark.circle.fill") } }
             .buttonStyle(.borderedProminent).controlSize(.mini).help("Remove filter")
     }
+    /// Token completions, only while a token is being typed ("from:Sa…").
     private var filterSuggestions: [String] {
+        let suffix = state.query.last?.isWhitespace == true ? "" : (ClipboardSearchQuery.editableText(in: state.query).split(separator: " ").last.map(String.init) ?? "")
+        guard suffix.contains(":") else { return [] }
         let all = ClipboardEntry.Kind.allCases.map { "type:" + $0.rawValue }
             + store.availableAppSources.prefix(6).map { "from:\"" + $0.name + "\"" }
             + store.boards.prefix(6).map { "board:\"" + $0.name + "\"" }
-        let suffix = state.query.last?.isWhitespace == true ? "" : (ClipboardSearchQuery.editableText(in: state.query).split(separator: " ").last.map(String.init) ?? "")
-        return Array(all.filter { !state.query.contains($0) && (suffix.isEmpty || $0.localizedCaseInsensitiveContains(suffix)) }.prefix(7))
+        return Array(all.filter { !state.query.contains($0) && $0.localizedCaseInsensitiveContains(suffix) }.prefix(7))
     }
 
     private var headerBar: some View {
@@ -1376,6 +1478,8 @@ struct ClipboardPanelView: View {
                     state.selected = Set(restored)
                     state.focusedID = restored.first
                 }.disabled(!store.canUndoDeletion)
+                Button("Erase History…") { controller.confirmEraseHistory() }
+                    .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
                 Divider()
                 Button("Settings…") { controller.openSettings() }
                 Divider()
