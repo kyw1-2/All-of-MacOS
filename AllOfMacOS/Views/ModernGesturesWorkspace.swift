@@ -15,6 +15,7 @@ struct ModernGesturesWorkspace: View {
     @AppStorage("AOMAutomationViewMode") private var viewMode = ViewMode.list
     @AppStorage("AOMAutomationListWidth") private var listWidth: Double = AOMSize.listColumnIdeal
     @AppStorage("AOMAutomationTableWidth") private var tableWidth: Double = 560
+    @State private var showingGroupsEditor = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
     @State private var runStates: [UUID: AOMRunState] = [:]
@@ -123,6 +124,9 @@ struct ModernGesturesWorkspace: View {
         .toolbar { toolbarContent }
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
+        }
+        .sheet(isPresented: $showingGroupsEditor) {
+            ActivationGroupsEditor().environmentObject(appState)
         }
         .sheet(isPresented: $appState.showingAddAction) {
             AddActionSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
@@ -366,6 +370,8 @@ struct ModernGesturesWorkspace: View {
                 }
             }
             .pickerStyle(.inline)
+            Divider()
+            Button("Edit Activation Groups…") { showingGroupsEditor = true }
         } label: {
             Label(scopeTitle, systemImage: appState.selectedActivationGroupID != nil ? "square.stack.3d.up"
                   : appState.selectedAppTarget.isGlobal ? "globe" : "app")

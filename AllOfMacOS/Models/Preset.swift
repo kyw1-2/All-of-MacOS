@@ -27,9 +27,11 @@ struct ActivationGroup: Identifiable, Codable, Hashable {
     var disableGlobalTriggers: Bool
     var isEnabled: Bool
     var appliesToAllApps: Bool
+    /// Extra conditions (time, power, displays, an app's window). nil = none.
+    var conditions: ActivationConditions?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, includedBundleIDs, excludedBundleIDs, disableGlobalTriggers, isEnabled, appliesToAllApps
+        case id, name, includedBundleIDs, excludedBundleIDs, disableGlobalTriggers, isEnabled, appliesToAllApps, conditions
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -40,6 +42,7 @@ struct ActivationGroup: Identifiable, Codable, Hashable {
         disableGlobalTriggers = try c.decodeIfPresent(Bool.self, forKey: .disableGlobalTriggers) ?? false
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         appliesToAllApps = try c.decodeIfPresent(Bool.self, forKey: .appliesToAllApps) ?? false
+        conditions = try c.decodeIfPresent(ActivationConditions.self, forKey: .conditions)
     }
     init(name: String) {
         id = UUID()
@@ -53,7 +56,17 @@ struct ActivationGroup: Identifiable, Codable, Hashable {
 
     func matches(_ bundleID: String?) -> Bool {
         guard isEnabled, let bundleID else { return false }
-        return (appliesToAllApps || includedBundleIDs.contains(bundleID)) && !excludedBundleIDs.contains(bundleID)
+        guard (appliesToAllApps || includedBundleIDs.contains(bundleID)) && !excludedBundleIDs.contains(bundleID) else { return false }
+        guard let conditions, !conditions.isEmpty else { return true }
+        return conditions.isSatisfied(by: ActivationConditionsContext.current(
+            needsWindows: !(conditions.requiresWindowOfBundleID ?? "").isEmpty))
+    }
+
+    /// App scope and conditions against a given snapshot (pure, for tests).
+    func matches(_ bundleID: String?, snapshot: ActivationConditions.Snapshot) -> Bool {
+        guard isEnabled, let bundleID,
+              (appliesToAllApps || includedBundleIDs.contains(bundleID)) && !excludedBundleIDs.contains(bundleID) else { return false }
+        return conditions?.isSatisfied(by: snapshot) ?? true
     }
 }
 
