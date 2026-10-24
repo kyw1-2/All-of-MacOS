@@ -16,6 +16,7 @@ struct ActionParameterForm: View {
         case moveResize, windowTarget, windowDrag, desktop, spaceShortcut, customClick, scroll, relativeMouse
         case textPayload, functionKey, modifier, arrow, level, filePath, speak, notification, shortcut, javascript, floatingMenu, accessibility, imageTemplate
         case repeatLoop, cycle, toggle, variableStep, askInput, debounce, triggerSelector, waitFor, pause, info
+        case keepAwake
     }
 
     private static func formKind(_ type: ActionType) -> Kind? {
@@ -33,6 +34,7 @@ struct ActionParameterForm: View {
         case .modifierKeyDown, .modifierKeyUp: return .modifier
         case .pressArrowKey: return .arrow
         case .setVolume, .setBrightness: return .level
+        case .toggleKeepAwake: return .keepAwake
         case .playSoundFile, .openFileOrFolder, .revealInFinder: return .filePath
         case .speakText: return .speak
         case .showNotification: return .notification
@@ -131,6 +133,12 @@ struct ActionParameterForm: View {
             Text("\(Int(p.levelPercent ?? (isVolume ? 50 : 70))) %").font(.callout.monospacedDigit())
             footnote(isVolume ? "Unmutes the output when raising from 0."
                               : "Uses the display under the pointer. Displays without a hardware control get a software dim that never goes fully black.")
+        case .keepAwake:
+            optionalNumberRow("Keep awake for (minutes)", \.keepAwakeMinutes, fallback: 60, range: 1...1440)
+            Toggle("Also keep the display awake", isOn: Binding(
+                get: { action.parameters.keepDisplayOn ?? false },
+                set: { newValue in save { $0.parameters.keepDisplayOn = newValue } }))
+            footnote("Empty minutes keeps the Mac awake until you toggle it off again.")
         case .filePath: filePath
         case .speak: speak
         case .notification:

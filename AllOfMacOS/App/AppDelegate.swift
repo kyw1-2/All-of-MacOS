@@ -378,6 +378,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func captureWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowFromPicker() } }
     @objc func captureActiveWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureActiveWindow() } }
     @objc func pauseRecordingAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.togglePause() } }
+    @objc func toggleKeepAwake() { MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) } }
     @objc func openAnnotationProjectAction() { MainActor.assumeIsolated { AnnotationEditorController.shared.chooseProject() } }
     @objc func recordScreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.toggleRecording() } }
     @objc func recordFullscreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.recordFullscreenUnderPointer() } }
@@ -488,6 +489,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
         menu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
                            paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
+        menu.addItem(.separator())
+
+        // System — Keep Awake shows its state like the Pause toggles do.
+        menu.addItem(.sectionHeader(title: "System"))
+        let awakeOn = MainActor.assumeIsolated { KeepAwakeService.shared.isActive }
+        let awakeItem = entry(awakeOn ? "Keep Awake (on)" : "Keep Awake",
+                              awakeOn ? "flask.fill" : "flask", #selector(toggleKeepAwake))
+        awakeItem.state = awakeOn ? .on : .off
+        menu.addItem(awakeItem)
         menu.addItem(.separator())
 
         // Automation — the engine, snapping, pausing and what the app in front

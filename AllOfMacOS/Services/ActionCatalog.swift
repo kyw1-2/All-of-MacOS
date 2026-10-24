@@ -64,6 +64,7 @@ extension ActionType {
         case .moveWindowUp: return "Nudges the window up by a tenth of the display."
         case .moveWindowDown: return "Nudges the window down by a tenth of the display."
         case .bringWindowToFront: return "Raises the window above other windows of the same app."
+        case .showWindowSwitcher: return "Opens a thumbnail switcher for every open window; arrows move, Return activates."
         case .showPinnedWindowPicker: return "Choose a live window to keep above other windows."
         case .selectWindowToPin: return "Point at a window and click to pin or unpin it. Escape cancels."
         case .togglePinFrontWindow: return "Keep the front window on top, or remove its pin."
@@ -139,6 +140,7 @@ extension ActionType {
         case .hideOtherApps: return "Hides every app except the frontmost one."
         // System
         case .sleepComputer: return "Puts the Mac to sleep."
+        case .toggleKeepAwake: return "Keeps the Mac awake until it is toggled off or the optional minutes run out."
         case .lockScreen: return "Locks the screen."
         case .toggleDarkMode: return "Switches AOM between light and dark appearance."
         case .toggleDoNotDisturb: return "Not implemented; use a script or shortcut instead."

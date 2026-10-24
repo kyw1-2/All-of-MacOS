@@ -17,7 +17,7 @@ final class StatusMenuLayoutTests: XCTestCase {
         XCTAssertTrue(menu.items.first?.isSectionHeader == true)
         XCTAssertEqual(items.last, "Quit All of MacOS")
         let headers = menu.items.filter(\.isSectionHeader).map(\.title)
-        XCTAssertEqual(headers, ["Capture", "Clipboard", "Automation"])
+        XCTAssertEqual(headers, ["Capture", "Clipboard", "System", "Automation"])
         XCTAssertFalse(items.contains { $0.hasPrefix("All of MacOS v") }, "The version moved to Settings › About")
     }
 

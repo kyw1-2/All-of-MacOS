@@ -122,6 +122,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
 
     // System Actions
     case sleepComputer = "Sleep Computer"
+    case toggleKeepAwake = "Toggle Keep Awake"
+    case showWindowSwitcher = "Show Window Switcher"
     case lockScreen = "Lock Screen"
     case toggleDarkMode = "Toggle Dark Mode"
     case toggleDoNotDisturb = "Toggle Do Not Disturb"
@@ -274,7 +276,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         switch self {
         case .actionGroup, .ifElse, .setVariable, .wait, .triggerNamedTrigger, .showHUD, .showCheatSheet: return .workflow
         case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow,
-             .togglePinWindowUnderCursor, .unpinAllWindows: return .windowManagement
+             .togglePinWindowUnderCursor, .unpinAllWindows, .showWindowSwitcher: return .windowManagement
         case .maximizeWindow, .minimizeWindow, .snapWindowLeft, .snapWindowRight,
              .snapWindowTopLeft, .snapWindowTopRight, .snapWindowBottomLeft,
              .snapWindowBottomRight, .centerWindow, .moveWindowNextMonitor,
@@ -291,7 +293,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
             return .keyboardActions
         case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
             return .applicationControl
-        case .sleepComputer, .lockScreen, .toggleDarkMode, .toggleDoNotDisturb,
+        case .sleepComputer, .toggleKeepAwake, .lockScreen, .toggleDarkMode, .toggleDoNotDisturb,
              .volumeUp, .volumeDown, .brightnessUp, .brightnessDown, .muteVolume, .setSoundOutput:
             return .systemActions
         case .runAppleScript, .runShellScript, .openURL:
@@ -368,6 +370,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .bringWindowToFront: return "macwindow.on.rectangle"
         case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow, .togglePinWindowUnderCursor: return "pin"
         case .unpinAllWindows: return "pin.slash"
+        case .showWindowSwitcher: return "rectangle.stack"
         case .maximizeWindowUnderCursor, .minimizeWindowUnderCursor, .closeWindowUnderCursor:
             return "cursorarrow.rays"
         case .leftClick, .doubleLeftClick: return "cursorarrow.click"
@@ -398,6 +401,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .hideApplication: return "eye.slash"
         case .toggleApplication: return "app.badge.checkmark"
         case .sleepComputer: return "moon"
+        case .toggleKeepAwake: return "flask"
         case .lockScreen: return "lock"
         case .toggleDarkMode: return "circle.lefthalf.filled"
         case .toggleDoNotDisturb: return "moon.circle"
@@ -598,6 +602,10 @@ struct ActionParameters: Codable, Hashable {
     var text: String?
     /// Delay between individual keystrokes. Missing values use 20 ms.
     var typingIntervalMs: Int?
+    /// Keep Awake: minutes before the assertion auto-releases. nil = until turned off.
+    var keepAwakeMinutes: Double?
+    /// Keep Awake: also keep the display from idling to sleep.
+    var keepDisplayOn: Bool?
     var applicationPath: String?
     var applicationName: String?
     var scriptContent: String?
