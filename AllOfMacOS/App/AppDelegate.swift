@@ -621,7 +621,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         submenu.addItem(duration("30 Minutes", 30))
         submenu.addItem(duration("1 Hour", 60))
         submenu.addItem(duration("2 Hours", 120))
-        if service.isActive {
+        // Offer Turn Off while any assertion exists — even one whose deadline
+        // already passed — so the state can always be cleared from the menu.
+        if service.hasAssertion {
             submenu.addItem(.separator())
             let off = NSMenuItem(title: "Turn Off", action: #selector(keepAwakeOff), keyEquivalent: "")
             off.target = self

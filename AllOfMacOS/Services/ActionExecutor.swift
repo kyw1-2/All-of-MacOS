@@ -513,7 +513,9 @@ class ActionExecutor {
             task.arguments = ["sleepnow"]
             try? task.run()
         case .toggleKeepAwake:
-            let minutes = action.parameters.keepAwakeMinutes.map { Int($0) }
+            // Imported JSON/MCP values can be fractional or absurd; clamp to
+            // the same 1...1440 range the form offers.
+            let minutes = action.parameters.keepAwakeMinutes.map { min(max(Int($0), 1), 1440) }
             let keepDisplay = action.parameters.keepDisplayOn ?? false
             MainActor.assumeIsolated {
                 KeepAwakeService.shared.toggle(minutes: minutes, keepDisplay: keepDisplay)
