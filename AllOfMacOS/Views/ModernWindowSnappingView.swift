@@ -88,6 +88,14 @@ struct ModernWindowSnappingView: View {
         .navigationSubtitle(appState.snapStatus)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Button {
+                    WindowSwitcherController.shared.show()
+                } label: {
+                    Label("Switch Windows", systemImage: "rectangle.stack")
+                }
+                .help("Thumbnail switcher for every open window (bind it in Settings ▸ Shortcuts)")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 6) {
                     Text("Drag to Snap").font(AOMType.body)
                     Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },

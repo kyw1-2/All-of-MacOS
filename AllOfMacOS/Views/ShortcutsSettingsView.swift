@@ -12,59 +12,37 @@ struct ShortcutsSettingsView: View {
     @State private var recordingAction: CaptureShortcutAction? = nil
     @State private var eventMonitor: Any? = nil
 
-    private let screenCaptureActions: [CaptureShortcutAction] = [
-        .captureArea,
-        .captureFullscreen,
-        .captureWindow,
-        .recordScreen,
-        .capturePreviousArea,
-        .scrollingCapture
-    ]
+    /// Derived from the enum's own category metadata, so a new action can
+    /// never ship registered-but-invisible again (the audit's completeness gap:
+    /// pauseRecording, allInOne and openProject were missing from the lists).
+    private static let groupOrder = ["Screen Capture", "Tools & Utilities", "Always on Top", "System & Switching"]
 
-    private let utilityActions: [CaptureShortcutAction] = [
-        .ocr,
-        .history,
-        .toggleDesktopIcons,
-        .pinLast
-    ]
+    private var groups: [(name: String, actions: [CaptureShortcutAction])] {
+        Self.groupOrder.compactMap { name in
+            let actions = CaptureShortcutAction.allCases.filter { $0.categoryName == name }
+            return actions.isEmpty ? nil : (name, actions)
+        }
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 if showsBanner { headerBanner }
 
-                // Screen Capture Group
-                AppleSettingsGroup("Screen Capture") {
-                    ForEach(Array(screenCaptureActions.enumerated()), id: \.element.id) { index, action in
-                        shortcutRow(for: action, showDivider: index < screenCaptureActions.count - 1)
-                    }
-                }
-
-                // Tools & Utilities Group
-                AppleSettingsGroup("Tools & Utilities") {
-                    ForEach(Array(utilityActions.enumerated()), id: \.element.id) { index, action in
-                        shortcutRow(for: action, showDivider: index < utilityActions.count - 1)
-                    }
-                }
-
-                AppleSettingsGroup("Always on Top") {
-                    ForEach(Array([CaptureShortcutAction.choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow,
-                                   .togglePinWindowUnderCursor, .unpinAllWindows].enumerated()), id: \.element.id) { index, action in
-                        shortcutRow(for: action, showDivider: index < 4)
-                    }
-                }
-
-                // System & Switching Group
-                AppleSettingsGroup("System & Switching") {
-                    ForEach(Array([CaptureShortcutAction.windowSwitcher, .keepAwake].enumerated()), id: \.element.id) { index, action in
-                        shortcutRow(for: action, showDivider: index < 1)
+                ForEach(groups, id: \.name) { group in
+                    AppleSettingsGroup(group.name) {
+                        ForEach(Array(group.actions.enumerated()), id: \.element.id) { index, action in
+                            shortcutRow(for: action, showDivider: index < group.actions.count - 1)
+                        }
                     }
                 }
 
                 // Bottom Controls
                 HStack {
-                    Button("Restore CleanShot Defaults") {
-                        shortcuts.resetToDefaults()
+                    Button("Restore Capture Defaults") {
+                        // Scoped: capture & tool shortcuts only — pinning,
+                        // switching and Keep Awake assignments survive.
+                        shortcuts.resetCaptureDefaults()
                     }
                     .controlSize(.small)
 

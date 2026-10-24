@@ -167,6 +167,16 @@ final class CaptureShortcuts: ObservableObject {
         }
     }
 
+    /// The "Restore Capture Defaults" button's scope: the capture and tool
+    /// shortcuts this button has always meant. Window pinning, the switcher
+    /// and Keep Awake defaults stay untouched.
+    func resetCaptureDefaults() {
+        for action in CaptureShortcutAction.allCases
+        where action.categoryName == "Screen Capture" || action.categoryName == "Tools & Utilities" {
+            setShortcut(action.defaultShortcut, for: action)
+        }
+    }
+
     private func loadShortcuts() {
         for action in CaptureShortcutAction.allCases {
             if defaults.bool(forKey: action.userDefaultsKey + ".disabled") {

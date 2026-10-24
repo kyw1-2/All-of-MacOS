@@ -296,6 +296,7 @@ final class GestureHUD {
         guard observer == nil else { return }
         observer = NotificationCenter.default.addObserver(forName: .gestureDidFire, object: nil, queue: .main) { [weak self] notification in
             guard UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true,
+                  notification.userInfo?["quiet"] as? Bool != true,
                   let name = notification.userInfo?["name"] as? String else { return }
             let actions = notification.userInfo?["actions"] as? String ?? ""
             self?.show(title: name, detail: actions.isEmpty ? nil : actions)

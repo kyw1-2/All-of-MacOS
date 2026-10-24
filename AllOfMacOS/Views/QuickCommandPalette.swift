@@ -109,6 +109,12 @@ struct QuickCommandPalette: View {
         CaptureShortcuts.shared.shortcut(for: action)?.displayString
     }
 
+    private var keepAwakeTitle: String {
+        KeepAwakeService.shared.isActive
+            ? "Turn Off Keep Awake\(KeepAwakeService.shared.remainingDescription.map { " (\($0))" } ?? "")"
+            : "Keep Awake"
+    }
+
     private var allItems: [PaletteItem] {
         var items: [PaletteItem] = []
         func command(_ id: String, _ title: String, _ subtitle: String, _ icon: String, keys: String? = nil,
@@ -148,6 +154,21 @@ struct QuickCommandPalette: View {
         }
         command("window.maximize", "Maximize Window", "Fill the visible screen", "arrow.up.left.and.arrow.down.right") {
             ActionExecutor.executeAction(TriggerAction(actionType: .maximizeWindow))
+        }
+        command("window.switcher", "Window Switcher", "Switch windows with thumbnails, like AltTab", "rectangle.stack",
+                keys: captureKeys(.windowSwitcher)) {
+            WindowSwitcherController.shared.show()
+        }
+        command("window.pinFront", "Pin Front Window", "Keep the front window on top", "pin",
+                keys: captureKeys(.togglePinFrontWindow)) {
+            ActionExecutor.executeAction(TriggerAction(actionType: .togglePinFrontWindow))
+        }
+        command("window.unpinAll", "Unpin All Windows", "Remove every live window pin", "pin.slash") {
+            ActionExecutor.executeAction(TriggerAction(actionType: .unpinAllWindows))
+        }
+        command("system.keepAwake", keepAwakeTitle, "Hold a prevent-idle-sleep power assertion", "flask",
+                keys: captureKeys(.keepAwake)) {
+            KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false)
         }
 
         for trigger in appState.currentPreset.triggers {

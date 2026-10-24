@@ -151,6 +151,17 @@ class PresetManager {
         for gesture in TrackpadGesture.allCases {
             keys.append("AOMSwipeMinVelocity_\(gesture.rawValue)")
         }
+        // Global shortcut assignments and their enabled flags, so a restored
+        // backup recovers the working environment the audit found missing.
+        for action in CaptureShortcutAction.allCases {
+            keys.append(action.userDefaultsKey)
+            keys.append(action.userDefaultsKey + ".disabled")
+        }
+        for command in ClipboardShortcuts.Command.allCases {
+            let key = "AOMClipboardShortcut_" + command.rawValue
+            keys.append(key)
+            keys.append(key + "Disabled")
+        }
         return keys
     }()
 
@@ -169,6 +180,9 @@ class PresetManager {
         // Also back up UserDefaults
         saveUserDefaultsBackup()
     }
+
+    /// Internal for the backup-scope test (@testable).
+    static var backedUpSettingKeys: [String] { userDefaultsKeys }
 
     private static func saveUserDefaultsBackup() {
         var dict: [String: Any] = [:]
