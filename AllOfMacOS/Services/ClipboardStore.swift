@@ -653,6 +653,24 @@ final class ClipboardStore: ObservableObject {
         return restored.map(\.id)
     }
 
+    /// How many unpinned items a smaller item limit would delete right away
+    /// (Paste's "reduce history limit" question). Pinned items never count.
+    func itemsRemoved(byMaxEntries newLimit: Int) -> Int {
+        let limit = Settings(maxEntries: newLimit).bounded.maxEntries
+        return max(0, entries.filter { $0.pinboardIDs.isEmpty }.count - limit)
+    }
+
+    /// Applies a new item limit; deleted items can be restored with Undo.
+    func applyMaxEntries(_ newLimit: Int) {
+        let unpinned = entries.filter { $0.pinboardIDs.isEmpty }
+        let limit = Settings(maxEntries: newLimit).bounded.maxEntries
+        if unpinned.count > limit { rememberDeletion(Array(unpinned.suffix(unpinned.count - limit))) }
+        settings.maxEntries = newLimit
+    }
+
+    /// Erase History: every unpinned item goes; pinboards and pinned items stay.
+    func eraseHistory() { clearUnpinned() }
+
     func clearUnpinned() {
         // In-flight capture belongs to the history being cleared as well.
         captureGeneration += 1
@@ -1084,5 +1102,12 @@ enum ClipboardAudioFeedback {
         // Off the main thread: NSSound's first play waited for the audio
         // device and froze the shelf mid-animation.
         AOMSystemSound.play(name, volume: volume)
+    }
+}
+
+/// Shared wording for Erase History confirmations.
+enum ClipboardEraseCopy {
+    static func message(unpinned: Int) -> String {
+        "\(unpinned) unpinned item\(unpinned == 1 ? "" : "s") will be deleted. Pinboards and pinned items are kept, and Undo Delete restores the erased items until you quit."
     }
 }

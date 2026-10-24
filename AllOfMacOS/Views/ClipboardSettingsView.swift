@@ -9,6 +9,8 @@ struct ClipboardSettingsView: View {
     @State private var recording: ClipboardShortcuts.Command?
     @State private var keyMonitor: Any?
     @State private var clearConfirmation = false
+    /// A smaller item limit that would delete items, waiting for confirmation.
+    @State private var pendingLimit: Int?
     @State private var recoverConfirmation = false
     @State private var recordingNote = ""
 
@@ -33,7 +35,13 @@ struct ClipboardSettingsView: View {
                         Picker("Keep unpinned items", selection: $store.settings.retentionDays) {
                             Text("1 Day").tag(1); Text("7 Days").tag(7); Text("30 Days").tag(30); Text("90 Days").tag(90); Text("Indefinitely").tag(0)
                         }
-                        Stepper("Maximum history: \(store.settings.maxEntries) items", value: $store.settings.maxEntries, in: 100...10000, step: 100)
+                        Stepper("Maximum history: \(store.settings.maxEntries) items", value: Binding(
+                            get: { store.settings.maxEntries },
+                            set: { value in
+                                // Lowering the limit below what is stored asks first.
+                                if store.itemsRemoved(byMaxEntries: value) > 0 { pendingLimit = value }
+                                else { store.settings.maxEntries = value }
+                            }), in: 100...10000, step: 100)
                         Picker("Unpinned history storage", selection: $store.settings.maxBytes) {
                             Text("50 MB").tag(50 * 1_024 * 1_024)
                             Text("200 MB").tag(200 * 1_024 * 1_024)
@@ -119,7 +127,7 @@ struct ClipboardSettingsView: View {
                             Text("\(store.entries.count) saved items · \(store.boards.count) pinboards").foregroundStyle(.secondary)
                             Spacer()
                             Button("Undo Delete") { _ = store.undoDeletion() }.disabled(!store.canUndoDeletion)
-                            Button("Clear Unpinned History…", role: .destructive) { clearConfirmation = true }
+                            Button("Erase History…", role: .destructive) { clearConfirmation = true }
                         }
                         if let warning = store.storageWarning {
                             HStack(alignment: .top, spacing: 8) {
@@ -142,10 +150,24 @@ struct ClipboardSettingsView: View {
             }.padding(20)
         }
         .onDisappear { stopRecording() }
-        .confirmationDialog("Clear all unpinned clipboard history?", isPresented: $clearConfirmation) {
-            Button("Clear Unpinned History", role: .destructive) { store.clearUnpinned() }
+        .confirmationDialog("Erase clipboard history?", isPresented: $clearConfirmation) {
+            Button("Erase History", role: .destructive) { store.eraseHistory() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("Pinned items and the current system clipboard will be kept.") }
+        } message: { Text(ClipboardEraseCopy.message(unpinned: store.entries.filter { $0.pinboardIDs.isEmpty }.count)) }
+        .confirmationDialog("Delete the oldest items?", isPresented: Binding(get: { pendingLimit != nil },
+                                                                             set: { if !$0 { pendingLimit = nil } })) {
+            if let limit = pendingLimit {
+                Button("Delete \(store.itemsRemoved(byMaxEntries: limit)) Items and Apply", role: .destructive) {
+                    store.applyMaxEntries(limit)
+                    pendingLimit = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingLimit = nil }
+        } message: {
+            if let limit = pendingLimit {
+                Text("A limit of \(limit) items deletes the \(store.itemsRemoved(byMaxEntries: limit)) oldest unpinned items now. Pinned items are kept, and Undo Delete brings them back.")
+            }
+        }
         .confirmationDialog("Recover clipboard storage?", isPresented: $recoverConfirmation) {
             Button("Archive Unreadable File and Resume", role: .destructive) {
                 Task { await store.recoverStorage() }

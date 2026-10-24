@@ -14,6 +14,7 @@ struct ClipboardStudioView: View {
     @State private var hoveredCardID: UUID? = nil
     @State private var showingSettings = false
     @State private var showingNewBoardSheet = false
+    @State private var showingEraseConfirmation = false
     @State private var newBoardName = ""
     @State private var newBoardColor = "blue"
     @StateObject private var toast = AOMToastModel()
@@ -90,6 +91,13 @@ struct ClipboardStudioView: View {
             .frame(minWidth: 600, idealWidth: 660, minHeight: 520, idealHeight: 600)
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .confirmationDialog("Erase clipboard history?", isPresented: $showingEraseConfirmation) {
+            Button("Erase History", role: .destructive) {
+                store.eraseHistory()
+                showToast("History erased · pinned items kept")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(ClipboardEraseCopy.message(unpinned: store.entries.filter { $0.pinboardIDs.isEmpty }.count)) }
         .aomToast(toast.message)
     }
 
@@ -245,14 +253,10 @@ struct ClipboardStudioView: View {
                 .help("Temporarily stop recording copied items")
             }
             Menu {
-                Button("Clear Unpinned Items") {
-                    store.clearUnpinned()
-                    showToast("Cleared unpinned items")
-                }
-                Button("Clear All History", role: .destructive) {
-                    store.delete(entryIDs: store.entries.map(\.id))
-                    showToast("Cleared clipboard history")
-                }
+                // Erase never touches pinned items (the old "Clear All History"
+                // deleted pinboard items too, without asking).
+                Button("Erase History…", role: .destructive) { showingEraseConfirmation = true }
+                    .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
                 Divider()
                 Button("Clipboard Settings…") { showingSettings = true }
             } label: {
