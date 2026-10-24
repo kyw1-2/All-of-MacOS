@@ -30,6 +30,10 @@ struct ModernGesturesWorkspace: View {
     @State private var pendingDeletion: Trigger?
     /// Narrow windows: whether the editor replaces the list.
     @State private var compactShowsEditor = false
+    /// The editor title reads as a heading, so it edits on click — a hoverable
+    /// text field this large would put the I-beam over the whole header.
+    @State private var editingName = false
+    @FocusState private var nameFieldFocused: Bool
 
     enum ViewMode: String { case list, table }
 
@@ -407,15 +411,35 @@ struct ModernGesturesWorkspace: View {
     private func editorHeader(_ trigger: Trigger) -> some View {
         VStack(alignment: .leading, spacing: AOMSpace.s) {
             HStack(spacing: AOMSpace.s - 2) {
-                TextField("Name", text: Binding(
-                    get: { trigger.name },
-                    set: { value in var updated = trigger; updated.name = value; appState.updateTrigger(updated) }),
-                          prompt: Text(trigger.input.displayName).foregroundStyle(AOMTheme.text))
-                    .textFieldStyle(.plain)
-                    .font(AOMType.title1)
-                    .tracking(-0.3)
-                    .help("Name (optional). Unnamed automations are titled by their input.")
-                    .accessibilityLabel("Name")
+                if editingName {
+                    TextField("Name", text: Binding(
+                        get: { trigger.name },
+                        set: { value in var updated = trigger; updated.name = value; appState.updateTrigger(updated) }),
+                              prompt: Text(trigger.input.displayName).foregroundStyle(AOMTheme.text))
+                        .textFieldStyle(.plain)
+                        .font(AOMType.title1)
+                        .tracking(-0.3)
+                        .focused($nameFieldFocused)
+                        .onSubmit { editingName = false }
+                        .onExitCommand { editingName = false }
+                        .help("Name (optional). Unnamed automations are titled by their input.")
+                        .accessibilityLabel("Name")
+                        .onChange(of: trigger.id) { _, _ in editingName = false }
+                } else {
+                    Text(trigger.name.isEmpty ? trigger.input.displayName : trigger.name)
+                        .font(AOMType.title1)
+                        .tracking(-0.3)
+                        .foregroundStyle(trigger.name.isEmpty ? AOMTheme.textSecondary : AOMTheme.text)
+                        .lineLimit(1)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            editingName = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { nameFieldFocused = true }
+                        }
+                        .help("Click to rename")
+                        .accessibilityLabel("Name, \(trigger.displayName). Click to rename.")
+                        .onChange(of: trigger.id) { _, _ in editingName = false }
+                }
                 Menu { triggerMenu(trigger) } label: {
                     Image(systemName: "ellipsis.circle").font(.system(size: 15))
                 }
