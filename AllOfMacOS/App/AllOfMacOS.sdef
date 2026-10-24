@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="All of MacOS Terminology">
+    <suite name="All of MacOS Suite" code="AOMs" description="Run automations and captures. Every command uses the same path as the matching aom:// link.">
+        <command name="run trigger" code="AOMsRunT" description="Run a named trigger (an automation whose input is “Named Trigger”).">
+            <cocoa class="AOMScriptRunTriggerCommand"/>
+            <direct-parameter type="text" description="The named trigger’s name."/>
+        </command>
+        <command name="capture" code="AOMsCapt" description="Start a capture, as from the Capture menu.">
+            <cocoa class="AOMScriptCaptureCommand"/>
+            <direct-parameter type="text" optional="yes" description="area (default), all in one, full screen, window, previous area, scrolling, self timer, text, or record screen."/>
+        </command>
+        <command name="restore quick access" code="AOMsRstQ" description="Reopen the most recently closed Quick Access overlay.">
+            <cocoa class="AOMScriptRestoreCommand"/>
+        </command>
+        <command name="open aom url" code="AOMsOURL" description="Perform any supported aom:// link, for example aom://open-history.">
+            <cocoa class="AOMScriptOpenURLCommand"/>
+            <direct-parameter type="text" description="An aom:// URL."/>
+        </command>
+    </suite>
+</dictionary>

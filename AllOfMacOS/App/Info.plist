@@ -64,6 +64,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Run your configured automations when Bluetooth devices connect or disconnect.</string>
 	<key>NSCameraUsageDescription</key>
@@ -98,6 +100,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>OSAScriptingDefinition</key>
+	<string>AllOfMacOS.sdef</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

@@ -11,7 +11,7 @@ let package = Package(
         .executableTarget(
             name: "AllOfMacOS",
             path: "AllOfMacOS",
-            exclude: ["App/Info.plist", "AllOfMacOS.entitlements", "Assets.xcassets"]
+            exclude: ["App/Info.plist", "App/AllOfMacOS.sdef", "AllOfMacOS.entitlements", "Assets.xcassets"]
         ),
         .testTarget(
             name: "AllOfMacOSTests",

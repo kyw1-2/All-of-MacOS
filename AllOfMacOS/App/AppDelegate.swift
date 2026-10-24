@@ -66,6 +66,8 @@ enum AOMCaptureDeepLink: Equatable {
 
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// The running delegate, for AppleScript commands that reuse URL handling.
+    @MainActor static weak var current: AppDelegate?
     var statusItem: NSStatusItem?
     var appState: AppState?
     private weak var mainWindow: NSWindow?
@@ -73,6 +75,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var suppressionObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.current = self
         AOMScrollChromePolicy.shared.start()
         if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
