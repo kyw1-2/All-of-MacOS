@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Favourite and recently used actions for the action picker. Backed by
@@ -114,7 +115,27 @@ enum ActionSummary {
         case .zoomWindow, .closeWindow, .toggleFullscreenWindow:
             return (p.windowTarget ?? "focused") == "underCursor" ? "window under pointer" : nil
         case .emptyTrash, .logOut: return p.requiresConfirmation == false ? "no confirmation" : "asks first"
+        case .sendKeyStroke:
+            guard let keyCode = p.shortcutKeyCode else { return "no shortcut recorded" }
+            return KeyboardShortcut(keyCode: keyCode, modifiers: NSEvent.ModifierFlags(rawValue: p.shortcutModifiers ?? 0)).displayString
+        case .setSoundOutput: return short(p.audioOutputName) ?? "no device chosen"
+        case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication,
+             .hideApplication, .toggleApplication:
+            return short(p.applicationName)
+        case .openURL: return short(p.url)
+        case .wait: return "\(p.waitMs ?? 250) ms"
         default: return nil
         }
+    }
+
+    /// One phrase for a list row: the first enabled action with its key
+    /// value, and how many follow. Type Text never shows its text or length.
+    static func summary(_ actions: [TriggerAction]) -> String {
+        let enabled = actions.filter(\.isEnabled)
+        guard let first = enabled.first else { return actions.isEmpty ? "No actions" : "All actions off" }
+        var phrase = first.displayName
+        if first.actionType != .typeText, let value = detail(first), !value.isEmpty { phrase += " · \(value)" }
+        if enabled.count > 1 { phrase += "  +\(enabled.count - 1)" }
+        return phrase
     }
 }

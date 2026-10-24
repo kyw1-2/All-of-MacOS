@@ -45,6 +45,18 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Outline symbol for the sidebar (the system tints it with the accent).
+    var sidebarSymbol: String {
+        switch self {
+        case .home: return "house"
+        case .gestures: return "bolt"
+        case .snapping: return "rectangle.split.2x2"
+        case .capture: return "camera.viewfinder"
+        case .clipboard: return "doc.on.clipboard"
+        case .insights: return "chart.bar.xaxis"
+        }
+    }
+
     /// System Settings–style tile colour for the sidebar and page heroes.
     var accentColor: Color {
         switch self {

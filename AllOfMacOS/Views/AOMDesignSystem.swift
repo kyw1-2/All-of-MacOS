@@ -10,10 +10,10 @@ enum AOMDesign {
     /// Outer page margin and the gap between sections.
     static let pagePadding: CGFloat = AOMTheme.pagePadding
     static let sectionSpacing: CGFloat = AOMTheme.sectionSpacing
-    static let gridSpacing: CGFloat = 14
+    static let gridSpacing: CGFloat = AOMSpace.s
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
     static let surfaceRadius: CGFloat = AOMTheme.cardRadius
-    static let tileRadius: CGFloat = 14
+    static let tileRadius: CGFloat = 10
     static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -78,7 +78,7 @@ extension View {
         overlay(alignment: .bottom) {
             if let message {
                 Label(message, systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
@@ -111,17 +111,16 @@ private struct AOMToolbarButtonBody: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
         configuration.label
-            .font(.system(size: 13.5, weight: .medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(AOMTheme.text)
-            .padding(.horizontal, 13)
-            .frame(height: 34)
-            .background(hovering ? AOMTheme.cardAlt : AOMTheme.paper, in: shape)
-            .overlay(shape.strokeBorder(AOMTheme.hairline, lineWidth: 0.75))
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(configuration.isPressed ? AOMTheme.track : (hovering ? AOMTheme.cardAlt : .clear), in: shape)
+            .overlay(shape.strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
             .contentShape(shape)
             .opacity(isEnabled ? 1 : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .onHover { hovering = $0 }
     }
@@ -203,8 +202,7 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     private var heading: some View {
-        HStack(spacing: 14) {
-            AOMIconBadge(systemImage: systemImage, tint: tint, size: 44, filled: true)
+        HStack(spacing: AOMSpace.s) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).aomPageTitle().lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
@@ -287,11 +285,11 @@ private struct AOMStatCell: View {
     }
 
     private func content(navigates: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                AOMIconBadge(systemImage: item.systemImage, tint: item.tint, size: 24, filled: true)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                AOMIconBadge(systemImage: item.systemImage, tint: item.tint, size: 16, filled: true)
                 Text(item.title)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(AOMTheme.textSecondary)
                     .lineLimit(1)
                 if navigates {
@@ -304,8 +302,7 @@ private struct AOMStatCell: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(item.value)
-                        .font(AOMType.metric(28))
-                        .tracking(-0.4)
+                        .font(AOMType.metric(22))
                         .monospacedDigit()
                         .foregroundStyle(AOMTheme.text)
                         .contentTransition(.numericText())
@@ -313,20 +310,20 @@ private struct AOMStatCell: View {
                         .minimumScaleFactor(0.6)
                     if let unit = item.unit {
                         Text(unit)
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(AOMTheme.textSecondary)
                             .lineLimit(1)
                     }
                 }
                 if let detail = item.detail {
                     Text(detail)
-                        .font(.system(size: 12.5))
+                        .font(AOMType.caption)
                         .foregroundStyle(AOMTheme.textTertiary)
                         .lineLimit(1)
                 }
             }
         }
-        .padding(14)
+        .padding(AOMSpace.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
@@ -383,11 +380,11 @@ struct AOMActionTile: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                AOMIconBadge(systemImage: systemImage, tint: tint, size: 34)
+                AOMIconBadge(systemImage: systemImage, tint: tint, size: 24, filled: true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                    Text(title).font(AOMType.bodyEmphasis).foregroundStyle(AOMTheme.text).lineLimit(1)
                     if let subtitle {
-                        Text(subtitle).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                        Text(subtitle).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)

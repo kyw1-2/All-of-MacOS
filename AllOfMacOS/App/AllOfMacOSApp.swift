@@ -558,12 +558,13 @@ struct AllOfMacOSApp: App {
                 }
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
-        .defaultSize(width: 1180, height: 740)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1280, height: 800)
         // aom:// links and opened files are handled by AppDelegate; without
         // this every link (Raycast, Shortcuts, Alfred) opened another window.
         .handlesExternalEvents(matching: [])
         .commands {
+            SidebarCommands()
             CommandGroup(before: .sidebar) {
                 ForEach(AOMMainTab.allCases) { tab in
                     Button(tab.title) {
@@ -573,6 +574,19 @@ struct AllOfMacOSApp: App {
                     .keyboardShortcut(tab.shortcutKey, modifiers: .command)
                 }
                 Divider()
+                let palette = AOMPaletteShortcut.keyEquivalent(AOMPaletteShortcut.current(appState.currentPreset))
+                Button("Search…") {
+                    appDelegate.showMainWindow()
+                    appState.showingCommandPalette = true
+                }
+                .keyboardShortcut(palette.0, modifiers: palette.1)
+                Divider()
+            }
+            CommandGroup(replacing: .help) {
+                Button("Show Onboarding Again") {
+                    appDelegate.showMainWindow()
+                    appState.showTutorialRequested = true
+                }
             }
             TriggerEditorCommands()
             WorkflowVariableCommands()

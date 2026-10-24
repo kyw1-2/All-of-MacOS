@@ -33,6 +33,8 @@ class AppState: ObservableObject {
     @Published var showingAddTrigger: Bool = false
     @Published var showingAddAction: Bool = false
     @Published var showingAddApp: Bool = false
+    /// The command palette over the main window (View ▸ Search…, sidebar search).
+    @Published var showingCommandPalette = false
     @Published var selectedMainTab: AOMMainTab = .home {
         didSet {
             if selectedMainTab == .insights && !showStatistics {
@@ -96,6 +98,16 @@ class AppState: ObservableObject {
         // Create a backup on startup so there's always a recent copy
         if preset.triggers.count > 0 {
             presetManager.save(preset)
+        }
+        // Isolated UI previews can open on a given page (`--aom-preview-tab <1-6>`),
+        // so screens are reviewed without driving the window with key events.
+        if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-tab"),
+           ProcessInfo.processInfo.arguments.indices.contains(index + 1),
+           let number = Int(ProcessInfo.processInfo.arguments[index + 1]), AOMMainTab.allCases.indices.contains(number - 1) {
+            selectedMainTab = AOMMainTab.allCases[number - 1]
+        }
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-palette") {
+            showingCommandPalette = true
         }
         // Schedule monitor start for next runloop iteration (self must be fully initialized first)
         // Skip automatic monitoring when running inside the unit-test host

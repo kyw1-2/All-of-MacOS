@@ -139,7 +139,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     try? await Task.sleep(for: .milliseconds(600))
                     state.filtersExpanded = true
                 }
-                ClipboardPanelController.shared.show()
+                // `--aom-clipboard-preview-data` seeds the store without opening the shelf.
+                if !args.contains("--aom-clipboard-preview-data") { ClipboardPanelController.shared.show() }
             }
         }
 

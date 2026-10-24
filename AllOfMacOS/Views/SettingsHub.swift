@@ -593,7 +593,7 @@ struct SettingsHubView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(isSearching ? "Search Results" : category.title)
-                        .font(.aomDisplay(21)).tracking(-0.7).foregroundStyle(AOMTheme.text)
+                        .font(AOMType.pageTitle).foregroundStyle(AOMTheme.text)
                     Text(isSearching ? "Settings matching your search" : category.blurb)
                         .font(.aomBody(13)).foregroundStyle(AOMTheme.textSecondary)
                 }

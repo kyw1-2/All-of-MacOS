@@ -101,8 +101,14 @@ struct ConfigSection<Content: View>: View {
 }
 
 struct TriggerConfigView: View {
+    /// Which settings to show. The Automation editor puts the input's own
+    /// settings under When and the tuning under Options; name, enabled and
+    /// scope live in its header, so the embedded parts omit them.
+    enum Part { case all, input, options }
+
     @EnvironmentObject var appState: AppState
     let trigger: Trigger
+    var part: Part = .all
 
     @State private var name: String
     @State private var isEnabled: Bool
@@ -111,14 +117,16 @@ struct TriggerConfigView: View {
     @AppStorage("AOMSuppressMouseDuringDrawing") private var suppressMouseDuringDrawing: Bool = true
     // swipeMinVelocity is per-gesture, handled via manual UserDefaults binding below
 
-    init(trigger: Trigger) {
+    init(trigger: Trigger, part: Part = .all) {
         self.trigger = trigger
+        self.part = part
         _name = State(initialValue: trigger.name)
         _isEnabled = State(initialValue: trigger.isEnabled)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if part == .all {
             ConfigSection("Trigger", systemImage: "cursorarrow.click", expanded: true) {
                 TextField("Name", text: $name)
                     .textFieldStyle(.roundedBorder)
@@ -168,8 +176,9 @@ struct TriggerConfigView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding(8)
             }
+            }
 
-            if case .drawingPattern = trigger.input {
+            if part != .options, case .drawingPattern = trigger.input {
                 DrawingSamplesConfiguration(trigger: trigger) { name, samples, certainty, ignoreDirection in
                     update {
                         $0.input = .drawingPattern(name)
@@ -179,7 +188,7 @@ struct TriggerConfigView: View {
                     }
                 }.id(trigger.id)
             }
-            if case .keySequence(let strokes) = trigger.input {
+            if part != .options, case .keySequence(let strokes) = trigger.input {
                 ConfigSection("Key Sequence", systemImage: "keyboard.badge.ellipsis", expanded: true) {
                     VStack(alignment: .leading, spacing: 9) {
                         Text(strokes.map(\.displayName).joined(separator: " → "))
@@ -237,7 +246,7 @@ struct TriggerConfigView: View {
                     }.padding(8)
                 }
             }
-            if case .keyboardShortcut = trigger.input {
+            if part != .options, case .keyboardShortcut = trigger.input {
                 ConfigSection("Keyboard Shortcut", systemImage: "command.square", expanded: true) {
                     VStack(alignment: .leading, spacing: 8) {
                         Button("Record Replacement Shortcut") {
@@ -247,6 +256,7 @@ struct TriggerConfigView: View {
                     }.padding(8)
                 }
             }
+            if part != .input {
             ConfigSection("Execution", systemImage: "play.circle", isAdvanced: true) {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("When already running", selection: triggerBinding(\.executionPolicy)) {
@@ -267,7 +277,8 @@ struct TriggerConfigView: View {
                     }
                 }.padding(8)
             }
-            if trigger.input.category == .trackpad || trigger.input.category == .normalMouse {
+            }
+            if part != .input, trigger.input.category == .trackpad || trigger.input.category == .normalMouse {
                 ConfigSection("Required Modifiers", systemImage: "command", isAdvanced: true) {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Match exact modifiers", isOn: Binding(get: { trigger.requiredModifiers != nil }, set: { value in
@@ -283,7 +294,7 @@ struct TriggerConfigView: View {
                     }.padding(8)
                 }
             }
-            if case .namedTrigger(let currentName) = trigger.input {
+            if part != .options, case .namedTrigger(let currentName) = trigger.input {
                 ConfigSection("Named Trigger", systemImage: "arrow.triangle.branch") {
                     TextField("Callable name", text: Binding(get: { currentName }, set: { value in update { $0.input = .namedTrigger(value) } }))
                         .textFieldStyle(.roundedBorder).padding(8)
@@ -292,7 +303,7 @@ struct TriggerConfigView: View {
 
 
             // Click suppression for mouse buttons and click-based trackpad gestures
-            if isClickBasedTrigger(trigger) {
+            if part != .input, isClickBasedTrigger(trigger) {
                 ConfigSection("Click Suppression", systemImage: "hand.raised", expanded: true) {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Suppress click pass-through", isOn: Binding(
@@ -312,14 +323,16 @@ struct TriggerConfigView: View {
             }
 
             // Gesture animation preview
-            if case .trackpadGesture(let gesture) = trigger.input {
+            if part != .options, case .trackpadGesture(let gesture) = trigger.input {
+                GesturePreviewView(gesture: gesture)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+            }
+            if part != .input, case .trackpadGesture(let gesture) = trigger.input {
                 Toggle("Haptic feedback on recognition", isOn: Binding(
                     get: { trigger.hapticFeedback },
                     set: { value in var updated = trigger; updated.hapticFeedback = value; appState.updateTrigger(updated) }
                 )).padding(.horizontal, 8)
-                GesturePreviewView(gesture: gesture)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
 
                 // TipTap sensitivity slider
                 if gesture == .tipTapLeft || gesture == .tipTapRight || gesture == .tipTapMiddle {
@@ -413,7 +426,7 @@ struct TriggerConfigView: View {
                 }
             }
 
-            Spacer()
+            if part == .all { Spacer() }
         }
     }
 

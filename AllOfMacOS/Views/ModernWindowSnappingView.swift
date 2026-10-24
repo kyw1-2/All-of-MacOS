@@ -47,14 +47,14 @@ struct ModernWindowSnappingView: View {
     }
 
     /// Page padding and spacing around the sheet (the header is measured).
-    static let chromeHeight: CGFloat = AOMDesign.pagePadding + 18 + 24
+    static let chromeHeight: CGFloat = 0
     /// Everything in the sheet's left column except the stage: paddings, the
     /// gap and the five rows of layout chips with their heading (≈245 pt, plus
     /// a little slack so text metrics can never push the grid out of the sheet).
     static let tileBlockHeight: CGFloat = 20 + 20 + 256 + 20
     static let minimumStageHeight: CGFloat = 150
     static let maximumStageHeight: CGFloat = 360
-    @State private var headerHeight: CGFloat = 59
+    private let headerHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -68,17 +68,7 @@ struct ModernWindowSnappingView: View {
                 ? min(Self.maximumStageHeight, sheetHeight - Self.tileBlockHeight)
                 : Self.minimumStageHeight
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    AOMPageHeader("Window Tiling", subtitle: appState.snapStatus,
-                                  systemImage: "rectangle.split.2x2.fill",
-                                  tint: appState.currentPreset.snappingEnabled ? AOMTheme.indigo : .gray) {
-                        Toggle("Drag to Snap", isOn: Binding(
-                            get: { appState.currentPreset.snappingEnabled },
-                            set: { appState.setSnappingEnabled($0) }
-                        ))
-                        .toggleStyle(.switch)
-                    }
-                    .aomReadHeight($headerHeight)
+                VStack(alignment: .leading, spacing: 0) {
                     Group {
                         if wide {
                             HStack(alignment: .top, spacing: 0) {
@@ -107,18 +97,29 @@ struct ModernWindowSnappingView: View {
                             .padding(20)
                         }
                     }
-                    .aomCardStyle(.paper, radius: 22, padding: 0)
                 }
-                .padding(.horizontal, AOMDesign.pagePadding)
-                .padding(.top, AOMDesign.pagePadding)
-                .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .scrollDisabled(fits)
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMWorkspaceBackground())
+        .aomPane()
+        .navigationTitle("Window Tiling")
+        .navigationSubtitle(appState.snapStatus)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 6) {
+                    Text("Drag to Snap").font(AOMType.body)
+                    Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
+                                                         set: { appState.setSnappingEnabled($0) }))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                .help("Snap windows when you drag them to an edge, corner or zone")
+            }
+        }
         .aomToast(toast.message)
         .sheet(isPresented: $showingSnapZones) {
             CustomSnapZonesEditor(preset: appState.currentPreset, profile: appState.activeSnapProfile)
@@ -136,7 +137,7 @@ struct ModernWindowSnappingView: View {
                 Text("Snap Layouts").font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
                     .accessibilityAddTraits(.isHeader)
                 Text("\(appState.effectiveSnapZones.filter(\.isEnabled).count) zones active")
-                    .font(.system(size: 13)).foregroundStyle(AOMTheme.textTertiary)
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
@@ -157,6 +158,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .frame(minWidth: 170)
                     .fixedSize()
                 }
                 settingRow("Hold ⌥ Option while dragging") {
@@ -192,7 +194,7 @@ struct ModernWindowSnappingView: View {
                                            @ViewBuilder control: () -> Control) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text(title).font(.system(size: 14)).foregroundStyle(AOMTheme.text).lineLimit(1)
+                Text(title).font(AOMType.body).foregroundStyle(AOMTheme.text).lineLimit(1)
                 Spacer(minLength: 8)
                 control()
             }
@@ -209,7 +211,7 @@ struct ModernWindowSnappingView: View {
                 AOMIconBadge(systemImage: symbol, tint: tint, size: 32, filled: true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(AOMType.rowTitle).foregroundStyle(AOMTheme.text).lineLimit(1)
-                    Text(detail).font(.system(size: 12.5)).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                    Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(AOMTheme.textTertiary)
@@ -250,7 +252,7 @@ struct ModernWindowSnappingView: View {
                             .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 .strokeBorder(Color.white.opacity(0.9), lineWidth: 1.5))
                             .overlay(Label(layout.rawValue, systemImage: layout.symbol)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(AOMType.bodyEmphasis)
                                 .foregroundStyle(.white))
                             .frame(width: max(0, rect.width), height: max(0, rect.height))
                             .position(x: rect.midX, y: rect.midY)
@@ -259,9 +261,9 @@ struct ModernWindowSnappingView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "cursorarrow.and.square.on.square.dashed").font(.system(size: 26))
                             Text(requiresOption ? "Hold ⌥ and drag a window to an edge or corner" : "Drag a window to an edge or corner")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(AOMType.body.weight(.medium))
                             Text("Point at a layout below to preview it")
-                                .font(.system(size: 12.5))
+                                .font(AOMType.caption)
                                 .foregroundStyle(.white.opacity(0.6))
                         }
                         .foregroundStyle(.white.opacity(0.92))
@@ -285,7 +287,7 @@ struct ModernWindowSnappingView: View {
                 Text("Tile the Front Window").font(AOMType.sectionTitle).tracking(-0.3).foregroundStyle(AOMTheme.text)
                     .accessibilityAddTraits(.isHeader)
                 Text("Click a layout to move the frontmost window now")
-                    .font(.system(size: 13)).foregroundStyle(AOMTheme.textTertiary).lineLimit(1)
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary).lineLimit(1)
                 Spacer(minLength: 0)
             }
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
@@ -433,11 +435,11 @@ private struct SnapLayoutChip: View {
         Button(action: onExecute) {
             HStack(spacing: 8) {
                 Image(systemName: layout.symbol)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(AOMType.bodyEmphasis)
                     .foregroundStyle(AOMTheme.blue)
                     .frame(width: 20)
                 Text(title)
-                    .font(.system(size: 13.5, weight: .medium))
+                    .font(AOMType.body.weight(.medium))
                     .foregroundStyle(isHovered ? AOMTheme.blue : AOMTheme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)

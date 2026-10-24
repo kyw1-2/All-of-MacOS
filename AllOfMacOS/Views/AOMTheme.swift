@@ -1,135 +1,88 @@
 import AppKit
 import SwiftUI
 
-/// AOM visual language.
+/// AOM visual language (2.0).
 ///
-/// One flat, neutral canvas (Toss grey 100 in light mode, graphite in dark
-/// mode) and one kind of surface: a white sheet with a hairline edge. Pages
-/// group related content *inside* a sheet — rows, dividers and inset wells —
-/// instead of scattering differently coloured cards. Colour is reserved for
-/// small squircle icons, state and the one primary action blue. Text follows a
-/// desktop-comfortable scale (14 pt body, 26 pt titles).
+/// macOS structure first: a system sidebar for navigation, a contextual
+/// toolbar for the page's tools, and content panes on the system content
+/// background. Colours are semantic system colours, so light/dark, Increase
+/// Contrast and the user's accent choice come for free; colour is reserved for
+/// the current selection, state and the one primary action. Text follows a
+/// desktop scale (13 pt body, 11.5 pt metadata, 15 pt section titles, 22 pt
+/// screen titles) instead of mobile sizes. These are AOM's own starting
+/// values, not Apple or Toss specifications.
 enum AOMTheme {
     // MARK: Canvas & surfaces
 
-    private static let canvasLight = NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1)   // #F2F4F6
-    private static let canvasDark = NSColor(srgbRed: 0.071, green: 0.075, blue: 0.086, alpha: 1)    // #121316
-
-    /// The window canvas. Opaque and flat, so wallpaper never tints the UI.
-    static let canvas = Color.aomDynamic(light: canvasLight, dark: canvasDark)
-    static let canvasNSColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? canvasDark : canvasLight
-    }
-    /// The sheet: white (light) / raised graphite (dark).
-    static let paper = Color.aomDynamic(
-        light: .white,
-        dark: NSColor(srgbRed: 0.110, green: 0.114, blue: 0.129, alpha: 1)     // #1C1D21
-    )
-    /// Fill for controls that sit on a sheet or the canvas.
-    static let card = Color.aomDynamic(
-        light: .white,
-        dark: NSColor(srgbRed: 0.137, green: 0.141, blue: 0.161, alpha: 1)     // #232429
-    )
-    /// Quiet inset fill inside a sheet: wells, hovered rows, thumbnails.
+    /// The window background behind panes (system window background).
+    static let canvas = Color(nsColor: .windowBackgroundColor)
+    static let canvasNSColor = NSColor.windowBackgroundColor
+    /// A content pane: lists, editors and libraries (white / dark grey).
+    static let pane = Color(nsColor: .controlBackgroundColor)
+    /// Raised content inside a pane: cards for discrete items.
+    static let paper = Color(nsColor: .controlBackgroundColor)
+    static let card = paper
+    static let solidCard = paper
+    /// Quiet inset fill inside a pane: wells, hovered rows, thumbnails.
     static let cardAlt = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.949, green: 0.957, blue: 0.965, alpha: 1),   // #F2F4F6
-        dark: NSColor(srgbRed: 0.149, green: 0.153, blue: 0.173, alpha: 1)     // #26272C
+        light: NSColor(srgbRed: 0.949, green: 0.953, blue: 0.961, alpha: 1),   // #F2F3F5
+        dark: NSColor.white.withAlphaComponent(0.06)
     )
-    /// Segmented tracks that sit directly on the canvas.
+    /// Segmented tracks and pressed wells.
     static let track = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.902, green: 0.914, blue: 0.929, alpha: 1),   // #E6E9ED
-        dark: NSColor.white.withAlphaComponent(0.07)
+        light: NSColor.black.withAlphaComponent(0.06),
+        dark: NSColor.white.withAlphaComponent(0.09)
     )
     /// Dark emphasis surface (toasts).
     static let ink = Color.aomDynamic(
         light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),   // #191F28
         dark: NSColor(srgbRed: 0.188, green: 0.196, blue: 0.220, alpha: 1)     // #303238
     )
-    static let solidCard = paper
-    /// Sheet edge.
-    static let hairline = Color.aomDynamic(
-        light: NSColor.black.withAlphaComponent(0.055),
-        dark: NSColor.white.withAlphaComponent(0.07)
-    )
+    /// Edges of cards and controls.
+    static let hairline = Color(nsColor: .separatorColor)
 
     // MARK: Text
 
-    static let text = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),   // #191F28
-        dark: NSColor(srgbRed: 0.937, green: 0.945, blue: 0.957, alpha: 1)     // #EFF1F4
-    )
-    static let textSecondary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.306, green: 0.349, blue: 0.408, alpha: 1),   // #4E5968
-        dark: NSColor(srgbRed: 0.659, green: 0.690, blue: 0.729, alpha: 1)     // #A8B0BA
-    )
-    static let textTertiary = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.545, green: 0.584, blue: 0.631, alpha: 1),   // #8B95A1
-        dark: NSColor(srgbRed: 0.459, green: 0.494, blue: 0.537, alpha: 1)     // #757E89
-    )
-    /// Row and section separators inside a sheet.
-    static let divider = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.918, green: 0.925, blue: 0.937, alpha: 1),   // #EAECEF
-        dark: NSColor.white.withAlphaComponent(0.07)
-    )
+    static let text = Color(nsColor: .labelColor)
+    static let textSecondary = Color(nsColor: .secondaryLabelColor)
+    static let textTertiary = Color(nsColor: .tertiaryLabelColor)
+    /// Row and section separators.
+    static let divider = Color(nsColor: .separatorColor)
 
-    // MARK: Accents
+    // MARK: Roles
 
-    static let blue = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.192, green: 0.510, blue: 0.965, alpha: 1),   // #3182F6
-        dark: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1)     // #4A95F9
-    )
-    /// Alias kept for call sites that name the primary action colour.
+    /// The primary action and the current selection: the app's accent
+    /// (Settings → Appearance), Toss blue by default.
+    static let blue = Color.accentColor
     static let actionBlue = blue
-    static let indigo = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.365, green: 0.380, blue: 0.890, alpha: 1),   // #5D61E3
-        dark: NSColor(srgbRed: 0.494, green: 0.506, blue: 0.980, alpha: 1)
-    )
-    static let cyan = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.000, green: 0.620, blue: 0.784, alpha: 1),   // #009EC8
-        dark: NSColor(srgbRed: 0.220, green: 0.760, blue: 0.900, alpha: 1)
-    )
-    static let purple = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.596, green: 0.392, blue: 0.929, alpha: 1),   // #9864ED
-        dark: NSColor(srgbRed: 0.700, green: 0.560, blue: 0.990, alpha: 1)
-    )
-    static let orange = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.976, green: 0.522, blue: 0.122, alpha: 1),   // #F9851F
-        dark: NSColor(srgbRed: 1.000, green: 0.630, blue: 0.300, alpha: 1)
-    )
-    static let positive = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.012, green: 0.698, blue: 0.424, alpha: 1),   // #03B26C
-        dark: NSColor(srgbRed: 0.200, green: 0.800, blue: 0.540, alpha: 1)
-    )
-    static let warning = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.965, green: 0.588, blue: 0.000, alpha: 1),
-        dark: NSColor(srgbRed: 1.000, green: 0.690, blue: 0.200, alpha: 1)
-    )
-    /// The product mark: one blue, lit slightly from the top.
+    static let positive = Color(nsColor: .systemGreen)
+    static let warning = Color(nsColor: .systemOrange)
+    static let danger = Color(nsColor: .systemRed)
+    /// Category hues for small glyphs only — never large fills.
+    static let indigo = Color(nsColor: .systemIndigo)
+    static let cyan = Color(nsColor: .systemTeal)
+    static let purple = Color(nsColor: .systemPurple)
+    static let orange = Color(nsColor: .systemOrange)
+    /// The product mark.
     static var heroGradient: LinearGradient {
         LinearGradient(colors: [heroStart, heroEnd], startPoint: .top, endPoint: .bottom)
     }
-    static let heroStart = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1),   // #4A95F9
-        dark: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1)
-    )
-    static let heroEnd = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.169, green: 0.443, blue: 0.918, alpha: 1),   // #2B71EA
-        dark: NSColor(srgbRed: 0.169, green: 0.443, blue: 0.918, alpha: 1)
-    )
+    static let heroStart = Color(nsColor: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1))
+    static let heroEnd = Color(nsColor: NSColor(srgbRed: 0.169, green: 0.443, blue: 0.918, alpha: 1))
 
     // MARK: Geometry
 
-    /// Continuous corners at desktop scale.
-    static let cardRadius: CGFloat = 18
-    static let controlRadius: CGFloat = 10
-    static let pagePadding: CGFloat = 28
-    static let sectionSpacing: CGFloat = 20
+    /// Cards for discrete items (captures, clipboard cards, notices).
+    static let cardRadius: CGFloat = 12
+    static let controlRadius: CGFloat = 7
+    static let pagePadding: CGFloat = AOMSpace.l
+    static let sectionSpacing: CGFloat = AOMSpace.l
 
     // MARK: Depth
 
     static var cardShadow: Color { Color.black.opacity(0.03) }
 
-    /// Light rim used by glass chrome: highlight top leading, fade bottom trailing.
+    /// Light rim used by floating glass chrome.
     static func rim(hovering: Bool = false, contrast: ColorSchemeContrast = .standard) -> LinearGradient {
         if contrast == .increased {
             return LinearGradient(colors: [Color(nsColor: .secondaryLabelColor), Color(nsColor: .tertiaryLabelColor)],
@@ -140,48 +93,97 @@ enum AOMTheme {
     }
     static let rimWidth: CGFloat = 0.75
 
-    /// The physical response shared by every pressable surface.
-    static let press = Animation.spring(response: 0.25, dampingFraction: 0.8)
+    /// The response shared by pressable surfaces: quick, no bounce.
+    static let press = Animation.easeOut(duration: 0.12)
+}
+
+// MARK: - Spacing, sizes and motion
+
+/// Spacing tokens (pt). Use the role, not the number.
+enum AOMSpace {
+    /// Icon-to-label gaps, tight stacks.
+    static let xxs: CGFloat = 4
+    /// Between related controls, row inner gaps.
+    static let xs: CGFloat = 8
+    /// Row horizontal padding, list header padding.
+    static let s: CGFloat = 12
+    /// Between groups inside a section; pane padding in dense panes.
+    static let m: CGFloat = 16
+    /// Pane padding; between sections.
+    static let l: CGFloat = 24
+    /// Above major page blocks.
+    static let xl: CGFloat = 32
+}
+
+/// Layout sizes shared by the shell and pages (pt).
+enum AOMSize {
+    /// Global sidebar.
+    static let sidebarMin: CGFloat = 190
+    static let sidebarIdeal: CGFloat = 212
+    static let sidebarMax: CGFloat = 260
+    /// The Automation list column; the editor takes the rest.
+    static let listColumnRange: ClosedRange<Double> = 270...380
+    static let listColumnIdeal: Double = 312
+    /// Below this the editor can't show an action row without truncating.
+    static let editorMinimum: CGFloat = 440
+    /// One- and two-line rows.
+    static let rowSingle: CGFloat = 32
+    static let rowDouble: CGFloat = 48
+    /// Readable line length for editors and forms.
+    static let readableWidth: CGFloat = 760
+}
+
+/// Motion tokens. Every value collapses to no animation under Reduce Motion.
+enum AOMMotion {
+    /// Hover, press, small colour and opacity changes.
+    static var quick: Animation? { AOMDesign.reduceMotion ? nil : .easeOut(duration: 0.12) }
+    /// Panels, disclosure and layout changes.
+    static var panel: Animation? { AOMDesign.reduceMotion ? nil : .snappy(duration: 0.22) }
 }
 
 // MARK: - Typography
 
-/// SF Pro at a desktop-comfortable scale with optical tracking.
+/// The desktop type scale. Sizes track the macOS text styles (13 pt body),
+/// one step larger only for titles that name what you are editing.
 enum AOMType {
-    static let pageTitle = Font.system(size: 26, weight: .bold)
-    static let pageTracking: CGFloat = -0.6
-    static let heroTitle = Font.system(size: 26, weight: .bold)
-    static let heroTracking: CGFloat = -0.6
-    static let subtitle = Font.system(size: 14)
-    /// Upper-case section labels.
-    static let sectionCaps = Font.system(size: 11.5, weight: .bold)
-    static let capsTracking: CGFloat = 0.8
-    /// Titles of sections inside a sheet.
-    static let sectionTitle = Font.system(size: 17, weight: .bold)
-    static let cardTitle = Font.system(size: 16, weight: .semibold)
-    static let tileTitle = Font.system(size: 15, weight: .semibold)
-    static let rowTitle = Font.system(size: 14.5, weight: .semibold)
-    static let body = Font.system(size: 14)
-    static let bodyEmphasis = Font.system(size: 14, weight: .semibold)
-    static let caption = Font.system(size: 12.5)
-    static func metric(_ size: CGFloat = 28) -> Font { .system(size: size, weight: .bold) }
+    /// Screen title in content (the name of the thing being edited).
+    static let pageTitle = Font.system(size: 22, weight: .semibold)
+    static let pageTracking: CGFloat = -0.2
+    static let heroTitle = pageTitle
+    static let heroTracking = pageTracking
+    static let subtitle = Font.system(size: 13)
+    /// Upper-case micro labels (sparingly).
+    static let sectionCaps = Font.system(size: 11, weight: .semibold)
+    static let capsTracking: CGFloat = 0.5
+    /// Section headings inside a pane.
+    static let sectionTitle = Font.system(size: 15, weight: .semibold)
+    static let cardTitle = Font.system(size: 14, weight: .semibold)
+    static let tileTitle = Font.system(size: 13, weight: .semibold)
+    /// First line of a list row.
+    static let rowTitle = Font.system(size: 13, weight: .medium)
+    static let body = Font.system(size: 13)
+    static let bodyEmphasis = Font.system(size: 13, weight: .semibold)
+    /// Second line of a row, captions, timestamps.
+    static let caption = Font.system(size: 11.5)
+    static let meta = caption
+    static func metric(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold) }
 }
 
 extension Font {
-    static func aomDisplay(_ size: CGFloat = 30) -> Font { .system(size: size, weight: .bold) }
-    static func aomTitle(_ size: CGFloat = 24) -> Font { .system(size: size, weight: .bold) }
-    static func aomHeadline(_ size: CGFloat = 17) -> Font { .system(size: size + 1.5, weight: .semibold) }
-    static func aomLabel(_ size: CGFloat = 14) -> Font { .system(size: size + 1.5, weight: .semibold) }
-    static func aomBody(_ size: CGFloat = 14) -> Font { .system(size: size + 1.5, weight: .regular) }
-    static func aomCaption(_ size: CGFloat = 12.5) -> Font { .system(size: size + 1.5, weight: .medium) }
+    static func aomDisplay(_ size: CGFloat = 26) -> Font { .system(size: size, weight: .bold) }
+    static func aomTitle(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold) }
+    static func aomHeadline(_ size: CGFloat = 15) -> Font { .system(size: size, weight: .semibold) }
+    static func aomLabel(_ size: CGFloat = 13) -> Font { .system(size: size, weight: .semibold) }
+    static func aomBody(_ size: CGFloat = 13) -> Font { .system(size: size, weight: .regular) }
+    static func aomCaption(_ size: CGFloat = 11.5) -> Font { .system(size: size, weight: .medium) }
 }
 
 extension View {
-    /// Page title: 26 pt bold, −0.6 tracking.
+    /// Screen title: 22 pt semibold.
     func aomPageTitle() -> some View {
         font(AOMType.pageTitle).tracking(AOMType.pageTracking).foregroundStyle(AOMTheme.text)
     }
-    /// Upper-case section label.
+    /// Upper-case micro label.
     func aomSectionCaps() -> some View {
         font(AOMType.sectionCaps).tracking(AOMType.capsTracking).textCase(.uppercase).foregroundStyle(AOMTheme.textTertiary)
     }
@@ -197,8 +199,7 @@ extension Color {
 
 // MARK: - Window canvas
 
-/// The window's lowest layer: one flat neutral canvas. No glows or washes —
-/// depth comes from the sheets on top of it.
+/// The window's lowest layer (system window background).
 struct AOMWindowCanvas: View {
     var body: some View {
         AOMTheme.canvas
@@ -244,9 +245,8 @@ struct AOMCardSurface: ViewModifier {
     }
 
     private var shadowOpacity: Double {
-        guard elevated, style != .well else { return 0 }
-        if scheme == .dark { return hovering ? 0.30 : 0.18 }
-        return hovering ? 0.06 : 0.025
+        guard elevated, style != .well, hovering else { return 0 }
+        return scheme == .dark ? 0.30 : 0.06
     }
 
     @ViewBuilder
@@ -320,12 +320,14 @@ struct AOMLift: ViewModifier {
 /// A one-pixel separator that matches the sheet dividers.
 struct AOMDivider: View {
     var axis: Axis = .horizontal
+    @Environment(\.displayScale) private var scale
 
     var body: some View {
+        let line = 1 / max(scale, 1)
         if axis == .horizontal {
-            Rectangle().fill(AOMTheme.divider).frame(height: 1)
+            Rectangle().fill(AOMTheme.divider).frame(height: line)
         } else {
-            Rectangle().fill(AOMTheme.divider).frame(width: 1)
+            Rectangle().fill(AOMTheme.divider).frame(width: line)
         }
     }
 }
@@ -336,6 +338,8 @@ struct AOMDivider: View {
 struct AOMResizeDivider: View {
     @Binding var width: Double
     let range: ClosedRange<Double>
+    /// Which side of the divider the resized pane is on.
+    var paneEdge: HorizontalEdge = .trailing
     @State private var dragStart: Double?
     @State private var hovering = false
 
@@ -356,7 +360,8 @@ struct AOMResizeDivider: View {
                     .onChanged { value in
                         let start = dragStart ?? width
                         dragStart = start
-                        width = min(range.upperBound, max(range.lowerBound, start - Double(value.translation.width)))
+                        let delta = Double(value.translation.width) * (paneEdge == .trailing ? -1 : 1)
+                        width = min(range.upperBound, max(range.lowerBound, start + delta))
                     }
                     .onEnded { _ in dragStart = nil }
             )
@@ -381,7 +386,6 @@ private struct AOMPressableBody: View {
     var body: some View {
         configuration.label
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
             .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
     }
 }
@@ -409,7 +413,6 @@ private struct AOMRowButtonBody: View {
             .background(shape.fill(AOMTheme.cardAlt.opacity(configuration.isPressed ? 1 : (hovering ? 0.85 : 0))))
             .contentShape(shape)
             .opacity(isEnabled ? 1 : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
             .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
             .onHover { hovering = $0 }
@@ -454,53 +457,45 @@ private struct AOMCardTileBody: View {
             .aomCardStyle(style, radius: radius, padding: padding, hovering: hovering && isEnabled)
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .opacity(isEnabled ? 1 : 0.5)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
             .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovering)
             .onHover { hovering = $0 }
     }
 }
 
-// MARK: - Icon badge
+// MARK: - Icon glyph
 
-/// Squircle icon badge in the System Settings manner. `filled` is a solid
-/// accent with a white glyph; otherwise a soft accent wash with an accent
-/// glyph. No glows — the colour itself carries it.
+/// A category or status glyph. 2.0 drops the coloured squircle backgrounds:
+/// the glyph alone carries the hue, so content, selection and actions read
+/// before decoration. `filled` keeps the hue; unfilled glyphs are secondary.
 struct AOMIconBadge: View {
     let systemImage: String
     var tint: Color = AOMTheme.blue
-    var size: CGFloat = 44
+    var size: CGFloat = 28
     var filled = false
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
         Image(systemName: systemImage)
-            .font(.system(size: size * 0.44, weight: .semibold))
-            .symbolRenderingMode(filled ? .monochrome : .hierarchical)
-            .foregroundStyle(filled ? Color.white : tint)
+            .font(.system(size: max(11, size * 0.5), weight: .medium))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(filled ? tint : AOMTheme.textSecondary)
             .frame(width: size, height: size)
-            .background {
-                if filled {
-                    shape.fill(LinearGradient(colors: [tint, tint.aomDarker(0.10)], startPoint: .top, endPoint: .bottom))
-                } else {
-                    shape.fill(tint.opacity(0.12))
-                }
-            }
             .accessibilityHidden(true)
     }
 }
 
 // MARK: - Search field
 
+/// In-pane search field (pages prefer `.searchable` in the toolbar).
 struct AOMSearchField: View {
     let prompt: String
     @Binding var text: String
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13.5, weight: .semibold))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(AOMTheme.textTertiary)
             TextField(prompt, text: $text)
                 .textFieldStyle(.plain)
@@ -513,22 +508,22 @@ struct AOMSearchField: View {
                     .accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, 13)
-        .frame(height: 36)
-        .background(AOMTheme.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(focused ? AOMTheme.blue.opacity(0.8) : AOMTheme.hairline, lineWidth: focused ? 1.5 : 0.75)
+            RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
+                .strokeBorder(focused ? AOMTheme.blue.opacity(0.8) : .clear, lineWidth: 2)
         }
     }
 }
 
 // MARK: - Buttons
 
-/// Filled primary action.
+/// Filled primary action (one per view).
 struct AOMFilledButtonStyle: ButtonStyle {
     var tint: Color = AOMTheme.actionBlue
-    var height: CGFloat = 40
+    var height: CGFloat = 28
 
     func makeBody(configuration: Configuration) -> some View {
         AOMFilledBody(configuration: configuration, tint: tint, height: height)
@@ -541,20 +536,17 @@ private struct AOMFilledBody: View {
     let height: CGFloat
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
         configuration.label
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, minHeight: height)
-            .background(tint.aomDarker(configuration.isPressed ? 0.12 : (hovering ? 0.06 : 0)), in: shape)
+            .padding(.horizontal, 12)
+            .frame(minHeight: height)
+            .background(tint.aomDarker(configuration.isPressed ? 0.14 : (hovering ? 0.06 : 0)), in: shape)
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(shape)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
-            .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .onHover { hovering = $0 }
     }
 }
@@ -562,7 +554,7 @@ private struct AOMFilledBody: View {
 /// Soft secondary action (accent wash), Toss's "weak" button.
 struct AOMTintedButtonStyle: ButtonStyle {
     var tint: Color = AOMTheme.actionBlue
-    var height: CGFloat = 36
+    var height: CGFloat = 26
 
     func makeBody(configuration: Configuration) -> some View {
         AOMTintedBody(configuration: configuration, tint: tint, height: height)
@@ -575,20 +567,17 @@ private struct AOMTintedBody: View {
     let height: CGFloat
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
         configuration.label
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(tint)
-            .padding(.horizontal, 14)
-            .frame(maxWidth: .infinity, minHeight: height)
-            .background(tint.opacity(hovering ? 0.16 : 0.10), in: shape)
+            .padding(.horizontal, 10)
+            .frame(minHeight: height)
+            .background(tint.opacity(configuration.isPressed ? 0.22 : (hovering ? 0.16 : 0.10)), in: shape)
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(shape)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
-            .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .onHover { hovering = $0 }
     }
 }
@@ -601,15 +590,15 @@ struct AOMChip: View {
     var symbol: String?
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             if let symbol {
-                Image(systemName: symbol).font(.system(size: 10.5, weight: .bold))
+                Image(systemName: symbol).font(.system(size: 9.5, weight: .bold))
             }
-            Text(text).font(.system(size: 12.5, weight: .semibold))
+            Text(text).font(.system(size: 11.5, weight: .semibold))
         }
         .foregroundStyle(tint)
-        .padding(.horizontal, 10)
-        .frame(height: 25)
+        .padding(.horizontal, 8)
+        .frame(height: 20)
         .background(background ?? tint.opacity(0.12), in: Capsule())
     }
 }
@@ -620,16 +609,17 @@ struct AOMKeycap: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(AOMTheme.textSecondary)
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, 7)
-            .frame(minWidth: 22, minHeight: 22)
-            .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(AOMTheme.hairline, lineWidth: 0.75)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(AOMTheme.hairline, lineWidth: 0.5)
             }
+            .accessibilityLabel(text)
     }
 }

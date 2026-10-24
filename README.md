@@ -2,6 +2,17 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 2.0.0
+
+A redesign around the three things you do every day — find and edit an automation, find and
+paste something you copied, capture and use it. The window now follows macOS structure: a
+collapsible sidebar for navigation, each page's tools in its own toolbar, and content panes.
+The Workspace puts problems (only when there are any), quick actions, pinned and recent
+automations, recent captures and clipboard items first; the figures moved to Insights. The
+Automation editor takes the width and reads Name · Applies to · Enabled, When, Do, Options.
+The command palette has primary and secondary actions with their keys and avoids your own
+shortcuts. Data formats, shortcuts and permissions are unchanged.
+
 ## Version 1.9.2
 
 Password typing never reaches the lock screen. The lock screen turns on Secure Input too, so

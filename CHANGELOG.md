@@ -2,6 +2,16 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 2.0.0 — A Mac window, built around your work
+- **Navigation:** the capsule tab bar is gone. A labelled, collapsible system sidebar holds the six places (⌘1–⌘6, View ▸ Hide Sidebar) with Search at the top and the automation switch, Settings and Help at the bottom. Each page owns its toolbar: title and status, view switch, search and its primary action in the same places on every page.
+- **Workspace:** problems first and only when they exist (permissions, paused automation, a shortcut conflict, clipboard storage), then Capture Area / Clipboard Shelf / Search with their real shortcuts, your pinned and recently used automations (with last-run time and a hover Run button — never for Type Text), recent captures you can copy, edit or drag, and recent clipboard items you copy with a click. The five-figure strip is one quiet line that links to Insights.
+- **Automation:** list → wide editor. Rows show each automation once (no repeated input name), what it does with its key value (⌘W, Bedroom, …), its keys, pin and switch. The editor reads Name · Applies to · Enabled, then When, Do, Options; Test sits next to its result (running, ran, failed). The sortable table is a view switch. Scope moved to the toolbar; narrow windows switch between list and editor.
+- **Command palette:** opens focused, ↑↓ to move, ↩ primary, ⌘↩ secondary (Run Now, Copy as Plain Text, Copy capture), Esc clears then closes; grouped when empty, one ranked list while searching. Its shortcut is ⌘K unless an automation or capture/clipboard hotkey owns it, then ⇧⌘K. Available as View ▸ Search….
+- **Clipboard library:** list with a preview built for each kind (full text, image, link with Open in Browser, files), Copy and More next to it, Return copies the selected row; pinboards and type filter head the list. The ⇧⌘V shelf is unchanged.
+- **Capture:** the tool column became the toolbar's Capture menu (with your shortcuts); cards offer Copy, Edit, Show in Finder and Pin on hover and drag straight into other apps.
+- **Insights:** a period switch (24 hours, 7 days, all time) scopes every figure; labels say what each number is.
+- **Design system:** system semantic colours and the user's accent, a 13 pt desktop type scale, spacing/size/motion tokens, glyphs without coloured squircles, hairline separators, no press-scaling. Shared row, heading, notice, run-status and key-cap components.
+
 ## 1.9.2 — No password typing at the lock screen
 - Type Text refuses to run while the screen is locked, and stops if the screen locks mid-way. The lock screen also turns on Secure Event Input, so 1.9.0 and 1.9.1 registered their secure-input shortcuts (including the ⌃ alias) there as well; nothing is registered while locked now.
 - Documented the one-time Keychain prompt each new build triggers for clipboard history.

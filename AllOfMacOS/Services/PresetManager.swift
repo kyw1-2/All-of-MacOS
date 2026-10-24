@@ -27,6 +27,16 @@ class PresetManager {
         return directory.path.hasPrefix(temporary) ? directory : nil
     }
     static var isUIPreview: Bool { previewDirectory != nil }
+    /// `--aom-preview-size 1280x800` sizes the main window of an isolated UI
+    /// preview, so screens are compared at fixed sizes without driving the
+    /// window through Accessibility.
+    static var previewWindowSize: CGSize? {
+        let args = ProcessInfo.processInfo.arguments
+        guard isUIPreview, let index = args.firstIndex(of: "--aom-preview-size"), args.indices.contains(index + 1) else { return nil }
+        let parts = args[index + 1].split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2, parts.allSatisfy({ $0 >= 400 && $0 <= 4000 }) else { return nil }
+        return CGSize(width: parts[0], height: parts[1])
+    }
     private static let isolatedDirectory: URL? = {
         if let previewDirectory { return previewDirectory }
         guard isRunningTests else { return nil }
