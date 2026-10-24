@@ -21,28 +21,43 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         var thumbnail: CGImage?
     }
 
-    @Published private(set) var items: [Item] = []
-    @Published private(set) var selectedIndex = 0
+    /// Internal for the controller test (@testable): the real list is built
+    /// from SCShareableContent in present(session:).
+    @Published var items: [Item] = []
+    /// Internal setter for the controller test (@testable).
+    @Published var selectedIndex = 0
     private var panel: NSPanel?
     private var monitors: [Any] = []
     private var previousApp: NSRunningApplication?
     private var initialModifiers = NSEvent.ModifierFlags(arrayLiteral: [])
     private var sawHeldModifier = false
+    /// One increment per show(): the async window query checks it after every
+    /// await so a superseded or cancelled session can never build a panel.
+    private var session = 0
+    private var isPresenting = false
+    private var deactivationObserver: NSObjectProtocol?
 
     var isShowing: Bool { panel?.isVisible == true }
 
     func show() {
-        guard panel == nil else { return }
+        guard panel == nil, !isPresenting else { return }
+        isPresenting = true
+        session += 1
+        let currentSession = session
         previousApp = NSWorkspace.shared.frontmostApplication
         initialModifiers = NSEvent.modifierFlags.intersection([.command, .control, .option])
         sawHeldModifier = false
-        Task { await present() }
+        Task { [weak self] in
+            await self?.present(session: currentSession)
+            self?.isPresenting = false
+        }
     }
 
-    private func present() async {
+    private func present(session currentSession: Int) async {
         var candidates: [Item] = []
         var scWindows: [SCWindow] = []
         if let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) {
+            guard currentSession == session else { return }
             for sc in content.windows where sc.isActiveWindowCandidate {
                 let app = sc.owningApplication
                 let running = app.flatMap { NSRunningApplication(processIdentifier: $0.processID) }
@@ -56,11 +71,17 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         }
         // SCShareableContent already reports front-to-back.
         candidates = Array(candidates.prefix(12))
-        guard !candidates.isEmpty else { return }
+        guard !candidates.isEmpty, currentSession == session else { return }
         items = candidates
         selectedIndex = 0
 
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 900, height: 190),
+        let screen = NSScreen.main
+        // Cards are 166 pt wide with 8 pt gaps; cap the panel at 70% of the
+        // screen so the row scrolls horizontally instead of overflowing.
+        let contentWidth = CGFloat(candidates.count) * 166 + 8 * CGFloat(max(0, candidates.count - 1)) + 24
+        let maxPanelWidth = (screen?.visibleFrame.width ?? 1200) * 0.7
+        let panelWidth = min(max(360, contentWidth), maxPanelWidth)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 190),
                             styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -71,8 +92,8 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.worksWhenModal = true
         panel.contentView = NSHostingView(rootView: WindowSwitcherView(controller: self))
-        if let screen = NSScreen.main {
-            let size = CGSize(width: 900, height: 190)
+        if let screen {
+            let size = CGSize(width: panelWidth, height: 190)
             let frame = NSRect(origin: screen.visibleFrame.origin,
                                size: size).offsetBy(dx: (screen.visibleFrame.width - size.width) / 2,
                                                     dy: (screen.visibleFrame.height - size.height) * 0.32)
@@ -122,23 +143,42 @@ final class WindowSwitcherController: NSObject, ObservableObject {
 
     func confirm() { activateAndClose() }
 
+    /// A click must activate the card it landed on, not whatever the keyboard
+    /// had selected. Falls back to cancel when the window vanished mid-click.
+    func selectAndConfirm(id: CGWindowID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { cancel(); return }
+        selectedIndex = index
+        confirm()
+    }
+
     func cancel() {
         closePanel()
         previousApp?.activate(options: [])
     }
 
-    private func activateAndClose() {
-        let item = items[selectedIndex]
-        closePanel()
+    /// Test seam: activates the chosen target. The default raises the AX
+    /// window and activates its app.
+    var activateTarget: (@MainActor (Item) -> Void) = { item in
         NSRunningApplication(processIdentifier: item.pid)?.activate(options: [])
         if let ax = item.axWindow {
             AXUIElementPerformAction(ax, kAXRaiseAction as CFString)
         }
     }
 
+    private func activateAndClose() {
+        guard !items.isEmpty else { closePanel(); return }
+        let item = items[selectedIndex]
+        closePanel()
+        activateTarget(item)
+    }
+
     private func closePanel() {
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors.removeAll()
+        if let deactivationObserver {
+            NotificationCenter.default.removeObserver(deactivationObserver)
+            self.deactivationObserver = nil
+        }
         panel?.orderOut(nil)
         panel = nil
         items = []
@@ -176,13 +216,21 @@ final class WindowSwitcherController: NSObject, ObservableObject {
             return event
         }
         if let key { monitors.append(key) }
-        // A click on a card activates it (handled in SwiftUI); clicks outside close.
+        // A click on a card activates it (handled in SwiftUI); clicks in other
+        // apps deactivate AOM, which also cancels — closing on any outside click.
         let click = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             guard let self, self.isShowing, event.window !== self.panel else { return event }
             self.cancel()
             return event
         }
         if let click { monitors.append(click) }
+        deactivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.isShowing else { return }
+                    self.cancel()
+                }
+            }
     }
 
     /// One selection step, repeated keys included so holding the trigger key
@@ -204,17 +252,25 @@ private extension SCWindow {
 private struct WindowSwitcherView: View {
     @ObservedObject var controller: WindowSwitcherController
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         ScrollViewReader { proxy in
-            HStack(spacing: 8) {
-                ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
-                    WindowSwitcherCard(item: item, isSelected: index == controller.selectedIndex)
-                        .scaleEffect(index == controller.selectedIndex ? 1.05 : 1.0)
-                        .onTapGesture { controller.confirm() }
-                        .id(index)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
+                        WindowSwitcherCard(item: item, isSelected: index == controller.selectedIndex)
+                            .scaleEffect(index == controller.selectedIndex && !reduceMotion ? 1.05 : 1.0)
+                            .onTapGesture { controller.selectAndConfirm(id: item.id) }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("\(item.appName), \(item.title.isEmpty ? "window" : item.title)")
+                            .accessibilityAddTraits(index == controller.selectedIndex ? [.isSelected, .isButton] : .isButton)
+                            .id(index)
+                    }
                 }
+                .padding(.vertical, 2)
             }
-            .animation(.easeOut(duration: 0.12), value: controller.selectedIndex)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: controller.selectedIndex)
             .onChange(of: controller.selectedIndex) { _, newIndex in
                 proxy.scrollTo(newIndex, anchor: .center)
             }
