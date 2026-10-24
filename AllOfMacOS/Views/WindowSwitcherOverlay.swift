@@ -26,12 +26,16 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     private var panel: NSPanel?
     private var monitors: [Any] = []
     private var previousApp: NSRunningApplication?
+    private var initialModifiers = NSEvent.ModifierFlags(arrayLiteral: [])
+    private var sawHeldModifier = false
 
     var isShowing: Bool { panel?.isVisible == true }
 
     func show() {
         guard panel == nil else { return }
         previousApp = NSWorkspace.shared.frontmostApplication
+        initialModifiers = NSEvent.modifierFlags.intersection([.command, .control, .option])
+        sawHeldModifier = false
         Task { await present() }
     }
 
@@ -137,20 +141,29 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     }
 
     private func installMonitors() {
+        // A modifier was held when the switcher opened (e.g. ⌃Tab): releasing
+        // it confirms. Releasing a modifier that was never held must not.
+        sawHeldModifier = !initialModifiers.isEmpty
         let key = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self, self.isShowing else { return event }
             if event.type == .flagsChanged {
-                // Releasing the held modifier confirms the selection.
-                if event.modifierFlags.intersection([.command, .control, .option]).isEmpty { self.confirm() }
+                let held = event.modifierFlags.intersection([.command, .control, .option])
+                if held.isEmpty {
+                    if sawHeldModifier { confirm() }
+                } else {
+                    sawHeldModifier = true
+                }
                 return nil
             }
             switch event.keyCode {
-            case 123: self.moveSelection(-1); return nil // left
-            case 124: self.moveSelection(1); return nil // right
-            case 36, 76: self.confirm(); return nil // return / enter
-            case 53: self.cancel(); return nil // esc
+            case 123: step(-1) // left
+            case 124: step(1) // right
+            case 48: step(event.modifierFlags.contains(.shift) ? -1 : 1) // Tab cycles like AltTab; ⇧Tab goes back
+            case 36, 76: confirm() // return / enter
+            case 53: cancel() // esc
             default: return event
             }
+            return nil
         }
         if let key { monitors.append(key) }
         // A click on a card activates it (handled in SwiftUI); clicks outside close.
@@ -160,6 +173,12 @@ final class WindowSwitcherController: NSObject, ObservableObject {
             return event
         }
         if let click { monitors.append(click) }
+    }
+
+    /// One selection step, repeated keys included so holding the trigger key
+    /// cycles; the view animates every change.
+    private func step(_ offset: Int) {
+        withAnimation(.easeOut(duration: 0.12)) { moveSelection(offset) }
     }
 }
 
@@ -172,20 +191,22 @@ private extension SCWindow {
     }
 }
 
-private extension NSRect {
-    func centered(in bounds: NSRect, size: CGSize) -> NSRect {
-        NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
-    }
-}
-
 private struct WindowSwitcherView: View {
     @ObservedObject var controller: WindowSwitcherController
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
-                WindowSwitcherCard(item: item, isSelected: index == controller.selectedIndex)
-                    .onTapGesture { controller.confirm() }
+        ScrollViewReader { proxy in
+            HStack(spacing: 8) {
+                ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
+                    WindowSwitcherCard(item: item, isSelected: index == controller.selectedIndex)
+                        .scaleEffect(index == controller.selectedIndex ? 1.05 : 1.0)
+                        .onTapGesture { controller.confirm() }
+                        .id(index)
+                }
+            }
+            .animation(.easeOut(duration: 0.12), value: controller.selectedIndex)
+            .onChange(of: controller.selectedIndex) { _, newIndex in
+                proxy.scrollTo(newIndex, anchor: .center)
             }
         }
         .padding(12)
