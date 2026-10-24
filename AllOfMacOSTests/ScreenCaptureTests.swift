@@ -685,7 +685,8 @@ final class ScreenCaptureTests: XCTestCase {
             // must not reserve five more global shortcuts without asking.
             if action == .allInOne || action == .openProject || action == .choosePinnedWindow
                 || action == .selectPinnedWindow || action == .togglePinFrontWindow
-                || action == .togglePinWindowUnderCursor || action == .unpinAllWindows {
+                || action == .togglePinWindowUnderCursor || action == .unpinAllWindows
+                || action == .windowSwitcher || action == .keepAwake {
                 XCTAssertNil(sc, "Optional commands must not reserve a default global shortcut")
             } else {
                 XCTAssertNotNil(sc, "\(action.displayName) should have a default shortcut")

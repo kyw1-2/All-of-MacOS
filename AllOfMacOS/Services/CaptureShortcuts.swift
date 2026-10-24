@@ -20,6 +20,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
     case toggleDesktopIcons = "toggleDesktopIcons"
     case pinLast = "pinLast"
     case choosePinnedWindow, selectPinnedWindow, togglePinFrontWindow, togglePinWindowUnderCursor, unpinAllWindows
+    case windowSwitcher, keepAwake
 
     var id: String { rawValue }
 
@@ -43,6 +44,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .togglePinFrontWindow: return "Pin / Unpin Front Window"
         case .togglePinWindowUnderCursor: return "Pin / Unpin Window Under Cursor"
         case .unpinAllWindows: return "Unpin All Windows"
+        case .windowSwitcher: return "Window Switcher"
+        case .keepAwake: return "Keep Awake"
         }
     }
 
@@ -52,6 +55,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
             return "Screen Capture"
         case .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
             return "Always on Top"
+        case .windowSwitcher, .keepAwake:
+            return "System & Switching"
         case .ocr, .history, .toggleDesktopIcons, .pinLast, .openProject:
             return "Tools & Utilities"
         }
@@ -73,6 +78,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .toggleDesktopIcons: return "eye.slash"
         case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor: return "pin"
         case .unpinAllWindows: return "pin.slash"
+        case .windowSwitcher: return "rectangle.stack"
+        case .keepAwake: return "flask"
         }
     }
 
@@ -82,7 +89,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .pauseRecording:
             return KeyboardShortcut(keyCode: 49, modifiers: [.command, .shift, .option])
-        case .allInOne, .openProject, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
+        case .allInOne, .openProject, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows, .windowSwitcher, .keepAwake:
             return nil
         case .captureArea:
             return KeyboardShortcut(keyCode: 21, modifiers: [.command, .shift]) // ⇧⌘4
@@ -242,6 +249,8 @@ final class CaptureShortcuts: ObservableObject {
         case .togglePinFrontWindow: WindowPinningService.shared.perform(.togglePinFrontWindow)
         case .togglePinWindowUnderCursor: WindowPinningService.shared.perform(.togglePinWindowUnderCursor)
         case .unpinAllWindows: WindowPinningService.shared.unpinAll()
+        case .windowSwitcher: MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
+        case .keepAwake: MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) }
         }
     }
 }

@@ -9,13 +9,21 @@ import IOKit.pwr_mgt
 final class KeepAwakeService: ObservableObject {
     static let shared = KeepAwakeService()
 
-    @Published private(set) var isActive = false
     @Published private(set) var endsAt: Date?
+    @Published private(set) var currentMinutes: Int?
 
     private var assertionID: IOPMAssertionID = 0
 
+    /// False again as soon as a timed assertion passes its deadline — the
+    /// system releases it, so the menus must not keep advertising an active pin.
+    var isActive: Bool {
+        guard assertionID != 0 else { return false }
+        if let endsAt, endsAt <= Date() { return false }
+        return true
+    }
+
     var remainingDescription: String? {
-        guard let endsAt else { return isActive ? "until turned off" : nil }
+        guard let endsAt, isActive else { return isActive ? "until turned off" : nil }
         let formatter = DateIntervalFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .short
@@ -43,7 +51,7 @@ final class KeepAwakeService: ObservableObject {
                                                  "All of MacOS Keep Awake" as CFString, &assertionID)
         }
         guard result == kIOReturnSuccess, assertionID != 0 else { assertionID = 0; return }
-        isActive = true
+        currentMinutes = minutes
         GestureLog.shared.logFromAnyThread("Keep Awake enabled\(minutes.map { " for \($0) min" } ?? "")", level: .action)
     }
 
@@ -51,7 +59,7 @@ final class KeepAwakeService: ObservableObject {
         guard assertionID != 0 else { return }
         IOPMAssertionRelease(assertionID)
         assertionID = 0
-        isActive = false
+        currentMinutes = nil
         endsAt = nil
         GestureLog.shared.logFromAnyThread("Keep Awake disabled", level: .action)
     }

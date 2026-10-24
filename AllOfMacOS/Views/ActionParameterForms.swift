@@ -134,11 +134,19 @@ struct ActionParameterForm: View {
             footnote(isVolume ? "Unmutes the output when raising from 0."
                               : "Uses the display under the pointer. Displays without a hardware control get a software dim that never goes fully black.")
         case .keepAwake:
-            optionalNumberRow("Keep awake for (minutes)", \.keepAwakeMinutes, fallback: 60, range: 1...1440)
+            Picker("Duration", selection: Binding(
+                get: { action.parameters.keepAwakeMinutes },
+                set: { newValue in save { $0.parameters.keepAwakeMinutes = newValue } })) {
+                Text("Until turned off").tag(Double?.none)
+                Text("30 minutes").tag(Double?.some(30))
+                Text("1 hour").tag(Double?.some(60))
+                Text("2 hours").tag(Double?.some(120))
+                Text("8 hours").tag(Double?.some(480))
+            }
             Toggle("Also keep the display awake", isOn: Binding(
                 get: { action.parameters.keepDisplayOn ?? false },
                 set: { newValue in save { $0.parameters.keepDisplayOn = newValue } }))
-            footnote("Empty minutes keeps the Mac awake until you toggle it off again.")
+            footnote("The assertion releases itself when the duration ends.")
         case .filePath: filePath
         case .speak: speak
         case .notification:

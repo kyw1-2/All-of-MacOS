@@ -257,6 +257,8 @@ struct ShortcutsSettingsView: View {
         case .history: return .mint
         case .toggleDesktopIcons: return .gray
         case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows: return .pink
+        case .windowSwitcher: return .indigo
+        case .keepAwake: return .orange
         }
     }
 
@@ -280,6 +282,8 @@ struct ShortcutsSettingsView: View {
         case .togglePinFrontWindow: return "Toggle always on top for the front window"
         case .togglePinWindowUnderCursor: return "Toggle always on top for the window under the pointer"
         case .unpinAllWindows: return "Remove all live pins, leaving source windows open"
+        case .windowSwitcher: return "Switch windows with an AltTab-style thumbnail overlay"
+        case .keepAwake: return "Toggle the keep-awake power assertion"
         }
     }
 }

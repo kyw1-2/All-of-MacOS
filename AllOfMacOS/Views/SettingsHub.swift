@@ -306,14 +306,24 @@ struct HubSliderRow: View {
     let step: Double
     let percent: Bool
 
+    @State private var liveValue: Double?
+
     var body: some View {
-        let value = aomSettingDouble(key, fallback)
+        let value = liveValue ?? aomSettingDouble(key, fallback).wrappedValue
         HubRowShell(icon: icon, tint: tint, title: title, subtitle: subtitle) {
             HStack(spacing: 10) {
-                Slider(value: value, in: range, step: step)
+                Slider(value: Binding(
+                    get: { value },
+                    set: { newValue in
+                        liveValue = newValue
+                        // Persist on the fly so other surfaces observe it too;
+                        // the label updates from liveValue without waiting.
+                        UserDefaults.standard.set(newValue, forKey: key)
+                        NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
+                    }), in: range, step: step)
                     .frame(width: 150)
                     .controlSize(.small)
-                Text(percent ? "\(Int((value.wrappedValue * 100).rounded()))%" : String(format: "%.1f", value.wrappedValue))
+                Text(percent ? "\(Int((value * 100).rounded()))%" : String(format: "%.1f", value))
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 40, alignment: .trailing)

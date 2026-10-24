@@ -378,7 +378,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func captureWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureWindowFromPicker() } }
     @objc func captureActiveWindowAction() { MainActor.assumeIsolated { CaptureCoordinator.shared.captureActiveWindow() } }
     @objc func pauseRecordingAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.togglePause() } }
-    @objc func toggleKeepAwake() { MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) } }
     @objc func openAnnotationProjectAction() { MainActor.assumeIsolated { AnnotationEditorController.shared.chooseProject() } }
     @objc func recordScreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.toggleRecording() } }
     @objc func recordFullscreenAction() { MainActor.assumeIsolated { ScreenRecordingService.shared.recordFullscreenUnderPointer() } }
@@ -491,13 +490,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                            paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
         menu.addItem(.separator())
 
-        // System — Keep Awake shows its state like the Pause toggles do.
+        // System — Keep Awake ▸ durations, mirroring the Pause AOM grammar.
         menu.addItem(.sectionHeader(title: "System"))
-        let awakeOn = MainActor.assumeIsolated { KeepAwakeService.shared.isActive }
-        let awakeItem = entry(awakeOn ? "Keep Awake (on)" : "Keep Awake",
-                              awakeOn ? "flask.fill" : "flask", #selector(toggleKeepAwake))
-        awakeItem.state = awakeOn ? .on : .off
-        menu.addItem(awakeItem)
+        let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
+        menu.addItem(awakeMenuItem)
         menu.addItem(.separator())
 
         // Automation — the engine, snapping, pausing and what the app in front
@@ -604,6 +600,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
+
+    // MARK: - Keep Awake
+
+    /// Keep Awake ▸ Indefinitely / 30 minutes / 1 hour / 2 hours / Turn Off.
+    @MainActor private func keepAwakeMenu() -> NSMenuItem {
+        let service = KeepAwakeService.shared
+        let item = NSMenuItem(title: service.isActive ? "Keep Awake (on)" : "Keep Awake",
+                              action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: service.isActive ? "flask.fill" : "flask", accessibilityDescription: nil)
+        let submenu = NSMenu()
+        func duration(_ title: String, _ minutes: Int?) -> NSMenuItem {
+            let entry = NSMenuItem(title: title, action: #selector(keepAwakeFor(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.state = service.isActive && service.currentMinutes == minutes ? .on : .off
+            entry.tag = minutes ?? -1
+            return entry
+        }
+        submenu.addItem(duration("Indefinitely", nil))
+        submenu.addItem(duration("30 Minutes", 30))
+        submenu.addItem(duration("1 Hour", 60))
+        submenu.addItem(duration("2 Hours", 120))
+        if service.isActive {
+            submenu.addItem(.separator())
+            let off = NSMenuItem(title: "Turn Off", action: #selector(keepAwakeOff), keyEquivalent: "")
+            off.target = self
+            submenu.addItem(off)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    @objc func keepAwakeFor(_ sender: NSMenuItem) {
+        let minutes = sender.tag >= 0 ? sender.tag : nil
+        MainActor.assumeIsolated { KeepAwakeService.shared.start(minutes: minutes, keepDisplay: false) }
+    }
+
+    @objc func keepAwakeOff() { MainActor.assumeIsolated { KeepAwakeService.shared.stop() } }
 
     // MARK: - Pause AOM (TriggerSuppression)
 
