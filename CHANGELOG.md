@@ -2,6 +2,15 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 2.3.0 — Natural capture behaviour and competitive parity
+- **Quick Access:** a Trash button sits beside More on the hover curtain (⌘⌫ too) — one click deletes a fresh capture; only recordings ask first. Cards auto-close after 5 minutes for people who never chose a setting (they stay in Capture History); a stored choice is never changed.
+- **One close rule:** Copy, Save, Pin and Annotate close the surface they were used from — Quick Access card, expanded preview, Capture History — and ⌥ keeps it open; a failure never closes it. Capture History selects on the first click, and its menu offers the same core actions as the card. The clipboard shelf's Copy stays open on purpose and now says so.
+- **After Capture = Copy/Save** no longer shows a second card (Capture > "Also Show After Copy/Save" brings it back; a failed copy/save still shows it).
+- **No drag stall:** unsaved captures get their drag file encoded off the main thread on hover; dragging does not save the capture.
+- **Clipboard:** Erase History (pinboards kept, undoable) in Settings, the shelf and the library — the library's old "Clear All History" no longer deletes pinned items. Lowering the item limit asks before deleting. Kind, date and app filter chips under the search field, synced with typed type:/from:/board: tokens. Remove Background for images (new item; original kept), also in Quick Access and the editor.
+- **Capture:** area selections snap to window and screen edges (hold ⌃ to place freely; Capture > Snap Selection to Windows). Recording keystrokes: Shortcuts Only / All Keys, position, size and light/dark style.
+- **Automation:** activation groups can require days and times, power source, display count or an app's window, edited in Automation › scope menu › Edit Activation Groups…. `{{var:name}}` places workflow variables (for example a script's output) into Type Text, Open URL, HUD and notification text. AppleScript: `run trigger`, `capture`, `restore quick access`, `open aom url`.
+
 ## 2.2.0 — Glass window, compact rhythm
 - **The window is glass now:** the chrome (sidebar, toolbar) sits on a real behind-window blur that shows your desktop through it — the System Settings / Things arrangement — while the page floats as an inset rounded card with a soft shadow and a hairline edge. Reduce Transparency and Increase Contrast restore the plain opaque window. The command palette keeps its material and gains the same lit rim.
 - **Compact rhythm:** rows tightened (30 pt single-line, 44 pt two-line), page padding 24→20, section spacing 24→18, sidebar search field and footer trimmed — noticeably more of your content per screen at the same readability.

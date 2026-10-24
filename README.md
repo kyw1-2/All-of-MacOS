@@ -2,6 +2,17 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 2.3.0
+
+Capture surfaces now behave the same way: Copy, Save, Pin and Annotate close the card,
+preview or history they came from (⌥ keeps it), and a fresh capture can be trashed with one
+click on its hover curtain. After Capture = Copy or Save no longer leaves a second card, and
+cards close themselves after five minutes unless you chose otherwise. Clipboard gains Erase
+History (pinned items kept), filter chips and Remove Background; selections snap to window
+edges; recordings get keystroke-overlay options; activation groups gain time, power, display
+and window conditions; workflow variables can be inserted with `{{var:name}}`; and AOM has an
+AppleScript dictionary. Stored settings, shortcuts and data are unchanged.
+
 ## Version 2.2.0
 
 The window itself is the redesign: the sidebar and toolbar now sit on a real behind-window
