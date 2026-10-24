@@ -47,6 +47,9 @@ struct AOMStudioSettings: Codable, Equatable {
     var cameraRoundness: Double = 0.18
     var aspect: AOMStudioAspect = .source
     var resolution: AOMStudioResolution = .source
+    /// Light or dark key badges. Optional so Studio projects saved before
+    /// 2.3 still decode (nil draws the original dark badge).
+    var keystrokeStyle: AOMKeystrokeStyle?
 
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0)
@@ -157,7 +160,7 @@ enum AOMStudioRenderer {
         }
         if settings.showKeystrokes,
            let key = settings.keystrokes.last(where: { time >= $0.time && time < $0.time + $0.duration }),
-           let glyph = keyGlyph(key.label) {
+           let glyph = keyGlyph(key.label, style: settings.keystrokeStyle ?? .dark) {
             let scale = min(2, max(0.5, settings.keystrokeScale))
             let scaled = glyph.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let y = extent.maxY - min(1, max(0, settings.keystrokeY)) * extent.height
@@ -177,21 +180,23 @@ enum AOMStudioRenderer {
 
     private static let glyphLock = NSLock()
     private static var keyGlyphs: [String: CIImage] = [:]
-    private static func keyGlyph(_ label: String) -> CIImage? {
+    private static func keyGlyph(_ label: String, style: AOMKeystrokeStyle) -> CIImage? {
         glyphLock.lock(); defer { glyphLock.unlock() }
-        if let image = keyGlyphs[label] { return image }
-        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold), .foregroundColor: NSColor.white])
+        let cacheKey = style.rawValue + "|" + label
+        if let image = keyGlyphs[cacheKey] { return image }
+        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 28, weight: .semibold),
+                                                                  .foregroundColor: style == .light ? NSColor.black : NSColor.white])
         let size = CGSize(width: max(70, text.size().width + 36), height: 58)
         let image = NSImage(size: size)
         image.lockFocus()
-        NSColor.black.withAlphaComponent(0.75).setFill()
+        (style == .light ? NSColor.white.withAlphaComponent(0.92) : NSColor.black.withAlphaComponent(0.75)).setFill()
         NSBezierPath(roundedRect: CGRect(origin: .zero, size: size), xRadius: 14, yRadius: 14).fill()
         text.draw(at: CGPoint(x: (size.width - text.size().width) / 2, y: 12))
         image.unlockFocus()
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let result = CIImage(cgImage: cg)
         if keyGlyphs.count > 256 { keyGlyphs.removeAll() }
-        keyGlyphs[label] = result
+        keyGlyphs[cacheKey] = result
         return result
     }
 
@@ -222,6 +227,11 @@ enum AOMStudioRenderer {
 }
 
 enum AOMStudioCursorStyle: String, Codable, CaseIterable { case arrow, dot, hidden }
+enum AOMKeystrokeStyle: String, Codable, CaseIterable, Identifiable {
+    case dark, light
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+}
 enum AOMStudioAspect: String, Codable, CaseIterable {
     case source, landscape, portrait, square
     var displayName: String {

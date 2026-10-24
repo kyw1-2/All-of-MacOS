@@ -13,6 +13,10 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureRecordingAudioSource") private var recordingAudioSourceRaw = RecordingAudioSource.off.rawValue
     @AppStorage("AOMCaptureRecordingCameraOverlay") private var recordingCameraOverlay = false
     @AppStorage("AOMCaptureRecordingKeystrokeOverlay") private var recordingKeystrokeOverlay = false
+    @AppStorage("AOMCaptureRecordingKeystrokeAllKeys") private var keystrokeAllKeys = false
+    @AppStorage("AOMCaptureRecordingKeystrokePosition") private var keystrokePosition = KeystrokeOverlayPosition.bottom.rawValue
+    @AppStorage("AOMCaptureRecordingKeystrokeSize") private var keystrokeSize = KeystrokeOverlaySize.medium.rawValue
+    @AppStorage("AOMCaptureRecordingKeystrokeStyle") private var keystrokeStyle = AOMKeystrokeStyle.dark.rawValue
     @AppStorage("AOMCaptureRecordingOutputFormat") private var recordingOutputFormat = "mp4"
     @AppStorage("AOMCaptureRecordingGIFFPS") private var recordingGIFFPS = 10
     @AppStorage("AOMCaptureRecordingFPS") private var recordingFPS = 30
@@ -258,8 +262,33 @@ struct CaptureSettingsView: View {
                 Toggle("", isOn: $recordingCameraOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "keyboard", iconColor: .purple,
-                             title: "Show Keyboard Shortcuts", subtitle: "Editable shortcuts; ordinary typed text is never collected", showDivider: true) {
+                             title: "Show Keystrokes",
+                             subtitle: keystrokeAllKeys ? "Every key except in password fields; editable afterwards"
+                                : "Shortcuts and navigation keys; ordinary typed text is not collected", showDivider: true) {
                 Toggle("", isOn: $recordingKeystrokeOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if recordingKeystrokeOverlay {
+                AppleSettingsRow(icon: "keyboard.badge.ellipsis", iconColor: .purple, title: "Keys to Show",
+                                 subtitle: nil, showDivider: true) {
+                    Picker("", selection: $keystrokeAllKeys) {
+                        Text("Shortcuts Only").tag(false)
+                        Text("All Keys").tag(true)
+                    }.pickerStyle(.menu).labelsHidden().frame(width: 150)
+                }
+                AppleSettingsRow(icon: "rectangle.portrait.topthird.inset.filled", iconColor: .purple,
+                                 title: "Keystroke Position, Size and Style", subtitle: nil, showDivider: true) {
+                    HStack(spacing: 6) {
+                        Picker("", selection: $keystrokePosition) {
+                            ForEach(KeystrokeOverlayPosition.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }.labelsHidden().frame(width: 90)
+                        Picker("", selection: $keystrokeSize) {
+                            ForEach(KeystrokeOverlaySize.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }.labelsHidden().frame(width: 95)
+                        Picker("", selection: $keystrokeStyle) {
+                            ForEach(AOMKeystrokeStyle.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }.labelsHidden().frame(width: 80)
+                    }.pickerStyle(.menu)
+                }
             }
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,
                              title: "Audio Source",

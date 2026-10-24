@@ -40,6 +40,7 @@ struct RecordingExportEditor: View {
     @State private var showKeys = true
     @State private var keyScale = 1.0
     @State private var keyY = 0.9
+    @State private var keyStyle: AOMKeystrokeStyle = .dark
     @State private var showCamera = true
     @State private var cameraSize = 0.24
     @State private var cameraX = 0.84
@@ -364,6 +365,9 @@ struct RecordingExportEditor: View {
             if !keyEvents.isEmpty {
                 Toggle("Shortcut layer", isOn: $showKeys)
                 HStack { Text("Size"); Slider(value: $keyScale, in: 0.5...2); Text("Vertical position"); Slider(value: $keyY, in: 0...1) }
+                Picker("Badge style", selection: $keyStyle) {
+                    ForEach(AOMKeystrokeStyle.allCases) { Text($0.displayName).tag($0) }
+                }.pickerStyle(.segmented).fixedSize()
                 ForEach($keyEvents) { $key in
                     HStack {
                         Text(key.label).frame(width: 100)
@@ -397,7 +401,7 @@ struct RecordingExportEditor: View {
                           keystrokes: keyEvents.filter { $0.isValid }.sorted { $0.time < $1.time }, showKeystrokes: showKeys,
                           keystrokeScale: keyScale, keystrokeY: keyY, showCamera: showCamera,
                           cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraRoundness: cameraRoundness,
-                          aspect: outputAspect, resolution: outputResolution)
+                          aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle)
     }
 
     private func updatePreview() {
@@ -541,6 +545,7 @@ struct RecordingExportEditor: View {
         includeSmoothedCursor = !settings.cursorPoints.isEmpty; cursorStyle = settings.cursorStyle
         showRipples = settings.showClickRipples; keyEvents = settings.keystrokes; showKeys = settings.showKeystrokes
         keyScale = settings.keystrokeScale; keyY = settings.keystrokeY; showCamera = settings.showCamera
+        keyStyle = settings.keystrokeStyle ?? .dark
         cameraSize = settings.cameraSize; cameraX = settings.cameraX; cameraY = settings.cameraY; cameraRoundness = settings.cameraRoundness
         outputAspect = settings.aspect; outputResolution = settings.resolution
     }

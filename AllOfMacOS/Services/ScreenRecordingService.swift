@@ -312,7 +312,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         var finishingWarning: String?
         do { try telemetry.write(for: url) }
         catch { finishingWarning = "Editable input track could not be saved: \(error.localizedDescription)" }
-        let defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
+        var defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
+        defaultStyle.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
+        defaultStyle.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
+        defaultStyle.keystrokeStyle = CaptureSettings.recordingKeystrokeStyle
         var presentation = url
         if !telemetry.points.isEmpty || !(telemetry.keystrokes ?? []).isEmpty || cameraWriter?.status == .completed || (wantsRipples && !(telemetry.clicks ?? []).isEmpty) {
             GestureHUD.shared.show(title: "Finishing Recording", detail: "Rendering editable layers. The original screen and camera tracks are kept.")
@@ -492,15 +495,27 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private func showKey(_ event: NSEvent) {
         guard isRecording, !isPaused else { return }
         guard !IsSecureEventInputEnabled() else { keyImage = nil; return }
-        // Only show shortcuts and navigation keys. Ordinary typed text and
-        // passwords are never copied into the keystroke overlay.
-        let special: [UInt16: String] = [36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-        let flags = event.modifierFlags
-        guard flags.contains(.command) || flags.contains(.control) || flags.contains(.option) || special[event.keyCode] != nil else { return }
-        let modifiers = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "") + (flags.contains(.shift) ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
-        let label = modifiers + (special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "")
+        // By default only shortcuts and navigation keys are shown, so ordinary
+        // typed text is not copied into the overlay; "All Keys" opts in.
+        // Password fields (Secure Input) are always excluded above.
+        guard let label = Self.keystrokeLabel(keyCode: event.keyCode, flags: event.modifierFlags,
+                                              characters: event.charactersIgnoringModifiers,
+                                              allKeys: CaptureSettings.recordingKeystrokesAllKeys) else { return }
         guard let time = recordingTime(), keyEvents.count < 60_000 else { return }
         keyEvents.append(AOMKeystrokeEvent(time: time, label: label))
+    }
+
+    /// The badge text for a key press, or nil when it is not shown.
+    nonisolated static func keystrokeLabel(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?,
+                                           allKeys: Bool) -> String? {
+        let special: [UInt16: String] = [36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 123: "←", 124: "→", 125: "↓", 126: "↑"]
+        let shortcut = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        guard shortcut || special[keyCode] != nil || allKeys else { return nil }
+        let modifiers = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "")
+            + (flags.contains(.shift) && shortcut ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
+        let key = special[keyCode] ?? (shortcut ? characters?.uppercased() : characters) ?? ""
+        let label = modifiers + key
+        return label.trimmingCharacters(in: .whitespaces).isEmpty ? nil : label
     }
 
     private func recordingTime() -> Double? {

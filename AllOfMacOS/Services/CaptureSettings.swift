@@ -424,6 +424,26 @@ enum CaptureSettings {
         get { d.bool(forKey: "AOMCaptureRecordingCameraOverlay") }
         set { d.set(newValue, forKey: "AOMCaptureRecordingCameraOverlay") }
     }
+    /// CleanShot's keystroke-overlay options for recordings.
+    static var recordingKeystrokePosition: KeystrokeOverlayPosition {
+        get { KeystrokeOverlayPosition(rawValue: d.string(forKey: "AOMCaptureRecordingKeystrokePosition") ?? "") ?? .bottom }
+        set { d.set(newValue.rawValue, forKey: "AOMCaptureRecordingKeystrokePosition") }
+    }
+    static var recordingKeystrokeSize: KeystrokeOverlaySize {
+        get { KeystrokeOverlaySize(rawValue: d.string(forKey: "AOMCaptureRecordingKeystrokeSize") ?? "") ?? .medium }
+        set { d.set(newValue.rawValue, forKey: "AOMCaptureRecordingKeystrokeSize") }
+    }
+    static var recordingKeystrokeStyle: AOMKeystrokeStyle {
+        get { AOMKeystrokeStyle(rawValue: d.string(forKey: "AOMCaptureRecordingKeystrokeStyle") ?? "") ?? .dark }
+        set { d.set(newValue.rawValue, forKey: "AOMCaptureRecordingKeystrokeStyle") }
+    }
+    /// Off (default): shortcuts and navigation keys only. On: every key,
+    /// except while a password field has Secure Input.
+    static var recordingKeystrokesAllKeys: Bool {
+        get { d.bool(forKey: "AOMCaptureRecordingKeystrokeAllKeys") }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingKeystrokeAllKeys") }
+    }
+
     static var recordingKeystrokeOverlay: Bool {
         get { d.bool(forKey: "AOMCaptureRecordingKeystrokeOverlay") }
         set { d.set(newValue, forKey: "AOMCaptureRecordingKeystrokeOverlay") }
@@ -534,4 +554,27 @@ extension CaptureSettings {
     /// speech. `ocrKeepsLineBreaks` above and `textCapture.keepsLineBreaks`
     /// share the "AOMOCRKeepsLineBreaks" key.
     static var textCapture: TextCaptureSettings { .shared }
+}
+
+/// Where recorded keystrokes appear.
+enum KeystrokeOverlayPosition: String, CaseIterable, Identifiable {
+    case top, bottom
+    var id: String { rawValue }
+    var displayName: String { self == .top ? "Top" : "Bottom" }
+    /// AOMStudioSettings.keystrokeY (0 top … 1 bottom).
+    var studioY: Double { self == .top ? 0.1 : 0.9 }
+}
+
+enum KeystrokeOverlaySize: String, CaseIterable, Identifiable {
+    case small, medium, large
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+    /// AOMStudioSettings.keystrokeScale.
+    var studioScale: Double {
+        switch self {
+        case .small: return 0.75
+        case .medium: return 1
+        case .large: return 1.4
+        }
+    }
 }
