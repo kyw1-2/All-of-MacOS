@@ -53,7 +53,7 @@ struct ModernWindowSnappingView: View {
     /// a little slack so text metrics can never push the grid out of the sheet).
     static let tileBlockHeight: CGFloat = 20 + 20 + 256 + 20
     static let minimumStageHeight: CGFloat = 150
-    static let maximumStageHeight: CGFloat = 360
+    static let maximumStageHeight: CGFloat = 280
     private let headerHeight: CGFloat = 0
 
     var body: some View {

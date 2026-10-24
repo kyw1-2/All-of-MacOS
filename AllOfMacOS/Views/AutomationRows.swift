@@ -34,29 +34,37 @@ struct AOMAutomationRow<Accessory: View>: View {
     @EnvironmentObject var appState: AppState
     let trigger: Trigger
     var showsSwitch = true
+    /// True only inside a selection list: key caps then invert to white on the
+    /// row's accent fill when this trigger is the selected one.
+    var rendersSelection = false
     @ViewBuilder var accessory: Accessory
 
-    init(trigger: Trigger, showsSwitch: Bool = true, @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
+    init(trigger: Trigger, showsSwitch: Bool = true, rendersSelection: Bool = false,
+         @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
         self.trigger = trigger
         self.showsSwitch = showsSwitch
+        self.rendersSelection = rendersSelection
         self.accessory = accessory()
     }
+
+    /// The list selection is app state, so the row knows when it is selected.
+    private var isSelected: Bool { rendersSelection && appState.selectedTrigger?.id == trigger.id }
 
     var body: some View {
         AOMListRow(trigger.displayName, detail: trigger.aomRowDetail, dimmed: !trigger.isEnabled) {
             Image(systemName: trigger.input.category.iconName)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : AOMTheme.textTertiary)
+                .foregroundStyle(trigger.isEnabled ? .secondary : .tertiary)
                 .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {
                 accessory
                 if trigger.isFavorite {
-                    Image(systemName: "pin.fill").font(.system(size: 9.5)).foregroundStyle(AOMTheme.textTertiary)
+                    Image(systemName: "pin.fill").font(.system(size: 9.5)).foregroundStyle(.tertiary)
                         .accessibilityLabel("Pinned")
                 }
                 if case .keyboardShortcut(let shortcut) = trigger.input {
-                    AOMShortcutKeys(shortcut: shortcut)
+                    AOMShortcutKeys(shortcut: shortcut, onSelection: isSelected)
                 }
                 if showsSwitch {
                     Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },

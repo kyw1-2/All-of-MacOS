@@ -329,23 +329,25 @@ struct ClipboardStudioView: View {
 
     private func chip(title: String, count: Int, color: Color?, symbol: String?, selected: Bool,
                       action: @escaping () -> Void) -> some View {
-        Button {
+        let accent = Color.accentColor
+        return Button {
             withAnimation(AOMMotion.quick) { action() }
         } label: {
             HStack(spacing: 5) {
                 if let color { Circle().fill(color).frame(width: 7, height: 7) }
                 if let symbol { Image(systemName: symbol).font(.system(size: 11, weight: .medium)) }
                 Text(title).font(AOMType.body.weight(selected ? .semibold : .regular)).lineLimit(1)
-                Text("\(count)").font(AOMType.caption.monospacedDigit()).foregroundStyle(AOMTheme.textTertiary)
+                Text("\(count)").font(AOMType.caption.monospacedDigit())
+                    .foregroundStyle(selected ? AOMTheme.onAccent(accent).opacity(0.75) : AOMTheme.textTertiary)
             }
-            .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
+            .foregroundStyle(selected ? AOMTheme.onAccent(accent) : AOMTheme.textSecondary)
             .padding(.horizontal, 9)
             .frame(height: 24)
-            .background(selected ? AOMTheme.track : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(selected ? accent : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: - New Board Sheet
@@ -445,14 +447,14 @@ private struct ClipboardStudioCard: View {
                 if let appIcon {
                     Image(nsImage: appIcon).resizable().frame(width: 16, height: 16)
                 } else {
-                    Image(systemName: entry.kind.symbol).font(.caption).foregroundStyle(.tint)
+                    Image(systemName: entry.kind.symbol).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(entry.sourceName ?? entry.kind.displayName)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if !entry.pinboardIDs.isEmpty {
-                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.orange)
+                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
                         .accessibilityLabel("Pinned")
                 }
                 Spacer(minLength: 4)
@@ -463,11 +465,12 @@ private struct ClipboardStudioCard: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
+            // Five caption lines fit the 108 pt band, so text ends on a whole
+            // line instead of the old blind clip through the middle of one.
             Preview(entry: entry)
                 .frame(height: 108)
                 .frame(maxWidth: .infinity)
                 .background(AOMTheme.cardAlt)
-                .clipped()
 
             HStack(spacing: 6) {
                 Text(entry.title)
@@ -621,7 +624,7 @@ extension ClipboardStudioCard {
                     Text(text)
                         .font(.system(size: large ? 13 : 12, design: ClipboardStudioCard.isLikelyCode(text) ? .monospaced : .default))
                         .foregroundStyle(.primary.opacity(0.9))
-                        .lineLimit(large ? nil : 6)
+                        .lineLimit(large ? nil : 5)
                         .textSelection(.enabled)
                     if large, full.count > 16000 {
                         Text("Preview shortened. Copy includes the full text.")

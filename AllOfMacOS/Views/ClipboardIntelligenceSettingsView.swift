@@ -134,7 +134,7 @@ private struct ClipboardMCPConnectSheet: View {
             } else {
                 TextField("Name (e.g. My AI Tool)", text: $request.name).textFieldStyle(.roundedBorder)
                 if let connectError {
-                    Text(connectError).font(.caption).foregroundStyle(.red)
+                    Text(connectError).font(.caption).foregroundStyle(AOMTheme.danger)
                 }
                 HStack {
                     Spacer()

@@ -70,6 +70,24 @@ enum AOMTheme {
     static let heroStart = Color(nsColor: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1))
     static let heroEnd = Color(nsColor: NSColor(srgbRed: 0.169, green: 0.443, blue: 0.918, alpha: 1))
 
+    /// Label colour for text and glyphs on an accent fill. Light accents
+    /// (yellow, orange, cyan, green) get near-black; the rest keep white.
+    /// Derived from WCAG relative luminance of the fill, so it also holds for
+    /// the user's accent choices in Settings → Appearance.
+    static func onAccent(_ accent: Color) -> Color {
+        guard let rgb = NSColor(accent).usingColorSpace(.deviceRGB) else { return .white }
+        func linear(_ c: CGFloat) -> CGFloat { c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        let luminance = 0.2126 * linear(rgb.redComponent)
+            + 0.7152 * linear(rgb.greenComponent)
+            + 0.0722 * linear(rgb.blueComponent)
+        // Above ~0.35 white text drops below ~3:1 contrast while black rises
+        // past ~8:1, so the light accents flip to a dark label.
+        if luminance > 0.35 {
+            return Color(nsColor: NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1))
+        }
+        return .white
+    }
+
     // MARK: Geometry
 
     /// Cards for discrete items (captures, clipboard cards, notices).
@@ -487,36 +505,6 @@ struct AOMIconBadge: View {
 // MARK: - Search field
 
 /// In-pane search field (pages prefer `.searchable` in the toolbar).
-struct AOMSearchField: View {
-    let prompt: String
-    @Binding var text: String
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AOMTheme.textTertiary)
-            TextField(prompt, text: $text)
-                .textFieldStyle(.plain)
-                .font(AOMType.body)
-                .focused($focused)
-            if !text.isEmpty {
-                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AOMTheme.textTertiary)
-                    .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
-                .strokeBorder(focused ? AOMTheme.blue.opacity(0.8) : .clear, lineWidth: 2)
-        }
-    }
-}
 
 // MARK: - Buttons
 
@@ -541,7 +529,7 @@ private struct AOMFilledBody: View {
         let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(AOMTheme.onAccent(tint))
             .padding(.horizontal, 12)
             .frame(minHeight: height)
             .background(tint.aomDarker(configuration.isPressed ? 0.14 : (hovering ? 0.06 : 0)), in: shape)
@@ -606,19 +594,23 @@ struct AOMChip: View {
 /// A key cap for shortcut hints.
 struct AOMKeycap: View {
     let text: String
+    /// White-on-transparent rendering for caps inside a selected list row,
+    /// where the chip's fixed card fill would sit unreadably on the accent.
+    var onSelection = false
 
     var body: some View {
         Text(text)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(AOMTheme.textSecondary)
+            .foregroundStyle(onSelection ? Color.white.opacity(0.92) : AOMTheme.textSecondary)
             .lineLimit(1)
             .fixedSize()
             .padding(.horizontal, 5)
             .frame(minWidth: 18, minHeight: 18)
-            .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .background(onSelection ? Color.white.opacity(0.18) : AOMTheme.cardAlt,
+                        in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(AOMTheme.hairline, lineWidth: 0.5)
+                    .strokeBorder(onSelection ? Color.white.opacity(0.35) : AOMTheme.hairline, lineWidth: 0.5)
             }
             .accessibilityLabel(text)
     }

@@ -419,7 +419,13 @@ struct AOMEmptyState<Actions: View>: View {
         } description: {
             Text(message)
         } actions: {
-            actions
+            // Narrow columns (the Automation list) must stack the actions
+            // instead of clipping them: try one row first, fall back to a
+            // leading-aligned column.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AOMSpace.xs) { actions }
+                VStack(alignment: .leading, spacing: AOMSpace.xs) { actions }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -89,6 +89,15 @@ class ActionExecutor {
                      isHeld: (() -> Bool)? = nil) {
         guard TriggerGate.admit(triggerID: triggerID, trigger: nil, redispatch: { fire(triggerID: triggerID, fallbackActions: fallbackActions, fromTrackpad: fromTrackpad, isHeld: isHeld) }) else { return }
         let trigger = registeredTriggers.first { $0.id == triggerID }
+        // Keyboard, mouse-button, drawing and system inputs all funnel through
+        // here, so their runs are counted once at dispatch. The trackpad
+        // monitor keeps its own detect/fire statistics and passes
+        // fromTrackpad, which must not be counted twice.
+        if !fromTrackpad, let trigger {
+            let inputName = trigger.input.displayName
+            GestureStatistics.shared.recordDetectionFromAnyThread(inputName)
+            GestureStatistics.shared.recordFireFromAnyThread(inputName)
+        }
         let startApp = externalBundleID
         let startModifiers = NSEvent.modifierFlags.rawValue & TriggerResolver.modifierMask
         let run: (@escaping (Bool) -> Void) -> Void = { done in

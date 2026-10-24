@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The command palette, after Raycast's root search and Action Panel: one
 /// field that is focused on open, ↑↓ to move, ↩ for the primary action, ⌘↩
-/// for the secondary one, Esc to clear the query and then to close. With an
+/// for the first secondary (further secondaries sit on the row's right-click
+/// menu), Esc to clear the query and then to close. With an
 /// empty query results are grouped by kind; while searching they are one
 /// ranked list. Shortcut hints are the user's real bindings.
 struct QuickCommandPalette: View {
@@ -30,7 +31,23 @@ struct QuickCommandPalette: View {
         let section: Section
         var shortcut: String?
         let primary: PaletteAction
-        var secondary: PaletteAction?
+        /// ⌘↩ runs the first; the rest surface in the row's right-click menu.
+        private(set) var secondaries: [PaletteAction]
+
+        /// The palette stays a launcher, not a context menu.
+        static let secondaryLimit = 3
+
+        init(id: String, title: String, subtitle: String, icon: String, section: Section,
+             shortcut: String? = nil, primary: PaletteAction, secondaries: [PaletteAction] = []) {
+            self.id = id
+            self.title = title
+            self.subtitle = subtitle
+            self.icon = icon
+            self.section = section
+            self.shortcut = shortcut
+            self.primary = primary
+            self.secondaries = Array(secondaries.prefix(Self.secondaryLimit))
+        }
     }
 
     enum Section: String, CaseIterable {
@@ -39,6 +56,49 @@ struct QuickCommandPalette: View {
         case clipboard = "Clipboard"
         case captures = "Recent Captures"
         case navigation = "Go To"
+    }
+
+    /// Pure search and keyboard decisions, split from the view so they are
+    /// testable without a window: with an empty (or blank) query the results
+    /// are grouped by section in declaration order; otherwise they form one
+    /// ranked list — title prefix, then title, then subtitle, then section
+    /// name — stable within a rank.
+    enum PaletteSearch {
+        enum EscapeOutcome: Equatable {
+            /// The query has content: clear it and keep the palette open.
+            case clearQuery
+            /// The query is empty: dismiss the palette.
+            case close
+        }
+
+        static func trimmedQuery(_ query: String) -> String {
+            query.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        /// Esc backs out one level: clear the query first, then close.
+        static func escapeOutcome(query: String) -> EscapeOutcome {
+            trimmedQuery(query).isEmpty ? .close : .clearQuery
+        }
+
+        /// Lower rank sorts first; nil means the item does not match.
+        static func rank(of item: PaletteItem, matching query: String) -> Int? {
+            if item.title.lowercased().hasPrefix(query.lowercased()) { return 0 }
+            if item.title.localizedCaseInsensitiveContains(query) { return 1 }
+            if item.subtitle.localizedCaseInsensitiveContains(query) { return 2 }
+            if item.section.rawValue.localizedCaseInsensitiveContains(query) { return 3 }
+            return nil
+        }
+
+        static func results(for items: [PaletteItem], query: String) -> [PaletteItem] {
+            let trimmed = trimmedQuery(query)
+            guard !trimmed.isEmpty else {
+                return Section.allCases.flatMap { section in items.filter { $0.section == section } }
+            }
+            return items.compactMap { item in rank(of: item, matching: trimmed).map { (item, $0) } }
+                .enumerated()
+                .sorted { ($0.element.1, $0.offset) < ($1.element.1, $1.offset) }
+                .map(\.element.0)
+        }
     }
 
     // MARK: Items
@@ -56,18 +116,24 @@ struct QuickCommandPalette: View {
             items.append(PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: .commands, shortcut: keys,
                                      primary: PaletteAction(title: "Run") { close(); run() }))
         }
+        // Keycaps mirror the user's real bindings; unbound commands show none.
+        // Capture Text resolves to the OCR binding, as in CaptureMenu.
         command("capture.area", "Capture Area", "Drag a region to capture", "viewfinder",
                 keys: captureKeys(.captureArea)) { CaptureCoordinator.shared.captureArea() }
-        command("capture.window", "Capture Window", "Pick a window to capture", "macwindow") {
+        command("capture.window", "Capture Window", "Pick a window to capture", "macwindow",
+                keys: captureKeys(.captureWindow)) {
             CaptureCoordinator.shared.captureWindowInteractive()
         }
-        command("capture.fullscreen", "Capture Full Screen", "The display under the pointer", "display") {
+        command("capture.fullscreen", "Capture Full Screen", "The display under the pointer", "display",
+                keys: captureKeys(.captureFullscreen)) {
             CaptureCoordinator.shared.captureFullscreen()
         }
-        command("capture.text", "Capture Text", "Recognise text in a region and copy it", "text.viewfinder") {
+        command("capture.text", "Capture Text", "Recognise text in a region and copy it", "text.viewfinder",
+                keys: captureKeys(.ocr)) {
             CaptureCoordinator.shared.captureText()
         }
-        command("capture.record", "Record Screen", "Start a screen recording", "record.circle") {
+        command("capture.record", "Record Screen", "Start a screen recording", "record.circle",
+                keys: captureKeys(.recordScreen)) {
             ScreenRecordingService.shared.promptAndStartRecording()
         }
         command("clipboard.shelf", "Open Clipboard Shelf", "Find and paste a copied item", "doc.on.clipboard",
@@ -87,7 +153,16 @@ struct QuickCommandPalette: View {
         for trigger in appState.currentPreset.triggers {
             var keys: String?
             if case .keyboardShortcut(let shortcut) = trigger.input { keys = shortcut.displayString }
-            var item = PaletteItem(id: "trigger.\(trigger.id.uuidString)", title: trigger.displayName,
+            // Never offer a list-level run for Type Text (it could type a stored password).
+            var secondaries: [PaletteAction] = []
+            if trigger.isEnabled, !trigger.actions.isEmpty, !trigger.aomTypesText {
+                secondaries = [PaletteAction(title: "Run Now") {
+                    close()
+                    ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
+                                                  triggerID: trigger.id)
+                }]
+            }
+            items.append(PaletteItem(id: "trigger.\(trigger.id.uuidString)", title: trigger.displayName,
                                    subtitle: trigger.aomRowDetail, icon: trigger.input.category.iconName,
                                    section: .automations, shortcut: keys,
                                    primary: PaletteAction(title: "Open in Editor") {
@@ -99,16 +174,8 @@ struct QuickCommandPalette: View {
                                        }
                                        appState.selectedTrigger = trigger
                                        appState.selectedMainTab = .gestures
-                                   })
-            // Never offer a list-level run for Type Text (it could type a stored password).
-            if trigger.isEnabled, !trigger.actions.isEmpty, !trigger.aomTypesText {
-                item.secondary = PaletteAction(title: "Run Now") {
-                    close()
-                    ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
-                                                  triggerID: trigger.id)
-                }
-            }
-            items.append(item)
+                                   },
+                                   secondaries: secondaries))
         }
 
         for entry in clipboardStore.entries.prefix(20) {
@@ -117,9 +184,9 @@ struct QuickCommandPalette: View {
                 subtitle: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · "),
                 icon: entry.kind.symbol, section: .clipboard,
                 primary: PaletteAction(title: "Copy") { close(); _ = try? clipboardStore.write(entryIDs: [entry.id], plainText: false) },
-                secondary: entry.kind == .text || entry.kind == .link
-                    ? PaletteAction(title: "Copy as Plain Text") { close(); _ = try? clipboardStore.write(entryIDs: [entry.id], plainText: true) }
-                    : nil))
+                secondaries: entry.kind == .text || entry.kind == .link
+                    ? [PaletteAction(title: "Copy as Plain Text") { close(); _ = try? clipboardStore.write(entryIDs: [entry.id], plainText: true) }]
+                    : []))
         }
 
         for capture in captureHistory.entries.prefix(6) {
@@ -128,7 +195,7 @@ struct QuickCommandPalette: View {
                 subtitle: "\(Int(capture.pixelSize.width))×\(Int(capture.pixelSize.height)) · \(AOMRelativeTime.string(capture.capturedAt))",
                 icon: capture.kind == .videoRecording ? "film" : "photo", section: .captures,
                 primary: PaletteAction(title: "Edit") { close(); CaptureItemActions.edit(capture) },
-                secondary: PaletteAction(title: "Copy") { close(); CaptureItemActions.copy(capture) }))
+                secondaries: [PaletteAction(title: "Copy") { close(); CaptureItemActions.copy(capture) }]))
         }
 
         for tab in AOMMainTab.allCases {
@@ -144,26 +211,9 @@ struct QuickCommandPalette: View {
     }
 
     /// Searching ranks one flat list: title prefix, then title, then detail.
-    private var results: [PaletteItem] {
-        let items = allItems
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return Section.allCases.flatMap { section in items.filter { $0.section == section } }
-        }
-        func rank(_ item: PaletteItem) -> Int? {
-            if item.title.lowercased().hasPrefix(trimmed.lowercased()) { return 0 }
-            if item.title.localizedCaseInsensitiveContains(trimmed) { return 1 }
-            if item.subtitle.localizedCaseInsensitiveContains(trimmed) { return 2 }
-            if item.section.rawValue.localizedCaseInsensitiveContains(trimmed) { return 3 }
-            return nil
-        }
-        return items.compactMap { item in rank(item).map { (item, $0) } }
-            .enumerated()
-            .sorted { ($0.element.1, $0.offset) < ($1.element.1, $1.offset) }
-            .map(\.element.0)
-    }
+    private var results: [PaletteItem] { PaletteSearch.results(for: allItems, query: query) }
 
-    private var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var isSearching: Bool { !PaletteSearch.trimmedQuery(query).isEmpty }
 
     // MARK: Body
 
@@ -198,6 +248,14 @@ struct QuickCommandPalette: View {
                         Text("No Results for “\(query)”").font(AOMType.bodyEmphasis)
                         Text("Try an automation name, an app or a word you copied.")
                             .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                        // The empty state needs a mouse-reachable way out too.
+                        Button("Clear Search") {
+                            query = ""
+                            isFieldFocused = true
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
+                        .padding(.top, 6)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -237,14 +295,18 @@ struct QuickCommandPalette: View {
         .onAppear { isFieldFocused = true }
         .onExitCommand {
             // Esc goes back one level: clear the query, then close.
-            if isSearching { query = "" } else { close() }
+            switch PaletteSearch.escapeOutcome(query: query) {
+            case .clearQuery: query = ""
+            case .close: close()
+            }
         }
         .onKeyPress(.upArrow) { move(-1, in: items); return .handled }
         .onKeyPress(.downArrow) { move(1, in: items); return .handled }
         .onKeyPress(.return, phases: .down) { press in
             guard let item = selected else { return .handled }
             if press.modifiers.contains(.command) {
-                item.secondary?.run()
+                // ⌘↩ keeps running the first secondary, as before.
+                item.secondaries.first?.run()
             } else {
                 item.primary.run()
             }
@@ -284,10 +346,11 @@ struct QuickCommandPalette: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 34)
-            .background(selected ? AOMTheme.track : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(selected ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .paletteExtraActionsMenu(Array(item.secondaries.dropFirst()))
         .accessibilityLabel("\(item.title), \(item.subtitle)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -301,7 +364,7 @@ struct QuickCommandPalette: View {
             Spacer()
             if let item {
                 actionHint(item.primary.title, keys: "↩", prominent: true) { item.primary.run() }
-                if let secondary = item.secondary {
+                if let secondary = item.secondaries.first {
                     actionHint(secondary.title, keys: "⌘↩", prominent: false) { secondary.run() }
                 }
             }
@@ -324,5 +387,22 @@ struct QuickCommandPalette: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(keys)")
+    }
+}
+
+private extension View {
+    /// Right-click surface for secondary actions beyond the first, which
+    /// already owns the ⌘↩ hint in the action bar. No menu when there are none.
+    @ViewBuilder
+    func paletteExtraActionsMenu(_ actions: [QuickCommandPalette.PaletteAction]) -> some View {
+        if actions.isEmpty {
+            self
+        } else {
+            contextMenu {
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                    Button(action.title) { action.run() }
+                }
+            }
+        }
     }
 }

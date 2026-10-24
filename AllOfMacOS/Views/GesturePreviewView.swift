@@ -18,21 +18,23 @@ struct GesturePreviewView: View {
     @State private var animationID = UUID()
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             ZStack {
                 // Trackpad body
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 11)
                     .fill(Color(nsColor: .darkGray).opacity(0.3))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.gray.opacity(0.4), lineWidth: 1.5)
+                        RoundedRectangle(cornerRadius: 11)
+                            .stroke(Color.gray.opacity(0.4), lineWidth: 1)
                     )
 
-                // Gesture animation
+                // Gesture animation, drawn at the original trackpad scale and
+                // proportionally downscaled with the body
                 gestureAnimation
+                    .scaleEffect(2.0 / 3.0)
                     .id(animationID)
             }
-            .frame(width: 180, height: 140)
+            .frame(width: 120, height: 92)
             .clipped()
             .onAppear { startAnimation() }
             .onChange(of: gesture) { _ in restartAnimation() }
@@ -41,7 +43,7 @@ struct GesturePreviewView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
-        .padding(12)
+        .padding(8)
         .environment(\.themeColor, appState.accentColorChoice.color)
     }
 

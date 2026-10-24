@@ -30,8 +30,8 @@ struct AOMHomeView: View {
     private var triggers: [Trigger] { appState.currentPreset.triggers }
     private var pinned: [Trigger] { triggers.filter(\.isFavorite) }
 
-    /// When each trigger last ran, from the statistics log (trackpad inputs
-    /// record their gesture name, which is the unnamed trigger's input name).
+    /// When each trigger last ran, from the statistics log. Inputs record
+    /// their display name (the unnamed trigger's input name) when they fire.
     private var lastRuns: [UUID: Date] {
         var latestByInput: [String: Date] = [:]
         for event in stats.events where event.fired {

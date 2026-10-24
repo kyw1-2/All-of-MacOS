@@ -2,6 +2,20 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 2.1.0
+
+Readability and honest numbers on top of the 2.0.0 window. Selected list rows invert their
+text (and key caps) like macOS expects, the palette's keyboard selection is clearly visible,
+and empty-state buttons wrap instead of clipping in narrow columns. Every input type —
+keyboard, mouse buttons, drawing, system triggers — now counts toward Insights and the
+Workspace's last-run times, not just trackpad gestures. Clipboard chips and filled buttons
+pick a readable label for any accent colour (including yellow, orange and cyan), the shelf's
+empty state offers Resume / Open Settings, and the Paste Stack panel uses the standard empty
+state. Settings rows regained their category-coloured icons, menus stop truncating long
+labels, permissions show a live badge, and "shortcut" searches reach the clipboard shortcut
+recorder. The Automation editor's trackpad preview is a third smaller. Shortcuts, data
+formats and permissions are unchanged.
+
 ## Version 2.0.0
 
 A redesign around the three things you do every day — find and edit an automation, find and

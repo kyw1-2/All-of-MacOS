@@ -42,7 +42,7 @@ struct PermissionsSettingsView: View {
                 if let settingsError {
                     Label(settingsError, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AOMTheme.warning)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -67,7 +67,7 @@ struct PermissionsSettingsView: View {
             Image(systemName: requiredGranted == requiredPermissions.count
                   ? "checkmark.shield.fill" : "shield.lefthalf.filled")
                 .font(.system(size: 25))
-                .foregroundStyle(requiredGranted == requiredPermissions.count ? Color.green : Color.orange)
+                .foregroundStyle(requiredGranted == requiredPermissions.count ? AOMTheme.positive : AOMTheme.warning)
                 .frame(width: 36)
 
             VStack(alignment: .leading, spacing: 3) {

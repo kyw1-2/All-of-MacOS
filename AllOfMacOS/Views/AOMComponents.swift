@@ -29,20 +29,22 @@ struct AOMListRow<Leading: View, Trailing: View>: View {
     private var hasDetail: Bool { !(detail ?? "").isEmpty }
 
     var body: some View {
+        // Hierarchical styles, not fixed label colors: List selection inverts
+        // them to white on the accent fill, so selected rows stay readable.
         HStack(spacing: AOMSpace.s - 2) {
             leading
                 .frame(width: 20)
-                .foregroundStyle(dimmed ? AOMTheme.textTertiary : AOMTheme.textSecondary)
+                .foregroundStyle(dimmed ? .tertiary : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(AOMType.rowTitle)
-                    .foregroundStyle(dimmed ? AOMTheme.textSecondary : AOMTheme.text)
+                    .foregroundStyle(dimmed ? .secondary : .primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let detail, hasDetail {
                     Text(detail)
                         .font(AOMType.caption)
-                        .foregroundStyle(AOMTheme.textSecondary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -199,12 +201,15 @@ struct AOMRunStatusView: View {
 /// the thing being read.
 struct AOMShortcutKeys: View {
     let shortcut: KeyboardShortcut
+    /// Renders the caps white-on-transparent so they read inside a selected
+    /// list row; plain key caps keep the chip look everywhere else.
+    var onSelection = false
 
     var body: some View {
         let display = shortcut.displayString
         HStack(spacing: 3) {
             ForEach(Array(Self.parts(display).enumerated()), id: \.offset) { _, part in
-                AOMKeycap(text: part)
+                AOMKeycap(text: part, onSelection: onSelection)
             }
         }
         .accessibilityElement(children: .ignore)

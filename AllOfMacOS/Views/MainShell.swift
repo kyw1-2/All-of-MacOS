@@ -129,7 +129,7 @@ struct AOMSidebar: View {
                                                set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .help(on ? "Pause every gesture and shortcut" : "Resume automation")
             Menu {
                 Button("Settings…") { openSettings() }

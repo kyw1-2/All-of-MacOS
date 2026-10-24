@@ -29,7 +29,7 @@ struct ClipboardStackView: View {
 
     // Paste Stack (PasteStack.storyboard): 264 pt column, close button on the
     // leading edge, centred bold title, direction toggle on the trailing edge,
-    // 44 pt rows and a centred "Empty" label.
+    // 44 pt rows and a guided empty state.
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -52,11 +52,17 @@ struct ClipboardStackView: View {
             }
             .padding(.horizontal, 8).frame(height: 32)
             if orderedRows.isEmpty {
-                VStack(spacing: 6) {
-                    Text("Empty").font(.system(size: 13)).foregroundStyle(.tertiary)
-                    Text("Copy items to add them. ⌘V pastes them in order.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                }.padding(.horizontal, 16).frame(maxWidth: .infinity, maxHeight: .infinity)
+                AOMEmptyState("Stack Is Empty", systemImage: "doc.on.clipboard",
+                              message: "Copy items to add them. ⌘V pastes them in order.") {
+                    Button("Open Clipboard Library") {
+                        // The stack panel floats outside the main window's
+                        // environment, so reuse the menu bar's switch path.
+                        let delegate = NSApp.delegate as? AppDelegate
+                        delegate?.appState?.selectedMainTab = .clipboard
+                        delegate?.showMainWindow()
+                    }
+                }
+                .padding(.horizontal, 16)
             } else {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
@@ -68,14 +74,14 @@ struct ClipboardStackView: View {
                 }
             }
             if !state.status.isEmpty {
-                Text(state.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                Text(state.status).font(AOMType.caption).foregroundStyle(.secondary).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 4)
             }
             Divider().opacity(0.5)
             HStack(spacing: 7) {
                 Button { state.stackMode.toggle() } label: {
                     HStack(spacing: 5) {
-                        Circle().fill(state.stackMode ? Color.green : Color.secondary).frame(width: 6, height: 6)
+                        Circle().fill(state.stackMode ? AOMTheme.positive : Color.secondary).frame(width: 6, height: 6)
                         Text(state.stackMode ? "Collecting" : "Paused")
                     }
                 }
@@ -118,11 +124,12 @@ struct ClipboardStackView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.previewText.isEmpty ? entry.title : entry.previewText)
                     .font(.system(size: 12, weight: ordinal == 0 ? .semibold : .regular)).lineLimit(1)
-                Text(entry.sourceName ?? entry.kind.displayName).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Text(entry.sourceName ?? entry.kind.displayName).font(AOMType.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
             Button { if state.stack.indices.contains(index) { state.stack.remove(at: index) } } label: {
                 Image(systemName: "minus.circle").foregroundStyle(.tertiary)
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
             }.buttonStyle(.plain).help("Remove from Stack").accessibilityLabel("Remove from Stack")
         }
         .padding(.horizontal, 6).frame(height: 44)

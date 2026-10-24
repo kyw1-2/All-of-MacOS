@@ -204,7 +204,7 @@ struct ModernGesturesWorkspace: View {
                 if searchQuery.isEmpty {
                     AOMEmptyState("No \(selectedDeviceCategory.rawValue) Automations", systemImage: selectedDeviceCategory.iconName,
                                   message: "Nothing in \(scopeTitle) uses this input yet.") {
-                        Button("New \(selectedDeviceCategory.rawValue) Automation") { presentAddTrigger(selectedDeviceCategory) }
+                        Button("New Automation") { presentAddTrigger(selectedDeviceCategory) }
                         Button("Show All Inputs") { selectedDeviceCategory = .all }
                     }
                 } else {
@@ -251,7 +251,7 @@ struct ModernGesturesWorkspace: View {
     private var list: some View {
         List(selection: selection) {
             ForEach(rows) { trigger in
-                AOMAutomationRow(trigger: trigger)
+                AOMAutomationRow(trigger: trigger, rendersSelection: true)
                     .modifier(FiredFlash(triggerID: trigger.id))
                     .tag(trigger.id)
                     .contextMenu { triggerMenu(trigger) }

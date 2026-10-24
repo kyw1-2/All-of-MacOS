@@ -160,7 +160,7 @@ struct CaptureStudioView: View {
     private var activeRecordingBanner: some View {
         HStack(spacing: 14) {
             Circle()
-                .fill(recordingService.isPaused ? Color.yellow : Color.red)
+                .fill(recordingService.isPaused ? AOMTheme.warning : AOMTheme.danger)
                 .frame(width: 10, height: 10)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
@@ -190,14 +190,14 @@ struct CaptureStudioView: View {
                 Label("Stop", systemImage: "stop.fill")
             }
             .buttonStyle(.borderedProminent)
-            .tint(.red)
+            .tint(AOMTheme.danger)
         }
         .controlSize(.small)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
+        .background(AOMTheme.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-            .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5))
+            .strokeBorder(AOMTheme.danger.opacity(0.3), lineWidth: 0.5))
     }
 
     // MARK: - Gallery Section
@@ -283,8 +283,8 @@ private struct CaptureCard: View {
             .aspectRatio(16 / 10, contentMode: .fit)
             .overlay(alignment: .topLeading) {
                 HStack(spacing: 4) {
-                    if entry.kind == .videoRecording { badge("Video", "play.fill", .red) }
-                    if entry.isPinned { badge("Pinned", "pin.fill", .orange) }
+                    if entry.kind == .videoRecording { badge("Video", "play.fill", AOMTheme.danger) }
+                    if entry.isPinned { badge("Pinned", "pin.fill", AOMTheme.warning) }
                 }
                 .padding(8)
             }
@@ -360,7 +360,7 @@ private struct CaptureCard: View {
         Button(role: role, action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(role == .destructive ? Color.red : Color.primary)
+                .foregroundStyle(role == .destructive ? AOMTheme.danger : Color.primary)
                 .frame(width: 28, height: 28)
                 .background(.regularMaterial, in: Circle())
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))

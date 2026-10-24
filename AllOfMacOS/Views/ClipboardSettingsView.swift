@@ -69,7 +69,7 @@ struct ClipboardSettingsView: View {
                     Label("\(conflict.appName) also uses \(conflict.shortcut.displayString). macOS sends it to \(conflict.appName), so choose another Clipboard History shortcut or quit \(conflict.appName).",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AOMTheme.warning)
                 }
                 GroupBox("Keyboard Shortcuts") {
                     VStack(spacing: 12) {
@@ -123,7 +123,7 @@ struct ClipboardSettingsView: View {
                         }
                         if let warning = store.storageWarning {
                             HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AOMTheme.warning)
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(warning).font(.caption)
                                     if store.storageStatus == .unreadableArchive {
@@ -136,7 +136,7 @@ struct ClipboardSettingsView: View {
                                 }
                             }
                         }
-                        if let error = store.lastError { Text(error).foregroundStyle(.red).font(.caption) }
+                        if let error = store.lastError { Text(error).foregroundStyle(AOMTheme.danger).font(.caption) }
                     }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }.padding(20)

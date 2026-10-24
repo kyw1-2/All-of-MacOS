@@ -146,7 +146,7 @@ struct HubRowShell<Control: View>: View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(AOMTheme.textSecondary)
+                .foregroundStyle(tint)
                 .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -208,7 +208,10 @@ struct HubChoiceRow: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.small)
-            .frame(width: width)
+            // Menus size to their content: a fixed width truncates long or
+            // localized labels ("Microphone + System Audio").
+            .frame(minWidth: width, alignment: .trailing)
+            .fixedSize()
             .accessibilityLabel(title)
         }
     }
@@ -234,7 +237,8 @@ struct HubIntChoiceRow: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.small)
-            .frame(width: width)
+            .frame(minWidth: width, alignment: .trailing)
+            .fixedSize()
             .accessibilityLabel(title)
         }
     }
@@ -451,7 +455,7 @@ enum SettingsCatalog {
             item("clipboardPreviews", .clipboard, "Link Previews", "Private web previews on link cards", ["링크", "미리보기"], AnyView(ClipboardPreferenceRow(icon: "link", tint: .teal, title: "Link Previews", subtitle: "Private link previews, off by default", keyPath: \.networkPreviews))),
             item("clipboardQuickModifier", .clipboard, "Quick Paste Modifier", "Modifier for quick paste with keys 1–9", ["붙여넣기", "단축키"], AnyView(HubChoiceRow(icon: "command", tint: .indigo, title: "Quick Paste Modifier", subtitle: "Modifier for quick paste with keys 1–9", key: "AOMClipboardQuickModifier", fallback: "command", options: modifiers, width: 150))),
             item("clipboardPlainModifier", .clipboard, "Plain Text Modifier", "Modifier for pasting without formatting", ["텍스트", "서식"], AnyView(HubChoiceRow(icon: "textformat", tint: .gray, title: "Plain Text Modifier", subtitle: "Modifier for pasting without formatting", key: "AOMClipboardPlainModifier", fallback: "shift", options: modifiers, width: 150))),
-            item("clipboardStorage", .clipboard, "Storage & Retention", "Retention, storage limits and excluded apps", ["저장", "용량", "보관", "히스토리"], AnyView(HubActionRow(icon: "externaldrive", tint: .brown, title: "Storage & Retention", subtitle: "Retention, storage limits and excluded apps") {
+            item("clipboardStorage", .clipboard, "Storage & Retention", "Retention, storage limits and excluded apps", ["저장", "용량", "보관", "히스토리", "shortcut", "hotkey", "단축키"], AnyView(HubActionRow(icon: "externaldrive", tint: .brown, title: "Storage & Retention", subtitle: "Retention, storage limits and excluded apps") {
                 Button("Open") { sheet.wrappedValue = .clipboardDetail }
                     .controlSize(.small)
             })),
@@ -475,6 +479,7 @@ enum SettingsCatalog {
     private static func permissionItems(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         [
             item("permissions", .permissions, "Permission Dashboard", "Accessibility, Screen Recording and Input Monitoring", ["권한", "개인정보", "접근성"], AnyView(HubActionRow(icon: "checkmark.shield", tint: .green, title: "Permission Dashboard", subtitle: "Accessibility, Screen Recording and Input Monitoring") {
+                PermissionSummaryBadge()
                 Button("Review") { sheet.wrappedValue = .permissions }.controlSize(.small)
             })),
             item("privacySettings", .permissions, "Open System Settings", "Open macOS privacy settings", ["시스템 설정", "개인정보"], AnyView(HubActionRow(icon: "gearshape.2", tint: .gray, title: "Open System Settings", subtitle: "Open macOS privacy settings") {
@@ -517,6 +522,32 @@ extension Notification.Name {
     static let aomRestartTutorial = Notification.Name("AOMSettingsRestartTutorial")
     static let aomResetPreferences = Notification.Name("AOMSettingsResetPreferences")
     static let aomOpenReleaseNotes = Notification.Name("AOMSettingsOpenReleaseNotes")
+}
+
+/// Quiet live summary beside the permission dashboard's Review action, so a
+/// search hit shows the state without opening the sheet.
+struct PermissionSummaryBadge: View {
+    @State private var granted: Int?
+
+    var body: some View {
+        Group {
+            if let granted {
+                let complete = granted == AOMPermission.required.count
+                Label(complete ? "All granted" : "\(granted) of \(AOMPermission.required.count)",
+                      systemImage: complete ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(complete ? AOMTheme.positive : AOMTheme.warning)
+                    .fixedSize()
+            }
+        }
+        // Read-only status queries, deferred off the catalog build; the
+        // dashboard sheet owns the periodic re-check.
+        .task {
+            if granted == nil {
+                granted = AOMPermission.required.filter { $0.status == .granted }.count
+            }
+        }
+    }
 }
 
 // MARK: - Hub
@@ -621,8 +652,14 @@ struct SettingsHubView: View {
             }
             .padding(.horizontal, 12).frame(height: 32)
             .foregroundStyle(selected ? AOMTheme.text : AOMTheme.textSecondary)
-            .background(selected ? AOMTheme.divider.opacity(0.6) : .clear,
+            .background(selected ? AOMTheme.blue.opacity(0.13) : .clear,
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(AOMTheme.blue.opacity(0.35), lineWidth: 1)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? [.isSelected] : [])

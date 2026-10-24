@@ -1140,6 +1140,8 @@ private struct QuickAccessOverlayView: View {
             Text(title)
                 .font(.system(size: compact ? 12 : 13, weight: .semibold))
                 .foregroundStyle(Color.black.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(width: compact ? min(70, (width - 40) / 2) : min(110, width * 0.42),
                        height: compact ? 24 : 28)
         }

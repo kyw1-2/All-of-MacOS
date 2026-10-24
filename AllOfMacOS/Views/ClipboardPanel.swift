@@ -1542,7 +1542,7 @@ struct ClipboardPanelView: View {
             }
             .font(.system(size: 11, weight: .medium))
             .frame(maxWidth: .infinity).frame(height: 27).padding(.horizontal, 8)
-            .foregroundStyle(selected ? Color.white : Color.primary)
+            .foregroundStyle(selected ? AOMTheme.onAccent(Color.accentColor) : Color.primary)
             .background(selected ? Color.accentColor : Color.primary.opacity(0.065), in: Capsule())
             .contentShape(Capsule())
         }
@@ -1623,6 +1623,17 @@ struct ClipboardPanelView: View {
                         Text(emptyMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        // One quiet action per state: fix a broken store, or
+                        // resume recording; a merely empty history stays text-only.
+                        if !store.isLoading && !isFiltering && state.board == nil {
+                            if store.storageStatus != .ok {
+                                Button("Open Clipboard Settings…") { controller.openSettings() }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                            } else if store.paused {
+                                Button("Resume") { controller.togglePause() }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {

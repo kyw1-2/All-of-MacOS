@@ -326,7 +326,6 @@ struct TriggerConfigView: View {
             if part != .options, case .trackpadGesture(let gesture) = trigger.input {
                 GesturePreviewView(gesture: gesture)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
             }
             if part != .input, case .trackpadGesture(let gesture) = trigger.input {
                 Toggle("Haptic feedback on recognition", isOn: Binding(
