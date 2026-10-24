@@ -2,6 +2,15 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 3.0.0 — Design overhaul
+- **Native on macOS 26/27:** AOM now ships with the SDK it is built with, so the system draws Liquid Glass sidebars, toolbars and controls instead of the compatibility look. The minimum system stays macOS 14.
+- **Workspace:** one card per tool with its live state and everyday action — capture modes and the latest shots, the newest clipboard items, pinned or recent automations, and your snap zones as miniature layouts. Problems and a running recording appear on top only while they exist.
+- **Every page, one grammar:** a calm canvas with cards, the page title in the toolbar, and filters as chips with counts (Automation inputs, capture kinds, pinboards). Capture gets a mode bar in CleanShot's order and S/M/L thumbnails; Window Tiling previews a layout before you use it.
+- **Settings:** a System Settings–style sidebar with search, titled groups, side-by-side choices for short options, labels that flip their switch, and new Shortcuts and Permissions panes with live status.
+- **Command palette, first run, menu bar:** a glass palette with clearer results; a three-step welcome (the four tools, the access they need, the shortcuts) instead of the old tour; and a menu bar menu grouped into Capture, Clipboard and Automation with the everyday capture modes at the top.
+- **Floating surfaces:** Quick Access, Capture History, Paste Stack, the recording bar, the capture toolbars and the text-capture HUD share one material.
+- Shortcuts, automations, clipboard data and settings are unchanged. References and decisions: `docs/design-overhaul-20261024.md`.
+
 ## 2.3.0 — Natural capture behaviour and competitive parity
 - **Quick Access:** a Trash button sits beside More on the hover curtain (⌘⌫ too) — one click deletes a fresh capture; only recordings ask first. Cards auto-close after 5 minutes for people who never chose a setting (they stay in Capture History); a stored choice is never changed.
 - **One close rule:** Copy, Save, Pin and Annotate close the surface they were used from — Quick Access card, expanded preview, Capture History — and ⌥ keeps it open; a failure never closes it. Capture History selects on the first click, and its menu offers the same core actions as the card. The clipboard shelf's Copy stays open on purpose and now says so.

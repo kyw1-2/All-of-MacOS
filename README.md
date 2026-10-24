@@ -2,6 +2,15 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.0.0
+
+A design overhaul across the whole app. AOM now ships with its real build SDK, so macOS 26
+and later draw it with Liquid Glass. The Workspace shows one card per tool with its live state;
+every page shares one canvas, card and filter-chip layout; Settings follows System Settings
+with Shortcuts and Permissions panes; the command palette, first-run welcome and menu bar
+menu are rebuilt; and the floating capture and clipboard surfaces share one material.
+Stored settings, shortcuts and data are unchanged.
+
 ## Version 2.3.0
 
 Capture surfaces now behave the same way: Copy, Save, Pin and Annotate close the card,

@@ -46,7 +46,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.3.0</string>
+	<string>3.0.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -59,7 +59,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2026102407</string>
+	<string>2026102408</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
