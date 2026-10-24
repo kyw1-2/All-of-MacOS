@@ -76,12 +76,12 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         selectedIndex = 0
 
         let screen = NSScreen.main
-        // Cards are 166 pt wide with 8 pt gaps; cap the panel at 70% of the
+        // Cards are 192 pt wide with 8 pt gaps; cap the panel at 80% of the
         // screen so the row scrolls horizontally instead of overflowing.
-        let contentWidth = CGFloat(candidates.count) * 166 + 8 * CGFloat(max(0, candidates.count - 1)) + 24
-        let maxPanelWidth = (screen?.visibleFrame.width ?? 1200) * 0.7
-        let panelWidth = min(max(360, contentWidth), maxPanelWidth)
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 190),
+        let contentWidth = CGFloat(candidates.count) * 192 + 8 * CGFloat(max(0, candidates.count - 1)) + 28
+        let maxPanelWidth = (screen?.visibleFrame.width ?? 1200) * 0.8
+        let panelWidth = min(max(420, contentWidth), maxPanelWidth)
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: 224),
                             styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -93,18 +93,28 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         panel.worksWhenModal = true
         panel.contentView = NSHostingView(rootView: WindowSwitcherView(controller: self))
         if let screen {
-            let size = CGSize(width: panelWidth, height: 190)
+            let size = CGSize(width: panelWidth, height: 224)
             let frame = NSRect(origin: screen.visibleFrame.origin,
                                size: size).offsetBy(dx: (screen.visibleFrame.width - size.width) / 2,
-                                                    dy: (screen.visibleFrame.height - size.height) * 0.32)
+                                                    dy: (screen.visibleFrame.height - size.height) / 2)
             panel.setFrame(frame, display: false)
         }
         self.panel = panel
         // The overlay must own the keyboard: without activating the app, key
         // events keep flowing to the previously active app and the local
-        // monitor never sees the cycling keys.
+        // monitor never sees the cycling keys. Activation must not resurrect
+        // AOM's own closed windows (the main window popping up on every
+        // switch): anything newly visible is ordered straight back out.
+        let visibleBefore = Set(NSApp.windows.filter { $0.isVisible && $0 !== panel })
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isShowing else { return }
+            for window in NSApp.windows where window.isVisible && window !== self.panel
+                && !visibleBefore.contains(window) {
+                window.orderOut(nil)
+            }
+        }
         installMonitors()
         loadThumbnails(from: scWindows)
     }
@@ -298,7 +308,7 @@ private struct WindowSwitcherCard: View {
                     Image(systemName: "macwindow").font(.system(size: 30)).foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 150, height: 96)
+            .frame(width: 176, height: 112)
             .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             HStack(spacing: 4) {
                 if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 14, height: 14) }
@@ -306,9 +316,9 @@ private struct WindowSwitcherCard: View {
                     .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1).truncationMode(.middle)
             }
-            .frame(width: 150)
+            .frame(width: 176)
         }
-        .padding(5)
+        .padding(6)
         .background(isSelected ? Color.accentColor.opacity(0.18) : .clear,
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
