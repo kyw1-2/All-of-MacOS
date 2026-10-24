@@ -2,6 +2,12 @@
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
 
+## 2.2.0 — Glass window, compact rhythm
+- **The window is glass now:** the chrome (sidebar, toolbar) sits on a real behind-window blur that shows your desktop through it — the System Settings / Things arrangement — while the page floats as an inset rounded card with a soft shadow and a hairline edge. Reduce Transparency and Increase Contrast restore the plain opaque window. The command palette keeps its material and gains the same lit rim.
+- **Compact rhythm:** rows tightened (30 pt single-line, 44 pt two-line), page padding 24→20, section spacing 24→18, sidebar search field and footer trimmed — noticeably more of your content per screen at the same readability.
+- **Depth with restraint:** filled buttons gained a vertical accent gradient with a lit top edge, and shortcut key caps read as tiny glass chips. Content surfaces stay opaque — glass belongs to chrome and floating layers, never to lists you read.
+- Everything from 2.1.0 (selection contrast, all-input statistics, palette actions, searchable settings) is unchanged.
+
 ## 2.1.0 — Readability and honest numbers
 - **Selected rows read again:** list rows (Automations, Clipboard library) used fixed label colours that macOS selection does not invert, so a selected row showed dark text on the accent fill. Rows, icons, pins and shortcut key caps now use hierarchical styles that invert with selection — key caps turn white-on-translucent inside a selected row. The command palette's keyboard selection, previously a 6% wash, is a clear accent fill; its no-results state gained a "Clear Search" button.
 - **Empty states never clip:** every empty state's actions now wrap to a column when they do not fit (ViewThatFits), fixing the Automation input-filter empty state where both buttons were cut off by the list column; its primary button is "New Automation" instead of "New Trackpad Automation".

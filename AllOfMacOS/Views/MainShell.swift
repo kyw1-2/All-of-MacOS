@@ -5,6 +5,11 @@ import SwiftUI
 /// places, the selected page in the detail column with its own contextual
 /// toolbar (title, view switch, search, create), and the optional diagnostics
 /// drawer. Global navigation and page tools no longer share one row.
+///
+/// 2.2: the window itself is glass — a behind-window sidebar blur shows the
+/// desktop through the chrome (sidebar, toolbar) while the page floats as an
+/// inset opaque card, the System Settings / Things arrangement. Transparency
+/// and contrast accessibility settings restore the opaque window.
 struct AOMMainShell<Content: View>: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
@@ -15,6 +20,8 @@ struct AOMMainShell<Content: View>: View {
     /// The sidebar is collapsible (toolbar button, View ▸ Hide Sidebar) and
     /// remembers its state.
     @AppStorage("AOMSidebarVisible") private var sidebarVisible = true
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(showingCommandPalette: Binding<Bool>,
          showLog: Binding<Bool>,
@@ -32,6 +39,10 @@ struct AOMMainShell<Content: View>: View {
         Binding(get: { sidebarVisible ? .all : .detailOnly },
                 set: { sidebarVisible = $0 != .detailOnly })
     }
+
+    /// Glass chrome needs the window non-opaque; accessibility settings
+    /// substitute the plain opaque window.
+    private var wantsGlass: Bool { !reduceTransparency && contrast != .increased }
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
@@ -52,9 +63,31 @@ struct AOMMainShell<Content: View>: View {
                         .background(AOMTheme.pane)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AOMTheme.pane)
+            // The page floats as an inset card on the glass: rounded, edged
+            // and softly lifted, with the toolbar left on the material above.
+            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous)
+                    .strokeBorder(AOMTheme.hairline, lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.10), radius: 14, y: 3)
+            .padding([.leading, .bottom, .trailing], AOMSpace.xs + 2)
             .navigationTitle(appState.selectedMainTab.title)
         }
         .navigationSplitViewStyle(.balanced)
+        .background {
+            if wantsGlass {
+                // Behind-window blur under the whole window: the sidebar and
+                // the toolbar pick it up; the opaque page card sits on top.
+                VisualEffectBackground(material: .sidebar, blendingMode: .behindWindow)
+                    .ignoresSafeArea()
+                TranslucentWindow().frame(width: 0, height: 0)
+            } else {
+                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+            }
+        }
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
     }
@@ -101,8 +134,12 @@ struct AOMSidebar: View {
             }
             .foregroundStyle(AOMTheme.textSecondary)
             .padding(.horizontal, 8)
-            .frame(height: 26)
+            .frame(height: 24)
             .background(AOMTheme.track.opacity(0.7), in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -148,8 +185,8 @@ struct AOMSidebar: View {
             .help("Settings, diagnostics and help")
             .accessibilityLabel("Settings and Help")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 }
 

@@ -289,7 +289,8 @@ struct QuickCommandPalette: View {
             }
             .frame(width: 640, height: 440)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
             .shadow(color: .black.opacity(0.22), radius: 30, y: 14)
         }
         .onAppear { isFieldFocused = true }

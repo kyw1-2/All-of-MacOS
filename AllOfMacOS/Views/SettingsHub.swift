@@ -605,7 +605,7 @@ struct SettingsHubView: View {
             }
         }
         .frame(minWidth: 780, idealWidth: 900, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
-        .background(AOMTheme.canvas)
+        .background(AOMTheme.pane)
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
         .onReceive(NotificationCenter.default.publisher(for: .aomSettingChanged)) { _ in flashSaved() }
         .onReceive(NotificationCenter.default.publisher(for: .aomImportBTTPreset)) { _ in importBTTPreset() }
@@ -736,7 +736,7 @@ struct SettingsHubView: View {
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 12)
-        .background(AOMTheme.canvas)
+        .background(AOMTheme.pane)
     }
 
     private func flashSaved() {

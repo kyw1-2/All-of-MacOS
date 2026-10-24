@@ -93,8 +93,8 @@ enum AOMTheme {
     /// Cards for discrete items (captures, clipboard cards, notices).
     static let cardRadius: CGFloat = 12
     static let controlRadius: CGFloat = 7
-    static let pagePadding: CGFloat = AOMSpace.l
-    static let sectionSpacing: CGFloat = AOMSpace.l
+    static let pagePadding: CGFloat = 20
+    static let sectionSpacing: CGFloat = 18
 
     // MARK: Depth
 
@@ -144,9 +144,9 @@ enum AOMSize {
     static let listColumnIdeal: Double = 312
     /// Below this the editor can't show an action row without truncating.
     static let editorMinimum: CGFloat = 440
-    /// One- and two-line rows.
-    static let rowSingle: CGFloat = 32
-    static let rowDouble: CGFloat = 48
+    /// One- and two-line rows (2.2 compact density).
+    static let rowSingle: CGFloat = 30
+    static let rowDouble: CGFloat = 44
     /// Readable line length for editors and forms.
     static let readableWidth: CGFloat = 760
 }
@@ -527,12 +527,20 @@ private struct AOMFilledBody: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
+        // Vertical accent gradient; press and hover darken it further below.
+        let fill = LinearGradient(colors: [tint, tint.aomDarker(configuration.isPressed ? 0.20 : (hovering ? 0.15 : 0.10))],
+                                  startPoint: .top, endPoint: .bottom)
         configuration.label
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(AOMTheme.onAccent(tint))
             .padding(.horizontal, 12)
             .frame(minHeight: height)
-            .background(tint.aomDarker(configuration.isPressed ? 0.14 : (hovering ? 0.06 : 0)), in: shape)
+            .background(fill, in: shape)
+            .overlay {
+                // Lit top edge: the glass rim on filled controls.
+                shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.30), Color.white.opacity(0.05)],
+                                                  startPoint: .top, endPoint: .center), lineWidth: 0.5)
+            }
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(shape)
             .onHover { hovering = $0 }
@@ -611,6 +619,12 @@ struct AOMKeycap: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .strokeBorder(onSelection ? Color.white.opacity(0.35) : AOMTheme.hairline, lineWidth: 0.5)
+            }
+            .overlay {
+                // Lit top edge: key caps read as tiny glass chips.
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Color.white.opacity(0.28), .clear],
+                                                 startPoint: .top, endPoint: .center), lineWidth: 0.5)
             }
             .accessibilityLabel(text)
     }

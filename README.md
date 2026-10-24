@@ -2,6 +2,16 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 2.2.0
+
+The window itself is the redesign: the sidebar and toolbar now sit on a real behind-window
+blur (your desktop shows through the chrome, the System Settings / Things arrangement) and
+every page floats as an inset rounded card with a soft shadow. Reduce Transparency and
+Increase Contrast fall back to the opaque window. The rhythm is compact — tighter rows
+and page padding at the same readability — and filled buttons and shortcut key caps gained
+a vertical accent gradient with a lit top edge. Glass stays on chrome and floating layers;
+content you read remains opaque. Shortcuts, data formats and permissions are unchanged.
+
 ## Version 2.1.0
 
 Readability and honest numbers on top of the 2.0.0 window. Selected list rows invert their
