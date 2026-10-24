@@ -10,9 +10,10 @@ import ScreenCaptureKit
 @MainActor
 enum WindowPickerController {
     /// Presents the picker and returns the chosen window, or nil if cancelled.
-    static func present(windows: [SCWindow]) async -> SCWindow? {
+    static func present(windows: [SCWindow], title: String = "Capture Window",
+                        actionLabel: String = "Capture", showsThumbnails: Bool = false) async -> SCWindow? {
         await withCheckedContinuation { continuation in
-            let controller = WindowPickerPanel(windows: windows) { chosen in
+            let controller = WindowPickerPanel(windows: windows, title: title, actionLabel: actionLabel, showsThumbnails: showsThumbnails) { chosen in
                 continuation.resume(returning: chosen)
             }
             controller.present()
@@ -34,17 +35,19 @@ final class WindowPickerPanel: NSWindowController {
     private let completion: (SCWindow?) -> Void
     private var didFinish = false
 
-    init(windows: [SCWindow], completion: @escaping (SCWindow?) -> Void) {
+    init(windows: [SCWindow], title: String = "Capture Window", actionLabel: String = "Capture",
+         showsThumbnails: Bool = false, completion: @escaping (SCWindow?) -> Void) {
         self.completion = completion
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
                             styleMask: [.titled, .closable, .resizable, .utilityWindow],
                             backing: .buffered, defer: false)
-        panel.title = "Capture Window"
+        panel.title = title
+        panel.applyCaptureVisibilityPreference()
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         super.init(window: panel)
         panel.contentView = NSHostingView(rootView: WindowPickerView(
-            windows: windows,
+            windows: windows, actionLabel: actionLabel, showsThumbnails: showsThumbnails,
             onSelect: { [weak self] window in self?.finish(window) },
             onCancel: { [weak self] in self?.finish(nil) }
         ))
@@ -63,6 +66,10 @@ final class WindowPickerPanel: NSWindowController {
         guard !didFinish else { return }
         didFinish = true
         self.window?.orderOut(nil)
+        // Destroy the hosting tree so thumbnail tasks stop even if AppKit keeps
+        // the closed NSWindow alive briefly.
+        self.window?.contentView = nil
+        self.window?.close()
         completion(window)
         WindowPickerController.release(self)
     }
@@ -76,6 +83,8 @@ extension WindowPickerPanel: NSWindowDelegate {
 
 private struct WindowPickerView: View {
     let windows: [SCWindow]
+    var actionLabel = "Capture"
+    var showsThumbnails = false
     let onSelect: (SCWindow) -> Void
     let onCancel: () -> Void
 
@@ -103,7 +112,7 @@ private struct WindowPickerView: View {
             ScrollView(showsIndicators: false) {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], spacing: 12) {
                     ForEach(Array(filtered.enumerated()), id: \.offset) { _, window in
-                        WindowCell(window: window) { onSelect(window) }
+                        WindowCell(window: window, actionLabel: actionLabel, showsThumbnail: showsThumbnails) { onSelect(window) }
                     }
                 }
                 .padding(12)
@@ -124,6 +133,9 @@ private struct WindowPickerView: View {
 
 private struct WindowCell: View {
     let window: SCWindow
+    var actionLabel = "Capture"
+    var showsThumbnail = false
+    @State private var thumbnail: NSImage?
     let onSelect: () -> Void
 
     @State private var isHovering = false
@@ -146,7 +158,9 @@ private struct WindowCell: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color.primary.opacity(0.06))
-                    if let icon = appIcon {
+                    if let thumbnail {
+                        Image(nsImage: thumbnail).resizable().scaledToFit()
+                    } else if let icon = appIcon {
                         Image(nsImage: icon)
                             .resizable()
                             .frame(width: 48, height: 48)
@@ -173,6 +187,24 @@ private struct WindowCell: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .accessibilityLabel("Capture window \(title) from \(appName)")
+        .accessibilityLabel("\(actionLabel) window \(title) from \(appName)")
+        .task(id: window.windowID) {
+            guard showsThumbnail else { return }
+            // Visible cells refresh at one Hz; cancellation releases each task
+            // as the picker closes or the cell leaves the lazy grid.
+            while !Task.isCancelled {
+                let filter = SCContentFilter(desktopIndependentWindow: window)
+                let configuration = SCStreamConfiguration()
+                let scale = min(1, 400 / max(1, window.frame.width))
+                configuration.width = max(2, Int(window.frame.width * scale))
+                configuration.height = max(2, Int(window.frame.height * scale))
+                configuration.showsCursor = false
+                configuration.ignoreShadowsSingleWindow = true
+                if let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration), !Task.isCancelled {
+                    thumbnail = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+                }
+                do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { break }
+            }
+        }
     }
 }

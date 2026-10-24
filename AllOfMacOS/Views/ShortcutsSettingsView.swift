@@ -47,6 +47,13 @@ struct ShortcutsSettingsView: View {
                     }
                 }
 
+                AppleSettingsGroup("Always on Top") {
+                    ForEach(Array([CaptureShortcutAction.choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow,
+                                   .togglePinWindowUnderCursor, .unpinAllWindows].enumerated()), id: \.element.id) { index, action in
+                        shortcutRow(for: action, showDivider: index < 4)
+                    }
+                }
+
                 // Bottom Controls
                 HStack {
                     Button("Restore CleanShot Defaults") {
@@ -249,7 +256,7 @@ struct ShortcutsSettingsView: View {
         case .ocr: return .orange
         case .history: return .mint
         case .toggleDesktopIcons: return .gray
-        case .pinLast: return .pink
+        case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows: return .pink
         }
     }
 
@@ -268,6 +275,11 @@ struct ShortcutsSettingsView: View {
         case .history: return "Slide out CleanShot capture history overlay"
         case .toggleDesktopIcons: return "Hide or restore icons on the desktop"
         case .pinLast: return "Float most recent capture on top of all windows"
+        case .choosePinnedWindow: return "Pick a live window from thumbnail previews"
+        case .selectPinnedWindow: return "Point at a window, then click to pin or unpin"
+        case .togglePinFrontWindow: return "Toggle always on top for the front window"
+        case .togglePinWindowUnderCursor: return "Toggle always on top for the window under the pointer"
+        case .unpinAllWindows: return "Remove all live pins, leaving source windows open"
         }
     }
 }

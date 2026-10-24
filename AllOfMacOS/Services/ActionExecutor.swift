@@ -382,6 +382,11 @@ class ActionExecutor {
                 }
             return
         }
+        if WindowPinningService.actionTypes.contains(action.actionType) {
+            onMain { WindowPinningService.shared.perform(action.actionType, target: windowTarget,
+                                                         isCancelled: isCancelled, completion: completion) }
+            return
+        }
         if action.actionType.category == .windowManagement {
             WindowManager.shared.execute(action.actionType, target: windowTarget,
                 parameters: action.parameters, completion: completion)
@@ -433,6 +438,8 @@ class ActionExecutor {
 
         defer { completion(true) }
         switch action.actionType {
+        case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
+            break // Completed asynchronously above.
         case .showHUD:
             let text = action.parameters.hudText ?? action.displayName
             if Thread.isMainThread { GestureHUD.shared.show(text) }

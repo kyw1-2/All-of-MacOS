@@ -150,6 +150,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !PresetManager.isUIPreview {
             ClipboardMCPServer.shared.refresh()
             requestAccessibilityPermissions()
+            Task { @MainActor in WindowPinRestoration.recover() }
             GestureHUD.shared.start()
             NSApp.servicesProvider = self
             NSUpdateDynamicServices()
@@ -322,6 +323,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         ActionExecutor.cancelAllSequences()
         MainActor.assumeIsolated {
+            WindowPinningService.shared.unpinAll()
             ClipboardMCPServer.shared.stopForTermination()
             GestureStatistics.shared.flushPendingWrites()
             appState?.flushPendingWrites()
@@ -499,6 +501,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
         snapItem.state = snapping ? .on : .off
         menu.addItem(snapItem)
+        menu.addItem(MainActor.assumeIsolated { WindowPinningService.shared.statusMenuItem() })
         menu.addItem(pauseMenuItem())
         if let appState = MainActor.assumeIsolated({ self.appState }),
            let triggers = MainActor.assumeIsolated({ TriggerMenu.build(from: appState) }) {

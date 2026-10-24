@@ -23,6 +23,11 @@ extension ActionType {
         case .triggerNamedTrigger: return "Runs the actions of a trigger that has a matching Named Trigger name."
         case .showHUD: return "Shows a short message on screen."
         case .showCheatSheet: return "Shows or hides the list of triggers that apply right now."
+        case .showPinnedWindowPicker: return "Choose a live window to keep above other apps."
+        case .selectWindowToPin: return "Point at a window and click to pin or unpin it."
+        case .togglePinFrontWindow: return "Toggle always on top for the front window."
+        case .togglePinWindowUnderCursor: return "Toggle always on top for the window under the pointer."
+        case .unpinAllWindows: return "Remove live window pins without closing their source windows."
         // Window management
         case .maximizeWindow: return "Fills the visible area of the window's display."
         case .minimizeWindow: return "Minimizes the focused window to the Dock."
@@ -59,6 +64,11 @@ extension ActionType {
         case .moveWindowUp: return "Nudges the window up by a tenth of the display."
         case .moveWindowDown: return "Nudges the window down by a tenth of the display."
         case .bringWindowToFront: return "Raises the window above other windows of the same app."
+        case .showPinnedWindowPicker: return "Choose a live window to keep above other windows."
+        case .selectWindowToPin: return "Point at a window and click to pin or unpin it. Escape cancels."
+        case .togglePinFrontWindow: return "Keep the front window on top, or remove its pin."
+        case .togglePinWindowUnderCursor: return "Keep the window under the pointer on top, or remove its pin."
+        case .unpinAllWindows: return "Remove all live window pins without closing their source windows."
         case .maximizeWindowUnderCursor: return "Maximizes the window under the pointer, not the focused one."
         case .minimizeWindowUnderCursor: return "Minimizes the window under the pointer."
         case .closeWindowUnderCursor: return "Closes the window under the pointer."
@@ -244,6 +254,8 @@ extension ActionType {
     var needsFocusedWindow: Bool {
         guard category == .windowManagement else { return false }
         switch self {
+        case .showPinnedWindowPicker, .selectWindowToPin, .togglePinWindowUnderCursor, .unpinAllWindows:
+            return false
         case .undoWindowPlacement, .saveWindowLayout, .restoreWindowLayout,
              .startMovingWindow, .stopMovingWindow, .toggleMovingWindow,
              .startResizingWindow, .stopResizingWindow, .toggleResizingWindow:

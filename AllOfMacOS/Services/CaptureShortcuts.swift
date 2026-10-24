@@ -19,6 +19,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
     case history = "history"
     case toggleDesktopIcons = "toggleDesktopIcons"
     case pinLast = "pinLast"
+    case choosePinnedWindow, selectPinnedWindow, togglePinFrontWindow, togglePinWindowUnderCursor, unpinAllWindows
 
     var id: String { rawValue }
 
@@ -37,6 +38,11 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .history: return "Capture History"
         case .toggleDesktopIcons: return "Toggle Desktop Icons"
         case .pinLast: return "Pin Last Capture"
+        case .choosePinnedWindow: return "Choose Window to Pin"
+        case .selectPinnedWindow: return "Select Window to Pin"
+        case .togglePinFrontWindow: return "Pin / Unpin Front Window"
+        case .togglePinWindowUnderCursor: return "Pin / Unpin Window Under Cursor"
+        case .unpinAllWindows: return "Unpin All Windows"
         }
     }
 
@@ -44,6 +50,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .captureArea, .captureFullscreen, .captureWindow, .recordScreen, .pauseRecording, .allInOne, .capturePreviousArea, .scrollingCapture:
             return "Screen Capture"
+        case .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
+            return "Always on Top"
         case .ocr, .history, .toggleDesktopIcons, .pinLast, .openProject:
             return "Tools & Utilities"
         }
@@ -63,7 +71,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .ocr: return "text.viewfinder"
         case .history: return "clock.arrow.2.circlepath"
         case .toggleDesktopIcons: return "eye.slash"
-        case .pinLast: return "pin"
+        case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor: return "pin"
+        case .unpinAllWindows: return "pin.slash"
         }
     }
 
@@ -73,7 +82,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .pauseRecording:
             return KeyboardShortcut(keyCode: 49, modifiers: [.command, .shift, .option])
-        case .allInOne, .openProject:
+        case .allInOne, .openProject, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
             return nil
         case .captureArea:
             return KeyboardShortcut(keyCode: 21, modifiers: [.command, .shift]) // ⇧⌘4
@@ -228,6 +237,11 @@ final class CaptureShortcuts: ObservableObject {
             )
         case .pinLast:
             CaptureActions.pinLastCapture()
+        case .choosePinnedWindow: WindowPinningService.shared.chooseWindow()
+        case .selectPinnedWindow: WindowPinningService.shared.selectWindow()
+        case .togglePinFrontWindow: WindowPinningService.shared.perform(.togglePinFrontWindow)
+        case .togglePinWindowUnderCursor: WindowPinningService.shared.perform(.togglePinWindowUnderCursor)
+        case .unpinAllWindows: WindowPinningService.shared.unpinAll()
         }
     }
 }

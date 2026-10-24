@@ -126,6 +126,7 @@ softer borders and hover lift throughout.
 ## Features
 
 - Trackpad, keyboard, window-management and automation controls
+- [Live window pinning](docs/window-pinning.md): keep windows on top, with interaction, opacity and configurable shortcuts
 - Clipboard history, pinboards, configurable double-click insertion and copying
 - Screen capture, OCR, QR recognition, annotation, scrolling screenshots
 - MP4 screen recording with optional audio, trimming and animated GIF export

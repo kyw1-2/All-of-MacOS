@@ -681,7 +681,11 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertTrue(shortcuts.hasActiveShortcuts)
         for action in CaptureShortcutAction.allCases {
             let sc = shortcuts.shortcut(for: action)
-            if action == .allInOne || action == .openProject {
+            // The window-pin commands are optional like All-In-One: new installs
+            // must not reserve five more global shortcuts without asking.
+            if action == .allInOne || action == .openProject || action == .choosePinnedWindow
+                || action == .selectPinnedWindow || action == .togglePinFrontWindow
+                || action == .togglePinWindowUnderCursor || action == .unpinAllWindows {
                 XCTAssertNil(sc, "Optional commands must not reserve a default global shortcut")
             } else {
                 XCTAssertNotNil(sc, "\(action.displayName) should have a default shortcut")

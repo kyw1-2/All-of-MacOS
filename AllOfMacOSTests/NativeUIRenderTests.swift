@@ -6,6 +6,26 @@ import XCTest
 /// Opt-in native rendering for visual review; never uses the user's preset.
 @MainActor
 final class NativeUIRenderTests: XCTestCase {
+    func testRenderWindowPinning() throws {
+        guard let path = ProcessInfo.processInfo.environment["AOM_UI_RENDER_PATH"] else {
+            throw XCTSkip("Set AOM_UI_RENDER_PATH for native visual review")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let state = AppState()
+        state.currentPreset = Preset(name: "Pinning UI Review")
+        for dark in [false, true] {
+            let scheme: ColorScheme = dark ? .dark : .light
+            try render(WindowPinningCard().environment(\.colorScheme, scheme),
+                       size: NSSize(width: 300, height: 310), appearance: dark ? .darkAqua : .aqua,
+                       url: output.appendingPathComponent(dark ? "window-pin-dark.png" : "window-pin-light.png"))
+        }
+        for width in [740, 1080] {
+            try render(ModernWindowSnappingView().environmentObject(state), size: NSSize(width: width, height: 820),
+                       appearance: .aqua, url: output.appendingPathComponent("window-pinning-\(width).png"))
+        }
+    }
+
     func testRenderNativeScreens() throws {
         guard let path = ProcessInfo.processInfo.environment["AOM_UI_RENDER_PATH"] else {
             throw XCTSkip("Set AOM_UI_RENDER_PATH for native visual review")

@@ -80,6 +80,11 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case moveWindowUp = "Move Window Up"
     case moveWindowDown = "Move Window Down"
     case bringWindowToFront = "Bring Window to Front"
+    case showPinnedWindowPicker = "Choose Window to Pin"
+    case selectWindowToPin = "Select Window to Pin"
+    case togglePinFrontWindow = "Pin / Unpin Front Window"
+    case togglePinWindowUnderCursor = "Pin / Unpin Window Under Cursor"
+    case unpinAllWindows = "Unpin All Windows"
     case maximizeWindowUnderCursor = "Maximize Window Under Cursor"
     case minimizeWindowUnderCursor = "Minimize Window Under Cursor"
     case closeWindowUnderCursor = "Close Window Under Cursor"
@@ -268,6 +273,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     var category: ActionCategory {
         switch self {
         case .actionGroup, .ifElse, .setVariable, .wait, .triggerNamedTrigger, .showHUD, .showCheatSheet: return .workflow
+        case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow,
+             .togglePinWindowUnderCursor, .unpinAllWindows: return .windowManagement
         case .maximizeWindow, .minimizeWindow, .snapWindowLeft, .snapWindowRight,
              .snapWindowTopLeft, .snapWindowTopRight, .snapWindowBottomLeft,
              .snapWindowBottomRight, .centerWindow, .moveWindowNextMonitor,
@@ -359,6 +366,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .moveWindowUp: return "arrow.up.square"
         case .moveWindowDown: return "arrow.down.square"
         case .bringWindowToFront: return "macwindow.on.rectangle"
+        case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow, .togglePinWindowUnderCursor: return "pin"
+        case .unpinAllWindows: return "pin.slash"
         case .maximizeWindowUnderCursor, .minimizeWindowUnderCursor, .closeWindowUnderCursor:
             return "cursorarrow.rays"
         case .leftClick, .doubleLeftClick: return "cursorarrow.click"
