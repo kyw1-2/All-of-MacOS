@@ -940,8 +940,13 @@ final class QuickAccessOverlayController {
             pauseAutoClose()
             // CleanShot's ⌘C / ⌘S / ⌘W / ⌘E / Space work while the card is
             // hovered, even after focus moved elsewhere since it appeared.
+            // Deferred one runloop tick so the window-server key transition
+            // never delays the curtain the pointer is waiting on.
             if let panel, !panel.isKeyWindow, panel.isVisible, NSApp.modalWindow == nil {
-                panel.makeKey()
+                DispatchQueue.main.async {
+                    guard panel.isVisible, NSApp.modalWindow == nil else { return }
+                    panel.makeKey()
+                }
             }
         } else {
             resumeAutoClose()
@@ -1128,8 +1133,14 @@ private struct QuickAccessOverlayView: View {
         .aomFloatingSurface(.hud, radius: 13)
         .help("Double-click to \(isVideo ? "edit" : "annotate") · Drag to export · Right-click for more")
         .onHover { state in
+            // Appear instantly on entry (the way the tiling executor does);
+            // only the leave fades, so the curtain never lags the pointer.
+            if state || reduceMotion {
+                hovered = state
+            } else {
+                withAnimation(.easeOut(duration: 0.12)) { hovered = state }
+            }
             onHoverChange(state)
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { hovered = state }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Quick Access for \(entry.displayName)")
