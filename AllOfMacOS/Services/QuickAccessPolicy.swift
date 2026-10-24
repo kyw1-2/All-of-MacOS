@@ -220,7 +220,8 @@ enum QuickAccessMenuCommand: String, CaseIterable {
         } else {
             items += [.annotate, .pin, .rotateLeft, .flipHorizontal]
             if canScaleRetina { items.append(.scaleRetina) }
-            items += [.resize, .removeBackground, .extractText, nil, .copyQRCode, .copyFile, .fileInfo]
+            // Remove Background is an AOM extra, after CleanShot's block.
+            items += [.resize, .extractText, .removeBackground, nil, .copyQRCode, .copyFile, .fileInfo]
         }
         return items
     }
