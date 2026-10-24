@@ -301,6 +301,7 @@ class ActionExecutor {
     private static func executeAction(_ action: TriggerAction, windowTarget: WindowManager.Target?, fromTrackpad: Bool = false,
                                       isCancelled: @escaping () -> Bool = { false }, completion: @escaping (Bool) -> Void) {
         guard !isCancelled() else { completion(false); return }
+        let action = WorkflowVariables.interpolated(action)
         NSLog("[ActionExecutor] Executing: %@", action.actionType.rawValue)
         GestureLog.shared.logFromAnyThread("Executing: \(action.actionType.rawValue)\(actionDetail(action))", level: .action)
 

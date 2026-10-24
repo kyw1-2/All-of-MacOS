@@ -62,3 +62,26 @@ final class ActivationConditionsTests: XCTestCase {
         XCTAssertEqual(conditions.summary, "On power adapter · Up to 1 display")
     }
 }
+
+/// BTT placeVariablesIntoString parity: an action's result feeds the next one.
+final class WorkflowVariableInterpolationTests: XCTestCase {
+    private let values = ["user": "kim", "ticket_id": "AOM-42"]
+
+    func testKnownVariablesArePlacedAndUnknownOnesLeftAsWritten() {
+        let lookup: (String) -> String? = { self.values[$0] }
+        XCTAssertEqual(WorkflowVariables.interpolate("https://x.test/{{var:ticket_id}}?u={{var:user}}", lookup: lookup),
+                       "https://x.test/AOM-42?u=kim")
+        XCTAssertEqual(WorkflowVariables.interpolate("{{var:missing}} {{user}} {var:user}", lookup: lookup),
+                       "{{var:missing}} {{user}} {var:user}", "only the explicit var: form is replaced")
+        XCTAssertEqual(WorkflowVariables.interpolate("no variables", lookup: lookup), "no variables")
+    }
+
+    func testOnlyTextBearingParametersChange() {
+        var action = TriggerAction(actionType: .openURL)
+        action.parameters.url = "https://x.test/{{var:ticket_id}}"
+        action.parameters.scriptContent = "echo {{var:user}}"
+        let resolved = WorkflowVariables.interpolated(action) { self.values[$0] }
+        XCTAssertEqual(resolved.parameters.url, "https://x.test/AOM-42")
+        XCTAssertEqual(resolved.parameters.scriptContent, "echo {{var:user}}", "scripts are never rewritten (no injection)")
+    }
+}

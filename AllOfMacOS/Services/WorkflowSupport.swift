@@ -60,6 +60,36 @@ enum WorkflowVariables {
         DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: nil) }
     }
 
+    /// BTT's "place variables into string": `{{var:name}}` becomes the
+    /// variable's value, so one action's result (a script's output, an image
+    /// match, Ask for Input) feeds the next action's text, URL or message.
+    /// Unknown names are left exactly as written, and nothing is replaced
+    /// without the explicit `var:` prefix, so existing text is unchanged.
+    static func interpolate(_ text: String, lookup: (String) -> String? = { value($0) }) -> String {
+        guard text.contains("{{var:"), let expression = interpolationExpression else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        var result = text
+        for match in expression.matches(in: text, range: range).reversed() {
+            guard let whole = Range(match.range, in: result), let nameRange = Range(match.range(at: 1), in: text),
+                  let replacement = lookup(String(text[nameRange])) else { continue }
+            result.replaceSubrange(whole, with: replacement)
+        }
+        return result
+    }
+    private static let interpolationExpression = try? NSRegularExpression(pattern: #"\{\{var:([A-Za-z0-9_]{1,64})\}\}"#)
+
+    /// The action with variables placed into its text-bearing parameters.
+    static func interpolated(_ action: TriggerAction, lookup: (String) -> String? = { value($0) }) -> TriggerAction {
+        var result = action
+        func apply(_ key: WritableKeyPath<ActionParameters, String?>) {
+            if let text = result.parameters[keyPath: key], text.contains("{{var:") {
+                result.parameters[keyPath: key] = interpolate(text, lookup: lookup)
+            }
+        }
+        apply(\.text); apply(\.url); apply(\.hudText); apply(\.notificationTitle); apply(\.variableValue)
+        return result
+    }
+
     static func value(_ name: String) -> String? {
         lock.lock(); defer { lock.unlock() }
         return values[name]

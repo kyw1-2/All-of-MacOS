@@ -648,7 +648,7 @@ struct ActionConfigView: View {
                             set: { value in saveAction { $0.parameters.typingIntervalMs = value } }), in: 0...500, step: 5) {
                             Text("Delay between characters: \(action.parameters.typingIntervalMs ?? 20) ms")
                         }
-                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return. Works in password fields, including macOS authorization dialogs.")
+                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return. Works in password fields, including macOS authorization dialogs. {{var:name}} inserts a workflow variable.")
                             .font(.caption).foregroundStyle(.secondary)
                         if case .keyboardShortcut(let shortcut) = trigger.input,
                            let alias = SecureInputHotKeys.secureAlias(for: shortcut) {
@@ -673,7 +673,7 @@ struct ActionConfigView: View {
                 }
 
                 TextField("Output variable (optional, up to 55 characters)", text: stringParameter(\.scriptResultVariable))
-                Text("Saves up to 512 output characters plus _exitCode and _timedOut status variables.").font(.caption).foregroundStyle(.secondary)
+                Text("Saves up to 512 output characters plus _exitCode and _timedOut status variables. Later steps can insert the output with {{var:name}}.").font(.caption).foregroundStyle(.secondary)
                 GroupBox("Execution timeout") {
                     HStack {
                         Text("Seconds")
@@ -724,12 +724,16 @@ struct ActionConfigView: View {
 
             case .openURL:
                 GroupBox("URL") {
-                    TextField("https://...", text: $url)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: url) { _, newValue in
-                            saveAction { $0.parameters.url = newValue }
-                        }
-                        .padding(8)
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("https://...", text: $url)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: url) { _, newValue in
+                                saveAction { $0.parameters.url = newValue }
+                            }
+                        Text("{{var:name}} inserts a workflow variable, for example a script's output.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(8)
                 }
 
             case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
