@@ -205,6 +205,7 @@ enum CaptureSettings {
         static let overlayInterval = "AOMCaptureOverlayInterval"
         static let overlayOnActiveDisplay = "AOMCaptureOverlayActiveDisplay"
         static let overlayCloseAfterDrag = "AOMCaptureOverlayCloseAfterDrag"
+        static let overlayAfterCopyOrSave = "AOMCaptureOverlayAfterCopyOrSave"
         static let overlayAsksForName = "AOMCaptureAsksForName"
         static let historyCapacity = "AOMCaptureHistoryCapacity"
         static let lastArea = "AOMCaptureLastArea"
@@ -304,9 +305,22 @@ enum CaptureSettings {
         set { d.set(newValue.rawValue, forKey: Key.overlaySize) }
     }
 
+    /// New installs close cards after a delay so captures never pile up on
+    /// screen (they stay in Capture History). A stored choice is never
+    /// overridden — only the value for people who never picked one changes.
+    static let defaultOverlayAutoClose: OverlayAutoClose = .afterInterval
+    static let defaultOverlayIntervalSeconds = 300
+
     static var overlayAutoClose: OverlayAutoClose {
-        get { OverlayAutoClose(rawValue: d.string(forKey: Key.overlayAutoClose) ?? "") ?? .never }
+        get { OverlayAutoClose(rawValue: d.string(forKey: Key.overlayAutoClose) ?? "") ?? defaultOverlayAutoClose }
         set { d.set(newValue.rawValue, forKey: Key.overlayAutoClose) }
+    }
+
+    /// When After Capture copies or saves, also show the Quick Access card.
+    /// Off by default: the copy/save is the feedback (no double overlay).
+    static var overlayAfterCopyOrSave: Bool {
+        get { d.object(forKey: Key.overlayAfterCopyOrSave) as? Bool ?? false }
+        set { d.set(newValue, forKey: Key.overlayAfterCopyOrSave) }
     }
 
     /// If true, auto-close saves previously unsaved captures first. On a
@@ -318,7 +332,7 @@ enum CaptureSettings {
     }
 
     static var overlayIntervalSeconds: Int {
-        get { d.object(forKey: Key.overlayInterval) as? Int ?? 5 }
+        get { d.object(forKey: Key.overlayInterval) as? Int ?? defaultOverlayIntervalSeconds }
         set { d.set(min(600, max(1, newValue)), forKey: Key.overlayInterval) }
     }
 

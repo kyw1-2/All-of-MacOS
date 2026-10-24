@@ -64,7 +64,7 @@ struct CapturePreviewContent: View {
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(isVideo && entry.playableVideoURL == nil)
-                Button { CapturePreviewActions.saveAs(entry) } label: {
+                Button { saveAs() } label: {
                     Text("Save as…").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
                         .background(Color.accentColor, in: Capsule())
@@ -95,16 +95,16 @@ struct CapturePreviewContent: View {
                 }
                 Spacer(minLength: 8)
                 if !isVideo {
-                    Button { PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL) } label: {
+                    Button { pin() } label: {
                         previewAction("pin.fill")
-                    }.help("Pin to Screen")
+                    }.keyboardShortcut("p", modifiers: .command).help("Pin to Screen (⌘P) · ⌥ keeps the preview open")
                 }
                 if let url = entry.playableVideoURL ?? entry.fileURL {
                     ShareLink(item: url) { previewAction("square.and.arrow.up") }.help("Share")
                 }
-                Button { CapturePreviewActions.copy(entry) } label: {
+                Button { copy() } label: {
                     previewAction("doc.on.doc.fill")
-                }.keyboardShortcut("c", modifiers: .command).help("Copy")
+                }.keyboardShortcut("c", modifiers: .command).help("Copy (⌘C) · ⌥ keeps the preview open")
                 Button(action: onClose) { previewAction("xmark") }
                     .keyboardShortcut(.escape, modifiers: []).help("Close Preview (Space or Esc)")
             }
@@ -139,6 +139,29 @@ struct CapturePreviewContent: View {
             if let url = entry.playableVideoURL { player = AVPlayer(url: url) }
         }
         .onDisappear { player?.pause(); player = nil }
+    }
+
+    // Same rule as the Quick Access card (QuickAccessPolicy.closesSurface):
+    // a completed action closes the preview, ⌥ keeps it, a failure never does.
+
+    private func copy() {
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
+        CapturePreviewActions.copy(entry) { ok in
+            if QuickAccessPolicy.closesSurface(afterSucceeded: ok, optionPressed: keepOpen) { onClose() }
+        }
+    }
+
+    private func saveAs() {
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
+        CapturePreviewActions.saveAs(entry) { ok in
+            if QuickAccessPolicy.closesSurface(afterSucceeded: ok, optionPressed: keepOpen) { onClose() }
+        }
+    }
+
+    private func pin() {
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
+        PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL)
+        if QuickAccessPolicy.closesSurface(afterSucceeded: true, optionPressed: keepOpen) { onClose() }
     }
 
     private func previewAction(_ symbol: String) -> some View {
@@ -195,7 +218,7 @@ enum CapturePreviewActions {
         }
     }
 
-    static func copy(_ entry: CaptureHistoryEntry) {
+    static func copy(_ entry: CaptureHistoryEntry, completion: @escaping (Bool) -> Void = { _ in }) {
         if entry.kind == .videoRecording {
             do {
                 guard let url = entry.playableVideoURL,
@@ -203,8 +226,10 @@ enum CapturePreviewActions {
                     throw CaptureError.captureFailed("The MP4 file could not be copied.")
                 }
                 GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied")
+                completion(true)
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                completion(false)
             }
             return
         }
@@ -215,13 +240,17 @@ enum CapturePreviewActions {
             do {
                 try await ScreenCaptureService.shared.copyToClipboardAsync(capture)
                 GestureHUD.shared.show(title: "Copied", detail: "Image copied")
+                completion(true)
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
+                completion(false)
             }
         }
     }
 
-    static func save(_ entry: CaptureHistoryEntry, completion: @escaping () -> Void = {}) {
+    /// `completion(true)` once the capture is on disk; `false` when the
+    /// user cancelled the panel or the write failed. Runs exactly once.
+    static func save(_ entry: CaptureHistoryEntry, completion: @escaping (Bool) -> Void = { _ in }) {
         let prompt = QuickAccessPolicy.shouldPromptSave(
             asksForName: CaptureSettings.asksForNameAfterCapture,
             optionPressed: NSEvent.modifierFlags.contains(.option))
@@ -230,38 +259,37 @@ enum CapturePreviewActions {
             return
         }
         if entry.kind == .videoRecording {
-            defer { completion() }
-            do {
-                guard let file = entry.playableVideoURL else {
-                    throw CaptureError.captureFailed("Recording file is missing.")
-                }
-                GestureHUD.shared.show(title: "Saved", detail: file.lastPathComponent)
-            } catch {
-                GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+            guard let file = entry.playableVideoURL else {
+                GestureHUD.shared.show(title: "Save Failed", detail: "Recording file is missing.")
+                completion(false)
+                return
             }
+            GestureHUD.shared.show(title: "Saved", detail: file.lastPathComponent)
+            completion(true)
             return
         }
         if let file = entry.fileURL, FileManager.default.isReadableFile(atPath: file.path) {
             GestureHUD.shared.show(title: "Saved", detail: file.lastPathComponent)
-            completion()
+            completion(true)
             return
         }
         // F-04B: write the never-saved capture off the main thread, then run
         // the caller's completion exactly once on every path.
         let capture = result(entry)
         Task { @MainActor in
-            defer { completion() }
             do {
                 let url = try await ScreenCaptureService.shared.writeToDiskAsync(capture)
                 CaptureHistory.shared.attachFile(url, to: entry.id)
                 GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+                completion(true)
             } catch {
                 GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                completion(false)
             }
         }
     }
 
-    static func saveAs(_ entry: CaptureHistoryEntry, completion: @escaping () -> Void = {}) {
+    static func saveAs(_ entry: CaptureHistoryEntry, completion: @escaping (Bool) -> Void = { _ in }) {
         let panel = NSSavePanel()
         let isVideo = entry.kind == .videoRecording
         panel.allowedContentTypes = [isVideo ? .mpeg4Movie : CaptureSettings.format.contentType]
@@ -270,11 +298,10 @@ enum CapturePreviewActions {
             ?? "Screenshot-\(entry.id.uuidString.prefix(8)).\(isVideo ? "mp4" : CaptureSettings.format.fileExtension)"
         let finished: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let destination = panel.url else {
-                completion()
+                completion(false)
                 return
             }
             if isVideo {
-                defer { completion() }
                 do {
                     guard let source = entry.playableVideoURL else {
                         throw CaptureError.captureFailed("Recording file is missing.")
@@ -292,8 +319,10 @@ enum CapturePreviewActions {
                     }
                     CaptureHistory.shared.attachFile(destination, to: entry.id)
                     GestureHUD.shared.show(title: "Saved", detail: destination.lastPathComponent)
+                    completion(true)
                 } catch {
                     GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                    completion(false)
                 }
                 return
             }
@@ -304,13 +333,14 @@ enum CapturePreviewActions {
             let format = CaptureSettings.format
             let entryID = entry.id
             Task { @MainActor in
-                defer { completion() }
                 do {
                     try await ScreenCaptureService.shared.writeToURLAsync(capture, to: destination, format: format)
                     CaptureHistory.shared.attachFile(destination, to: entryID)
                     GestureHUD.shared.show(title: "Saved", detail: destination.lastPathComponent)
+                    completion(true)
                 } catch {
                     GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
+                    completion(false)
                 }
             }
         }

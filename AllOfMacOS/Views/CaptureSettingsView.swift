@@ -29,8 +29,9 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureOverlayEnabled") private var overlayEnabled = true
     @AppStorage("AOMCaptureOverlayCorner") private var overlayCornerRaw = OverlayCorner.bottomLeft.rawValue
     @AppStorage("AOMCaptureOverlaySize") private var overlaySizeRaw = OverlaySize.small.rawValue
-    @AppStorage("AOMCaptureOverlayAutoClose") private var autoCloseRaw = OverlayAutoClose.never.rawValue
-    @AppStorage("AOMCaptureOverlayInterval") private var overlayInterval = 5
+    @AppStorage("AOMCaptureOverlayAutoClose") private var autoCloseRaw = CaptureSettings.defaultOverlayAutoClose.rawValue
+    @AppStorage("AOMCaptureOverlayInterval") private var overlayInterval = CaptureSettings.defaultOverlayIntervalSeconds
+    @AppStorage("AOMCaptureOverlayAfterCopyOrSave") private var overlayAfterCopyOrSave = false
     @AppStorage("AOMCaptureOverlayActiveDisplay") private var overlayActiveDisplay = true
     @AppStorage("AOMCaptureOverlayCloseAfterDrag") private var overlayCloseAfterDrag = true
     @AppStorage("AOMCaptureOverlayAutoCloseSave") private var overlayAutoCloseSave = true
@@ -364,6 +365,16 @@ struct CaptureSettingsView: View {
                              subtitle: "Floating thumbnail with copy, save, annotate and pin",
                              showDivider: true) {
                 Toggle("", isOn: $overlayEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if afterAction == .copyToClipboard || afterAction == .saveToDisk {
+                AppleSettingsRow(icon: "rectangle.stack.badge.plus", iconColor: .gray,
+                                 title: "Also Show After \(afterAction == .copyToClipboard ? "Copy" : "Save")",
+                                 subtitle: overlayAfterCopyOrSave
+                                    ? "The card appears too, after the capture is \(afterAction == .copyToClipboard ? "copied" : "saved")"
+                                    : "Off: the capture is \(afterAction == .copyToClipboard ? "copied" : "saved") without a card. A card still appears if that fails",
+                                 showDivider: true) {
+                    Toggle("", isOn: $overlayAfterCopyOrSave).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
             }
             AppleSettingsRow(icon: "rectangle.lefthalf.inset.filled", iconColor: .purple,
                              title: "Position on Screen", subtitle: nil, showDivider: true) {

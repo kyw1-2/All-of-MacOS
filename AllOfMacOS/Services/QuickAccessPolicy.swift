@@ -3,7 +3,12 @@ import Foundation
 /// Pure quick-access rules; kept outside AppKit to make state transitions
 /// deterministic and regression-testable.
 enum QuickAccessShortcut: Equatable {
-    case close, copy, save, edit, pin, quickLook
+    case close, copy, save, edit, pin, quickLook, trash
+}
+
+/// The buttons on a Quick Access card's hover curtain, by corner.
+enum QuickAccessHoverControl: String, Equatable {
+    case close, pin, quickLook, copy, save, annotate, editVideo, trash, more
 }
 
 enum QuickAccessPolicy {
@@ -15,6 +20,7 @@ enum QuickAccessPolicy {
             case 1: return .save      // Cmd-S
             case 14: return .edit     // Cmd-E
             case 35: return .pin      // Cmd-P
+            case 51: return .trash    // Cmd-Delete
             default: return nil
             }
         }
@@ -26,6 +32,41 @@ enum QuickAccessPolicy {
     }
 
     static let maximumVisible = 3
+
+    /// Hover curtain layout: top row, centre, bottom row. Trash sits beside
+    /// More so one click removes a capture right after taking it (CleanShot's
+    /// overlay trash button), without unbalancing the four corners.
+    static func hoverControls(isVideo: Bool) -> (top: [QuickAccessHoverControl], center: [QuickAccessHoverControl],
+                                                  bottom: [QuickAccessHoverControl]) {
+        (top: [.close, isVideo ? .quickLook : .pin],
+         center: [.copy, .save],
+         bottom: [isVideo ? .editVideo : .annotate, .trash, .more])
+    }
+
+    /// Only recordings ask before going to the Trash (CleanShot's
+    /// "confirm video delete"); screenshots stay in Capture History either way.
+    static func confirmsTrash(isVideo: Bool) -> Bool { isVideo }
+
+    /// One rule for every capture surface (Quick Access card, expanded
+    /// preview, Capture History, pinned window): a completed Copy, Save, Pin,
+    /// Annotate, Delete, Share or drag-out closes the surface; ⌥ keeps it
+    /// open; a failure never closes it, so the result is not lost.
+    static func closesSurface(afterSucceeded succeeded: Bool, optionPressed: Bool) -> Bool {
+        succeeded && !optionPressed
+    }
+
+    /// After Capture is a single choice. Copy or Save already gave feedback,
+    /// so a Quick Access card follows only when the user asked for both, or
+    /// when the copy/save failed and the card is the way to recover.
+    static func showsOverlayAfterCapture(action: AfterCaptureAction, overlayEnabled: Bool,
+                                         alsoAfterCopyOrSave: Bool, actionSucceeded: Bool) -> Bool {
+        switch action {
+        case .showOverlay: return true
+        case .copyToClipboard, .saveToDisk:
+            return !actionSucceeded || (overlayEnabled && alsoAfterCopyOrSave)
+        case .openAnnotate, .doNothing: return false
+        }
+    }
 
     /// Bounded layout for 1–3 overlays on short displays.
     /// Cards may overlap gracefully when their combined height exceeds the

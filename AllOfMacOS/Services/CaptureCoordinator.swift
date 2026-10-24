@@ -545,7 +545,11 @@ final class CaptureCoordinator {
         case .copyToClipboard:
             do {
                 try await ScreenCaptureService.shared.copyToClipboardAsync(result)
-                if CaptureSettings.overlayEnabled { showOverlay(for: stored) }
+                GestureHUD.shared.show(title: "Copied", detail: "Capture on the clipboard")
+                if QuickAccessPolicy.showsOverlayAfterCapture(action: action, overlayEnabled: CaptureSettings.overlayEnabled,
+                        alsoAfterCopyOrSave: CaptureSettings.overlayAfterCopyOrSave, actionSucceeded: true) {
+                    showOverlay(for: stored)
+                }
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
                 showOverlay(for: stored, explicit: true)
@@ -555,7 +559,11 @@ final class CaptureCoordinator {
             do {
                 let url = try await ScreenCaptureService.shared.writeToDiskAsync(result)
                 CaptureHistory.shared.attachFile(url, to: stored.id)
-                if CaptureSettings.overlayEnabled { showOverlay(for: stored) }
+                GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
+                if QuickAccessPolicy.showsOverlayAfterCapture(action: action, overlayEnabled: CaptureSettings.overlayEnabled,
+                        alsoAfterCopyOrSave: CaptureSettings.overlayAfterCopyOrSave, actionSucceeded: true) {
+                    showOverlay(for: stored)
+                }
             } catch {
                 GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
                 showOverlay(for: stored, explicit: true)

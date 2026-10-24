@@ -27,6 +27,12 @@ private final class ClipboardPanelContainerView: NSView {
 
 @MainActor
 final class ClipboardPanelState: ObservableObject {
+    /// ⌘C in the shelf copies and keeps the shelf open on purpose (Paste
+    /// does the same) so several items can be copied in a row; the status
+    /// says so, because every other capture surface closes after Copy.
+    nonisolated static func multiCopyStatus(count: Int) -> String {
+        "\(count == 1 ? "Copied" : "Copied \(count) items") — the shelf stays open for more. Return pastes, Esc closes."
+    }
     @Published var query = ""
     @Published var recentSearches: [String] = []
     func rememberSearch() {
@@ -991,7 +997,7 @@ final class ClipboardPanelController {
             guard !ids.isEmpty else { return false }
             do {
                 _ = try store.write(entryIDs: ids, plainText: plain)
-                state.status = "Copied \(ids.count == 1 ? "item" : "\(ids.count) items") to clipboard."
+                state.status = ClipboardPanelState.multiCopyStatus(count: ids.count)
             } catch { state.status = error.localizedDescription }
             return true
         }
@@ -2273,7 +2279,7 @@ private struct ClipboardCardView: View, Equatable {
             .keyboardShortcut(.return, modifiers: ClipboardPreferences.shared.plainModifier.eventModifiers)
             .disabled(!many && entry.text == nil && entry.fileURLs.isEmpty)
         Button("Copy\(suffix)") {
-            do { _ = try store.write(entryIDs: targets); state.status = many ? "Copied \(targets.count) items." : "Copied to clipboard." }
+            do { _ = try store.write(entryIDs: targets); state.status = ClipboardPanelState.multiCopyStatus(count: targets.count) }
             catch { state.status = error.localizedDescription }
         }.keyboardShortcut("c", modifiers: .command)
         Divider()
@@ -2490,7 +2496,7 @@ private struct ClipboardPreviewSheet: View {
                text.selectedRange().length > 0 { return false }
             do {
                 if try store.write(entryIDs: [current.id], plainText: ClipboardPreferences.shared.isPlain(flags)) {
-                    state.status = "Copied to clipboard."
+                    state.status = ClipboardPanelState.multiCopyStatus(count: 1)
                 }
             } catch { state.status = error.localizedDescription }
             return true

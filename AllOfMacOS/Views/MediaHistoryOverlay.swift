@@ -579,12 +579,20 @@ struct MediaHistoryOverlayView: View {
 
     // MARK: - Action Helpers
 
+    /// Like Copy, Annotate, Pin and Restore, a completed Save closes the
+    /// overlay (⌥ keeps it). Cancelling the save panel or a failed write keeps
+    /// it open.
     private func saveEntry(_ entry: CaptureHistoryEntry) {
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
         controller?.isShowingSheet = true
-        CapturePreviewActions.save(entry) { updateSheetState() }
+        CapturePreviewActions.save(entry) { ok in
+            updateSheetState()
+            if QuickAccessPolicy.closesSurface(afterSucceeded: ok, optionPressed: keepOpen) { controller?.dismiss() }
+        }
     }
 
     private func copyEntry(_ entry: CaptureHistoryEntry) {
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
         let res = CaptureResult(
             image: entry.image,
             globalRect: .zero,
@@ -603,7 +611,7 @@ struct MediaHistoryOverlayView: View {
                 return
             }
             GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied to clipboard")
-            controller?.dismiss()
+            if !keepOpen { controller?.dismiss() }
             return
         }
         // F-04B: encode the image off the main thread; dismiss the sheet only
@@ -613,7 +621,7 @@ struct MediaHistoryOverlayView: View {
             do {
                 try await ScreenCaptureService.shared.copyToClipboardAsync(res)
                 GestureHUD.shared.show(title: "Copied", detail: "Image copied to clipboard")
-                controller?.dismiss()
+                if !keepOpen { controller?.dismiss() }
             } catch {
                 GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
             }
@@ -631,6 +639,7 @@ struct MediaHistoryOverlayView: View {
 
     private func pinEntry(_ entry: CaptureHistoryEntry) {
         guard entry.kind != .videoRecording else { previewEntry = entry; return }
+        let keepOpen = NSEvent.modifierFlags.contains(.option)
         let res = CaptureResult(
             image: entry.image,
             globalRect: .zero,
@@ -641,7 +650,7 @@ struct MediaHistoryOverlayView: View {
         )
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
             PinnedScreenshotController.shared.pin(entry: entry, url: url)
-            controller?.dismiss()
+            if !keepOpen { controller?.dismiss() }
             return
         }
         // F-04B: a pin wants a file to hand to other apps on drag-out, so write
@@ -662,7 +671,7 @@ struct MediaHistoryOverlayView: View {
                 GestureHUD.shared.show(title: "Save Failed", detail: error.localizedDescription)
             }
             PinnedScreenshotController.shared.pin(entry: entry, url: pinURL)
-            controller?.dismiss()
+            if !keepOpen { controller?.dismiss() }
         }
     }
 
@@ -714,6 +723,11 @@ struct MediaHistoryOverlayView: View {
 
 // MARK: - Capture Thumbnail
 
+/// Click handling shared by history cards (pure for tests).
+enum HistoryClick {
+    static func isDoubleClick(_ clickCount: Int?) -> Bool { (clickCount ?? 1) >= 2 }
+}
+
 private struct CaptureHistoryCard: View {
     let entry: CaptureHistoryEntry
     let isSelected: Bool
@@ -743,16 +757,16 @@ private struct CaptureHistoryCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onHover { hovering in
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.14)) { isHovered = hovering }
+            // Have a drag file ready before a drag can start (no UI stall).
+            if hovering { CaptureDragFiles.shared.prefetch(entry) }
         }
-        .gesture(
-            TapGesture(count: 2).exclusively(before: TapGesture())
-                .onEnded { click in
-                    switch click {
-                    case .first: onSelect(); onAnnotate()
-                    case .second: onSelect()
-                    }
-                }
-        )
+        // One recogniser, like the clipboard panel: the first click selects
+        // at once (no wait for the double-click interval) and the second
+        // click of a double-click opens Annotate.
+        .onTapGesture {
+            onSelect()
+            if HistoryClick.isDoubleClick(NSApp.currentEvent?.clickCount) { onAnnotate() }
+        }
         .onDrag { dragItemProvider() }
         .contextMenu { cardMenu }
     }
@@ -927,17 +941,18 @@ private struct CaptureHistoryCard: View {
     }
 
     private func dragItemProvider() -> NSItemProvider {
-        // F-04B deferred limitation: `NSItemProvider` for `.onDrag` must be
-        // produced synchronously on the main thread, so this one path still
-        // encodes/writes with the synchronous `writeToDisk`. Making it async
-        // would need a promise-based `NSItemProvider` (e.g. `registerFileRepresentation`),
-        // which is out of scope for this bounded fix; a drag of a never-saved
-        // capture can therefore still briefly block the UI.
+        // `.onDrag` needs the item synchronously. Saved captures hand over
+        // their file; unsaved ones use the drag file prefetched on hover
+        // (encoded off the main thread by CaptureDragFiles). Only a drag that
+        // beats the prefetch falls back to the synchronous write below.
         if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
             return NSItemProvider(contentsOf: url) ?? NSItemProvider(object: entry.thumbnail)
         }
         // Never export a video's thumbnail as a misleading PNG.
         guard entry.kind != .videoRecording else { return NSItemProvider() }
+        if let url = CaptureDragFiles.shared.readyFile(for: entry) {
+            return NSItemProvider(contentsOf: url) ?? NSItemProvider(object: entry.thumbnail)
+        }
 
         let res = CaptureResult(
             image: entry.image,

@@ -210,6 +210,7 @@ final class QuickAccessOverlayController {
             onAnnotate: { [weak self] in self?.annotate() },
             onPin: { [weak self] in self?.pin() },
             onClose: { [weak self] in self?.dismiss(deleteFile: false) },
+            onTrash: { [weak self] in self?.trashFromOverlay() },
             onDragOut: { [weak self] success, option in self?.handleDragOut(success: success, optionPressed: option) },
             prepareDragFile: { [weak self] in self?.beginDragFile() },
             onHoverChange: { [weak self] hovering in self?.setHovering(hovering) },
@@ -221,6 +222,7 @@ final class QuickAccessOverlayController {
                 ("Save", { [weak self] in self?.save() }),
                 ("Annotate", { [weak self] in self?.annotate() }),
                 ("Close", { [weak self] in self?.dismiss(deleteFile: false) }),
+                ("Move to Trash", { [weak self] in self?.trashFromOverlay() }),
             ]
         )
     }
@@ -257,6 +259,7 @@ final class QuickAccessOverlayController {
             case .edit: self.annotate()
             case .pin: self.pin()
             case .quickLook: self.preview()
+            case .trash: self.trashFromOverlay()
             }
             return nil
         }
@@ -686,7 +689,7 @@ final class QuickAccessOverlayController {
         case .openInFinder: revealInFinder()
         case .print: printCapture()
         case .saveAs: saveAs()
-        case .moveToTrash: dismiss(deleteFile: true)
+        case .moveToTrash: trashFromOverlay()
         case .annotate, .editVideo: annotate()
         case .pin: pin()
         case .rotateLeft:
@@ -772,6 +775,25 @@ final class QuickAccessOverlayController {
 
     // MARK: - Files
 
+    /// Hover trash button, ⌘⌫ and the menu item: one path. Recordings ask
+    /// first (losing one is expensive); screenshots go straight away — the
+    /// saved file to the Trash, an unsaved one out of Capture History.
+    func trashFromOverlay() {
+        guard !mediaOperationInProgress, !recycleInProgress else { return }
+        if QuickAccessPolicy.confirmsTrash(isVideo: isVideo) {
+            pauseAutoClose()
+            let alert = NSAlert()
+            alert.messageText = "Move “\(entry.displayName)” to the Trash?"
+            alert.informativeText = "The recording is removed from Capture History and its file goes to the Trash."
+            alert.addButton(withTitle: "Move to Trash")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else { resumeAutoClose(); return }
+        }
+        dismiss(deleteFile: true)
+    }
+
     private func moveToTrash() {
         guard !recycleInProgress else { return }
         guard let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) else {
@@ -844,7 +866,8 @@ final class QuickAccessOverlayController {
 
     private func beginDragFile() -> URL? {
         guard !mediaOperationInProgress else { return nil }
-        let file = ensureFile()
+        // Prefer the drag file written off the main thread on hover.
+        let file = CaptureDragFiles.shared.readyFile(for: entry) ?? ensureFile()
         if file != nil {
             dragging = true
             pauseAutoClose()
@@ -893,6 +916,7 @@ final class QuickAccessOverlayController {
     private func setHovering(_ value: Bool) {
         hovering = value
         if value {
+            CaptureDragFiles.shared.prefetch(entry)
             pauseAutoClose()
             // CleanShot's ⌘C / ⌘S / ⌘W / ⌘E / Space work while the card is
             // hovered, even after focus moved elsewhere since it appeared.
@@ -1011,6 +1035,7 @@ private struct QuickAccessOverlayView: View {
     let onAnnotate: () -> Void
     let onPin: () -> Void
     let onClose: () -> Void
+    let onTrash: () -> Void
     let onDragOut: (Bool, Bool) -> Void
     let prepareDragFile: () -> URL?
     let onHoverChange: (Bool) -> Void
@@ -1112,7 +1137,10 @@ private struct QuickAccessOverlayView: View {
                     overlayIcon("pencil", label: "Annotate", hint: "Open Annotate tool (⌘E or double-click)", onAnnotate)
                 }
                 Spacer(minLength: 4)
-                overlayIcon("ellipsis", label: "More Actions", hint: "More actions (or right-click)", onMore)
+                HStack(spacing: compact ? 4 : 5) {
+                    overlayIcon("trash", label: "Move to Trash", hint: "Move to Trash (⌘⌫)", onTrash)
+                    overlayIcon("ellipsis", label: "More Actions", hint: "More actions (or right-click)", onMore)
+                }
             }
         }
     }
