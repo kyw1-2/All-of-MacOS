@@ -12,7 +12,7 @@ enum TriggerSuppressionKind: Equatable {
     init(_ input: TriggerInput?) {
         switch input {
         case .trackpadGesture: self = .trackpad
-        case .keyboardShortcut, .keySequence: self = .keyboard
+        case .keyboardShortcut, .keySequence, .typedString: self = .keyboard
         case .mouseButton, .mouse: self = .mouse
         case .drawingPattern: self = .drawing
         case .namedTrigger, .systemEvent, .none: self = .system

@@ -229,6 +229,9 @@ enum TriggerInput: Codable, Hashable {
     case trackpadGesture(TrackpadGesture)
     case keyboardShortcut(KeyboardShortcut)
     case keySequence([KeySequenceStroke])
+    /// Text expansion (espanso / BTT Typed Strings parity): typing the
+    /// abbreviation in any app erases it and types the replacement.
+    case typedString(TypedStringSpec)
     case mouseButton(MouseButton)
     /// Richer Normal Mouse trigger (any button, multi-click, long press, drag
     /// direction, scroll). `.mouseButton` stays for buttons 3-7 single presses
@@ -243,6 +246,7 @@ enum TriggerInput: Codable, Hashable {
         case .trackpadGesture(let gesture): return gesture.rawValue
         case .keyboardShortcut(let shortcut): return shortcut.displayString
         case .keySequence(let strokes): return strokes.map(\.displayName).joined(separator: " → ")
+        case .typedString(let spec): return "Typed “\(spec.abbreviation)”"
         case .mouseButton(let button): return button.rawValue
         case .mouse(let spec): return spec.displayName
         case .drawingPattern(let name): return "Drawing: \(name)"
@@ -254,12 +258,20 @@ enum TriggerInput: Codable, Hashable {
     var category: TriggerCategory {
         switch self {
         case .trackpadGesture: return .trackpad
-        case .keyboardShortcut, .keySequence: return .keyboard
+        case .keyboardShortcut, .keySequence, .typedString: return .keyboard
         case .mouseButton, .mouse: return .normalMouse
         case .drawingPattern: return .drawings
         case .namedTrigger, .systemEvent: return .otherTriggers
         }
     }
+}
+
+/// A text-expansion rule. The replacement is typed in place of the
+/// abbreviation; when it is empty the trigger's own actions run instead.
+struct TypedStringSpec: Codable, Hashable {
+    var abbreviation: String
+    var replacement: String = ""
+    var displayName: String { "Typed “\(abbreviation)”" }
 }
 
 struct Trigger: Identifiable, Codable, Hashable {

@@ -448,6 +448,8 @@ struct AddTriggerSheet: View {
     @State private var longTouchMs = 500
     @State private var recordedShortcut: KeyboardShortcut?
     @State private var keyboardMode = "shortcut"
+    @State private var typedAbbreviation = ""
+    @State private var typedReplacement = ""
     @State private var sequenceStrokes: [KeySequenceStroke] = []
     @State private var sequenceHoldEnabled = false
     @State private var sequenceHoldMs = 600
@@ -510,8 +512,11 @@ struct AddTriggerSheet: View {
                 Picker("Keyboard input", selection: $keyboardMode) {
                     Text("Shortcut").tag("shortcut")
                     Text("Key Sequence").tag("sequence")
+                    Text("Typed String").tag("typed")
                 }.pickerStyle(.segmented)
-                if keyboardMode == "sequence" { sequenceRecorder } else { keyboardRecorder }
+                if keyboardMode == "sequence" { sequenceRecorder }
+                else if keyboardMode == "typed" { typedStringFields }
+                else { keyboardRecorder }
             case .normalMouse:
                 mousePicker
             case .drawings:
@@ -546,8 +551,10 @@ struct AddTriggerSheet: View {
 
     private var canAdd: Bool {
         switch category {
-        case .keyboard: return keyboardMode == "sequence" ?
-            ((sequenceHoldEnabled ? sequenceStrokes.count == 1 : sequenceStrokes.count >= 2) && sequenceStrokes.count <= 6) : recordedShortcut != nil
+        case .keyboard:
+            if keyboardMode == "sequence" { return (sequenceHoldEnabled ? sequenceStrokes.count == 1 : sequenceStrokes.count >= 2) && sequenceStrokes.count <= 6 }
+            if keyboardMode == "typed" { return typedStringIsValid }
+            return recordedShortcut != nil
         case .trackpad: return TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers) == nil
         case .normalMouse: return TriggerValidation.problem(for: mouseInput, requiredModifiers: mouseModifiers) == nil
         case .drawings: return !drawingSamples.isEmpty && !drawingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -931,6 +938,27 @@ struct AddTriggerSheet: View {
         }
     }
 
+    private var typedStringIsValid: Bool {
+        let abbreviation = typedAbbreviation.trimmingCharacters(in: .whitespacesAndNewlines)
+        return abbreviation.count >= 2 && abbreviation.count <= 64
+            && abbreviation.rangeOfCharacter(from: .newlines) == nil
+    }
+
+    private var typedStringFields: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Type this abbreviation in any app and it is replaced:")
+                .font(.subheadline).foregroundStyle(.secondary)
+            TextField("Abbreviation, e.g. ;email", text: $typedAbbreviation)
+                .textFieldStyle(.roundedBorder)
+            Text("Replaced with:")
+                .font(.subheadline).foregroundStyle(.secondary)
+            TextField("Replacement text (empty = run the trigger's actions)", text: $typedReplacement)
+                .textFieldStyle(.roundedBorder)
+            Text("Never expands in password fields. Leave the replacement empty to run this trigger's actions instead.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var canAddOtherTrigger: Bool {
         switch otherTriggerMode {
         case "scheduled":
@@ -967,6 +995,9 @@ struct AddTriggerSheet: View {
         case .keyboard:
             if keyboardMode == "sequence" {
                 input = .keySequence(sequenceStrokes)
+            } else if keyboardMode == "typed" {
+                input = .typedString(TypedStringSpec(abbreviation: typedAbbreviation.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                     replacement: typedReplacement))
             } else {
                 guard let shortcut = recordedShortcut else { return }
                 input = .keyboardShortcut(shortcut)

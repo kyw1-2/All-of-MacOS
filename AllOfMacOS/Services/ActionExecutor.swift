@@ -512,6 +512,14 @@ class ActionExecutor {
             task.launchPath = "/usr/bin/pmset"
             task.arguments = ["sleepnow"]
             try? task.run()
+        case .toggleKeepAwake:
+            let minutes = action.parameters.keepAwakeMinutes.map { Int($0) }
+            let keepDisplay = action.parameters.keepDisplayOn ?? false
+            MainActor.assumeIsolated {
+                KeepAwakeService.shared.toggle(minutes: minutes, keepDisplay: keepDisplay)
+            }
+        case .showWindowSwitcher:
+            MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
         case .lockScreen:
             if let lib = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY) {
                 typealias LockFn = @convention(c) () -> Void
@@ -857,6 +865,15 @@ class ActionExecutor {
             units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: $0.count, unicodeString: $0.baseAddress) }
         }
         return (down, up)
+    }
+
+    /// Public entry for the text-expansion engine: types the replacement of a
+    /// matched abbreviation into the frontmost app. Same delivery rules as the
+    /// Type Text action (lock screen, Secure Event Input, focus tracking).
+    static func typeReplacementText(_ text: String, completion: ((Bool) -> Void)? = nil) {
+        typeText(text, intervalMs: nil, isCancelled: { false }) { success in
+            completion?(success)
+        }
     }
 
     private static func typeText(_ text: String, intervalMs: Int?, isCancelled: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {

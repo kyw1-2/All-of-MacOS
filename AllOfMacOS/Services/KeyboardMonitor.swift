@@ -294,9 +294,17 @@ class KeyboardMonitor: ObservableObject {
                 if monitor.secureHotKeys?.owns(keyCode: eventCode, flags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))) == true {
                     return Unmanaged.passUnretained(event)
                 }
+                // Text expansion needs the real character, not a keycode.
+                var text: String?
+                if type == .keyDown {
+                    var chars = [UniChar](repeating: 0, count: 8)
+                    var length = 0
+                    event.keyboardGetUnicodeString(maxStringLength: 8, actualStringLength: &length, unicodeString: &chars)
+                    if length > 0 { text = String(decoding: chars.prefix(length), as: UTF16.self) }
+                }
                 let swallowed = monitor.handleInput(keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
                     modifiers: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)), isDown: type == .keyDown,
-                    isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+                    isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, text: text)
                 return swallowed ? nil : Unmanaged.passUnretained(event)
             }, userInfo: nil)
         if let tap = triggerEventTap {
@@ -310,7 +318,7 @@ class KeyboardMonitor: ObservableObject {
                 if event.type == .flagsChanged {
                     self?.handleSequenceModifierEvent(keyCode: event.keyCode, flags: event.cgEvent?.flags ?? [])
                 } else {
-                    _ = self?.handleInput(keyCode: event.keyCode, modifiers: event.modifierFlags, isDown: event.type == .keyDown, isRepeat: event.isARepeat)
+                    _ = self?.handleInput(keyCode: event.keyCode, modifiers: event.modifierFlags, isDown: event.type == .keyDown, isRepeat: event.isARepeat, text: event.type == .keyDown ? event.characters : nil)
                 }
             } { globalMonitors.append(monitor) }
             GestureLog.shared.logFromAnyThread("Keyboard uses listen-only fallback; check Accessibility permission", level: .error)
@@ -373,8 +381,13 @@ class KeyboardMonitor: ObservableObject {
     }
 
     @discardableResult
-    func handleInput(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isDown: Bool, isRepeat: Bool = false) -> Bool {
+    func handleInput(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isDown: Bool, isRepeat: Bool = false, text: String? = nil) -> Bool {
         guard !Self.isRecordingShortcut, !isMonitoring else { return false }
+
+        // Text expansion runs before everything else: it only ever sees plain
+        // printable typing, and a match swallows its final key.
+        if isDown, let text, !text.isEmpty,
+           processTypedString(text: text, modifiers: modifiers) { return true }
 
         // ESC (keyCode 53) dismisses active overlays immediately, even when another app is focused
         if keyCode == 53 && isDown {
@@ -462,6 +475,50 @@ class KeyboardMonitor: ObservableObject {
         }
         return true
     }
+
+    /// Typed-string matching (espanso / BTT Typed Strings parity). Returns
+    /// true when this key was the final character of an abbreviation and was
+    /// swallowed; the erasure and expansion then run off the tap callback.
+    private func processTypedString(text: String, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true),
+              registeredTriggers.contains(where: { if case .typedString = $0.input { return true }; return false }),
+              ActionExecutor.activeTextTypingSessions == 0,
+              !ScreenLock.isLocked,
+              NSApp.keyWindow == nil, // never expand into AOM's own fields
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            MainActor.assumeIsolated { TypedStringEngine.shared.reset() }
+            return false
+        }
+        guard modifiers.isDisjoint(with: [.command, .control, .option, .function]) else {
+            MainActor.assumeIsolated { TypedStringEngine.shared.reset() }
+            return false
+        }
+        // Secure Event Input owns the focused field (passwords, the lock
+        // screen): typed text must never expand or erase there.
+        guard !IsSecureEventInputEnabled() else {
+            MainActor.assumeIsolated { TypedStringEngine.shared.reset() }
+            return false
+        }
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let match = MainActor.assumeIsolated {
+            TypedStringEngine.shared.observe(text: text, bundleID: bundleID,
+                                             registered: registeredTriggers, activationGroups: activationGroups)
+        }
+        guard let match, case .typedString(let spec) = match.trigger.input else { return false }
+        let engine = TypedStringEngine.shared
+        let trigger = match.trigger
+        DispatchQueue.global(qos: .userInitiated).async {
+            engine.erase(match.backspaces)
+            Task { @MainActor in engine.reset() }
+            if !spec.replacement.isEmpty {
+                ActionExecutor.typeReplacementText(spec.replacement, completion: nil)
+            } else {
+                self.fire(trigger, keyCode: 0)
+            }
+        }
+        return true
+    }
+
     private func fire(_ trigger: Trigger, keyCode: UInt16) {
         // Keep event tap callbacks short: launch the workflow after returning to the run loop.
         let generation = registrationGeneration
