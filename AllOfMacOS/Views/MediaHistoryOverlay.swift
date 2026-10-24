@@ -510,6 +510,7 @@ struct MediaHistoryOverlayView: View {
                                         thumbnailHeight: max(60, side - 58),
                                         onSelect: { searchFocused = false; selectedID = entry.id },
                                         onCopy: { copyEntry(entry) },
+                                        onSave: { saveEntry(entry) },
                                         onAnnotate: { annotateEntry(entry) },
                                         onPin: { pinEntry(entry) },
                                         onRestore: { restoreEntry(entry) },
@@ -734,6 +735,7 @@ private struct CaptureHistoryCard: View {
     var thumbnailHeight: CGFloat = 140
     let onSelect: () -> Void
     let onCopy: () -> Void
+    var onSave: () -> Void = {}
     let onAnnotate: () -> Void
     let onPin: () -> Void
     let onRestore: () -> Void
@@ -866,11 +868,16 @@ private struct CaptureHistoryCard: View {
                 }
             }
         } else {
+            // Same core set and order as the Quick Access card's menu.
             Button("Copy Image", action: onCopy)
+            Button("Save", action: onSave)
             Button("Annotate…", action: onAnnotate)
             Button("Pin to Screen", action: onPin)
             Button("Preview…", action: onPreview)
             Button("Restore to Quick Access", action: onRestore)
+            if let url = entry.fileURL, FileManager.default.fileExists(atPath: url.path) {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
             Button("Copy QR Code") {
                 Task { @MainActor in
                     do {
