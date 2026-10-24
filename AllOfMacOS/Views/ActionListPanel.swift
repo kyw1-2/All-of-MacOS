@@ -25,10 +25,9 @@ struct ActionCardView: View {
             HStack(spacing: 8) {
                 // Step Badge
                 Text("\(index)")
-                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 18, height: 18)
-                    .background(.quaternary.opacity(0.8), in: Circle())
 
                 if isElse {
                     Text("ELSE")
@@ -39,9 +38,12 @@ struct ActionCardView: View {
                 }
 
                 Image(systemName: action.actionType.iconName)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22)
+                    .font(.system(size: 17, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(categoryColor)
+                    .frame(width: 36, height: 36)
+                    .background(categoryColor.opacity(0.09),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -54,7 +56,7 @@ struct ActionCardView: View {
                     }
                     if let detail = actionDetail {
                         Text(detail)
-                            .font(.caption2)
+                            .font(AOMType.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -94,8 +96,8 @@ struct ActionCardView: View {
                 .help(isExpanded ? "Hide options" : "Show options")
                 .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
             .onTapGesture { onToggleExpand() }
 
@@ -103,20 +105,13 @@ struct ActionCardView: View {
                 Divider()
                 // In-place parameter configuration view!
                 ActionConfigView(keyboardMonitor: keyboardMonitor, trigger: trigger, action: action)
-                    .padding(10)
+                    .padding(16)
             }
         }
+        .aomCardStyle(.paper, padding: 0, elevated: false)
         .padding(.leading, CGFloat(depth * 14))
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5)
-        )
         .opacity(action.isEnabled ? 1 : 0.6)
+        .animation(AOMMotion.panel, value: isExpanded)
     }
 
     private var categoryColor: Color {

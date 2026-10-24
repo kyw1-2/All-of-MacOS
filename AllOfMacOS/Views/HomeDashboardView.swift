@@ -50,17 +50,20 @@ struct AOMHomeView: View {
             let wide = geometry.size.width >= Self.wideWidth
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.l) {
+                    workspaceHeading
                     notices
                     quickActions
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.xl) {
                             automations(lastRuns: lastRuns)
+                                .aomCardStyle(.paper, padding: 20, elevated: false)
                                 .frame(maxWidth: .infinity, alignment: .topLeading)
                             recent
                                 .frame(width: min(380, max(300, geometry.size.width * 0.36)), alignment: .topLeading)
                         }
                     } else {
                         automations(lastRuns: lastRuns)
+                            .aomCardStyle(.paper, padding: 20, elevated: false)
                         recent
                     }
                     summaryLine
@@ -72,7 +75,7 @@ struct AOMHomeView: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .aomPane()
+        .background(AOMTheme.workspace)
         .navigationTitle("Workspace")
         .navigationSubtitle(subtitle(lastRuns: lastRuns))
         .toolbar {
@@ -150,21 +153,59 @@ struct AOMHomeView: View {
 
     // MARK: Quick actions
 
+    private var workspaceHeading: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom) {
+                workspaceTitle
+                Spacer(minLength: 20)
+                engineStatus
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                workspaceTitle
+                engineStatus
+            }
+        }
+    }
+
+    private var workspaceTitle: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Your workspace")
+                .font(.system(size: 30, weight: .semibold)).tracking(-0.8)
+                .foregroundStyle(AOMTheme.text)
+                .accessibilityAddTraits(.isHeader)
+            Text("Capture a moment. Keep an idea. Automate the rest.")
+                .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
+        }
+    }
+
+    private var engineStatus: some View {
+        Label {
+            Text(appState.globalEnabled
+                 ? "\(triggers.filter(\.isEnabled).count) automations enabled"
+                 : "Automation paused")
+        } icon: {
+            Circle().fill(appState.globalEnabled ? AOMTheme.positive : AOMTheme.warning)
+                .frame(width: 6, height: 6)
+        }
+        .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(AOMTheme.paper, in: Capsule())
+    }
+
     private var quickActions: some View {
-        HStack(spacing: AOMSpace.xs) {
-            HomeQuickButton(title: "Capture Area", symbol: "viewfinder",
-                            shortcut: CaptureShortcuts.shared.shortcut(for: .captureArea)) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
+            AOMLaunchTile("Capture Area", detail: "Save what's on your screen", symbol: "viewfinder", tint: .blue,
+                          shortcut: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString) {
                 CaptureCoordinator.shared.captureArea()
             }
-            HomeQuickButton(title: "Clipboard Shelf", symbol: "doc.on.clipboard",
-                            shortcut: ClipboardShortcuts.shared.shortcut(for: .history)) {
+            AOMLaunchTile("Clipboard Shelf", detail: "Pick up anything you copied", symbol: "doc.on.clipboard", tint: .purple,
+                          shortcut: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString) {
                 ClipboardPanelController.shared.show()
             }
-            HomeQuickButton(title: "Search", symbol: "magnifyingglass",
-                            shortcut: AOMPaletteShortcut.current(appState.currentPreset)) {
+            AOMLaunchTile("Find Anything", detail: "Commands, automations and more", symbol: "magnifyingglass", tint: .teal,
+                          shortcut: AOMPaletteShortcut.current(appState.currentPreset).displayString) {
                 showingCommandPalette = true
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -196,7 +237,7 @@ struct AOMHomeView: View {
                     section(recent.isEmpty ? "Automations" : "Recently Used", rows: Array(rest.prefix(Self.rowsPerSection)),
                             lastRuns: lastRuns)
                 }
-                HStack(spacing: AOMSpace.s) {
+                VStack(alignment: .leading, spacing: AOMSpace.xs) {
                     Button("Show All \(triggers.count) in Automation") { appState.selectedMainTab = .gestures }
                         .buttonStyle(.link)
                     if pinned.isEmpty {
@@ -247,7 +288,7 @@ struct AOMHomeView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: AOMSpace.xs), GridItem(.flexible(), spacing: AOMSpace.xs)],
                               spacing: AOMSpace.xs) {
-                        ForEach(history.entries.prefix(4)) { entry in
+                        ForEach(history.entries.prefix(2)) { entry in
                             HomeCaptureThumb(entry: entry) {
                                 CaptureItemActions.copy(entry)
                                 toast.show("Copied capture")
@@ -268,7 +309,7 @@ struct AOMHomeView: View {
                         .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
                         .padding(.top, 4)
                 } else {
-                    let entries = Array(clipboard.entries.prefix(5))
+                    let entries = Array(clipboard.entries.prefix(3))
                     VStack(spacing: 0) {
                         ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                             HomeClipboardRow(entry: entry) { copy(entry) }
@@ -402,34 +443,6 @@ private struct HomeClipboardRow: View {
         .help("Copy “\(entry.title.prefix(60))”")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(named: "Copy", onCopy)
-    }
-}
-
-/// One of the three everyday entry points: glyph, label, its shortcut.
-private struct HomeQuickButton: View {
-    let title: String
-    let symbol: String
-    let shortcut: KeyboardShortcut?
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: symbol).font(.system(size: 12.5, weight: .medium)).foregroundStyle(AOMTheme.blue)
-                Text(title).font(AOMType.body.weight(.medium)).foregroundStyle(AOMTheme.text)
-                if let shortcut { AOMKeycap(text: shortcut.displayString) }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(hovering ? AOMTheme.track : AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(AOMMotion.quick, value: hovering)
-        .help(shortcut.map { "\(title) (\($0.displayString))" } ?? title)
-        .accessibilityLabel(shortcut.map { "\(title), \($0.displayString)" } ?? title)
     }
 }
 

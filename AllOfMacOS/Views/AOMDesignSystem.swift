@@ -1,6 +1,51 @@
 import AppKit
 import SwiftUI
 
+/// A compact launch surface. The entire tile is a native focusable button;
+/// the shortcut is a hint, never a second competing action.
+struct AOMLaunchTile: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let tint: Color
+    var shortcut: String?
+    let action: () -> Void
+
+    init(_ title: String, detail: String, symbol: String, tint: Color,
+         shortcut: String? = nil, action: @escaping () -> Void) {
+        self.title = title; self.detail = detail; self.symbol = symbol
+        self.tint = tint; self.shortcut = shortcut; self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(alignment: .top) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 23, weight: .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(tint)
+                    Spacer(minLength: 4)
+                    if let shortcut { AOMKeycap(text: shortcut) }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AOMTheme.text)
+                    Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                        .lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
+            .padding(16)
+            .background(tint.opacity(0.045), in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
+        }
+        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMTheme.cardRadius, padding: 0))
+        .help(shortcut.map { "\(title) (\($0))" } ?? title)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail)
+    }
+}
+
 // MARK: - Design tokens
 
 /// One set of spacing, radius and surface rules for every AOM page, so
@@ -13,7 +58,7 @@ enum AOMDesign {
     static let gridSpacing: CGFloat = AOMSpace.s
     /// Continuous corner radii: large surfaces, tiles/cards, small controls.
     static let surfaceRadius: CGFloat = AOMTheme.cardRadius
-    static let tileRadius: CGFloat = 10
+    static let tileRadius: CGFloat = 14
     static let controlRadius: CGFloat = AOMTheme.controlRadius
 
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }

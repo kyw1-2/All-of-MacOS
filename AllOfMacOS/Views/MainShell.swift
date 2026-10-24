@@ -67,12 +67,12 @@ struct AOMMainShell<Content: View>: View {
             .background(AOMTheme.pane)
             // The page floats as an inset card on the glass: rounded, edged
             // and softly lifted, with the toolbar left on the material above.
-            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AOMTheme.windowContentRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: AOMTheme.windowContentRadius, style: .continuous)
                     .strokeBorder(AOMTheme.hairline, lineWidth: 0.5)
             }
-            .shadow(color: .black.opacity(0.10), radius: 14, y: 3)
+            .shadow(color: .black.opacity(0.06), radius: 16, y: 4)
             .padding([.leading, .bottom, .trailing], AOMSpace.xs + 2)
             .navigationTitle(appState.selectedMainTab.title)
         }
@@ -112,16 +112,51 @@ struct AOMSidebar: View {
 
     var body: some View {
         List(selection: selection) {
-            ForEach(AOMMainTab.allCases) { tab in
-                Label(tab.title, systemImage: tab.sidebarSymbol)
-                    .tag(tab)
-                    .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
+            navigationItem(.home)
+            Section("Tools") {
+                navigationItem(.gestures)
+                navigationItem(.snapping)
+                navigationItem(.capture)
+                navigationItem(.clipboard)
+            }
+            Section("Activity") {
+                navigationItem(.insights)
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) { searchButton }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 9) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 19, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(AOMTheme.text)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("AOM").font(.system(size: 18, weight: .semibold)).tracking(-0.6)
+                        Text("All of MacOS").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                searchButton
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
-        .accessibilityLabel("Navigation")
+        .accessibilityElement(children: .contain)
+    }
+
+    private func navigationItem(_ tab: AOMMainTab) -> some View {
+        Label {
+            Text(tab.title).font(.system(size: 13, weight: .medium))
+                .padding(.leading, 3)
+        } icon: {
+            Image(systemName: tab.sidebarSymbol)
+                .font(.system(size: 15, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+        }
+        .frame(minHeight: 28)
+        .tag(tab)
+        .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
     }
 
     private var searchButton: some View {
@@ -134,7 +169,7 @@ struct AOMSidebar: View {
             }
             .foregroundStyle(AOMTheme.textSecondary)
             .padding(.horizontal, 8)
-            .frame(height: 24)
+            .frame(height: 30)
             .background(AOMTheme.track.opacity(0.7), in: RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
@@ -143,9 +178,9 @@ struct AOMSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.top, 4)
-        .padding(.bottom, 6)
+        .padding(.bottom, 10)
         .help("Search commands, automations, clipboard and captures")
         .accessibilityLabel("Search")
     }
@@ -167,6 +202,7 @@ struct AOMSidebar: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .accessibilityLabel("Automation engine")
                 .help(on ? "Pause every gesture and shortcut" : "Resume automation")
             Menu {
                 Button("Settings…") { openSettings() }

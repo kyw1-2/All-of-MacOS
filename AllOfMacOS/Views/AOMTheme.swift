@@ -19,6 +19,12 @@ enum AOMTheme {
     static let canvasNSColor = NSColor.windowBackgroundColor
     /// A content pane: lists, editors and libraries (white / dark grey).
     static let pane = Color(nsColor: .controlBackgroundColor)
+    /// The work surface underneath documents and workflow steps. Kept opaque:
+    /// material belongs to the window chrome, never underneath readable content.
+    static let workspace = Color.aomDynamic(
+        light: NSColor(srgbRed: 0.963, green: 0.967, blue: 0.975, alpha: 1),
+        dark: NSColor(srgbRed: 0.085, green: 0.090, blue: 0.105, alpha: 1)
+    )
     /// Raised content inside a pane: cards for discrete items.
     static let paper = Color(nsColor: .controlBackgroundColor)
     static let card = paper
@@ -91,7 +97,8 @@ enum AOMTheme {
     // MARK: Geometry
 
     /// Cards for discrete items (captures, clipboard cards, notices).
-    static let cardRadius: CGFloat = 12
+    static let cardRadius: CGFloat = 16
+    static let windowContentRadius: CGFloat = 18
     static let controlRadius: CGFloat = 7
     static let pagePadding: CGFloat = 20
     static let sectionSpacing: CGFloat = 18
@@ -137,7 +144,7 @@ enum AOMSpace {
 enum AOMSize {
     /// Global sidebar.
     static let sidebarMin: CGFloat = 190
-    static let sidebarIdeal: CGFloat = 212
+    static let sidebarIdeal: CGFloat = 218
     static let sidebarMax: CGFloat = 260
     /// The Automation list column; the editor takes the rest.
     static let listColumnRange: ClosedRange<Double> = 270...380
@@ -474,7 +481,7 @@ private struct AOMCardTileBody: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .aomCardStyle(style, radius: radius, padding: padding, hovering: hovering && isEnabled)
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .opacity(isEnabled ? 1 : 0.5)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.5)
             .animation(reduceMotion ? nil : AOMTheme.press, value: configuration.isPressed)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: hovering)
             .onHover { hovering = $0 }

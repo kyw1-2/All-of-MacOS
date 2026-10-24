@@ -45,12 +45,25 @@ struct CaptureStudioView: View {
                 activeRecordingBanner.padding(AOMSpace.s)
                 AOMDivider()
             }
-            filterBar
-            AOMDivider()
-            ScrollView { gallerySection.padding(AOMSpace.m) }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    captureLaunchpad
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text("Your captures").font(.system(size: 22, weight: .semibold)).tracking(-0.4)
+                                .accessibilityAddTraits(.isHeader)
+                            Text("\(filteredEntries.count)").font(AOMType.body).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        filterBar
+                        gallerySection
+                    }
+                }
+                .padding(24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .aomPane()
+        .background(AOMTheme.workspace)
         .navigationTitle("Capture")
         .navigationSubtitle(subtitle)
         .toolbar { toolbarContent }
@@ -137,6 +150,24 @@ struct CaptureStudioView: View {
         }
     }
 
+    private var captureLaunchpad: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
+            AOMLaunchTile("Screenshot", detail: "Select an area to capture", symbol: "viewfinder", tint: .blue,
+                          shortcut: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString) {
+                CaptureCoordinator.shared.captureArea()
+            }
+            AOMLaunchTile("Record Screen", detail: "Capture your screen in motion", symbol: "record.circle", tint: .red,
+                          shortcut: CaptureShortcuts.shared.shortcut(for: .recordScreen)?.displayString) {
+                recordingService.promptAndStartRecording()
+            }
+            .disabled(recordingService.isRecording)
+            AOMLaunchTile("Extract Text", detail: "Copy text from anywhere", symbol: "text.viewfinder", tint: .orange,
+                          shortcut: CaptureShortcuts.shared.shortcut(for: .ocr)?.displayString) {
+                CaptureCoordinator.shared.captureText()
+            }
+        }
+    }
+
     private var filterBar: some View {
         HStack(spacing: AOMSpace.s) {
             Picker("Show", selection: $selectedFilter) {
@@ -151,8 +182,7 @@ struct CaptureStudioView: View {
                 .foregroundStyle(AOMTheme.textTertiary)
                 .lineLimit(1)
         }
-        .padding(.horizontal, AOMSpace.s)
-        .frame(height: 40)
+        .frame(minHeight: 30)
     }
 
     // MARK: - Active Recording Banner
@@ -214,7 +244,7 @@ struct CaptureStudioView: View {
                 .frame(minHeight: 320)
             } else {
                 // Wide enough that the caption (kind, size, time) never truncates.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: AOMSpace.s)], spacing: AOMSpace.s) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 16)], spacing: 20) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,
@@ -308,10 +338,24 @@ private struct CaptureCard: View {
             .onDrag { CaptureItemActions.dragProvider(entry) }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(entry.displayName)
-                    .font(AOMType.bodyEmphasis)
-                    .foregroundStyle(AOMTheme.text)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(entry.displayName)
+                        .font(AOMType.bodyEmphasis)
+                        .foregroundStyle(AOMTheme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Menu {
+                        Button("Copy", action: onCopy)
+                        Button("Edit", action: onAnnotate)
+                        Button("Pin to Screen", action: onPin)
+                        Button("Reopen in Quick Access", action: onRestoreOverlay)
+                        if let onShowInFinder { Button("Show in Finder", action: onShowInFinder) }
+                        Divider()
+                        Button("Remove from History", role: .destructive, action: onDelete)
+                    } label: { Image(systemName: "ellipsis") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .accessibilityLabel("Actions for \(entry.displayName)")
+                }
                 HStack(spacing: 6) {
                     // The kind only when the title does not already say it.
                     if entry.kind.displayName != entry.displayName {
@@ -326,8 +370,8 @@ private struct CaptureCard: View {
                 .foregroundStyle(AOMTheme.textTertiary)
                 .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
         .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: isHovered)

@@ -34,6 +34,7 @@ struct ClipboardStudioView: View {
     var body: some View {
         let entries = filteredEntries
         VStack(spacing: 0) {
+            libraryHeading
             filterBar
             AOMDivider()
             Group {
@@ -98,11 +99,12 @@ struct ClipboardStudioView: View {
         GeometryReader { geometry in
             if gridLayout {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: AOMSpace.s)], spacing: AOMSpace.s) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 16)], spacing: 16) {
                         ForEach(entries) { entry in libraryCard(entry) }
                     }
-                    .padding(AOMSpace.m)
+                    .padding(24)
                 }
+                .background(AOMTheme.workspace)
             } else {
                 let showsPreview = geometry.size.width >= 640
                 HStack(spacing: 0) {
@@ -270,6 +272,22 @@ struct ClipboardStudioView: View {
 
     // MARK: - Filter bar (pinboards and kinds — this page's own navigation)
 
+    private var libraryHeading: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(search.board.flatMap { id in store.boards.first { $0.id == id }?.name } ?? "Your clipboard")
+                .font(.system(size: 24, weight: .semibold)).tracking(-0.5)
+                .lineLimit(1).accessibilityAddTraits(.isHeader)
+            Text("\(filteredEntries.count) items")
+                .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+            Spacer(minLength: 0)
+            if store.paused {
+                Label("Paused", systemImage: "pause.circle")
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.warning)
+            }
+        }
+        .padding(.horizontal, 24).padding(.top, 22).padding(.bottom, 14)
+    }
+
     private var filterBar: some View {
         HStack(spacing: AOMSpace.s) {
             pinboardsBar
@@ -286,8 +304,9 @@ struct ClipboardStudioView: View {
             .labelsHidden()
             .fixedSize()
         }
-        .padding(.horizontal, AOMSpace.s)
-        .frame(height: 40)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+        .frame(minHeight: 40)
     }
 
     private var pinboardsBar: some View {
@@ -465,51 +484,40 @@ private struct ClipboardStudioCard: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
-            // Five caption lines fit the 108 pt band, so text ends on a whole
-            // line instead of the old blind clip through the middle of one.
             Preview(entry: entry)
-                .frame(height: 108)
+                .frame(height: 144)
                 .frame(maxWidth: .infinity)
-                .background(AOMTheme.cardAlt)
+                .background(AOMTheme.cardAlt.opacity(0.55))
 
-            HStack(spacing: 6) {
-                Text(entry.title)
-                    .font(.callout.weight(.semibold))
-                    .lineLimit(1)
+            HStack(spacing: 8) {
+                Label(entry.kind.displayName, systemImage: entry.kind.symbol)
+                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
                 Spacer(minLength: 4)
-                Group {
-                    Group {
-                        Button(action: onCopy) { Image(systemName: "doc.on.doc") }
-                            .help("Copy")
-                        Menu {
-                            if boards.isEmpty { Text("No pinboards yet") }
+                Button(action: onCopy) { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .help("Copy").accessibilityLabel("Copy item")
+                Menu {
+                    Button("Copy", action: onCopy)
+                    if !boards.isEmpty {
+                        Menu("Pinboards") {
                             ForEach(boards) { board in
-                                Button {
+                                Button(entry.pinboardIDs.contains(board.id) ? "Unpin from \(board.name)" : "Pin to \(board.name)") {
                                     onTogglePin(board)
-                                } label: {
-                                    if entry.pinboardIDs.contains(board.id) {
-                                        Label(board.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(board.name)
-                                    }
                                 }
                             }
-                        } label: {
-                            Image(systemName: entry.pinboardIDs.isEmpty ? "pin" : "pin.fill")
                         }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help("Pin to a pinboard")
-                        Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }
-                            .help("Delete")
                     }
-                    .buttonStyle(.borderless)
-                    .transition(.opacity)
+                    Divider()
+                    Button("Delete", role: .destructive, action: onDelete)
+                } label: {
+                    Image(systemName: "ellipsis")
                 }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Item actions").accessibilityLabel("Item actions")
             }
-            .padding(.horizontal, 16)
-            .frame(height: 34)
+            .padding(.horizontal, 14)
+            .frame(height: 38)
         }
         .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
         .clipShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
