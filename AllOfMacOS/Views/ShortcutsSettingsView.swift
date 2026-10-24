@@ -54,6 +54,13 @@ struct ShortcutsSettingsView: View {
                     }
                 }
 
+                // System & Switching Group
+                AppleSettingsGroup("System & Switching") {
+                    ForEach(Array([CaptureShortcutAction.windowSwitcher, .keepAwake].enumerated()), id: \.element.id) { index, action in
+                        shortcutRow(for: action, showDivider: index < 1)
+                    }
+                }
+
                 // Bottom Controls
                 HStack {
                     Button("Restore CleanShot Defaults") {
