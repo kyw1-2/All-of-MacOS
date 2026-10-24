@@ -384,6 +384,11 @@ class KeyboardMonitor: ObservableObject {
     func handleInput(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isDown: Bool, isRepeat: Bool = false, text: String? = nil) -> Bool {
         guard !Self.isRecordingShortcut, !isMonitoring else { return false }
 
+        // While the window switcher is up it owns the keyboard: the bound
+        // shortcut (⌃Tab re-pressed) cycles instead of re-opening.
+        if isDown, MainActor.assumeIsolated({ WindowSwitcherController.shared.handleSwitcherKey(
+            keyCode: keyCode, modifiers: modifiers, isRepeat: isRepeat) }) { return true }
+
         // Text expansion runs before everything else: it only ever sees plain
         // printable typing, and a match swallows its final key.
         if isDown, let text, !text.isEmpty,

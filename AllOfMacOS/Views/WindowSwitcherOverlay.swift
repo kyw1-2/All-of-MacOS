@@ -79,6 +79,10 @@ final class WindowSwitcherController: NSObject, ObservableObject {
             panel.setFrame(frame, display: false)
         }
         self.panel = panel
+        // The overlay must own the keyboard: without activating the app, key
+        // events keep flowing to the previously active app and the local
+        // monitor never sees the cycling keys.
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         installMonitors()
         loadThumbnails(from: scWindows)
@@ -140,30 +144,36 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         items = []
     }
 
+    /// Cycling keys are routed here by KeyboardMonitor's event tap — the tap
+    /// sees every keyDown first and would otherwise swallow the bound
+    /// shortcut (⌃Tab re-pressed) before a local monitor could step.
+    /// Returns true when the key belonged to the switcher.
+    func handleSwitcherKey(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isRepeat: Bool) -> Bool {
+        guard isShowing else { return false }
+        switch keyCode {
+        case 123: step(-1) // left
+        case 124: step(1) // right
+        case 48: step(modifiers.contains(.shift) ? -1 : 1) // Tab cycles like AltTab; ⇧Tab goes back
+        case 36, 76: confirm() // return / enter
+        case 53: cancel() // esc
+        default: return false
+        }
+        return true
+    }
+
     private func installMonitors() {
         // A modifier was held when the switcher opened (e.g. ⌃Tab): releasing
         // it confirms. Releasing a modifier that was never held must not.
         sawHeldModifier = !initialModifiers.isEmpty
-        let key = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        let key = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             guard let self, self.isShowing else { return event }
-            if event.type == .flagsChanged {
-                let held = event.modifierFlags.intersection([.command, .control, .option])
-                if held.isEmpty {
-                    if sawHeldModifier { confirm() }
-                } else {
-                    sawHeldModifier = true
-                }
-                return nil
+            let held = event.modifierFlags.intersection([.command, .control, .option])
+            if held.isEmpty {
+                if sawHeldModifier { confirm() }
+            } else {
+                sawHeldModifier = true
             }
-            switch event.keyCode {
-            case 123: step(-1) // left
-            case 124: step(1) // right
-            case 48: step(event.modifierFlags.contains(.shift) ? -1 : 1) // Tab cycles like AltTab; ⇧Tab goes back
-            case 36, 76: confirm() // return / enter
-            case 53: cancel() // esc
-            default: return event
-            }
-            return nil
+            return event
         }
         if let key { monitors.append(key) }
         // A click on a card activates it (handled in SwiftUI); clicks outside close.
