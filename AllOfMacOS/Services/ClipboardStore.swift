@@ -808,6 +808,29 @@ final class ClipboardStore: ObservableObject {
         for task in tasks { await task.value }
     }
 
+    /// Adds an image as a new clipboard item (used for edits that keep the
+    /// original, such as Remove Background). Pinboards of the source carry over.
+    @discardableResult
+    func createImageItem(_ image: CGImage, from source: ClipboardEntry? = nil) -> ClipboardEntry? {
+        guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return nil }
+        guard data.count <= Self.maximumEntryBytes else { lastError = StoreError.tooLarge.localizedDescription; return nil }
+        var entry = ClipboardEntry.captured(items: [[NSPasteboard.PasteboardType.png.rawValue: data]],
+                                            sourceName: "All of MacOS", sourceBundleID: "com.kyw.allofmacos", at: now())
+        entry.pinboardIDs = source?.pinboardIDs ?? []
+        entries.insert(entry, at: 0)
+        let inserted = entry
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let digest = await onQueue { inserted.payloadDigest }
+            if entries.contains(where: { $0.id == inserted.id }) { digests[inserted.id] = digest }
+        }
+        captureTasks.append(task)
+        trim()
+        scheduleSave()
+        scheduleImageIndexing()
+        return entries.first { $0.id == entry.id }
+    }
+
     func editImage(entryID: UUID, image: CGImage) {
         guard let index = entries.firstIndex(where: { $0.id == entryID }), entries[index].kind == .image,
               let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }

@@ -462,6 +462,25 @@ final class QuickAccessOverlayController {
         }
     }
 
+    /// The cut-out becomes a new capture with its own card; this one is kept.
+    private func removeBackground() {
+        guard !isVideo else { return }
+        mediaOperation { [self] in
+            GestureHUD.shared.show(title: "Removing Background…", detail: nil)
+            do {
+                let output = try await BackgroundRemoval.removingBackground(await entry.loadImage())
+                let result = CaptureResult(image: output, globalRect: CGRect(origin: .zero, size: entry.pointSize),
+                                           scale: entry.scale, kind: entry.kind,
+                                           windowTitle: entry.windowTitle, capturedAt: Date())
+                let stored = CaptureHistory.shared.add(result, url: nil)
+                CaptureCoordinator.shared.restoreToQuickAccess(stored)
+                GestureHUD.shared.show(title: "Background Removed", detail: "Added as a new capture; the original is kept")
+            } catch {
+                GestureHUD.shared.show(title: "Remove Background Failed", detail: error.localizedDescription)
+            }
+        }
+    }
+
     private func recognizeText() {
         let keepBreaks = CaptureSettings.ocrKeepsLineBreaks
         Task { @MainActor in
@@ -699,6 +718,7 @@ final class QuickAccessOverlayController {
         case .scaleRetina: scaleRetinaToOneX()
         case .resize: promptResize()
         case .extractText: recognizeText()
+        case .removeBackground: removeBackground()
         case .copyQRCode: recognizeQRCode()
         case .copyFile: copyFile()
         case .fileInfo: showFileInfo()

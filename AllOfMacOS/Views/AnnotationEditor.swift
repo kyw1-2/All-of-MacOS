@@ -544,6 +544,8 @@ private struct AnnotationEditorView: View {
                 Button("Flip Horizontally") { transformImage(.flipHorizontal) }
                 Button("Flip Vertically") { transformImage(.flipVertical) }
             }
+            Button("Remove Background") { removeBackground() }
+                .help("Make everything except the subject transparent (Undo restores it)")
             Button("Smart Highlight Text…") { showingSmartHighlight = true }
             Divider()
             Button("Layers…") { layersPopover = true }
@@ -859,6 +861,23 @@ private struct AnnotationEditorView: View {
                 status = "Text recognition failed: \(error.localizedDescription)"
             }
             smartHighlightBusy = false
+        }
+    }
+
+    private func removeBackground() {
+        let source = document.baseImage
+        status = "Removing background…"
+        Task { @MainActor in
+            do {
+                let output = try await BackgroundRemoval.removingBackground(source)
+                guard document.replaceBaseImage(output) else {
+                    status = "Could not remove the background."
+                    return
+                }
+                status = "Background removed. Undo restores the original."
+            } catch {
+                status = error.localizedDescription
+            }
         }
     }
 

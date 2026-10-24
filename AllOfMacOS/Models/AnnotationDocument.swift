@@ -711,6 +711,15 @@ struct AnnotationDocument {
         return true
     }
 
+    /// Swaps in same-size pixels (Remove Background) as one undoable step;
+    /// annotations stay editable on top.
+    mutating func replaceBaseImage(_ image: CGImage) -> Bool {
+        guard image.width == baseImage.width, image.height == baseImage.height else { return false }
+        beginChange()
+        baseImage = image
+        return true
+    }
+
     /// Moves an object up or down the z-order.
     mutating func reorder(_ id: UUID, offset: Int) {
         guard let index = objects.firstIndex(where: { $0.id == id }) else { return }

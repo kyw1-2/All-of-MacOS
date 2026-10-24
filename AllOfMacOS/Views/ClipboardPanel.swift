@@ -930,6 +930,30 @@ final class ClipboardPanelController {
         return selected.contains(entry.id) ? selected : [entry.id]
     }
 
+    /// Paste 7's Edit Image ▸ Remove Background: the cut-out is a new item
+    /// right after the original, which is kept untouched.
+    func removeBackground(_ entry: ClipboardEntry) {
+        guard let data = entry.imageData, let source = NSBitmapImageRep(data: data)?.cgImage else {
+            state.status = "This item has no image to edit."
+            return
+        }
+        state.status = "Removing background…"
+        Task { @MainActor in
+            do {
+                let output = try await BackgroundRemoval.removingBackground(source)
+                guard let created = store.createImageItem(output, from: entry) else {
+                    state.status = store.lastError ?? "Could not add the image."
+                    return
+                }
+                state.selected = [created.id]
+                state.focusedID = created.id
+                state.status = "Background removed — added as a new item."
+            } catch {
+                state.status = error.localizedDescription
+            }
+        }
+    }
+
     /// Paste's "Erase History": unpinned items go, pinboards stay; asks first.
     func confirmEraseHistory() {
         let unpinned = store.entries.filter { $0.pinboardIDs.isEmpty }.count
@@ -2391,6 +2415,9 @@ private struct ClipboardCardView: View, Equatable {
             Button(entry.kind == .image ? "Edit Image…" : "Edit…") { controller.editEntry(entry) }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(entry.kind == .file)
+            if entry.kind == .image {
+                Button("Remove Background") { controller.removeBackground(entry) }
+            }
             Button("Rename…") { state.editor = .init(operation: .renameEntry(entry.id), title: "Rename Item", text: entry.title) }
                 .keyboardShortcut("r", modifiers: .command)
         }

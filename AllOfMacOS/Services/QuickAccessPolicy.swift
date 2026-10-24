@@ -149,7 +149,7 @@ enum QuickAccessSwipe: Equatable {
 enum QuickAccessMenuCommand: String, CaseIterable {
     case share, closeAll, saveAll, temporarilyHide, quickLook, openInFinder,
          print, saveAs, moveToTrash, openWith
-    case annotate, pin, rotateLeft, flipHorizontal, scaleRetina, resize, extractText
+    case annotate, pin, rotateLeft, flipHorizontal, scaleRetina, resize, extractText, removeBackground
     // AOM extras, kept at the end so the CleanShot block stays familiar.
     case copyQRCode, copyFile, fileInfo, editVideo
 
@@ -172,6 +172,7 @@ enum QuickAccessMenuCommand: String, CaseIterable {
         case .scaleRetina: return "Scale Retina to 1x"
         case .resize: return "Resize…"
         case .extractText: return "Extract Text"
+        case .removeBackground: return "Remove Background"
         case .copyQRCode: return "Copy QR Code"
         case .copyFile: return "Copy File"
         case .fileInfo: return "File Information"
@@ -198,6 +199,7 @@ enum QuickAccessMenuCommand: String, CaseIterable {
         case .scaleRetina: return "arrow.down.right.and.arrow.up.left"
         case .resize: return "arrow.up.left.and.arrow.down.right"
         case .extractText: return "text.viewfinder"
+        case .removeBackground: return "person.crop.rectangle.badge.plus"
         case .copyQRCode: return "qrcode.viewfinder"
         case .copyFile: return "doc.on.doc"
         case .fileInfo: return "info.circle"
@@ -218,7 +220,7 @@ enum QuickAccessMenuCommand: String, CaseIterable {
         } else {
             items += [.annotate, .pin, .rotateLeft, .flipHorizontal]
             if canScaleRetina { items.append(.scaleRetina) }
-            items += [.resize, .extractText, nil, .copyQRCode, .copyFile, .fileInfo]
+            items += [.resize, .removeBackground, .extractText, nil, .copyQRCode, .copyFile, .fileInfo]
         }
         return items
     }
