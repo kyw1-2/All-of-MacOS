@@ -181,6 +181,33 @@ enum SelectionGeometry {
     ///   - ratio: width ÷ height lock, nil for freeform.
     ///   - fromCenter: ⌥ — `anchor` is the centre rather than a corner.
     ///   - bounds: the rect never leaves these bounds (ratio is preserved when clamping).
+    /// Snap guides: the x and y positions of on-screen window and display
+    /// edges (global top-left points).
+    struct SnapGuides: Equatable {
+        var xs: [CGFloat] = []
+        var ys: [CGFloat] = []
+
+        init(xs: [CGFloat] = [], ys: [CGFloat] = []) {
+            self.xs = Array(Set(xs)).sorted()
+            self.ys = Array(Set(ys)).sorted()
+        }
+
+        init(rects: [CGRect]) {
+            self.init(xs: rects.flatMap { [$0.minX, $0.maxX] }, ys: rects.flatMap { [$0.minY, $0.maxY] })
+        }
+    }
+
+    /// Moves each coordinate of `point` onto the nearest guide within
+    /// `threshold`; coordinates with no guide that close are unchanged.
+    static func snapped(_ point: CGPoint, to guides: SnapGuides, threshold: CGFloat = 6) -> CGPoint {
+        func nearest(_ value: CGFloat, _ candidates: [CGFloat]) -> CGFloat {
+            guard let best = candidates.min(by: { abs($0 - value) < abs($1 - value) }),
+                  abs(best - value) <= threshold else { return value }
+            return best
+        }
+        return CGPoint(x: nearest(point.x, guides.xs), y: nearest(point.y, guides.ys))
+    }
+
     static func dragRect(anchor: CGPoint, current: CGPoint, ratio: CGFloat?, fromCenter: Bool,
                          bounds: CGRect) -> CGRect {
         let dx = current.x - anchor.x, dy = current.y - anchor.y

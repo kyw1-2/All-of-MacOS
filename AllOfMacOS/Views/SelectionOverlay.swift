@@ -71,6 +71,7 @@ final class SelectionOverlayController {
         state.commitPending = { [weak self] in self?.commitPending() }
         state.activeDisplayID = (screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? screens[0]).displayID
         state.desktopBounds = screens.map(\.sckFrame).reduce(CGRect.null) { $0.union($1) }
+        if CaptureSettings.snapsSelection { state.snapGuides = Self.snapGuides(screens: screens) }
 
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             if event.keyCode == 53 {
@@ -104,6 +105,22 @@ final class SelectionOverlayController {
         NSApp.activate(ignoringOtherApps: true)
         windows.first?.makeKey()
         CaptureCoordinator.textLog.info("selection overlay presented")
+    }
+
+    /// Edges of other apps' visible windows plus every display frame.
+    private static func snapGuides(screens: [NSScreen]) -> SelectionGeometry.SnapGuides {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let windows = info.compactMap { window -> CGRect? in
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                  (window[kCGWindowOwnerPID as String] as? pid_t) != ownPID,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  rect.width >= 50, rect.height >= 50 else { return nil }
+            return rect
+        }
+        return SelectionGeometry.SnapGuides(rects: windows + screens.map(\.sckFrame))
     }
 
     private func handleLocal(_ event: NSEvent) -> NSEvent? {
@@ -522,6 +539,16 @@ private final class SelectionState: ObservableObject {
     var commitPending: (() -> Void)?
     /// Union of every display, in global top-left points.
     var desktopBounds: CGRect = .infinite
+    /// Window and display edges an area selection snaps to (empty = off).
+    var snapGuides = SelectionGeometry.SnapGuides()
+
+    /// Snapping applies to free-form drags only: never with a ratio lock, from
+    /// the centre (⌥) or while ⌃ is held.
+    func snapping(_ point: CGPoint) -> CGPoint {
+        guard aspectRatio.value == nil, !optionDown,
+              !NSEvent.modifierFlags.contains(.control) else { return point }
+        return SelectionGeometry.snapped(point, to: snapGuides)
+    }
 
     /// Freeform, presets, then the custom entry (current custom ratio or 16:9 seed).
     var ratioChoices: [SelectionAspectRatio] { [.freeform] + SelectionAspectRatio.presets }
@@ -947,7 +974,7 @@ private struct SelectionView: View {
                         moveOrigin = pending
                         NSCursor.closedHand.set()
                     } else {
-                        state.anchor = globalRect(for: CGRect(origin: value.startLocation, size: .zero)).origin
+                        state.anchor = state.snapping(globalRect(for: CGRect(origin: value.startLocation, size: .zero)).origin)
                     }
                 }
                 if let origin = resizeOrigin, let handle = state.activeHandle {
@@ -970,7 +997,7 @@ private struct SelectionView: View {
                 }
                 let mouse = NSEvent.mouseLocation
                 state.optionDown = NSEvent.modifierFlags.contains(.option)
-                state.current = CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.height ?? 0) - mouse.y)
+                state.current = state.snapping(CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.height ?? 0) - mouse.y))
                 state.isDragging = true
                 pointer = value.location
             }

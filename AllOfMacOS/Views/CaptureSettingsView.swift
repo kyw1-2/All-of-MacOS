@@ -24,6 +24,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCapturePlaysSound") private var playsSound = true
     @AppStorage("AOMCaptureSelfTimer") private var selfTimer = 0
     @AppStorage("AOMCapturePixelSnap") private var pixelSnap = true
+    @AppStorage("AOMCaptureSnapSelection") private var snapsSelection = true
     @AppStorage("AOMCaptureFreezeScreen") private var freezeScreen = false
     @AppStorage("AOMCaptureAfterAction") private var afterActionRaw = AfterCaptureAction.showOverlay.rawValue
     @AppStorage("AOMCaptureOverlayEnabled") private var overlayEnabled = true
@@ -151,6 +152,11 @@ struct CaptureSettingsView: View {
             AppleSettingsRow(icon: "square.grid.2x2", iconColor: .gray, title: "Pixel Snap",
                              subtitle: "Align selections to whole pixels to avoid a soft edge", showDivider: true) {
                 Toggle("", isOn: $pixelSnap).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            AppleSettingsRow(icon: "rectangle.dashed", iconColor: .blue, title: "Snap Selection to Windows",
+                             subtitle: "Edges stick to nearby window and screen edges. Hold ⌃ while dragging to place freely",
+                             showDivider: true) {
+                Toggle("", isOn: $snapsSelection).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
             AppleSettingsRow(icon: "snowflake", iconColor: .cyan, title: "Freeze Screen",
                              subtitle: "Hold the desktop still while you draw the selection", showDivider: true) {

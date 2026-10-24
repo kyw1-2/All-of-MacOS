@@ -194,6 +194,7 @@ enum CaptureSettings {
         static let playsSound = "AOMCapturePlaysSound"
         static let selfTimerSeconds = "AOMCaptureSelfTimer"
         static let pixelSnap = "AOMCapturePixelSnap"
+        static let snapsSelection = "AOMCaptureSnapSelection"
         static let freezeScreen = "AOMCaptureFreezeScreen"
         static let saveDirectory = "AOMCaptureSaveDirectory"
         static let afterCapture = "AOMCaptureAfterAction"
@@ -265,6 +266,13 @@ enum CaptureSettings {
     static var pixelSnap: Bool {
         get { d.object(forKey: Key.pixelSnap) as? Bool ?? true }
         set { d.set(newValue, forKey: Key.pixelSnap) }
+    }
+
+    /// CleanShot-style smart snapping: an area selection's edges stick to
+    /// nearby window and display edges. Hold ⌃ while dragging to place freely.
+    static var snapsSelection: Bool {
+        get { d.object(forKey: Key.snapsSelection) as? Bool ?? true }
+        set { d.set(newValue, forKey: Key.snapsSelection) }
     }
 
     /// Dims and freezes the desktop behind the selection overlay, so windows that
