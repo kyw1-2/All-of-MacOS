@@ -238,7 +238,8 @@ class KeyboardMonitor: ObservableObject {
     private var globalMonitors: [Any] = []
     private var triggerEventTap: CFMachPort?
     private var triggerRunLoopSource: CFRunLoopSource?
-    private var registeredTriggers: [Trigger] = []
+    /// Internal for the registration integration test (@testable).
+    var registeredTriggers: [Trigger] = []
     private var activationGroups: [ActivationGroup] = []
     private var sequenceDetector = KeySequenceDetector()
     private var pressed: [UInt16: [Trigger]] = [:]
@@ -250,7 +251,9 @@ class KeyboardMonitor: ObservableObject {
         activationGroups = groups
         registeredTriggers = triggers.filter {
             guard $0.isEnabled else { return false }
-            switch $0.input { case .keyboardShortcut, .keySequence: return true; default: return false }
+            // .typedString feeds processTypedString from the same tap; without
+            // it here a saved expansion rule never reaches the engine.
+            switch $0.input { case .keyboardShortcut, .keySequence, .typedString: return true; default: return false }
         }
         let hasCaptureShortcuts = MainActor.assumeIsolated { CaptureShortcuts.shared.hasActiveShortcuts || ClipboardShortcuts.shared.hasActiveShortcuts }
         guard (!registeredTriggers.isEmpty || hasCaptureShortcuts), systemMonitoringEnabled else { return }
@@ -535,7 +538,12 @@ class KeyboardMonitor: ObservableObject {
                     self?.pressed[keyCode] != nil && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(keyCode))
                 } : nil)
             LiveTouchState.shared.flashTrigger(trigger.id)
-            NotificationCenter.default.post(name: .gestureDidFire, object: nil, userInfo: ["name": trigger.input.displayName, "actions": trigger.actions.filter(\.isEnabled).map { $0.actionType.rawValue }.joined(separator: " → ")])
+            // Rapid-fire actions (window switching, pin toggles) must not flash
+            // a HUD on every press — the overlay itself is the feedback.
+            let quiet = trigger.actions.filter(\.isEnabled).map(\.actionType).allSatisfy {
+                [.showWindowSwitcher, .togglePinFrontWindow, .togglePinWindowUnderCursor].contains($0)
+            }
+            NotificationCenter.default.post(name: .gestureDidFire, object: nil, userInfo: ["name": trigger.input.displayName, "actions": trigger.actions.filter(\.isEnabled).map { $0.actionType.rawValue }.joined(separator: " → "), "quiet": quiet])
         }
     }
     private func releaseKeys() {
