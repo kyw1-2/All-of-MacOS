@@ -363,6 +363,11 @@ final class ClipboardPanelController {
         window.center(); detachedPreview?.close(); detachedPreview = window
         hideImmediately(); window.makeKeyAndOrderFront(nil)
     }
+
+    /// A rename inside the detached preview keeps the window's title bar in step.
+    func syncDetachedPreviewTitle(_ title: String) {
+        detachedPreview?.title = title
+    }
     private var destination: NSRunningApplication?
     private var keyMonitor: Any?
     private var outsideMonitor: Any?
@@ -2574,7 +2579,35 @@ private struct ClipboardPreviewSheet: View {
     @State private var content: ClipboardPreviewCache.Content?
     @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var loadedVersion: UUID?
+    // Paste-style rename: the title shows in the preview and edits in place
+    // on double-click. The preview key handler already yields to editingTitleID.
+    @State private var isEditingTitle = false
+    @State private var editedTitle = ""
+    @FocusState private var titleFocused: Bool
     private var currentContent: ClipboardPreviewCache.Content? { loadedVersion == current.contentVersion ? content : nil }
+
+    private func beginTitleEdit() {
+        editedTitle = current.title
+        isEditingTitle = true
+        state.editingTitleID = current.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(30))
+            titleFocused = true
+        }
+    }
+
+    private func commitTitle() {
+        guard isEditingTitle else { return }
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != current.title { store.rename(entryID: current.id, title: trimmed) }
+        finishTitleEdit()
+    }
+
+    private func finishTitleEdit() {
+        isEditingTitle = false
+        state.editingTitleID = nil
+        titleFocused = false
+    }
 
     private func beginEditing() {
         let item = current
@@ -2586,6 +2619,9 @@ private struct ClipboardPreviewSheet: View {
     }
 
     private func handlePreviewKey(_ event: NSEvent) -> Bool {
+        // While the title is being edited the field editor owns the keyboard;
+        // returning false lets Esc cancel the edit via onExitCommand.
+        if state.editingTitleID != nil { return false }
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         if event.keyCode == 53 { controller.closePreview(); return true }
         if flags == .command, event.keyCode == 14, current.kind == .image {
@@ -2651,7 +2687,25 @@ private struct ClipboardPreviewSheet: View {
                 Button { controller.closePreview() } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
                 }.help("Close Preview (Space / Esc)").accessibilityLabel("Close Preview")
-                Text(current.kind.displayName).font(.system(size: 12, weight: .semibold))
+                if isEditingTitle {
+                    TextField("Title", text: $editedTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, weight: .semibold))
+                        .focused($titleFocused)
+                        .onSubmit { commitTitle() }
+                        .onExitCommand { finishTitleEdit() }
+                        .frame(maxWidth: 220)
+                        .accessibilityLabel("Title")
+                } else {
+                    Text(current.title.isEmpty ? current.kind.displayName : current.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(current.title.isEmpty ? .secondary : .primary)
+                        .lineLimit(1).truncationMode(.middle)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { beginTitleEdit() }
+                        .help(current.title.isEmpty ? "Double-click to name this item" : "Double-click to rename")
+                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Double-click to rename.")
+                }
                 Spacer()
                 Menu {
                     ForEach(store.boards) { board in

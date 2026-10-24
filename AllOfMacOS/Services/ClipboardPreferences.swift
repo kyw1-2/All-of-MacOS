@@ -157,11 +157,38 @@ struct ClipboardDetachedPreview: View {
     @ObservedObject var store: ClipboardStore
     @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var content: ClipboardPreviewCache.Content?
+    // Paste-style rename: double-click the title to edit it in place.
+    @State private var isEditingTitle = false
+    @State private var editedTitle = ""
+    @FocusState private var titleFocused: Bool
     private var current: ClipboardEntry { store.entries.first { $0.id == entry.id } ?? entry }
     var body: some View {
         VStack(spacing: 10) {
             HStack {
-                Text(current.title).font(.headline).lineLimit(1)
+                if isEditingTitle {
+                    TextField("Title", text: $editedTitle)
+                        .textFieldStyle(.roundedBorder).font(.headline)
+                        .focused($titleFocused)
+                        .onSubmit { commitTitle() }
+                        .onExitCommand { isEditingTitle = false }
+                        .frame(maxWidth: 280)
+                        .accessibilityLabel("Title")
+                } else {
+                    Text(current.title.isEmpty ? current.kind.displayName : current.title)
+                        .font(.headline).lineLimit(1)
+                        .foregroundStyle(current.title.isEmpty ? .secondary : .primary)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            editedTitle = current.title
+                            isEditingTitle = true
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(30))
+                                titleFocused = true
+                            }
+                        }
+                        .help(current.title.isEmpty ? "Double-click to name this item" : "Double-click to rename")
+                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Double-click to rename.")
+                }
                 Spacer()
                 Button("Copy") { _ = try? store.write(entryIDs: [current.id]) }
                 Button("Edit") { ClipboardPanelController.shared.editEntry(current) }
@@ -178,6 +205,18 @@ struct ClipboardDetachedPreview: View {
             }
         }.padding(16).frame(minWidth: 320, minHeight: 240)
             .task(id: current.contentVersion) { content = await ClipboardPreviewCache.shared.content(for: current) }
+            .onChange(of: titleFocused) { _, focused in
+                if !focused, isEditingTitle { commitTitle() }
+            }
+    }
+
+    private func commitTitle() {
+        isEditingTitle = false
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != current.title {
+            store.rename(entryID: current.id, title: trimmed)
+            ClipboardPanelController.shared.syncDetachedPreviewTitle(trimmed)
+        }
     }
 }
 
