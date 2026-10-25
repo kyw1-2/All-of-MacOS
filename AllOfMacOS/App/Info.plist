@@ -66,6 +66,8 @@
 	<true/>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>All of MacOS needs audio capture access to control per-app volume, routing, and equalizer settings.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Run your configured automations when Bluetooth devices connect or disconnect.</string>
 	<key>NSCameraUsageDescription</key>

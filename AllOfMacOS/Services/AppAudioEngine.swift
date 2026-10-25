@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import AudioToolbox
+import Darwin
 
 /// SoundSource-lite per-app audio control on macOS 14.2+ Core Audio Process
 /// Taps. For each app the user adjusts: a process tap is created with
@@ -91,6 +92,56 @@ final class AppAudioEngine {
                 _ = setGain(gain, muted: isMuted, pid: app.pid)
             }
         }
+        NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+    }
+
+    // MARK: - Process Hierarchy & Helpers
+
+    private static func parentPID(of pid: pid_t) -> pid_t? {
+        var info = proc_bsdinfo()
+        let size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
+        if size == MemoryLayout<proc_bsdinfo>.size {
+            return pid_t(info.pbi_ppid)
+        }
+        return nil
+    }
+
+    private static func mainApp(for pid: pid_t) -> NSRunningApplication? {
+        if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular {
+            return app
+        }
+        var current = pid
+        for _ in 0..<5 {
+            guard let ppid = parentPID(of: current), ppid > 1 else { break }
+            if let app = NSRunningApplication(processIdentifier: ppid), app.activationPolicy == .regular {
+                return app
+            }
+            current = ppid
+        }
+        return nil
+    }
+
+    static func processObjectIDs(for targetPID: pid_t) -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
+        var objects = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return [] }
+
+        var result: [AudioObjectID] = []
+        for obj in objects {
+            guard let p = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), p > 0 else { continue }
+            if p == targetPID {
+                result.append(obj)
+            } else if let main = mainApp(for: p), main.processIdentifier == targetPID {
+                result.append(obj)
+            }
+        }
+        return result
     }
 
     // MARK: - Running audio apps (process objects, 14.2+)
@@ -111,11 +162,15 @@ final class AppAudioEngine {
             var objects = [AudioObjectID](repeating: 0, count: count)
             if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr {
                 for object in objects {
-                    guard let pid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), pid > 0,
+                    guard let rawPid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPid > 0,
                           Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { continue }
-                    let app = NSRunningApplication(processIdentifier: pid)
-                    let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
+
+                    let app = Self.mainApp(for: rawPid) ?? NSRunningApplication(processIdentifier: rawPid)
+                    let pid = app?.processIdentifier ?? rawPid
+                    guard !seenPIDs.contains(pid) else { continue }
                     seenPIDs.insert(pid)
+
+                    let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
                     results.append(AppState(
                         pid: pid,
                         name: app?.localizedName ?? "Process \(pid)",
@@ -202,24 +257,6 @@ final class AppAudioEngine {
         return value.pointee
     }
 
-    static func processObjectID(for pid: pid_t) -> AudioObjectID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return nil }
-        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
-        var objects = [AudioObjectID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return nil }
-        for obj in objects {
-            if let p = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), p == pid {
-                return obj
-            }
-        }
-        return nil
-    }
-
     static func defaultOutputDeviceUID() -> String? {
         var defOutAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -252,7 +289,7 @@ final class AppAudioEngine {
     /// Starts (or retunes) the tap session for a pid.
     func setGain(_ gain: Float, muted: Bool = false, pid: pid_t) -> Bool {
         let clamped = Mixer.clamp(gain)
-        persistGain(clamped, pid: pid)
+        persistState(gain: clamped, muted: muted, pid: pid)
         if let session = sessions[pid] {
             session.box.takeUnretainedValue().gain = clamped
             session.box.takeUnretainedValue().muted = muted
@@ -285,9 +322,11 @@ final class AppAudioEngine {
 
     func session(pid: pid_t) -> Session? { sessions[pid] }
 
-    private func persistGain(_ gain: Float, pid: pid_t) {
-        if let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier {
+    private func persistState(gain: Float, muted: Bool, pid: pid_t) {
+        let app = Self.mainApp(for: pid) ?? NSRunningApplication(processIdentifier: pid)
+        if let bundleID = app?.bundleIdentifier, !bundleID.isEmpty {
             UserDefaults.standard.set(Double(gain), forKey: "AOMAudioGain_\(bundleID)")
+            UserDefaults.standard.set(muted, forKey: "AOMAudioMute_\(bundleID)")
         }
     }
 
@@ -300,29 +339,22 @@ final class AppAudioEngine {
     private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
 
-        // 1. Resolve CoreAudio process object ID from pid
-        guard let processObjID = Self.processObjectID(for: pid) else {
+        // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
+        let processObjIDs = Self.processObjectIDs(for: pid)
+        guard !processObjIDs.isEmpty else {
             return nil
         }
 
         // 2. The stereo process tap; .mutedWhenTapped silences the app's original
         //    unattenuated output while our aggregate device renders the scaled audio.
-        let description = CATapDescription(stereoMixdownOfProcesses: [processObjID])
+        let description = CATapDescription(stereoMixdownOfProcesses: processObjIDs)
+        description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
         var tapID = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(description, &tapID) == noErr, tapID != kAudioObjectUnknown else { return nil }
 
-        // 3. The tap's UID
-        var uidAddress = AudioObjectPropertyAddress(mSelector: kAudioTapPropertyUID,
-                                                    mScope: kAudioObjectPropertyScopeGlobal,
-                                                    mElement: kAudioObjectPropertyElementMain)
-        var uidSize: UInt32 = UInt32(MemoryLayout<CFString>.size)
-        var tapUID: CFString = "" as CFString
-        guard AudioObjectGetPropertyData(tapID, &uidAddress, 0, nil, &uidSize, &tapUID) == noErr,
-              let tapUIDString = tapUID as String?, !tapUIDString.isEmpty else {
-            AudioHardwareDestroyProcessTap(tapID)
-            return nil
-        }
+        // 3. The tap's UUID string
+        let tapUID = description.uuid.uuidString
 
         // 4. Target hardware output device UID
         guard let outUID = Self.targetOutputUID(for: bundleID) ?? Self.defaultOutputDeviceUID() else {
@@ -330,22 +362,25 @@ final class AppAudioEngine {
             return nil
         }
 
-        // 5. Aggregate device wrapping BOTH Tap (input) and Physical Output (output)
+        // 5. Aggregate device wrapping BOTH Tap (via TapListKey) and Physical Output (via SubDeviceListKey)
         let aggregateDict: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "AOM App Audio \(pid)",
-            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
-            kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [
+            kAudioAggregateDeviceNameKey as String: "AOM App Audio \(pid)",
+            kAudioAggregateDeviceUIDKey as String: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
+            kAudioAggregateDeviceIsPrivateKey as String: true,
+            kAudioAggregateDeviceTapAutoStartKey as String: true,
+            kAudioAggregateDeviceTapListKey as String: [
                 [
-                    kAudioSubDeviceUIDKey: tapUIDString,
-                    kAudioSubDeviceDriftCompensationKey: 1
-                ],
-                [
-                    kAudioSubDeviceUIDKey: outUID,
-                    kAudioSubDeviceDriftCompensationKey: 1
+                    kAudioSubTapUIDKey as String: tapUID,
+                    kAudioSubTapDriftCompensationKey as String: true
                 ]
             ],
-            kAudioAggregateDeviceMainSubDeviceKey: outUID
+            kAudioAggregateDeviceSubDeviceListKey as String: [
+                [
+                    kAudioSubDeviceUIDKey as String: outUID,
+                    kAudioSubDeviceDriftCompensationKey as String: true
+                ]
+            ],
+            kAudioAggregateDeviceMainSubDeviceKey as String: outUID
         ]
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID) == noErr,

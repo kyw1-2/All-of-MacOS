@@ -178,7 +178,7 @@ class TrackpadMonitor {
             return (trigger.id, gesture, trigger.actions, trigger.appBundleID, trigger.suppressClick, trigger.hapticFeedback, trigger.requiredModifiers, trigger.activationGroupID)
         }
         guard systemMonitoringEnabled else { return }
-        // The Swish-style gesture layers read the same hardware stream; with
+        // The window/utility gesture layers read the same hardware stream; with
         // no trackpad trigger configured they were the only consumer, and the
         // stream used to shut down — every ported gesture went dead.
         let layersNeedHardware = MainActor.assumeIsolated {

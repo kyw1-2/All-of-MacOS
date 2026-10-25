@@ -79,7 +79,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AOMScrollChromePolicy.shared.start()
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
             startMissionControlOverlay()
-            _ = SwishEmbeddedManager.shared
         }
         if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true

@@ -603,6 +603,9 @@ private struct SoundSourceAppCard: View {
         .onAppear {
             availableOutputs = AudioOutputService.devices()
         }
+        .onChange(of: app.gain) { _, newGain in
+            gain = min(max(newGain, 0), 2.0)
+        }
     }
 }
 

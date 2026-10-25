@@ -40,6 +40,9 @@ final class AppAudioMixerService: ObservableObject {
         if let preset, let gains = AudioEQ.presets[preset] {
             _eqGains = Published(initialValue: gains)
         }
+        NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
+            self?.refresh()
+        }
     }
 
     func refresh() {
@@ -119,8 +122,10 @@ final class AppAudioMixerService: ObservableObject {
     func toggleMute(pid: pid_t) -> Bool {
         guard #available(macOS 14.2, *) else { return false }
         let current = AppAudioEngine.shared.session(pid: pid)
-        let muted = current == nil ? true : !current!.muted
-        let gain = current?.gain ?? 1
+        let app = apps.first(where: { $0.pid == pid })
+        let isCurrentlyMuted = current?.muted ?? app?.muted ?? false
+        let muted = !isCurrentlyMuted
+        let gain = current?.gain ?? app?.gain ?? 1.0
         let ok = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
         if ok { refresh() }
         return ok
@@ -308,8 +313,6 @@ struct AppAudioRow: View {
     let onGain: (Float) -> Void
     let onMute: () -> Void
     @State private var gain: Float
-    @State private var muted = false
-    @State private var tapped = false
 
     init(app: AppAudioState, onGain: @escaping (Float) -> Void, onMute: @escaping () -> Void) {
         self.app = app
@@ -323,9 +326,9 @@ struct AppAudioRow: View {
             Text(app.name).font(.system(size: 12)).lineLimit(1)
             Spacer(minLength: 8)
             Button { onMute() } label: {
-                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(muted ? .red : .secondary)
-            }.buttonStyle(.plain).help(muted ? "Unmute" : "Mute")
+                Image(systemName: app.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .foregroundStyle(app.muted ? .red : .secondary)
+            }.buttonStyle(.plain).help(app.muted ? "Unmute" : "Mute")
             Slider(value: Binding(get: { Double(gain) }, set: { newValue in
                 gain = Float(newValue)
                 onGain(gain)
@@ -338,6 +341,9 @@ struct AppAudioRow: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { tapped.toggle(); onMute() }
+        .onTapGesture(count: 2) { onMute() }
+        .onChange(of: app.gain) { _, newGain in
+            gain = min(max(newGain, 0), 2)
+        }
     }
 }
