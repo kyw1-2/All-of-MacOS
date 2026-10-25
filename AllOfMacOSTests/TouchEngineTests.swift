@@ -242,4 +242,19 @@ final class TouchEngineTests: XCTestCase {
         XCTAssertFalse(monitor.shouldSuppressMouseEvent(.rightMouseDown))
     }
 
+    func testNativeMouseDownGuaranteesMatchingMouseUpPasses() {
+        let monitor = TrackpadMonitor(systemMonitoringEnabled: false)
+        var corner = Trigger(name: "Volume", input: .trackpadGesture(.cornerClickTopLeft))
+        corner.suppressClick = true; corner.actions = [TriggerAction(actionType: .volumeDown)]
+        monitor.registerTriggers([corner]); defer { monitor.unregisterAll() }
+
+        // Single finger in center (not corner): native click passes
+        monitor.processTouchFrame([TouchPoint(id: 1, x: 0.5, y: 0.5, size: 0.1)], count: 1, timestamp: 1, pressedButtons: 0)
+        XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseDown))
+
+        // Even if finger moves to corner or state changes during the click,
+        // the matching mouseUp MUST NOT be suppressed to prevent stuck drag states.
+        monitor.processTouchFrame([TouchPoint(id: 1, x: 0.02, y: 0.98, size: 0.1)], count: 1, timestamp: 1.05, pressedButtons: 0)
+        XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseUp))
+    }
 }

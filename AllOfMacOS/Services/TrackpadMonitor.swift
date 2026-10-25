@@ -72,6 +72,10 @@ class TrackpadMonitor {
     private var clickSuppressEventTap: CFMachPort?
     private var clickSuppressRunLoopSource: CFRunLoopSource?
     private var suppressedButtons = Set<Int>()
+    /// Buttons whose down event was passed to the system natively. Any subsequent
+    /// up event for these buttons MUST pass to the system to guarantee balanced
+    /// down/up pairs and prevent stuck drag states.
+    private var inFlightNativeButtons = Set<Int>()
     private var tipTapShield = TipTapClickShield()
     /// Peak normalized pressure seen on the current contact, reset when the
     /// fingers lift. Force Click is judged against this because the pressure
@@ -1263,6 +1267,7 @@ class TrackpadMonitor {
                 guard let monitor = TrackpadMonitor.activeTrackpadMonitor else { return .passUnretained(event) }
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                     monitor.suppressedButtons.removeAll()
+                    monitor.inFlightNativeButtons.removeAll()
                     if let tap = monitor.clickSuppressEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return .passUnretained(event)
                 }
@@ -1280,12 +1285,23 @@ class TrackpadMonitor {
                                   at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         let button = (type == .rightMouseDown || type == .rightMouseUp) ? 1 : 0
         if type == .leftMouseUp || type == .rightMouseUp {
+            if inFlightNativeButtons.remove(button) != nil {
+                // A native mouseDown was previously passed to the system for this button.
+                // We MUST allow this mouseUp to pass through to the system to complete the click
+                // and prevent the system from getting stuck in mouse-down/drag state.
+                suppressedButtons.remove(button)
+                return false
+            }
             guard suppressedButtons.remove(button) != nil else { return false }
             handleMouseRelease(); return true
         }
         guard type == .leftMouseDown || type == .rightMouseDown else { return false }
         suppressedButtons.remove(button) // Resynchronize on a fresh down after a lost up.
-        guard TriggerSuppression.shared.allows(kind: .trackpad) else { return false }
+        inFlightNativeButtons.remove(button)
+        guard TriggerSuppression.shared.allows(kind: .trackpad) else {
+            inFlightNativeButtons.insert(button)
+            return false
+        }
         let enabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
         if enabled, type == .leftMouseDown, tipTapShield.contains(now) {
             // Pair every residual click, including a delayed second click,
@@ -1297,9 +1313,15 @@ class TrackpadMonitor {
         if type == .rightMouseDown {
             // A native secondary tap may arrive after a contact has lifted.
             // Never let a stale corner position or TipTap shield eat it.
-            guard currentFingers == 2 || currentFingers == 3 else { return false }
+            guard currentFingers == 2 || currentFingers == 3 else {
+                inFlightNativeButtons.insert(button)
+                return false
+            }
         }
-        guard let gesture = clickGestureToSuppress() else { return false }
+        guard let gesture = clickGestureToSuppress() else {
+            inFlightNativeButtons.insert(button)
+            return false
+        }
         suppressedButtons.insert(button)
         sessions[lastContactDevice]?.consume()
         trackpadIsPressed = true
@@ -1351,6 +1373,7 @@ class TrackpadMonitor {
             TrackpadMonitor.activeTrackpadMonitor = nil
         }
         suppressedButtons.removeAll()
+        inFlightNativeButtons.removeAll()
     }
 
     private func matchingTriggers(for gesture: TrackpadGesture) -> [(id: UUID, gesture: TrackpadGesture, actions: [TriggerAction], appBundleID: String?, suppressClick: Bool, hapticFeedback: Bool, requiredModifiers: UInt?, activationGroupID: UUID?)] {
