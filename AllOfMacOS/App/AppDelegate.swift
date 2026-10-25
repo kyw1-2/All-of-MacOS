@@ -77,6 +77,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.current = self
         AOMScrollChromePolicy.shared.start()
+        if !PresetManager.isRunningTests && !PresetManager.isUIPreview { startMissionControlOverlay() }
         if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
         if showIcon {
@@ -597,6 +598,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 window.delegate = self
                 window.makeKeyAndOrderFront(nil)
                 return
+            }
+        }
+    }
+
+    // MARK: - Mission Control buttons
+
+    /// The overlay polls the Dock's AX tree only while the setting is on.
+    func startMissionControlOverlay() {
+        MainActor.assumeIsolated {
+            if UserDefaults.standard.object(forKey: "AOMMissionControlButtons") as? Bool ?? true {
+                MissionControlOverlayService.shared.start()
             }
         }
     }
