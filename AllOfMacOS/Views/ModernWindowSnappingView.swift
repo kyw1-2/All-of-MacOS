@@ -59,6 +59,7 @@ struct ModernWindowSnappingView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
+                                SwishEngineCard()
                                 WindowPinningCard()
                                 snappingCard
                                 zonesCard
@@ -69,6 +70,7 @@ struct ModernWindowSnappingView: View {
                         VStack(alignment: .leading, spacing: AOMSpace.m) {
                             previewCard
                             galleryCard
+                            SwishEngineCard()
                             WindowPinningCard()
                             snappingCard
                             zonesCard

@@ -66,6 +66,33 @@ final class AppAudioEngine {
 
     var isSupported: Bool { true } // the type itself is 14.2-gated
 
+    private init() {
+        setupProcessListener()
+    }
+
+    private func setupProcessListener() {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main) { [weak self] _, _ in
+            self?.syncActiveProcesses()
+        }
+    }
+
+    func syncActiveProcesses() {
+        for app in runningAudioApps() {
+            let bundleID = app.bundleID
+            guard !bundleID.isEmpty else { continue }
+            let hasCustomGain = UserDefaults.standard.object(forKey: "AOMAudioGain_\(bundleID)") != nil
+            let isMuted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)")
+            if hasCustomGain || isMuted {
+                let gain = Self.storedGain(bundleID: bundleID)
+                _ = setGain(gain, muted: isMuted, pid: app.pid)
+            }
+        }
+    }
+
     // MARK: - Running audio apps (process objects, 14.2+)
 
     func runningAudioApps() -> [AppState] {
@@ -149,10 +176,19 @@ final class AppAudioEngine {
 
     func setRoute(uid: String?, bundleID: String) {
         UserDefaults.standard.set(uid, forKey: "AOMAudioRoute_\(bundleID)")
+        for (pid, session) in sessions where session.bundleID == bundleID {
+            let gain = session.gain
+            let muted = session.muted
+            stop(pid: pid)
+            _ = setGain(gain, muted: muted, pid: pid)
+        }
     }
 
     func setMagicBoost(_ enabled: Bool, bundleID: String) {
         UserDefaults.standard.set(enabled, forKey: "AOMAudioMagicBoost_\(bundleID)")
+        for (_, session) in sessions where session.bundleID == bundleID {
+            session.box.takeUnretainedValue().magicBoost = enabled
+        }
     }
 
     nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
@@ -166,27 +202,72 @@ final class AppAudioEngine {
         return value.pointee
     }
 
+    static func processObjectID(for pid: pid_t) -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return nil }
+        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
+        var objects = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return nil }
+        for obj in objects {
+            if let p = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), p == pid {
+                return obj
+            }
+        }
+        return nil
+    }
+
+    static func defaultOutputDeviceUID() -> String? {
+        var defOutAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var defOutID = AudioObjectID(0)
+        var defOutSize = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &defOutAddr, 0, nil, &defOutSize, &defOutID) == noErr else { return nil }
+
+        var devUIDAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var outUID: CFString = "" as CFString
+        var outUIDSize = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(defOutID, &devUIDAddr, 0, nil, &outUIDSize, &outUID) == noErr else { return nil }
+        let uid = outUID as String
+        return uid.isEmpty ? nil : uid
+    }
+
+    static func targetOutputUID(for bundleID: String) -> String? {
+        if let stored = UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"), !stored.isEmpty {
+            return stored
+        }
+        return defaultOutputDeviceUID()
+    }
+
     // MARK: - Gain / mute / lifecycle
 
-    /// Starts (or retunes) the tap session for a pid. Returns false when the
-    /// OS gates us out (denied capture) — pre-14.2 callers never get here.
+    /// Starts (or retunes) the tap session for a pid.
     func setGain(_ gain: Float, muted: Bool = false, pid: pid_t) -> Bool {
         let clamped = Mixer.clamp(gain)
-        if var session = sessions[pid] {
+        persistGain(clamped, pid: pid)
+        if let session = sessions[pid] {
             session.box.takeUnretainedValue().gain = clamped
             session.box.takeUnretainedValue().muted = muted
             session.gain = clamped
             session.muted = muted
             sessions[pid] = session
-            persistGain(clamped, pid: pid)
             return true
         }
-        guard let session = createSession(pid: pid, gain: clamped, muted: muted) else {
-            authorizationDenied = true
-            return false
+        if let session = createSession(pid: pid, gain: clamped, muted: muted) {
+            sessions[pid] = session
+            authorizationDenied = false
+            return true
         }
-        sessions[pid] = session
-        persistGain(clamped, pid: pid)
+        // When process hasn't opened an audio stream yet, gain is persisted
+        // and attached automatically as soon as the audio stream starts.
         return true
     }
 
@@ -218,39 +299,53 @@ final class AppAudioEngine {
 
     private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        // 1. The process tap; `.whenRunning` silences the app's own output
-        //    while the tap runs, so the mixed render is the only audible path.
-        // The Swift-refined API: plain init + [AudioObjectID] processes.
-        let description = CATapDescription()
-        description.processes = [AudioObjectID(pid)]
-        description.isMono = true
-        // .mutedWhenTapped silences the app's own hardware output exactly
-        // while another client reads the tap — our mixer is that client.
+
+        // 1. Resolve CoreAudio process object ID from pid
+        guard let processObjID = Self.processObjectID(for: pid) else {
+            return nil
+        }
+
+        // 2. The stereo process tap; .mutedWhenTapped silences the app's original
+        //    unattenuated output while our aggregate device renders the scaled audio.
+        let description = CATapDescription(stereoMixdownOfProcesses: [processObjID])
         description.muteBehavior = .mutedWhenTapped
         var tapID = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateProcessTap(description, &tapID) == noErr, tapID != kAudioObjectUnknown else { return nil }
 
-        // 2. The tap's UID, then a private aggregate device wrapping it.
+        // 3. The tap's UID
         var uidAddress = AudioObjectPropertyAddress(mSelector: kAudioTapPropertyUID,
                                                     mScope: kAudioObjectPropertyScopeGlobal,
                                                     mElement: kAudioObjectPropertyElementMain)
-        var uidSize: UInt32 = 0
-        var tapUID: CFString?
-        guard AudioObjectGetPropertyDataSize(tapID, &uidAddress, 0, nil, &uidSize) == noErr, uidSize > 0,
-              AudioObjectGetPropertyData(tapID, &uidAddress, 0, nil, &uidSize, &tapUID) == noErr,
+        var uidSize: UInt32 = UInt32(MemoryLayout<CFString>.size)
+        var tapUID: CFString = "" as CFString
+        guard AudioObjectGetPropertyData(tapID, &uidAddress, 0, nil, &uidSize, &tapUID) == noErr,
               let tapUIDString = tapUID as String?, !tapUIDString.isEmpty else {
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
+
+        // 4. Target hardware output device UID
+        guard let outUID = Self.targetOutputUID(for: bundleID) ?? Self.defaultOutputDeviceUID() else {
+            AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+
+        // 5. Aggregate device wrapping BOTH Tap (input) and Physical Output (output)
         let aggregateDict: [String: Any] = [
             kAudioAggregateDeviceNameKey: "AOM App Audio \(pid)",
-            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid)",
+            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [[
-                kAudioSubDeviceUIDKey: tapUIDString,
-                kAudioSubDeviceDriftCompensationKey: 1
-            ]],
-            kAudioAggregateDeviceMainSubDeviceKey: tapUIDString
+            kAudioAggregateDeviceSubDeviceListKey: [
+                [
+                    kAudioSubDeviceUIDKey: tapUIDString,
+                    kAudioSubDeviceDriftCompensationKey: 1
+                ],
+                [
+                    kAudioSubDeviceUIDKey: outUID,
+                    kAudioSubDeviceDriftCompensationKey: 1
+                ]
+            ],
+            kAudioAggregateDeviceMainSubDeviceKey: outUID
         ]
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         guard AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID) == noErr,
@@ -259,9 +354,9 @@ final class AppAudioEngine {
             return nil
         }
 
-        // 3. The IOProc: pull tapped audio from input scope, apply gain, write
-        //    to output scope. Runs on the realtime thread — no allocation.
-        let box = Unmanaged.passRetained(MixerBox(gain: gain, muted: muted))
+        // 6. Realtime IOProc
+        let magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+        let box = Unmanaged.passRetained(MixerBox(gain: gain, muted: muted, magicBoost: magicBoost))
         var procID: AudioDeviceIOProcID?
         let status = AudioDeviceCreateIOProcIDWithBlock(
             &procID, aggregateID, nil,
@@ -295,11 +390,12 @@ final class AppAudioEngine {
 final class MixerBox {
     var gain: Float
     var muted: Bool
+    var magicBoost: Bool
     let eq: EQBox
     /// Preallocated EQ scratch — the audio thread must not allocate.
     var scratch = [Float](repeating: 0, count: 8192)
-    init(gain: Float, muted: Bool, eq: AudioEQ = AudioEQ()) {
-        self.gain = gain; self.muted = muted; self.eq = EQBox(eq)
+    init(gain: Float, muted: Bool, magicBoost: Bool = false, eq: AudioEQ = AudioEQ()) {
+        self.gain = gain; self.muted = muted; self.magicBoost = magicBoost; self.eq = EQBox(eq)
     }
 }
 
@@ -313,19 +409,82 @@ nonisolated enum Mixer {
         let gain = box.muted ? Float(0) : box.gain
         let inputList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputList = UnsafeMutableAudioBufferListPointer(output)
-        for (index, outBuffer) in outputList.enumerated() {
-            guard index < inputList.count,
-                  let inputPtr = inputList[index].mData?.assumingMemoryBound(to: Float32.self),
-                  let outputPtr = outBuffer.mData?.assumingMemoryBound(to: Float32.self) else { continue }
-            let frames = Int(outBuffer.mDataByteSize) / MemoryLayout<Float32>.size
-            // Realtime path: gain in place, then the EQ's zero-allocation
-            // variant through the box's scratch buffer.
-            for frame in 0..<frames { outputPtr[frame] = inputPtr[frame] * gain }
-            if box.eq.current.isEnabled {
-                box.scratch.withUnsafeMutableBufferPointer { scratch in
-                    guard let base = scratch.baseAddress, scratch.count >= frames else { return }
-                    box.eq.current.process(into: outputPtr, input: outputPtr, frames: frames, scratch: base)
+        guard inputList.count > 0, outputList.count > 0 else { return }
+
+        let useMagicBoost = box.magicBoost
+
+        if inputList.count == outputList.count {
+            for (index, outBuffer) in outputList.enumerated() {
+                guard let inPtr = inputList[index].mData?.assumingMemoryBound(to: Float32.self),
+                      let outPtr = outBuffer.mData?.assumingMemoryBound(to: Float32.self) else {
+                    if let outPtr = outBuffer.mData?.assumingMemoryBound(to: Float32.self) {
+                        let total = Int(outBuffer.mDataByteSize) / MemoryLayout<Float32>.size
+                        for f in 0..<total { outPtr[f] = 0 }
+                    }
+                    continue
                 }
+                let inSamples = Int(inputList[index].mDataByteSize) / MemoryLayout<Float32>.size
+                let outSamples = Int(outBuffer.mDataByteSize) / MemoryLayout<Float32>.size
+                let frames = min(inSamples, outSamples)
+                for f in 0..<frames {
+                    var s = inPtr[f] * gain
+                    if useMagicBoost {
+                        s = s > 0 ? (s / (1.0 + s * 0.4)) * 1.3 : (s / (1.0 - s * 0.4)) * 1.3
+                    }
+                    outPtr[f] = s
+                }
+                if outSamples > frames {
+                    for f in frames..<outSamples { outPtr[f] = 0 }
+                }
+                if box.eq.current.isEnabled {
+                    box.scratch.withUnsafeMutableBufferPointer { scratch in
+                        guard let base = scratch.baseAddress, scratch.count >= frames else { return }
+                        box.eq.current.process(into: outPtr, input: outPtr, frames: frames, scratch: base)
+                    }
+                }
+            }
+        } else if inputList.count == 1 && outputList.count >= 2 {
+            // Stereo interleaved input to non-interleaved stereo output
+            guard let inPtr = inputList[0].mData?.assumingMemoryBound(to: Float32.self),
+                  let out0 = outputList[0].mData?.assumingMemoryBound(to: Float32.self),
+                  let out1 = outputList[1].mData?.assumingMemoryBound(to: Float32.self) else { return }
+            let inFrames = (Int(inputList[0].mDataByteSize) / MemoryLayout<Float32>.size) / 2
+            let out0Frames = Int(outputList[0].mDataByteSize) / MemoryLayout<Float32>.size
+            let out1Frames = Int(outputList[1].mDataByteSize) / MemoryLayout<Float32>.size
+            let frames = min(inFrames, min(out0Frames, out1Frames))
+            for f in 0..<frames {
+                var s0 = inPtr[f * 2] * gain
+                var s1 = inPtr[f * 2 + 1] * gain
+                if useMagicBoost {
+                    s0 = s0 > 0 ? (s0 / (1.0 + s0 * 0.4)) * 1.3 : (s0 / (1.0 - s0 * 0.4)) * 1.3
+                    s1 = s1 > 0 ? (s1 / (1.0 + s1 * 0.4)) * 1.3 : (s1 / (1.0 - s1 * 0.4)) * 1.3
+                }
+                out0[f] = s0
+                out1[f] = s1
+            }
+            if out0Frames > frames { for f in frames..<out0Frames { out0[f] = 0 } }
+            if out1Frames > frames { for f in frames..<out1Frames { out1[f] = 0 } }
+        } else if inputList.count >= 2 && outputList.count == 1 {
+            // Non-interleaved stereo input to interleaved stereo output
+            guard let in0 = inputList[0].mData?.assumingMemoryBound(to: Float32.self),
+                  let in1 = inputList[1].mData?.assumingMemoryBound(to: Float32.self),
+                  let outPtr = outputList[0].mData?.assumingMemoryBound(to: Float32.self) else { return }
+            let inFrames = min(Int(inputList[0].mDataByteSize), Int(inputList[1].mDataByteSize)) / MemoryLayout<Float32>.size
+            let outFrames = (Int(outputList[0].mDataByteSize) / MemoryLayout<Float32>.size) / 2
+            let frames = min(inFrames, outFrames)
+            for f in 0..<frames {
+                var s0 = in0[f] * gain
+                var s1 = in1[f] * gain
+                if useMagicBoost {
+                    s0 = s0 > 0 ? (s0 / (1.0 + s0 * 0.4)) * 1.3 : (s0 / (1.0 - s0 * 0.4)) * 1.3
+                    s1 = s1 > 0 ? (s1 / (1.0 + s1 * 0.4)) * 1.3 : (s1 / (1.0 - s1 * 0.4)) * 1.3
+                }
+                outPtr[f * 2] = s0
+                outPtr[f * 2 + 1] = s1
+            }
+            let totalOut = outFrames * 2
+            if totalOut > frames * 2 {
+                for f in (frames * 2)..<totalOut { outPtr[f] = 0 }
             }
         }
     }

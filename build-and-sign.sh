@@ -65,6 +65,7 @@ iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$CONTENTS/Resources/AppIcon.ic
 
 bash "$PWD/scripts/bundle-webp.sh" "$CONTENTS" "$SIGN_ID"
 bash "$PWD/scripts/bundle-annotation-preview.sh" "$CONTENTS" "$SIGN_ID"
+bash "$PWD/scripts/bundle-swish.sh" "$CONTENTS" "$SIGN_ID"
 mkdir -p "$CONTENTS/Resources/bin"
 # AppleScript dictionary (Info.plist OSAScriptingDefinition).
 cp "$PWD/AllOfMacOS/App/AllOfMacOS.sdef" "$CONTENTS/Resources/AllOfMacOS.sdef"

@@ -281,6 +281,60 @@ final class PortedFeatureTests: XCTestCase {
         _ = controller // the settings are read per-frame by the running engine
         UserDefaults.standard.removeObject(forKey: "AOMWindowGestureEdgeSize")
     }
+
+    func testSwishEmbeddedManagerProperties() {
+        let manager = SwishEmbeddedManager.shared
+        XCTAssertNotNil(manager)
+        manager.refresh()
+        XCTAssertEqual(SwishEmbeddedManager.swishBundleID, "co.highlyopinionated.swish")
+    }
+
+    func testAppAudioEngineMixingZeroWhenMuted() {
+        let box = MixerBox(gain: 1.5, muted: true)
+        var inSamples: [Float32] = [0.5, -0.5, 0.2, -0.2]
+        var outSamples: [Float32] = [1.0, 1.0, 1.0, 1.0]
+
+        inSamples.withUnsafeMutableBufferPointer { inBuf in
+            outSamples.withUnsafeMutableBufferPointer { outBuf in
+                var inAudioBuf = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(inBuf.count * MemoryLayout<Float32>.size), mData: inBuf.baseAddress)
+                var outAudioBuf = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(outBuf.count * MemoryLayout<Float32>.size), mData: outBuf.baseAddress)
+
+                var inList = AudioBufferList(mNumberBuffers: 1, mBuffers: inAudioBuf)
+                var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: outAudioBuf)
+
+                withUnsafePointer(to: &inList) { inPtr in
+                    withUnsafeMutablePointer(to: &outList) { outPtr in
+                        Mixer.mix(input: inPtr, output: outPtr, box: box)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(outSamples, [0.0, 0.0, 0.0, 0.0])
+    }
+
+    func testAppAudioEngineMixingScalesGain() {
+        let box = MixerBox(gain: 1.5, muted: false)
+        var inSamples: [Float32] = [0.2, -0.4, 0.1, -0.1]
+        var outSamples: [Float32] = [0.0, 0.0, 0.0, 0.0]
+
+        inSamples.withUnsafeMutableBufferPointer { inBuf in
+            outSamples.withUnsafeMutableBufferPointer { outBuf in
+                var inAudioBuf = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(inBuf.count * MemoryLayout<Float32>.size), mData: inBuf.baseAddress)
+                var outAudioBuf = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(outBuf.count * MemoryLayout<Float32>.size), mData: outBuf.baseAddress)
+
+                var inList = AudioBufferList(mNumberBuffers: 1, mBuffers: inAudioBuf)
+                var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: outAudioBuf)
+
+                withUnsafePointer(to: &inList) { inPtr in
+                    withUnsafeMutablePointer(to: &outList) { outPtr in
+                        Mixer.mix(input: inPtr, output: outPtr, box: box)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(outSamples[0], 0.3, accuracy: 0.001)
+        XCTAssertEqual(outSamples[1], -0.6, accuracy: 0.001)
+    }
 }
 
 /// Records presentations without building panels.

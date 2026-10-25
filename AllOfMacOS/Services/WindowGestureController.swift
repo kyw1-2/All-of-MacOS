@@ -34,7 +34,9 @@ final class WindowGestureController: ObservableObject {
     private var savedPreMaximize: CGRect?
 
     var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
+        let swish = UserDefaults.standard.object(forKey: "AOMSwishEnabled") as? Bool ?? true
+        let general = UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
+        return swish && general
     }
     var anyLayerEnabled: Bool { isEnabled }
 
