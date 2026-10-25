@@ -387,6 +387,13 @@ class KeyboardMonitor: ObservableObject {
     func handleInput(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isDown: Bool, isRepeat: Bool = false, text: String? = nil) -> Bool {
         guard !Self.isRecordingShortcut, !isMonitoring else { return false }
 
+        // Mission Control hotkeys (W/⇧W/M/H) only while MC is open — the Dock
+        // owns focus then, so this global tap is the only place they exist.
+        if isDown, MainActor.assumeIsolated({
+            MissionControlOverlayService.shared.isMissionControlActive &&
+            MissionControlHotKeyHandler.shared.handleGlobalKey(keyCode: keyCode, modifiers: modifiers)
+        }) { return true }
+
         // While the window switcher is up it owns the keyboard: the bound
         // shortcut (⌃Tab re-pressed) cycles instead of re-opening.
         if isDown, MainActor.assumeIsolated({ WindowSwitcherController.shared.handleSwitcherKey(

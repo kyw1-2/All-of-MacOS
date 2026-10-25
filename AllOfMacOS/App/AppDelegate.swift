@@ -610,6 +610,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if UserDefaults.standard.object(forKey: "AOMMissionControlButtons") as? Bool ?? true {
                 MissionControlOverlayService.shared.start()
             }
+            // The W/⇧W/M/H shortcuts while Mission Control is open. The key
+            // events themselves arrive through KeyboardMonitor's global tap.
+            MissionControlHotKeyHandler.shared.start()
         }
     }
 

@@ -37,12 +37,29 @@ final class MissionControlHotKeyHandler {
         }
     }
 
+    /// Global-key entry from KeyboardMonitor's session event tap — the only
+    /// path that sees W/M/H while Mission Control (and therefore the Dock)
+    /// owns keyboard focus.
+    @discardableResult
+    func handleGlobalKey(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        // ANSI W=13, M=46, H=4.
+        guard [13, 46, 4].contains(keyCode),
+              modifiers.intersection([.command, .control, .option]).isEmpty else { return false }
+        let isShift = modifiers.contains(.shift)
+        let cursor = NSEvent.mouseLocation
+        return act(character: keyCode == 13 ? "w" : keyCode == 46 ? "m" : "h",
+                   shift: isShift, cursor: cursor)
+    }
+
     private func handleKey(_ event: NSEvent) -> Bool {
         let cursor = NSEvent.mouseLocation
         guard let chars = event.charactersIgnoringModifiers?.lowercased(), !chars.isEmpty else { return false }
         let isShift = event.modifierFlags.contains(.shift)
+        return act(character: chars, shift: isShift, cursor: cursor)
+    }
 
-        switch chars {
+    private func act(character: String, shift isShift: Bool, cursor: CGPoint) -> Bool {
+        switch character {
         case "w":
             if isShift {
                 // Close all windows of the app under cursor
