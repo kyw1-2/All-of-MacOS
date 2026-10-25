@@ -1,5 +1,11 @@
 import Foundation
 import AppKit
+import PDFKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
+import ImageIO
+import UniformTypeIdentifiers
+import AVFoundation
 
 /// System maintenance and file utility suite replicating MacMagic 2.0 features inside AOM.
 final class MacMagicSystemToolService {
@@ -166,6 +172,161 @@ final class MacMagicSystemToolService {
         if chflags(path, flags) != 0 {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Failed to update file hidden attribute."])
         }
+    }
+
+    // MARK: - PDF Tools
+
+    /// Combines PDF documents in order into a single file at the destination.
+    func combinePDFs(urls: [URL], to destination: URL) throws {
+        let merged = PDFDocument()
+        var index = 0
+        for url in urls.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+            guard let document = PDFDocument(url: url) else { continue }
+            for page in 0..<document.pageCount {
+                guard let page = document.page(at: page) else { continue }
+                merged.insert(page, at: index)
+                index += 1
+            }
+        }
+        guard merged.pageCount > 0 else { throw CocoaError(.fileWriteUnknown) }
+        guard merged.write(to: destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// Compresses a PDF by re-rendering every page as a scaled JPEG-backed
+    /// PDF page (MacMagic's compresspdfs approach).
+    func compressPDF(url: URL, to destination: URL, quality: Double = 0.65) throws {
+        guard let source = PDFDocument(url: url) else { throw CocoaError(.fileReadUnknown) }
+        let output = PDFDocument()
+        for index in 0..<source.pageCount {
+            guard let page = source.page(at: index) else { continue }
+            let thumbnail = page.thumbnail(of: page.bounds(for: .mediaBox).size, for: .mediaBox)
+            guard let tiff = thumbnail.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]) else { continue }
+            if let pageImage = PDFPage(image: NSImage(data: jpeg) ?? NSImage()) {
+                output.insert(pageImage, at: index)
+            }
+        }
+        guard output.write(to: destination) else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    // MARK: - Media Tools
+
+    enum ImageFormat: String, CaseIterable { case png, jpeg, heic, webp }
+
+    /// Converts an image file to another format, returning the new file URL.
+    func convertImage(url: URL, to format: ImageFormat, quality: Double = 0.85) throws -> URL {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        let type: UTType = format == .png ? .png : format == .jpeg ? .jpeg : format == .heic ? .heic : UTType(filenameExtension: "webp") ?? .png
+        let base = url.deletingPathExtension().lastPathComponent
+        let destinationURL = url.deletingLastPathComponent().appendingPathComponent("\(base)-\(format.rawValue).\(type.preferredFilenameExtension ?? format.rawValue)")
+        guard let destination = CGImageDestinationCreateWithURL(destinationURL as CFURL, type.identifier as CFString, 1, nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
+        return destinationURL
+    }
+
+    /// Generates a QR code image for the text at the given scale.
+    func generateQRCode(text: String, scale: CGFloat = 12) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(text.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) else { return nil }
+        let rep = NSCIImageRep(ciImage: output)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    /// Converts a video to H.264 MP4 (or another preset) via AVAssetExportSession.
+    func convertVideo(url: URL, to destination: URL, preset: String = AVAssetExportPresetHighestQuality) async throws {
+        let asset = AVURLAsset(url: url)
+        guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        session.outputURL = destination
+        session.outputFileType = .mp4
+        try await session.export()
+    }
+
+    // MARK: - System Management
+
+    /// Total size of the user's cache directories (~/Library/Caches and the
+    /// app-support cache roots), computed without deleting anything.
+    func diskCacheSize() -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+    }
+
+    func clearDiskCache() throws -> Int64 {
+        let caches = diskCacheSize()
+        var freed: Int64 = 0
+        let items = try FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: [.isDirectoryKey, .totalFileAllocatedSizeKey])
+        for item in items {
+            // AOM's own live cache must survive.
+            if item.lastPathComponent.contains("allofmacos") || item.lastPathComponent.contains("AllOfMacOS") { continue }
+            freed += (try? directorySize(item)) ?? 0
+            try? FileManager.default.removeItem(at: item)
+        }
+        return freed
+    }
+
+    func directorySize(_ url: URL) throws -> Int64 {
+        var total: Int64 = 0
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
+        for case let file as URL in enumerator {
+            total += Int64((try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize) ?? 0)
+        }
+        return total
+    }
+
+    /// Turns the primary Wi-Fi interface off (MacMagic's disconnectwifi).
+    func disconnectWiFi() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/networksetup")
+        process.arguments = ["-setairportpower", "en0", "off"]
+        try process.run()
+        process.waitUntilExit()
+    }
+
+    // MARK: - File Management
+
+    /// Batch rename: replaces a regex/plain pattern, with an optional
+    /// sequential number token "{n}". Returns the new URLs in order.
+    func batchRename(urls: [URL], pattern: String, replacement: String, startingNumber: Int = 1) throws -> [URL] {
+        let regex = try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: pattern))
+        var renamed: [URL] = []
+        var number = startingNumber
+        for url in urls {
+            let name = url.deletingPathExtension().lastPathComponent
+            let ext = url.pathExtension
+            var newName: String
+            if let regex {
+                let range = NSRange(name.startIndex..., in: name)
+                newName = regex.stringByReplacingMatches(in: name, range: range, withTemplate: replacement)
+            } else {
+                newName = name.replacingOccurrences(of: pattern, with: replacement)
+            }
+            newName = newName.replacingOccurrences(of: "{n}", with: String(number))
+            number += 1
+            let target = url.deletingLastPathComponent().appendingPathComponent("\(newName).\(ext)")
+            try? FileManager.default.moveItem(at: url, to: target)
+            renamed.append(target)
+        }
+        return renamed
+    }
+
+    /// Force-deletes a stubborn file: clears the immutable flag first, then
+    /// removes it (MacMagic's forcedelete).
+    func forceDelete(url: URL) throws {
+        try? setFileLocked(url: url, locked: false)
+        try FileManager.default.removeItem(at: url)
     }
 
     /// Empties the user Trash directory.
