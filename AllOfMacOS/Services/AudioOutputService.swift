@@ -218,7 +218,11 @@ final class AudioOutputService {
         guard !busy else { finish(false, "Another sound output change is still running", completion); return }
         guard !name.isEmpty || !(uid ?? "").isEmpty else { finish(false, "Choose an output device or enter an AirPlay room name", completion); return }
         busy = true
+        let previousUID = Self.currentDeviceID().flatMap { Self.string($0, kAudioDevicePropertyDeviceUID) }
         let done: (Bool, String) -> Void = { success, message in
+            if success, let applied = Self.currentDeviceID().flatMap({ Self.string($0, kAudioDevicePropertyDeviceUID) }) {
+                AudioOutputRestore.record(previousUID: previousUID, appliedUID: applied)
+            }
             self.busy = false; self.finish(success, message, completion)
         }
         let devices = Self.devices()

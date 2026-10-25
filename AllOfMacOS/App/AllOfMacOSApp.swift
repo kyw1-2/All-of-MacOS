@@ -22,6 +22,13 @@ enum AOMLauncher {
                 exit(result["passed"] as? Bool == true ? 0 : 1)
             } catch { fputs("Self-test report failed: \(error)\n", stderr); exit(2) }
         }
+        if let i = args.firstIndex(of: "--aom-restore-audio"), args.indices.contains(i + 1) {
+            let before = AudioOutputRestore.defaultOutputUID() ?? ""
+            let restored = AudioOutputRestore.restoreIfNeeded(reason: "command line")
+            let after = AudioOutputRestore.defaultOutputUID() ?? ""
+            let result: [String: Any] = ["restored": restored, "before": before, "after": after]
+            writeCheck(result, path: args[i + 1]); exit(0)
+        }
         if let i = args.firstIndex(of: "--aom-select-audio"), args.indices.contains(i + 2) {
             _ = NSApplication.shared
             let name = args[i + 1]

@@ -80,6 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
+            AudioOutputRestore.restoreIfNeeded(reason: "a previous session")
         }
         if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
@@ -328,6 +329,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ActionExecutor.cancelAllSequences()
         MainActor.assumeIsolated {
             if #available(macOS 14.2, *) { AppAudioEngine.shared.stopAll() }
+            _ = AudioOutputRestore.restoreIfNeeded(reason: "quit")
             WindowPinningService.shared.unpinAll()
             ClipboardMCPServer.shared.stopForTermination()
             GestureStatistics.shared.flushPendingWrites()
