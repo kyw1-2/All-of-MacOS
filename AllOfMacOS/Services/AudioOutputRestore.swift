@@ -209,9 +209,9 @@ extension AudioOutputRestore {
     /// and keeps stalling after AOM quits. Watch the first seconds of a launch and
     /// put the device we started on back.
     static func guardStartupOutputFlip() {
-        // Deliberately not gated on the AirPlay-repair preference: this undoes a
-        // change our own engine just caused, not a choice the user made.
-        guard !hasPendingChange else { return }
+        // Only run when explicitly enabled. By default, users intentionally choose
+        // HomePod / AirPlay and AOM must never revert or fight their choice.
+        guard protectsMediaPlayback, !hasPendingChange else { return }
         guard let baselineUID = defaultOutputUID(), let baselineID = deviceID(forUID: baselineUID),
               transportType(of: baselineID) != kAudioDeviceTransportTypeAirPlay else { return }
         let name = self.name(of: baselineID)
