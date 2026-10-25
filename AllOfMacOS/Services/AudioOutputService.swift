@@ -30,7 +30,32 @@ final class AudioOutputService {
         guard status == noErr, let value else { return "" }
         return value.takeRetainedValue() as String
     }
+    private static let deviceCacheLock = NSLock()
+    private nonisolated(unsafe) static var deviceSnapshot: [AudioOutputDevice] = []
+    private nonisolated(unsafe) static var deviceSnapshotAt: TimeInterval = -.infinity
+
+    static func invalidateDeviceCache() {
+        deviceCacheLock.lock(); defer { deviceCacheLock.unlock() }
+        deviceSnapshotAt = -.infinity
+    }
+
     static func devices() -> [AudioOutputDevice] {
+        let now = ProcessInfo.processInfo.systemUptime
+        deviceCacheLock.lock()
+        if now - deviceSnapshotAt < 0.5 {
+            let result = deviceSnapshot
+            deviceCacheLock.unlock()
+            return result
+        }
+        deviceCacheLock.unlock()
+        let result = readDevices()
+        deviceCacheLock.lock()
+        deviceSnapshot = result; deviceSnapshotAt = now
+        deviceCacheLock.unlock()
+        return result
+    }
+
+    private static func readDevices() -> [AudioOutputDevice] {
         var property = address(kAudioHardwarePropertyDevices); var size: UInt32 = 0
         let system = AudioObjectID(kAudioObjectSystemObject)
         guard AudioObjectGetPropertyDataSize(system, &property, 0, nil, &size) == noErr else { return [] }
@@ -116,8 +141,7 @@ final class AudioOutputService {
     static func canAdjustOutputVolume() -> Bool {
         guard let device = currentDeviceID() else { return false }
         if volumeProperty(device) != nil { return true }
-        if #available(macOS 14.2, *) { return true }
-        return false
+        return supportsSoftwareVolume(device)
     }
     static func canAdjustBalance() -> Bool {
         guard let device = currentDeviceID() else { return false }
@@ -132,15 +156,22 @@ final class AudioOutputService {
     static func currentVolume() -> Float32? {
         guard let device = currentDeviceID() else { return nil }
         guard var property = volumeProperty(device) else {
-            if #available(macOS 14.2, *) { return softwareGain(uid: string(device, kAudioDevicePropertyDeviceUID)) }
+            if supportsSoftwareVolume(device) { return softwareGain(uid: string(device, kAudioDevicePropertyDeviceUID)) }
             return nil
         }
         var value: Float32 = 0; var size: UInt32 = 4
         guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
         return value
     }
+    private static func supportsSoftwareVolume(_ device: AudioDeviceID) -> Bool {
+        guard AudioOutputRestore.transportType(of: device) != kAudioDeviceTransportTypeAirPlay else { return false }
+        if #available(macOS 14.2, *) { return AppAudioEngine.shared.isEnabled }
+        return false
+    }
+
     static func softwareGain(uid: String) -> Float {
-        guard let device = devices().first(where: { $0.uid == uid }), volumeProperty(device.id) == nil else { return 1 }
+        guard let device = devices().first(where: { $0.uid == uid }),
+              supportsSoftwareVolume(device.id), volumeProperty(device.id) == nil else { return 1 }
         let value = UserDefaults.standard.object(forKey: "AOMAudioDeviceGain_\(uid)") as? Double ?? 1
         return value.isFinite ? Float(min(1, max(0, value))) : 1
     }
@@ -171,6 +202,10 @@ final class AudioOutputService {
         guard let device = Self.currentDeviceID() else { done(false, "No output device is connected"); return }
         guard device == request.device else { done(false, "Output changed during volume adjustment"); return }
         guard var property = Self.volumeProperty(device) else {
+            guard Self.supportsSoftwareVolume(device) else {
+                done(false, "This output has no writable volume control. Use its native volume control.")
+                return
+            }
             if #available(macOS 14.2, *) {
                 let uid = Self.string(device, kAudioDevicePropertyDeviceUID)
                 let current = Double(Self.softwareGain(uid: uid)) * 100

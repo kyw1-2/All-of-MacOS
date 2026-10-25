@@ -33,7 +33,7 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .coordinateSpace(name: "tutorialOverlay")
-        .onPreferenceChange(TutorialFramePreferenceKey.self) { tutorialFrames = $0 }
+        .onPreferenceChange(TutorialFramePreferenceKey.self) { if tutorialFrames != $0 { tutorialFrames = $0 } }
         .overlay {
             if showTutorial {
                 TutorialOverlayView(isPresented: $showTutorial, frames: tutorialFrames)

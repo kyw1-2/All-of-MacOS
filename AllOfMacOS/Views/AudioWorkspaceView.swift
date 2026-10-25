@@ -107,6 +107,17 @@ struct AudioWorkspaceView: View {
                         .help("Refresh applications")
                     }
 
+                    if service.airPlayBypassed && service.soundEnabled {
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("HomePod / AirPlay · Direct Playback").font(.headline)
+                                Text("App volume, mute, EQ and boost are saved but bypassed on this connection. They resume on a local output. Control HomePod volume through macOS or HomePod.")
+                                    .font(.callout)
+                            }
+                        } icon: { Image(systemName: "airplay.audio") }
+                        .padding().frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                    }
                     if !service.soundEnabled {
                         VStack(spacing: 12) {
                             HStack(spacing: 8) {
@@ -208,9 +219,8 @@ struct AudioWorkspaceView: View {
             .padding(AOMSpace.xl)
         }
         .background(AOMTheme.workspace)
-        .task { service.refresh() }
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in service.refreshMeters() }
-        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in service.refresh() }
+        .onAppear { service.beginMetering(); service.refresh() }
+        .onDisappear { service.endMetering() }
     }
 
     private var filteredApps: [AppAudioState] {
@@ -592,10 +602,7 @@ private struct SoundSourceAppCard: View {
                         }
                     }
                     if app.tapped {
-                        ProgressView(value: Double(app.peakLevel), total: 1)
-                            .tint(app.peakLevel > 0.95 ? .orange : .green)
-                            .frame(maxWidth: 100)
-                            .accessibilityLabel("Application audio level")
+                        AppAudioLevelMeter(pid: app.pid)
                     }
                     Text(app.error ?? app.processingStatus)
                         .font(.system(size: 10))

@@ -81,8 +81,6 @@ struct AOMSidebar: View {
     @Binding var showLog: Bool
     @Binding var showTouchVisualizer: Bool
     @Environment(\.openSettings) private var openSettings
-    @ObservedObject private var recording = ScreenRecordingService.shared
-    @ObservedObject private var clipboard = ClipboardStore.shared
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -110,14 +108,15 @@ struct AOMSidebar: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Live state that needs attention, shown at the trailing edge of a row.
-    private func status(for tab: AOMMainTab) -> (text: String, tint: Color)? {
+    @ViewBuilder
+    private func statusBadge(for tab: AOMMainTab) -> some View {
         switch tab {
-        case .gestures where !appState.globalEnabled: return ("Paused", AOMTheme.warning)
-        case .capture where recording.isRecording: return (recording.isPaused ? "Paused" : "REC", AOMTheme.danger)
-        case .clipboard where clipboard.paused: return ("Paused", AOMTheme.warning)
-        case .audio where AppAudioMixerService.shared.eqEnabled: return ("EQ", AOMTheme.positive)
-        default: return nil
+        case .gestures:
+            if !appState.globalEnabled { AOMSidebarStatusBadge(text: "Paused", tint: AOMTheme.warning) }
+        case .capture: AOMRecordingSidebarBadge()
+        case .clipboard: AOMClipboardSidebarBadge()
+        case .audio: AOMAudioSidebarBadge()
+        default: EmptyView()
         }
     }
 
@@ -132,15 +131,7 @@ struct AOMSidebar: View {
                     .symbolRenderingMode(.hierarchical)
             }
             Spacer(minLength: 4)
-            if let status = status(for: tab) {
-                Text(status.text)
-                    .font(AOMType.micro.weight(.semibold))
-                    .foregroundStyle(status.tint)
-                    .padding(.horizontal, 6)
-                    .frame(height: 17)
-                    .background(status.tint.opacity(0.14), in: Capsule())
-                    .accessibilityLabel(status.text)
-            }
+            statusBadge(for: tab)
         }
         .frame(minHeight: 26)
         .tag(tab)
@@ -255,5 +246,41 @@ enum AOMPaletteShortcut {
         if shortcut.modifiers.contains(.option) { modifiers.insert(.option) }
         if shortcut.modifiers.contains(.control) { modifiers.insert(.control) }
         return (key, modifiers)
+    }
+}
+
+// Only the small status badge observes recording ticks/clipboard updates.
+// Navigation selection and the full List no longer redraw for these events.
+private struct AOMSidebarStatusBadge: View {
+    let text: String
+    let tint: Color
+    var body: some View {
+        Text(text).font(AOMType.micro.weight(.semibold)).foregroundStyle(tint)
+            .padding(.horizontal, 6).frame(height: 17)
+            .background(tint.opacity(0.14), in: Capsule()).accessibilityLabel(text)
+    }
+}
+private struct AOMRecordingSidebarBadge: View {
+    @ObservedObject private var recording = ScreenRecordingService.shared
+    var body: some View {
+        if recording.isRecording {
+            AOMSidebarStatusBadge(text: recording.isPaused ? "Paused" : "REC", tint: AOMTheme.danger)
+        }
+    }
+}
+private struct AOMClipboardSidebarBadge: View {
+    @ObservedObject private var clipboard = ClipboardStore.shared
+    var body: some View {
+        if clipboard.paused { AOMSidebarStatusBadge(text: "Paused", tint: AOMTheme.warning) }
+    }
+}
+private struct AOMAudioSidebarBadge: View {
+    @ObservedObject private var audio = AppAudioMixerService.shared
+    var body: some View {
+        if !audio.soundEnabled { AOMSidebarStatusBadge(text: "Off", tint: AOMTheme.textSecondary) }
+        else if audio.airPlayBypassed { AOMSidebarStatusBadge(text: "Direct", tint: AOMTheme.textSecondary) }
+        else if audio.eqEnabled || audio.allAppsBoostEnabled {
+            AOMSidebarStatusBadge(text: "FX", tint: AOMTheme.positive)
+        }
     }
 }

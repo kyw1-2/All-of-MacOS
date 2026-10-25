@@ -16,8 +16,16 @@ final class MissionControlOverlayService: ObservableObject {
 
     @Published private(set) var isMissionControlActive = false
     private var pollTimer: Timer?
-    private var tiles: [(panel: NSPanel, pid: pid_t, windowTitle: String?)] = []
-    private var lastPid: pid_t = 0
+    private var tiles: [(panel: NSPanel, element: AXUIElement, pid: pid_t, windowTitle: String?)] = []
+    private let probeQueue = DispatchQueue(label: "com.kyw.allofmacos.mission-control-probe", qos: .utility)
+    private var probeInFlight = false
+    private var generation = 0
+    private struct TileSnapshot: @unchecked Sendable {
+        let element: AXUIElement
+        let frame: CGRect
+        let pid: pid_t
+        let title: String?
+    }
 
     var isEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
@@ -33,6 +41,7 @@ final class MissionControlOverlayService: ObservableObject {
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        generation += 1
         teardown()
     }
 
@@ -40,16 +49,42 @@ final class MissionControlOverlayService: ObservableObject {
 
     private func poll() {
         guard isEnabled, !ScreenLock.isLocked else {
-            if isMissionControlActive { teardown() }
+            generation += 1
+            if isMissionControlActive || !tiles.isEmpty { teardown() }
             return
         }
-        let mcWindow = Self.missionControlWindow()
-        if let mcWindow {
-            if !isMissionControlActive { isMissionControlActive = true }
-            rebuildTiles(for: mcWindow)
-        } else if isMissionControlActive || !tiles.isEmpty {
-            teardown()
-            isMissionControlActive = false
+        guard !probeInFlight else { return }
+        probeInFlight = true
+        let requestGeneration = generation
+        probeQueue.async { [weak self] in
+            let snapshot = Self.captureSnapshot()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.probeInFlight = false
+                guard self.pollTimer != nil, self.generation == requestGeneration,
+                      self.isEnabled, !ScreenLock.isLocked else { return }
+                if let snapshot {
+                    if !self.isMissionControlActive { self.isMissionControlActive = true }
+                    self.rebuildTiles(snapshot)
+                } else if self.isMissionControlActive || !self.tiles.isEmpty {
+                    self.teardown()
+                }
+            }
+        }
+    }
+
+    nonisolated private static func captureSnapshot() -> [TileSnapshot]? {
+        guard let window = missionControlWindow() else { return nil }
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &value) == .success,
+              let children = value as? [AXUIElement] else { return [] }
+        return children.compactMap { element in
+            guard let rect = frame(of: element), rect.width > 120, rect.height > 90 else { return nil }
+            var pid: pid_t = 0
+            AXUIElementGetPid(element, &pid)
+            var title: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
+            return TileSnapshot(element: element, frame: rect, pid: pid, title: title as? String)
         }
     }
 
@@ -57,6 +92,7 @@ final class MissionControlOverlayService: ObservableObject {
     nonisolated private static func missionControlWindow() -> AXUIElement? {
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return nil }
         let ref = AXUIElementCreateApplication(dock.processIdentifier)
+        AXUIElementSetMessagingTimeout(ref, 0.1)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(ref, kAXWindowsAttribute as CFString, &value) == .success,
               let windows = value as? [AXUIElement] else { return nil }
@@ -71,45 +107,28 @@ final class MissionControlOverlayService: ObservableObject {
 
     // MARK: - Tiles
 
-    private func rebuildTiles(for mcWindow: AXUIElement) {
-        guard let mcFrame = Self.frame(of: mcWindow) else { teardown(); return }
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(mcWindow, kAXChildrenAttribute as CFString, &value) == .success,
-              let children = value as? [AXUIElement] else { teardown(); return }
-        var tileFrames: [(AXUIElement, CGRect)] = []
-        for child in children {
-            guard let frame = Self.frame(of: child), frame.width > 120, frame.height > 90 else { continue }
-            tileFrames.append((child, frame))
-        }
-        guard !tileFrames.isEmpty else { teardown(); return }
-        // Reuse panels whose target frame barely moved; create the rest.
+    private func rebuildTiles(_ snapshot: [TileSnapshot]) {
         let top = NSScreen.screens.first?.frame.maxY ?? 0
-        var usedPanels = Set<Int>()
-        for (index, (ax, frame)) in tileFrames.enumerated() {
-            let appFrame = CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
-            var pid: pid_t = 0
-            AXUIElementGetPid(ax, &pid)
+        for (index, tile) in snapshot.enumerated() {
+            let frame = CGRect(x: tile.frame.minX, y: top - tile.frame.maxY,
+                               width: tile.frame.width, height: tile.frame.height)
             if index < tiles.count {
-                tiles[index].panel.setFrame(appFrame, display: true)
-                usedPanels.insert(index)
-            } else {
-                if let panel = makeCloseButton(frame: appFrame, tile: ax, pid: pid, title: title(of: ax)) {
-                    tiles.append((panel, pid, title(of: ax)))
-                    usedPanels.insert(tiles.count - 1)
+                let old = tiles[index]
+                if CFEqual(old.element, tile.element), old.pid == tile.pid, old.windowTitle == tile.title {
+                    if old.panel.frame != frame { old.panel.setFrame(frame, display: true) }
+                    continue
                 }
+                // A new window can occupy the same tile index. Its close action
+                // must not keep the previous window captured in a closure.
+                old.panel.orderOut(nil)
+                if let panel = makeCloseButton(frame: frame, tile: tile.element, pid: tile.pid, title: tile.title) {
+                    tiles[index] = (panel, tile.element, tile.pid, tile.title)
+                }
+            } else if let panel = makeCloseButton(frame: frame, tile: tile.element, pid: tile.pid, title: tile.title) {
+                tiles.append((panel, tile.element, tile.pid, tile.title))
             }
         }
-        // Drop panels for tiles that disappeared (MC page changed).
-        for index in tiles.indices.reversed() where !usedPanels.contains(index) && index >= tileFrames.count {
-            tiles[index].panel.orderOut(nil)
-            tiles.remove(at: index)
-        }
-    }
-
-    private func title(of element: AXUIElement) -> String? {
-        var value: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value)
-        return value as? String
+        while tiles.count > snapshot.count { tiles.removeLast().panel.orderOut(nil) }
     }
 
     private func makeCloseButton(frame: CGRect, tile: AXUIElement, pid: pid_t, title: String?) -> NSPanel? {
@@ -121,9 +140,9 @@ final class MissionControlOverlayService: ObservableObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = false
         panel.contentView = NSHostingView(rootView: MissionControlTileOverlay(
-            onHover: { hovering in
+            onHover: { [weak panel] hovering in
                 // Dim the rest of the tile so the button reads as attached.
-                panel.backgroundColor = NSColor.black.withAlphaComponent(hovering ? 0.001 : 0)
+                panel?.backgroundColor = NSColor.black.withAlphaComponent(hovering ? 0.001 : 0)
             },
             onClose: { [weak self] in
                 self?.closeTile(tile: tile, pid: pid, title: title)
@@ -135,20 +154,21 @@ final class MissionControlOverlayService: ObservableObject {
     /// Closing from Mission Control: raise the source window first (so the
     /// close lands on the right target) then press its AX close button.
     private func closeTile(tile: AXUIElement, pid: pid_t, title: String?) {
-        AXUIElementPerformAction(tile, kAXRaiseAction as CFString)
-        if let app = NSRunningApplication(processIdentifier: pid) {
-            app.activate(options: [])
-        }
+        guard pid > 0, let title, !title.isEmpty else { return }
         var windows: CFTypeRef?
         let ref = AXUIElementCreateApplication(pid)
         guard AXUIElementCopyAttributeValue(ref, kAXWindowsAttribute as CFString, &windows) == .success,
               let list = windows as? [AXUIElement] else { return }
-        let match = list.first { window in
+        let matches = list.filter { window in
             var t: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &t)
-            return (t as? String) == title && title != nil
-        } ?? list.first
-        guard let match else { return }
+            return (t as? String) == title
+        }
+        // An unresolved/duplicate title is not permission to close the first
+        // unrelated window belonging to this process.
+        guard matches.count == 1, let match = matches.first else { return }
+        AXUIElementPerformAction(match, kAXRaiseAction as CFString)
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [])
         var buttons: CFTypeRef?
         guard AXUIElementCopyAttributeValue(match, kAXChildrenAttribute as CFString, &buttons) == .success,
               let children = buttons as? [AXUIElement] else { return }
@@ -163,6 +183,7 @@ final class MissionControlOverlayService: ObservableObject {
     }
 
     private func teardown() {
+        if isMissionControlActive { isMissionControlActive = false }
         for tile in tiles { tile.panel.orderOut(nil) }
         tiles.removeAll()
     }

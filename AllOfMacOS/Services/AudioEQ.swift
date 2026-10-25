@@ -159,3 +159,50 @@ final class AudioEQProcessor {
         return value
     }
 }
+
+/// AOM's linked stereo compressor with makeup gain. This is not a copy of
+/// SoundSource's proprietary algorithm. State persists between buffers;
+/// attack/release smooth changes instead of distorting every sample with tanh.
+final class AudioAdaptiveBoost {
+    private let envelopeAttack: Float
+    private let envelopeRelease: Float
+    private let gainAttack: Float
+    private let gainRelease: Float
+    private var envelope: Float = 0
+    private var gain: Float = 1
+    private var targetGain: Float = 1
+    private var controlFrame = 0
+    private var previousLevel = 0
+
+    init(sampleRate: Double) {
+        let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
+        envelopeAttack = Float(exp(-1 / (0.003 * rate)))
+        envelopeRelease = Float(exp(-1 / (0.150 * rate)))
+        gainAttack = Float(exp(-1 / (0.005 * rate)))
+        gainRelease = Float(exp(-1 / (0.100 * rate)))
+    }
+
+    func process(left: inout Float, right: inout Float, level: Int) {
+        left = left.isFinite ? left : 0
+        right = right.isFinite ? right : 0
+        let peak = max(abs(left), abs(right))
+        let coefficient = peak > envelope ? envelopeAttack : envelopeRelease
+        envelope = coefficient * envelope + (1 - coefficient) * peak
+        let strength = min(3, max(0, level))
+        if strength == 0 {
+            targetGain = 1
+        } else if controlFrame == 0 || strength != previousLevel {
+            let threshold: Float = strength == 1 ? 0.28 : (strength == 2 ? 0.22 : 0.18)
+            let ratio: Float = Float(strength + 1)
+            let makeup: Float = strength == 1 ? 1.5 : (strength == 2 ? 2 : 2.5)
+            let reduction = envelope > threshold ? pow(threshold / envelope, 1 - 1 / ratio) : 1
+            // Do not raise a silent/noise-only input toward the makeup level.
+            targetGain = envelope < 0.001 ? 1 : min(makeup, makeup * reduction)
+        }
+        previousLevel = strength
+        controlFrame = (controlFrame + 1) & 31
+        let smoothing = targetGain < gain ? gainAttack : gainRelease
+        gain = smoothing * gain + (1 - smoothing) * targetGain
+        left *= gain; right *= gain
+    }
+}

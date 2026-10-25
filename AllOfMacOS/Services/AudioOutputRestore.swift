@@ -35,7 +35,11 @@ enum AudioOutputRestore {
     static func record(previousUID: String?, appliedUID: String) {
         guard isEnabled, !appliedUID.isEmpty, appliedUID != (previousUID ?? "") else { return }
         let defaults = UserDefaults.standard
-        defaults.set(previousUID ?? "", forKey: previousKey)
+        let lastApplied = defaults.string(forKey: appliedKey)
+        // Consecutive AOM switches still restore the original user device.
+        if lastApplied != previousUID || defaults.object(forKey: previousKey) == nil {
+            defaults.set(previousUID ?? "", forKey: previousKey)
+        }
         defaults.set(appliedUID, forKey: appliedKey)
         defaults.set(Date(), forKey: stampKey)
     }
@@ -217,9 +221,14 @@ extension AudioOutputRestore {
         let name = self.name(of: baselineID)
         for delay in [2.0, 5.0, 9.0, 14.0, 20.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard protectsMediaPlayback, !hasPendingChange else { return }
                 guard let currentUID = defaultOutputUID(), let currentID = deviceID(forUID: currentUID),
                       transportType(of: currentID) == kAudioDeviceTransportTypeAirPlay else { return }
-                guard setDefaultOutput(baselineID) else { return }
+                // Re-resolve a UID: a disconnected device's numeric ID can be
+                // reused by an unrelated output before this delayed task fires.
+                guard let target = deviceID(forUID: baselineUID),
+                      transportType(of: target) != kAudioDeviceTransportTypeAirPlay,
+                      setDefaultOutput(target) else { return }
                 GestureLog.shared.logFromAnyThread(
                     "AOM's audio engine woke AirPlay and macOS moved the default output; returned audio to \(name)",
                     level: .action)

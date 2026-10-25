@@ -87,6 +87,10 @@ final class AppAudioEngine {
         }
     }
 
+    private(set) var airPlayBypassed = false
+    private var bypassedPIDs = Set<pid_t>()
+    private var appIdentitySnapshot: [AppState] = []
+    private var appIdentitySnapshotAt: TimeInterval = -.infinity
     private var timer: Timer?
     private var lastSyncAt: TimeInterval = 0
     private var syncing = false
@@ -106,6 +110,11 @@ final class AppAudioEngine {
                          kAudioHardwarePropertyDevices] {
             var address = AudioOutputService.address(selector)
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                if selector == kAudioHardwarePropertyDevices || selector == kAudioHardwarePropertyDefaultOutputDevice {
+                    AudioOutputService.invalidateDeviceCache()
+                } else {
+                    self?.appIdentitySnapshotAt = -.infinity
+                }
                 self?.scheduleSync()
             }
             if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
@@ -114,7 +123,7 @@ final class AppAudioEngine {
             }
         }
         timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.isEnabled else { return }
             // While nothing is captured the timer is only a backstop: the CoreAudio
             // process and device listeners already wake us as soon as playback starts.
             // Sweeping the whole process table every second kept an idle MacBook Air
@@ -126,10 +135,12 @@ final class AppAudioEngine {
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 
+    func requestSync() { scheduleSync() }
+
     private func scheduleSync() {
         guard !syncScheduled else { return }
         syncScheduled = true
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             guard let self else { return }
             self.syncScheduled = false
             self.syncActiveProcesses()
@@ -159,26 +170,30 @@ final class AppAudioEngine {
     }
 
     func syncActiveProcesses() {
+        guard !syncing else { return }
+        syncing = true
+        lastSyncAt = ProcessInfo.processInfo.systemUptime
+        defer {
+            syncing = false
+            NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+        }
+        airPlayBypassed = Self.isNativeAirPlayActive()
+        bypassedPIDs.removeAll(keepingCapacity: true)
         guard isEnabled else {
             if !sessions.isEmpty { stopAll() }
             return
         }
-        guard !syncing else { return }
         // An AirPlay route change can arrive while app audio taps are running.
         // Release them so Chrome/Safari resumes its own unmodified audio route.
         // Do not change the user's selected HomePod or macOS sound settings.
-        if Self.isNativeAirPlayActive() {
+        if airPlayBypassed {
             let hadSessions = !sessions.isEmpty ||
                 MainActor.assumeIsolated { !SharedOutputRenderer.shared.activeDeviceUIDs.isEmpty }
             if hadSessions {
                 stopAll()
-                NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
             }
             return
         }
-        syncing = true
-        defer { syncing = false }
-        lastSyncAt = ProcessInfo.processInfo.systemUptime
         updatePlaybackListeners()
         let apps = runningAudioApps()
         // Nothing playing and nothing captured: enumerating devices and rebinding
@@ -207,6 +222,14 @@ final class AppAudioEngine {
         for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
             if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
             let ids = objectsByOwner[app.pid] ?? []
+            if let uid = Self.targetOutputUID(for: app.bundleID),
+               let device = devices.first(where: { $0.uid == uid }),
+               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay {
+                bypassedPIDs.insert(app.pid)
+                stop(pid: app.pid)
+                errors.removeValue(forKey: app.pid)
+                continue
+            }
             if let failed = failedProcessIDs[app.pid], failed != ids {
                 retryAfter.removeValue(forKey: app.pid)
                 failedProcessIDs.removeValue(forKey: app.pid)
@@ -259,16 +282,13 @@ final class AppAudioEngine {
                 continue
             }
             guard ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
-            // macOS 26 can arm a bundle before its first audio process exists.
-            // On older releases wait without treating a quiet app as a failure.
-            if ids.isEmpty {
-                if #available(macOS 26.0, *) { } else { continue }
-            }
+            // Master effects must not instantiate an aggregate for every
+            // non-audio app. Process-list notifications attach new producers.
+            guard !ids.isEmpty else { continue }
             if attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted) {
                 GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
             }
         }
-        NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
     }
 
     private func updatePlaybackListeners() {
@@ -297,6 +317,10 @@ final class AppAudioEngine {
     func level(pid: pid_t) -> Float { sessions[pid]?.box.takeUnretainedValue().peakLevel ?? 0 }
 
     func status(pid: pid_t) -> String {
+        if !isEnabled { return "Audio processing off — settings saved" }
+        if airPlayBypassed || bypassedPIDs.contains(pid) {
+            return "AirPlay direct — volume, EQ and boost saved for local output"
+        }
         if let error = errors[pid] { return error }
         guard let session = sessions[pid], let transport = session.transport else {
             return pid <= 0 ? "App closed — settings saved" : "Waiting for app audio"
@@ -339,6 +363,7 @@ final class AppAudioEngine {
         return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
             d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
             d.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ||
+            d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
     }
@@ -390,7 +415,7 @@ final class AppAudioEngine {
                 master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                 appBoost: appBoost, masterBoost: masterBoost)
         }
-        syncActiveProcesses()
+        scheduleSync()
     }
 
     // MARK: - Process Hierarchy & Helpers
@@ -498,6 +523,10 @@ final class AppAudioEngine {
     // MARK: - Running audio apps (process objects, 14.2+)
 
     func runningAudioApps() -> [AppState] {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - appIdentitySnapshotAt < 3 {
+            return currentStates(for: appIdentitySnapshot)
+        }
         var results: [AppState] = []
         var seenPIDs = Set<pid_t>()
 
@@ -584,10 +613,31 @@ final class AppAudioEngine {
                                     outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
                                     magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")))
         }
-        return results.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        appIdentitySnapshot = results.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        appIdentitySnapshotAt = now
+        return currentStates(for: appIdentitySnapshot)
+    }
+
+    private func currentStates(for identities: [AppState]) -> [AppState] {
+        identities.map { identity in
+            var state = identity
+            let d = UserDefaults.standard
+            state.gain = Self.storedGain(bundleID: state.bundleID)
+            state.muted = d.bool(forKey: "AOMAudioMute_\(state.bundleID)")
+            state.tapped = sessions[state.pid] != nil
+            state.outputDeviceUID = d.string(forKey: "AOMAudioRoute_\(state.bundleID)")
+            state.magicBoost = d.bool(forKey: "AOMAudioMagicBoost_\(state.bundleID)")
+            state.error = airPlayBypassed || !isEnabled ? nil : errors[state.pid]
+            state.processingStatus = status(pid: state.pid)
+            // Meters have their own observable model. Do not invalidate an
+            // entire application list for a changing sample peak.
+            state.peakLevel = 0
+            return state
+        }
     }
 
     func addCustomApp(bundleID: String) {
+        appIdentitySnapshotAt = -.infinity
         var list = UserDefaults.standard.stringArray(forKey: "AOMAudioUserApps") ?? []
         if !list.contains(bundleID) {
             list.append(bundleID)
@@ -606,10 +656,7 @@ final class AppAudioEngine {
 
     func setMagicBoost(_ enabled: Bool, bundleID: String) {
         UserDefaults.standard.set(enabled, forKey: "AOMAudioMagicBoost_\(bundleID)")
-        for session in sessions.values where session.bundleID == bundleID {
-            session.box.takeUnretainedValue().magicBoost = enabled
-        }
-        syncActiveProcesses()
+        updateEffects()
     }
 
     nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
@@ -710,9 +757,7 @@ final class AppAudioEngine {
 
         // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
         let processObjIDs = Self.processObjectIDs(for: pid)
-        if processObjIDs.isEmpty {
-            if #available(macOS 26.0, *) { } else { return nil }
-        }
+        guard !processObjIDs.isEmpty else { return nil }
         let description = CATapDescription(stereoMixdownOfProcesses: processObjIDs)
         description.name = "AOM App Audio \(bundleID)"
         description.isPrivate = true
@@ -920,6 +965,7 @@ final class MixerBox {
     /// Adaptive-compression strength: 0 off, 1 low, 2 medium, 3 high. The
     /// effective strength is the stronger of the app and master settings.
     fileprivate var renderBoostLevel: Int = 0
+    fileprivate let boostProcessor = AudioAdaptiveBoost(sampleRate: 48000)
     private var desiredAppBoost: Int = 0
     private var desiredMasterBoost: Int = 0
     fileprivate var renderDeviceGain: Float = 1
@@ -959,6 +1005,7 @@ final class MixerBox {
         if desiredAppEQ.eq != app { desiredAppEQ = AudioEQProcessor(app) }
         if desiredMasterEQ.eq != master { desiredMasterEQ = AudioEQProcessor(master) }
         desiredAppBoost = min(3, max(0, appBoost))
+        desiredBoost = desiredAppBoost > 0
         desiredMasterBoost = min(3, max(0, masterBoost))
     }
     fileprivate func beginRender() {
@@ -1007,14 +1054,7 @@ nonisolated enum Mixer {
             var r = planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]
             l = box.masterEQ.process(box.appEQ.process(l, channel: 0), channel: 0)
             r = box.masterEQ.process(box.appEQ.process(r, channel: 1), channel: 1)
-            if box.renderBoostLevel > 0 {
-                // Adaptive compression: the drive scales with the chosen
-                // strength and a small makeup keeps loud passages near unity.
-                let drive: Float = 1.25 + 0.55 * Float(box.renderBoostLevel)
-                let makeup: Float = 1 + 0.07 * Float(box.renderBoostLevel - 1)
-                l = tanh(l * drive) * makeup
-                r = tanh(r * drive) * makeup
-            }
+            box.boostProcessor.process(left: &l, right: &r, level: box.renderBoostLevel)
             l *= box.renderGain * box.renderDeviceGain; r *= box.renderGain * box.renderDeviceGain
             // A bounded output prevents overdrive/EQ from wrapping or emitting NaNs.
             l = l.isFinite ? max(-1, min(1, l)) : 0

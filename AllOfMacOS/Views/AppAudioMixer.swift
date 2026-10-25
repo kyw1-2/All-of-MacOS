@@ -9,6 +9,10 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = AppAudioMixerService()
 
     @Published private(set) var apps: [AppAudioState] = []
+    @Published private(set) var airPlayBypassed = false
+    let meters = AppAudioMeters()
+    private var meterClients = 0
+    private var reloadScheduled = false
     @Published var soundEnabled: Bool {
         didSet {
             guard soundEnabled != oldValue else { return }
@@ -85,31 +89,69 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         audioObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 if #available(macOS 14.2, *) {
-                    self?.soundEnabled = AppAudioEngine.shared.isEnabled
+                    if let self, self.soundEnabled != AppAudioEngine.shared.isEnabled {
+                        self.soundEnabled = AppAudioEngine.shared.isEnabled
+                    }
                 }
-                self?.reloadApps()
+                self?.requestReload()
             }
         }
     }
 
     func refresh() {
         guard isSupported, #available(macOS 14.2, *) else { return }
-        AppAudioEngine.shared.syncActiveProcesses()
-        reloadApps()
+        AppAudioEngine.shared.requestSync()
+        requestReload()
+    }
+
+    private func requestReload() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.reloadScheduled = false
+            self.reloadApps()
+        }
     }
 
     private func reloadApps() {
         guard #available(macOS 14.2, *) else { return }
-        apps = AppAudioEngine.shared.runningAudioApps()
-        competingMixer = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.rogueamoeba.soundsource" }
-        lastError = apps.compactMap(\.error).first
+        let engine = AppAudioEngine.shared
+        let updated = engine.runningAudioApps()
+        if apps != updated { apps = updated }
+        let competitor = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.rogueamoeba.soundsource" }
+        if competingMixer?.processIdentifier != competitor?.processIdentifier { competingMixer = competitor }
+        let error = updated.compactMap(\.error).first
+        if lastError != error { lastError = error }
+        if airPlayBypassed != engine.airPlayBypassed { airPlayBypassed = engine.airPlayBypassed }
     }
 
     func refreshMeters() {
         guard #available(macOS 14.2, *) else { return }
-        var updated = apps
-        for index in updated.indices { updated[index].peakLevel = AppAudioEngine.shared.level(pid: updated[index].pid) }
-        if updated != apps { apps = updated }
+        var levels: [pid_t: Float] = [:]
+        for app in apps where app.tapped {
+            let level = AppAudioEngine.shared.level(pid: app.pid)
+            levels[app.pid] = (max(0, min(1, level)) * 100).rounded() / 100
+        }
+        if meters.levels != levels { meters.levels = levels }
+    }
+
+    func beginMetering() {
+        meterClients += 1
+        guard refreshTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMeters() }
+        }
+        timer.tolerance = 0.02
+        refreshTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func endMetering() {
+        meterClients = max(0, meterClients - 1)
+        guard meterClients == 0 else { return }
+        refreshTimer?.invalidate(); refreshTimer = nil
+        if !meters.levels.isEmpty { meters.levels = [:] }
     }
 
     func reconnect(pid: pid_t) {
@@ -183,7 +225,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     func applyEQ() {
         guard #available(macOS 14.2, *) else { return }
         AppAudioEngine.shared.updateEffects()
-        reloadApps()
+        requestReload()
     }
 
     func appBoostLevel(_ bundleID: String) -> Int {
@@ -265,9 +307,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         isShowing = true
         panel.orderFrontRegardless()
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshMeters() }
-        }
+        beginMetering()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isShowing, event.keyCode == 53 else { return event }
             self.hide()
@@ -278,8 +318,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) { hide() }
 
     func hide() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
+        if isShowing { endMetering() }
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         panel?.orderOut(nil)
         panel = nil
@@ -295,7 +334,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             let muted = AppAudioEngine.shared.session(pid: pid)?.muted ?? apps.first(where: { $0.pid == pid })?.muted ?? false
             _ = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
         }
-        reloadApps()
+        requestReload()
     }
 
     /// Toggle per-app mute; the tap session persists so unmuting restores gain.
@@ -341,6 +380,23 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             AppAudioEngine.shared.addCustomApp(bundleID: bundleID)
             refresh()
         }
+    }
+}
+
+@MainActor
+final class AppAudioMeters: ObservableObject {
+    @Published var levels: [pid_t: Float] = [:]
+}
+
+struct AppAudioLevelMeter: View {
+    let pid: pid_t
+    @ObservedObject private var meters = AppAudioMixerService.shared.meters
+    var body: some View {
+        let level = meters.levels[pid] ?? 0
+        ProgressView(value: Double(level), total: 1)
+            .tint(level > 0.95 ? .orange : .green)
+            .frame(maxWidth: 100)
+            .accessibilityLabel("Application audio level")
     }
 }
 
