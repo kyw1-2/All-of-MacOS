@@ -239,6 +239,7 @@ struct AudioWorkspaceView: View {
 
 private struct MasterOutputCard: View {
     @State private var devices: [AudioOutputDevice] = []
+    @State private var isSwitchingOutput = false
     @State private var volume: Double = 50
     @State private var balance: Float = 0
     @State private var isMuted = false
@@ -264,8 +265,18 @@ private struct MasterOutputCard: View {
                 Picker("", selection: Binding(
                     get: { currentUID },
                     set: { uid in
+                        // SwiftUI re-syncs a picker whenever its items change. A
+                        // device that reconnects (AirPlay comes back with a fresh
+                        // UID) used to fire this setter on its own and push the
+                        // system default onto that device, which stalls every
+                        // other app's playback. Only a real user change counts.
+                        guard !isSwitchingOutput, uid != currentUID, !uid.isEmpty else { return }
                         guard let device = devices.first(where: { $0.uid == uid }) else { return }
-                        AudioOutputService.shared.select(name: device.name, uid: device.uid) { _ in refresh() }
+                        isSwitchingOutput = true
+                        AudioOutputService.shared.select(name: device.name, uid: device.uid) { _ in
+                            isSwitchingOutput = false
+                            refresh()
+                        }
                     })) {
                     ForEach(devices) { device in
                         Text(device.name).tag(device.uid)

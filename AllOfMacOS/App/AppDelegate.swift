@@ -81,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
             AudioOutputRestore.restoreIfNeeded(reason: "a previous session")
+            AudioOutputRestore.repairAirPlayDefaultAtLaunch()
         }
         if !PresetManager.isUIPreview { Task { @MainActor in AOMTouchBar.shared.start() } }
         let showIcon = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
@@ -330,6 +331,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MainActor.assumeIsolated {
             if #available(macOS 14.2, *) { AppAudioEngine.shared.stopAll() }
             _ = AudioOutputRestore.restoreIfNeeded(reason: "quit")
+            AudioOutputRestore.rememberLocalDefault()
             WindowPinningService.shared.unpinAll()
             ClipboardMCPServer.shared.stopForTermination()
             GestureStatistics.shared.flushPendingWrites()

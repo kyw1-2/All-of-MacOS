@@ -222,6 +222,7 @@ final class AudioOutputService {
         let done: (Bool, String) -> Void = { success, message in
             if success, let applied = Self.currentDeviceID().flatMap({ Self.string($0, kAudioDevicePropertyDeviceUID) }) {
                 AudioOutputRestore.record(previousUID: previousUID, appliedUID: applied)
+                AudioOutputRestore.rememberLocalDefault()
             }
             self.busy = false; self.finish(success, message, completion)
         }

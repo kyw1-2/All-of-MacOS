@@ -14,10 +14,10 @@ enum AudioOutputRestore {
     private static let stampKey = "aom.audio.outputChangedAt"
     private static let enabledKey = "aom.audio.restoreOutputOnExit"
 
-    /// On by default; a user who wants AOM's output choice to survive a quit can
-    /// turn it off in the audio workspace.
+    /// Preserving a user-selected HomePod (or any output) across app exit is
+    /// the safe default. Restore only if the user explicitly opted into it.
     static var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false
     }
 
     static var hasPendingChange: Bool {
@@ -129,5 +129,68 @@ enum AudioOutputRestore {
         let status = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil,
                                                 UInt32(MemoryLayout<AudioDeviceID>.size), &device)
         return status == noErr
+    }
+}
+
+// MARK: - Launch-time repair of a stuck AirPlay default
+
+extension AudioOutputRestore {
+    private static let lastLocalKey = "aom.audio.lastLocalOutputUID"
+    private static let protectKey = "aom.audio.protectMediaPlayback"
+
+    /// Optional legacy fallback. Never assume an AirPlay default is broken:
+    /// users intentionally select HomePod as the system audio output.
+    /// Automatic force-switching to built-in speakers is disabled by default.
+    static var protectsMediaPlayback: Bool {
+        UserDefaults.standard.object(forKey: protectKey) as? Bool ?? false
+    }
+
+    static func transportType(of id: AudioDeviceID) -> UInt32 {
+        var address = propertyAddress(kAudioDevicePropertyTransportType)
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return 0 }
+        return value
+    }
+
+    private static func hasOutput(_ id: AudioDeviceID) -> Bool {
+        var address = propertyAddress(kAudioDevicePropertyStreams)
+        address.mScope = kAudioDevicePropertyScopeOutput
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    /// Remembers the device to come back to when a later AirPlay route has to be
+    /// undone.
+    static func rememberLocalDefault() {
+        guard let uid = defaultOutputUID(), let id = deviceID(forUID: uid) else { return }
+        guard transportType(of: id) != kAudioDeviceTransportTypeAirPlay else { return }
+        UserDefaults.standard.set(uid, forKey: lastLocalKey)
+    }
+
+    private static func localFallback() -> AudioDeviceID? {
+        let saved = UserDefaults.standard.string(forKey: lastLocalKey) ?? ""
+        if !saved.isEmpty, let id = deviceID(forUID: saved),
+           transportType(of: id) != kAudioDeviceTransportTypeAirPlay { return id }
+        if let builtIn = deviceID(forUID: "BuiltInSpeakerDevice") { return builtIn }
+        return deviceIDs().first { transportType(of: $0) == kAudioDeviceTransportTypeBuiltIn && hasOutput($0) }
+    }
+
+    /// An AirPlay default that outlives the process is what keeps video frozen
+    /// about a second in, even with AOM quit. Put a local device back once, at
+    /// launch, before anything tries to play.
+    @discardableResult
+    static func repairAirPlayDefaultAtLaunch() -> Bool {
+        guard protectsMediaPlayback, !hasPendingChange else { return false }
+        guard let uid = defaultOutputUID(), let current = deviceID(forUID: uid),
+              transportType(of: current) == kAudioDeviceTransportTypeAirPlay else {
+            rememberLocalDefault()
+            return false
+        }
+        guard let target = localFallback(), setDefaultOutput(target) else { return false }
+        GestureLog.shared.logFromAnyThread(
+            "Returned system audio to \(name(of: target)) — an AirPlay default stalls video playback",
+            level: .action)
+        return true
     }
 }
