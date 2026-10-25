@@ -82,6 +82,60 @@ final class PortedFeatureTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "AOMMissionControlButtons")
     }
 
+    // MARK: Utility gestures — space swipe & dock pinch contracts
+
+    func testTopBandDetection() {
+        let screens = [NSRect(x: 0, y: 0, width: 1440, height: 900)]
+        XCTAssertTrue(TrackpadUtilityGestures.cursorInTopBand(CGPoint(x: 700, y: 895), screens: screens),
+                      "points within 12 pt of the top count")
+        XCTAssertFalse(TrackpadUtilityGestures.cursorInTopBand(CGPoint(x: 700, y: 860), screens: screens),
+                       "ordinary window content near the top must not trip")
+        XCTAssertFalse(TrackpadUtilityGestures.cursorInTopBand(CGPoint(x: 1700, y: 895), screens: screens),
+                       "off-screen points never count")
+    }
+
+    func testSpaceSwipeFiresOncePerDirectionAndChains() {
+        let service = TrackpadUtilityGestures.shared
+        var fired: [Bool] = []
+        service.switchSpace = { fired.append($0) }
+        defer { service.switchSpace = { _ in } }
+        UserDefaults.standard.removeObject(forKey: "AOMTopBarSpaceSwipe")
+
+        func frame(_ x1: Float, _ x2: Float) -> [TouchPoint] {
+            [TouchPoint(id: 0, x: x1, y: 0.5, size: 0.1),
+             TouchPoint(id: 1, x: x2, y: 0.5, size: 0.1)]
+        }
+        // Cursor pinned in the top band by the seams.
+        service.cursorLocation = { CGPoint(x: 700, y: 895) }
+        service.cursorInTopBand = { _ in true }
+        defer {
+            service.cursorLocation = { NSEvent.mouseLocation }
+            service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+        }
+
+        var t: Double = 10
+        service.observe(points: frame(0.4, 0.6), timestamp: t) // begin
+        t += 0.5
+        service.observe(points: frame(0.25, 0.45), timestamp: t) // swipe left 0.15
+        XCTAssertEqual(fired, [false], "fingers left → the Space on the right")
+        t += 0.5
+        service.observe(points: frame(0.25, 0.45), timestamp: t) // same position, no refire
+        XCTAssertEqual(fired.count, 1, "no refire without further movement")
+        t += 0.5
+        service.observe(points: frame(0.40, 0.60), timestamp: t) // chain back right
+        XCTAssertEqual(fired, [false, true], "rebased gesture chains the other way")
+        service.observe(points: [], timestamp: t) // lift
+        UserDefaults.standard.removeObject(forKey: "AOMTopBarSpaceSwipe")
+    }
+
+    func testDockPinchQuitSettingContract() {
+        UserDefaults.standard.removeObject(forKey: "AOMDockPinchQuit")
+        XCTAssertTrue(TrackpadUtilityGestures.shared.dockQuitEnabled, "on by default")
+        UserDefaults.standard.set(false, forKey: "AOMDockPinchQuit")
+        XCTAssertFalse(TrackpadUtilityGestures.shared.dockQuitEnabled)
+        UserDefaults.standard.removeObject(forKey: "AOMDockPinchQuit")
+    }
+
     // MARK: Window gestures setting contract
 
     func testWindowGesturesSettingContract() {

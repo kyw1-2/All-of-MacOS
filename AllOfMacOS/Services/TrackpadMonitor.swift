@@ -405,9 +405,13 @@ class TrackpadMonitor {
         }
         if points.isEmpty { activeDevice = nil }
         // Window gesture layer (three-finger drag/pinch): sees every frame,
-        // including the empty frame that ends a gesture.
+        // including the empty frame that ends a gesture. Two-finger frames
+        // feed the utility layer (top-band space swipe, Dock pinch quit).
         MainActor.assumeIsolated {
             WindowGestureController.shared.observe(points: points, timestamp: timestamp)
+            if points.count <= 2 {
+                TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
+            }
         }
     }
 
