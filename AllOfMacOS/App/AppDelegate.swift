@@ -81,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
             AudioOutputRestore.guardStartupOutputFlip()
+            AudioOutputRestore.startMediaPlaybackGuard()
             AudioOutputRestore.restoreIfNeeded(reason: "a previous session")
             AudioOutputRestore.repairAirPlayDefaultAtLaunch()
         }

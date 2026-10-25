@@ -176,6 +176,33 @@ extension AudioOutputRestore {
         return deviceIDs().first { transportType(of: $0) == kAudioDeviceTransportTypeBuiltIn && hasOutput($0) }
     }
 
+    /// macOS keeps moving the default output onto an AirPlay route while a media
+    /// app is playing, and it stays there after AOM quits — which is what freezes
+    /// video about a second in. When the user opts in, hold the output on the last
+    /// local device for as long as AOM runs.
+    private nonisolated(unsafe) static var mediaGuardInstalled = false
+
+    static func startMediaPlaybackGuard() {
+        guard !mediaGuardInstalled, protectsMediaPlayback else { return }
+        mediaGuardInstalled = true
+        var address = propertyAddress(kAudioHardwarePropertyDefaultOutputDevice)
+        let block: AudioObjectPropertyListenerBlock = { _, _ in
+            // Give the change a moment to settle, then only act on a route that is
+            // still AirPlay and was not a change the user made inside AOM.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                guard protectsMediaPlayback, !hasPendingChange else { return }
+                guard let uid = defaultOutputUID(), let current = deviceID(forUID: uid),
+                      transportType(of: current) == kAudioDeviceTransportTypeAirPlay else { return }
+                guard let target = localFallback(), setDefaultOutput(target) else { return }
+                GestureLog.shared.logFromAnyThread(
+                    "Kept media audio on \(name(of: target)) — macOS had moved it to AirPlay",
+                    level: .action)
+            }
+        }
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
+                                            DispatchQueue.main, block)
+    }
+
     /// Starting the app-audio engine can make macOS re-open the last AirPlay route
     /// and take it as the system default a few seconds after launch. The captured
     /// apps then play into an AirPlay buffer, which stalls video about a second in
