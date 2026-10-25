@@ -45,6 +45,15 @@ struct WindowPinningOptions: Codable, Equatable {
 }
 
 enum WindowPinningGeometry {
+    /// Parking target for translucent pins (Topit's approach): the window sits
+    /// a 2 pt sliver inside the desktop's left edge, off its original spot but
+    /// still on-screen — a fully off-screen window stops receiving
+    /// ScreenCaptureKit frames and the pin would freeze on its last image.
+    static func parkTarget(original: CGRect, desktop: CGRect) -> CGPoint {
+        CGPoint(x: desktop.minX - original.width + 2,
+                y: min(max(original.minY, desktop.minY), desktop.maxY - original.height))
+    }
+
     /// The conversion is its own inverse and preserves negative monitor origins.
     static func appKitFrame(_ frame: CGRect, primaryTop: CGFloat) -> CGRect {
         CGRect(x: frame.minX, y: primaryTop - frame.maxY, width: frame.width, height: frame.height)

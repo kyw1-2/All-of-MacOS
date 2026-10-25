@@ -21,6 +21,23 @@ final class PortedFeatureTests: XCTestCase {
         XCTAssertTrue(outside.isEmpty, "points off the window never resize")
     }
 
+    // MARK: Pin parking — the sliver that keeps translucent pins live
+
+    func testParkTargetKeepsA2PointSliverOnScreen() {
+        let desktop = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let original = CGRect(x: 400, y: 300, width: 600, height: 400)
+        let target = WindowPinningGeometry.parkTarget(original: original, desktop: desktop)
+        let parked = CGRect(origin: target, size: original.size)
+        XCTAssertEqual(parked.maxX - desktop.minX, 2, accuracy: 0.5,
+                       "exactly a 2 pt sliver stays inside the desktop")
+        XCTAssertFalse(parked.intersects(original), "the parked window leaves its original spot")
+        XCTAssertTrue(desktop.intersects(parked), "still on-screen so ScreenCaptureKit keeps streaming")
+        // Tall windows clamp inside the desktop vertically instead of below it.
+        let tall = CGRect(x: 100, y: 100, width: 300, height: 1200)
+        let tallTarget = WindowPinningGeometry.parkTarget(original: tall, desktop: desktop)
+        XCTAssertTrue(CGRect(origin: tallTarget, size: tall.size).intersects(desktop))
+    }
+
     // MARK: Audio mixer — pure math and state
 
     func testMixerGainClamp() {

@@ -269,7 +269,7 @@ final class LivePinnedWindow: ObservableObject, Identifiable {
               WindowPinRestoration.remember(self, frame: original, defaults: defaults) else { return false }
         restoreFrame = original
         let desktop = WindowManager.shared.screens().map(\.frame).reduce(CGRect.null) { $0.union($1) }
-        let parked = CGPoint(x: original.minX + CGFloat(id % 73) * 3, y: desktop.maxY + 2000)
+        let parked = WindowPinningGeometry.parkTarget(original: original, desktop: desktop)
         guard WindowPinRestoration.move(target, to: parked), let actual = WindowManager.shared.frame(of: target),
               !actual.intersects(original),
               WindowPinRestoration.recordParkedFrame(actual, id: id, defaults: defaults) else {
