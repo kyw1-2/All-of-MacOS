@@ -244,6 +244,8 @@ struct ShortcutsSettingsView: View {
         case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows: return .pink
         case .windowSwitcher: return .indigo
         case .keepAwake: return .orange
+        case .appAudioMixer: return .green
+        case .muteFrontAppAudio: return .red
         }
     }
 
@@ -269,6 +271,8 @@ struct ShortcutsSettingsView: View {
         case .unpinAllWindows: return "Remove all live pins, leaving source windows open"
         case .windowSwitcher: return "Switch windows with an AltTab-style thumbnail overlay"
         case .keepAwake: return "Toggle the keep-awake power assertion"
+        case .appAudioMixer: return "Per-app volume and mute panel (macOS 14.2+)"
+        case .muteFrontAppAudio: return "Mute or unmute the front app's audio"
         }
     }
 }

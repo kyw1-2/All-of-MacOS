@@ -102,6 +102,7 @@ private struct AppAudioMixerView: View {
                 Button { service.hide() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
             }.padding(12)
+            MixerOutputSection()
             Divider()
             if service.apps.isEmpty {
                 VStack(spacing: 8) {
@@ -125,6 +126,70 @@ private struct AppAudioMixerView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// Master surface: the current output device, its volume and mute — the
+/// SoundSource header row. Uses AudioOutputService, which exists on every
+/// supported macOS version (no 14.2 gate).
+private struct MixerOutputSection: View {
+    @State private var devices: [AudioOutputDevice] = []
+    @State private var volume: Double = 50
+    @State private var muted = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text("Output").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { currentUID },
+                    set: { uid in
+                        guard let device = devices.first(where: { $0.uid == uid }) else { return }
+                        AudioOutputService.shared.select(name: device.name, uid: device.uid, completion: { _ in })
+                    })) {
+                    ForEach(devices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(maxWidth: 170)
+            }
+            HStack {
+                Button {
+                    AudioOutputService.shared.adjustVolume(percentagePoints: -5, completion: { _ in refresh() })
+                } label: { Image(systemName: "speaker.minus") }
+                    .buttonStyle(.plain)
+                Slider(value: Binding(get: { volume }, set: { newValue in
+                    volume = newValue
+                    AudioOutputService.shared.setVolume(percent: newValue, completion: { _ in })
+                }), in: 0...100, step: 1)
+                    .controlSize(.small)
+                Button {
+                    AudioOutputService.shared.adjustVolume(percentagePoints: 5, completion: { _ in refresh() })
+                } label: { Image(systemName: "speaker.plus") }
+                    .buttonStyle(.plain)
+                Text("\(Int(volume))%")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, 12).padding(.bottom, 10)
+        .onAppear(perform: refresh)
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+    }
+
+    private var currentUID: String {
+        guard let id = AudioOutputService.currentDeviceID(),
+              let current = devices.first(where: { $0.uid == String(id) }) ?? devices.first else { return "" }
+        return current.uid
+    }
+
+    private func refresh() {
+        devices = AudioOutputService.devices()
+        volume = Double(AudioOutputService.currentVolume() ?? 0.5) * 100
+        muted = false
     }
 }
 

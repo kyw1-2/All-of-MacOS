@@ -495,6 +495,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.sectionHeader(title: "System"))
         let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
         menu.addItem(awakeMenuItem)
+        menu.addItem(entry("App Audio Mixer", "slider.horizontal.3", #selector(showAudioMixer)))
+        menu.addItem(entry("Mute Front App", "speaker.minus", #selector(muteFrontAppAudioAction)))
         menu.addItem(.separator())
 
         // Automation — the engine, snapping, pausing and what the app in front
@@ -651,6 +653,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func keepAwakeOff() { MainActor.assumeIsolated { KeepAwakeService.shared.stop() } }
+    @objc func showAudioMixer() { MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() } }
+    @objc func muteFrontAppAudioAction() { MainActor.assumeIsolated { AppAudioMixerService.shared.toggleMuteFront() } }
 
     // MARK: - Pause AOM (TriggerSuppression)
 
