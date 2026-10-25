@@ -147,6 +147,7 @@ class PresetManager {
             "launchAtLogin",
             "showMenuBarIcon",
             "AOMAudioEQEnabled", "AOMAudioEQPreset", "AOMAudioEQGains", "AOMAudioUserApps",
+            "AOMAudioMasterBoostEnabled", "AOMAudioMasterBoostLevel",
             "AOMWindowGesturesEnabled", "AOMWindowGestureEdgeSize", "AOMWindowGestureRequireModifier"
         ]
         // Add per-gesture swipe velocity keys
@@ -188,7 +189,7 @@ class PresetManager {
 
     private static func saveUserDefaultsBackup() {
         var dict: [String: Any] = [:]
-        let audioPrefixes = ["AOMAudioGain_", "AOMAudioMute_", "AOMAudioRoute_", "AOMAudioMagicBoost_",
+        let audioPrefixes = ["AOMAudioGain_", "AOMAudioMute_", "AOMAudioRoute_", "AOMAudioMagicBoost_", "AOMAudioBoostLevel_",
                              "AOMAudioAppEQEnabled_", "AOMAudioAppEQGains_", "AOMAudioAppEQPreset_",
                              "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_"]
         let audioKeys = UserDefaults.standard.dictionaryRepresentation().keys.filter { key in

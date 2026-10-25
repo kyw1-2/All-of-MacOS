@@ -2,9 +2,8 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// The Audio page: a faithful, studio-grade SoundSource control center in the main window.
-/// Includes Master Output/Input/Alert controls, Per-App Audio Mixer with device routing,
-/// Overdrive (up to 200%), Magic Boost, Per-App 10-Band EQ, and independent effects settings.
+/// System audio controls, independent application effects, and shared output effects.
+/// Includes per-app routing, gain, adaptive boost, and ten-band equalizers.
 struct AudioWorkspaceView: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var searchText: String = ""
@@ -28,7 +27,18 @@ struct AudioWorkspaceView: View {
                     }
                 }
 
-                // MARK: - Applications Mixer (SoundSource Core Experience)
+                VStack(alignment: .leading, spacing: AOMSpace.s) {
+                    Text("OUTPUT EFFECTS")
+                        .font(AOMType.caption.weight(.semibold))
+                        .foregroundStyle(AOMTheme.textSecondary)
+                    MasterBoostControls(service: service)
+                        .padding(14)
+                        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
+                }
+
+                // MARK: - Applications Mixer
                 VStack(alignment: .leading, spacing: AOMSpace.s) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -476,6 +486,7 @@ private struct MasterAlertCard: View {
 // MARK: - SoundSource Application Audio Card
 
 private struct SoundSourceAppCard: View {
+    @ObservedObject private var mixerService = AppAudioMixerService.shared
     let app: AppAudioState
     let isEQExpanded: Bool
     let onToggleEQ: () -> Void
@@ -594,7 +605,23 @@ private struct SoundSourceAppCard: View {
                     .background(app.magicBoost ? Color.indigo : AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .help("Boost quiet audio with soft saturation")
+                .accessibilityValue(app.magicBoost ? "On" : "Off")
+                .help("Raise quiet passages with adaptive compression for this app")
+
+                if app.magicBoost {
+                    Picker("App boost strength", selection: Binding(
+                        get: { mixerService.appBoostLevel(app.bundleID) },
+                        set: { mixerService.setAppBoostLevel($0, bundleID: app.bundleID) }
+                    )) {
+                        Text("Low").tag(1)
+                        Text("Medium").tag(2)
+                        Text("High").tag(3)
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 90)
+                }
+                Spacer(minLength: 8)
 
                 // Equalizer Toggle
                 Button {
@@ -611,7 +638,11 @@ private struct SoundSourceAppCard: View {
                 Button("Reconnect") { AppAudioMixerService.shared.reconnect(pid: app.pid) }
                     .buttonStyle(.borderless).disabled(app.pid <= 0)
                     .help("Reconnect this app’s audio capture and output")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
 
+            HStack(spacing: 12) {
                 // Mute Button
                 Button {
                     onMute()

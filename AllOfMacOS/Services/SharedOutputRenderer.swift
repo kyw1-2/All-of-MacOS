@@ -100,6 +100,19 @@ final class SharedOutputRenderer {
         return graph.failure == nil && graph.engine.isRunning
     }
 
+    /// Restarts a stopped engine in place: overload or a transient format
+    /// change stops the HAL cycle, and starting again keeps the tap, the
+    /// aggregate and every source node attached — no player sees device loss.
+    func ensureRunning(token: SourceToken) {
+        guard var graph = graphs[token.uid] else { return }
+        guard !graph.engine.isRunning else { return }
+        graph.failure = nil
+        do { try graph.engine.start() } catch {
+            graph.failure = "Audio output restart failed: \(error.localizedDescription)"
+        }
+        graphs[token.uid] = graph
+    }
+
     func removeSource(_ token: SourceToken) {
         guard let graph = graphs[token.uid] else { return }
         graph.bus.remove(id: token.id)

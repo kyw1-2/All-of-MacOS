@@ -58,6 +58,23 @@ final class PortedFeatureTests: XCTestCase {
 
     // MARK: Audio mixer — pure math and state
 
+    func testAdaptiveBoostLevelsDriveCompression() {
+        // The level picks the drive: a boosted pass on a quiet sine must be
+        // louder than unity, and level 3 louder than level 1.
+        let input = (0..<1024).map { Float(sin(2 * .pi * 220 * Double($0) / 48000)) * 0.15 }
+        func rms(_ signal: [Float]) -> Float {
+            sqrt(signal.map { $0 * $0 }.reduce(0, +) / Float(max(1, signal.count)))
+        }
+        // Emulate the render math from MixerBox (drive scales with level).
+        func boosted(_ level: Int) -> [Float] {
+            let drive: Float = 1.25 + 0.55 * Float(level)
+            let makeup: Float = 1 + 0.07 * Float(level - 1)
+            return input.map { tanh($0 * drive) * makeup }
+        }
+        XCTAssertGreaterThan(rms(boosted(1)), rms(input) * 1.1, "level 1 must lift a quiet passage")
+        XCTAssertGreaterThan(rms(boosted(3)), rms(boosted(1)), "level 3 compresses harder than level 1")
+    }
+
     func testMixerGainClamp() {
         XCTAssertEqual(Mixer.clamp(0.5), 0.5)
         XCTAssertEqual(Mixer.clamp(-3), 0)

@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreAudio
 import Darwin
+import Accelerate
 
 /// Bounded stereo bridge between the tap clock and the playback clock. Both
 /// audio callbacks use try-lock only; neither can wait on the UI or the other
@@ -96,7 +97,11 @@ final class AppAudioTransport {
 
     func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox) {
         let outputs = UnsafeMutableAudioBufferListPointer(output)
-        for buffer in outputs { if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) } }
+        for buffer in outputs {
+            if let data = buffer.mData?.assumingMemoryBound(to: Float.self) {
+                vDSP_vclr(data, 1, vDSP_Length(Int(buffer.mDataByteSize) / MemoryLayout<Float32>.stride))
+            }
+        }
         guard frames > 0, frames <= capacity, lock.try() else { mixer.publishPeak(0); return }
         if !buffered {
             guard count >= targetFrames else { lock.unlock(); mixer.publishPeak(0); return }
@@ -122,7 +127,7 @@ final class AppAudioTransport {
             filled += 1
         }
         if filled < frames {
-            for index in (filled * 2)..<(frames * 2) { scratch[index] = 0 }
+            vDSP_vclr(scratch + filled * 2, 1, vDSP_Length((frames - filled) * 2))
             buffered = false
             fractionalPosition = 0
         }

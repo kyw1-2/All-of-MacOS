@@ -9,6 +9,21 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = AppAudioMixerService()
 
     @Published private(set) var apps: [AppAudioState] = []
+    @Published var allAppsBoostEnabled: Bool {
+        didSet {
+            guard allAppsBoostEnabled != oldValue else { return }
+            UserDefaults.standard.set(allAppsBoostEnabled, forKey: "AOMAudioMasterBoostEnabled")
+            applyEQ()
+        }
+    }
+    @Published var allAppsBoostLevel: Int {
+        didSet {
+            guard allAppsBoostLevel != oldValue else { return }
+            allAppsBoostLevel = min(3, max(1, allAppsBoostLevel))
+            UserDefaults.standard.set(allAppsBoostLevel, forKey: "AOMAudioMasterBoostLevel")
+            applyEQ()
+        }
+    }
     @Published var eqGains: [Float] = AudioEQ.presets["Flat"]!
     @Published var eqEnabled: Bool {
         didSet {
@@ -39,6 +54,9 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private override init() {
+        _allAppsBoostEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled"))
+        let savedBoostLevel = UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2
+        _allAppsBoostLevel = Published(initialValue: min(3, max(1, savedBoostLevel)))
         _eqEnabled = Published(initialValue: UserDefaults.standard.object(forKey: "AOMAudioEQEnabled") as? Bool ?? false)
         let preset = UserDefaults.standard.string(forKey: "AOMAudioEQPreset")
         _eqPreset = Published(initialValue: preset ?? "Flat")
@@ -141,12 +159,25 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     func start() { refresh() }
 
-    /// Pushes the current EQ to every live tap session (master EQ, like
-    /// SoundSource's output EQ).
+    /// Applies app effects and the shared output effects without resetting playback.
     func applyEQ() {
         guard #available(macOS 14.2, *) else { return }
         AppAudioEngine.shared.updateEffects()
         reloadApps()
+    }
+
+    func appBoostLevel(_ bundleID: String) -> Int {
+        let saved = UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(bundleID)") as? Int ?? 2
+        return min(3, max(1, saved))
+    }
+
+    func setAppBoostLevel(_ level: Int, bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        let value = min(3, max(1, level))
+        guard appBoostLevel(bundleID) != value else { return }
+        objectWillChange.send()
+        UserDefaults.standard.set(value, forKey: "AOMAudioBoostLevel_\(bundleID)")
+        applyEQ()
     }
 
     func appEQGains(_ bundleID: String) -> [Float] {
@@ -307,6 +338,9 @@ private struct AppAudioMixerView: View {
             }.padding(12)
             MixerOutputSection()
             Divider()
+            MasterBoostControls(service: service)
+                .padding(12)
+            Divider()
             if let error = service.lastError {
                 Text(error).font(.caption).foregroundStyle(.red).padding(8)
             }
@@ -334,6 +368,46 @@ private struct AppAudioMixerView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+/// Output effects remain independent from each application's boost setting.
+struct MasterBoostControls: View {
+    @ObservedObject var service: AppAudioMixerService
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Button {
+                    service.allAppsBoostEnabled.toggle()
+                } label: {
+                    Label("Boost All Apps", systemImage: service.allAppsBoostEnabled ? "sparkles" : "waveform")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(service.allAppsBoostEnabled ? Color.indigo : Color.secondary)
+                .accessibilityValue(service.allAppsBoostEnabled ? "On" : "Off")
+                .help("Enhance quiet audio across all managed applications")
+                Spacer(minLength: 8)
+                Picker("Output boost strength", selection: $service.allAppsBoostLevel) {
+                    Text("Low").tag(1)
+                    Text("Medium").tag(2)
+                    Text("High").tag(3)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(maxWidth: 220)
+                .disabled(!service.allAppsBoostEnabled)
+            }
+            Text(service.allAppsBoostEnabled
+                 ? "Boosts the mixed audio from all managed apps. Individual app effects remain independent."
+                 : "Raise quiet passages with adaptive compression. Keep each app’s own boost settings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .disabled(!service.isSupported)
     }
 }
 

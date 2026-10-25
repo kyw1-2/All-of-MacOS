@@ -1,4 +1,5 @@
 import AppKit
+import Accelerate
 import CoreAudio
 import AudioToolbox
 import AVFoundation
@@ -177,10 +178,17 @@ final class AppAudioEngine {
                 let ready = session.sourceToken.map { token in
                     MainActor.assumeIsolated { SharedOutputRenderer.shared.isReady(token) }
                 } ?? false
-                if session.outputUID != uid || !ready {
+                if session.outputUID != uid {
                     guard moveOutput(session, device: device) else {
                         fail(session, message: "Audio output could not start. Original audio restored; reconnect to retry.")
                         continue
+                    }
+                } else if !ready {
+                    // Overload or a transient format change can stop the
+                    // engine. Restart it in place — the tap, aggregate and
+                    // transport survive, so no player sees device loss.
+                    if let token = session.sourceToken {
+                        MainActor.assumeIsolated { SharedOutputRenderer.shared.ensureRunning(token: token) }
                     }
                 }
                 mixer.deviceGain = AudioOutputService.softwareGain(uid: uid)
@@ -302,10 +310,17 @@ final class AppAudioEngine {
     }
 
     func updateEffects() {
+        let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled")
+            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2))
+            : 0
         for session in sessions.values {
+            let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)")
+                ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(session.bundleID)") as? Int ?? 2))
+                : 0
             session.box.takeUnretainedValue().setEffects(
                 app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate))
+                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                appBoost: appBoost, masterBoost: masterBoost)
         }
         syncActiveProcesses()
     }
@@ -652,7 +667,13 @@ final class AppAudioEngine {
         let mixer = MixerBox(gain: gain, muted: muted,
                              magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
-        mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate), master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate))
+        let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(bundleID)") as? Int ?? 2)) : 0
+        let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled")
+            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2)) : 0
+        mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate),
+                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                         appBoost: appBoost, masterBoost: masterBoost)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let transport = AppAudioTransport(sampleRate: sampleRate)
         // Add only a software render source; the hardware graph remains fixed.
@@ -713,33 +734,44 @@ final class AppAudioEngine {
         var address = AudioOutputService.address(kAudioTapPropertyDescription)
         let result = AudioObjectSetPropertyData(session.tapID, &address, 0, nil,
                                                 UInt32(MemoryLayout.size(ofValue: value)), &value)
-        guard result == noErr else { description.processes = previous; return false }
+        guard result == noErr else {
+            // Retargeting a freshly created tap fails transiently — CoreAudio
+            // is still publishing the process objects the tap itself changed.
+            // Destroying the session here paused every video exactly 1 s after
+            // attach. Keep the tap (the main process still gets captured) and
+            // retry membership on the next tick.
+            description.processes = previous
+            GestureLog.shared.logFromAnyThread("Tap membership update deferred (\(result)) — keeping the session", level: .noMatch)
+            return true
+        }
         session.processIDs = ids
         return true
     }
 
     private func moveOutput(_ session: Session, device: AudioOutputDevice) -> Bool {
         guard let transport = session.transport else { return false }
-        if let source = session.sourceToken {
-            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
-            session.sourceToken = nil
-        }
-        // Removal is a render barrier: two device clocks cannot consume the
-        // same transport or EQ history concurrently during migration.
-        MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
         let mixer = session.box.takeUnretainedValue()
+        // Bridge, don't break: the new source is added before the old one is
+        // removed. A failed add must leave the session playing through its
+        // existing output — losing the device is what pauses every player.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: device.uid, device: device,
             render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else { return false }
+        if let old = session.sourceToken {
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
+        }
         session.sourceToken = source
         session.outputUID = device.uid
         return true
     }
 
     private func fail(_ session: Session, message: String) {
+        // Last-resort restore: the original audio returns (the app reverts to
+        // its own output). Recovery is bounded — .infinity permanently blocked
+        // self-healing from transient failures like HAL overload restarts.
         stop(pid: session.pid)
         errors[session.pid] = message
-        retryAfter[session.pid] = .infinity
+        retryAfter[session.pid] = ProcessInfo.processInfo.systemUptime + 5
         failedProcessIDs[session.pid] = Self.processObjectIDs(for: session.pid).sorted()
         GestureLog.shared.logFromAnyThread(message, level: .error)
     }
@@ -784,6 +816,11 @@ final class MixerBox {
     fileprivate var renderGain: Float
     fileprivate var renderMuted: Bool
     fileprivate var renderBoost: Bool
+    /// Adaptive-compression strength: 0 off, 1 low, 2 medium, 3 high. The
+    /// effective strength is the stronger of the app and master settings.
+    fileprivate var renderBoostLevel: Int = 0
+    private var desiredAppBoost: Int = 0
+    private var desiredMasterBoost: Int = 0
     fileprivate var renderDeviceGain: Float = 1
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
@@ -811,18 +848,25 @@ final class MixerBox {
         desiredGain = Mixer.clamp(gain); renderGain = Mixer.clamp(gain)
         desiredMuted = muted; renderMuted = muted
         desiredBoost = magicBoost; renderBoost = magicBoost
+        desiredAppBoost = magicBoost ? 2 : 0
         let app = AudioEQProcessor(eq), master = AudioEQProcessor(AudioEQ(sampleRate: eq.sampleRate))
         desiredAppEQ = app; appEQ = app
         desiredMasterEQ = master; masterEQ = master
     }
-    func setEffects(app: AudioEQ, master: AudioEQ) {
+    func setEffects(app: AudioEQ, master: AudioEQ, appBoost: Int, masterBoost: Int) {
         lock.lock(); defer { lock.unlock() }
         if desiredAppEQ.eq != app { desiredAppEQ = AudioEQProcessor(app) }
         if desiredMasterEQ.eq != master { desiredMasterEQ = AudioEQProcessor(master) }
+        desiredAppBoost = min(3, max(0, appBoost))
+        desiredMasterBoost = min(3, max(0, masterBoost))
     }
     fileprivate func beginRender() {
         guard lock.try() else { return }
-        renderGain = desiredGain; renderMuted = desiredMuted; renderBoost = desiredBoost
+        renderGain = desiredGain; renderMuted = desiredMuted
+        // Legacy single-bool boost upgrades to the level model; the master
+        // boost covers apps whose own toggle is off.
+        renderBoost = desiredBoost && desiredAppBoost == 0
+        renderBoostLevel = max(desiredAppBoost, desiredMasterBoost)
         renderDeviceGain = desiredDeviceGain
         appEQ = desiredAppEQ; masterEQ = desiredMasterEQ
         lock.unlock()
@@ -838,7 +882,9 @@ nonisolated enum Mixer {
         let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputs = UnsafeMutableAudioBufferListPointer(output)
         for buffer in outputs {
-            if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+            if let data = buffer.mData?.assumingMemoryBound(to: Float.self) {
+                vDSP_vclr(data, 1, vDSP_Length(Int(buffer.mDataByteSize) / MemoryLayout<Float32>.stride))
+            }
         }
         var peak: Float = 0
         defer { box.publishPeak(peak) }
@@ -860,9 +906,13 @@ nonisolated enum Mixer {
             var r = planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]
             l = box.masterEQ.process(box.appEQ.process(l, channel: 0), channel: 0)
             r = box.masterEQ.process(box.appEQ.process(r, channel: 1), channel: 1)
-            if box.renderBoost {
-                l = tanh(l * 1.8)
-                r = tanh(r * 1.8)
+            if box.renderBoostLevel > 0 {
+                // Adaptive compression: the drive scales with the chosen
+                // strength and a small makeup keeps loud passages near unity.
+                let drive: Float = 1.25 + 0.55 * Float(box.renderBoostLevel)
+                let makeup: Float = 1 + 0.07 * Float(box.renderBoostLevel - 1)
+                l = tanh(l * drive) * makeup
+                r = tanh(r * drive) * makeup
             }
             l *= box.renderGain * box.renderDeviceGain; r *= box.renderGain * box.renderDeviceGain
             // A bounded output prevents overdrive/EQ from wrapping or emitting NaNs.
