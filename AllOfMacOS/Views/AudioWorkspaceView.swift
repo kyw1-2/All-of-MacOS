@@ -107,16 +107,10 @@ struct AudioWorkspaceView: View {
                         .help("Refresh applications")
                     }
 
-                    if service.airPlayBypassed && service.soundEnabled {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("HomePod / AirPlay · Direct Playback").font(.headline)
-                                Text("App volume, mute, EQ and boost are saved but bypassed on this connection. They resume on a local output. Control HomePod volume through macOS or HomePod.")
-                                    .font(.callout)
-                            }
-                        } icon: { Image(systemName: "airplay.audio") }
-                        .padding().frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                    if service.isSupported {
+                        AirPlayProcessingControls(service: service)
+                            .padding().frame(maxWidth: .infinity, alignment: .leading)
+                            .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12))
                     }
                     if !service.soundEnabled {
                         VStack(spacing: 12) {

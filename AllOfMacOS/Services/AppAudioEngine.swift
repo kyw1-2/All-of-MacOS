@@ -58,6 +58,7 @@ final class AppAudioEngine {
         var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
         let createdAt = ProcessInfo.processInfo.systemUptime
+        var airPlayCaptureStalledSince: TimeInterval?
 
         init(pid: pid_t, bundleID: String, tapID: AudioObjectID, aggregateID: AudioObjectID,
              procID: AudioDeviceIOProcID?, box: Unmanaged<MixerBox>, gain: Float, muted: Bool) {
@@ -87,7 +88,26 @@ final class AppAudioEngine {
         }
     }
 
+    static var airPlayProcessingEnabled: Bool {
+        UserDefaults.standard.object(forKey: "AOMAudioAirPlayProcessingEnabled") as? Bool ?? true
+    }
+
+    func setAirPlayProcessingEnabled(_ enabled: Bool) {
+        guard enabled != Self.airPlayProcessingEnabled else { return }
+        UserDefaults.standard.set(enabled, forKey: "AOMAudioAirPlayProcessingEnabled")
+        stopAll()
+        errors.removeAll(); retryAfter.removeAll(); failedProcessIDs.removeAll()
+        airPlayCaptureFailures.removeAll()
+        scheduleSync()
+    }
+
     private(set) var airPlayBypassed = false
+    var airPlayProcessingActive: Bool { sessions.values.contains { $0.sourceToken?.isAirPlay == true } }
+    var airPlayPreparing: Bool { !pendingAirPlayPIDs.isEmpty }
+    private var pendingAirPlayPIDs = Set<pid_t>()
+    // A capture failure on a live remote sender must not retry merely because
+    // creating / destroying the failed tap changed CoreAudio's process list.
+    private var airPlayCaptureFailures: [String: String] = [:]
     private var bypassedPIDs = Set<pid_t>()
     private var appIdentitySnapshot: [AppState] = []
     private var appIdentitySnapshotAt: TimeInterval = -.infinity
@@ -147,9 +167,8 @@ final class AppAudioEngine {
         }
     }
 
-    /// Remote AirPlay streams must keep their native producer clock and routing.
-    /// Capturing with .mutedWhenTapped, then trying to re-render through an
-    /// AVAudioEngine bound to the generic AirPlay HAL device, can stall clients.
+    /// Identifies routes requiring either native bypass or the dedicated
+    /// buffered AirPlay sender. Never route these through AVAudioEngine.
     /// Detect transport type, not a user-facing room name or a device ID.
     static func shouldBypassAirPlayCapture(defaultTransport: UInt32?, routeTransport: UInt32?) -> Bool {
         defaultTransport == kAudioDeviceTransportTypeAirPlay ||
@@ -177,15 +196,15 @@ final class AppAudioEngine {
             syncing = false
             NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
         }
-        airPlayBypassed = Self.isNativeAirPlayActive()
+        airPlayBypassed = Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled
+        pendingAirPlayPIDs.removeAll(keepingCapacity: true)
         bypassedPIDs.removeAll(keepingCapacity: true)
         guard isEnabled else {
             if !sessions.isEmpty { stopAll() }
             return
         }
-        // An AirPlay route change can arrive while app audio taps are running.
-        // Release them so Chrome/Safari resumes its own unmodified audio route.
-        // Do not change the user's selected HomePod or macOS sound settings.
+        // Native mode releases taps without changing the selected HomePod.
+        // Processing mode uses a separate sender, never an AVAudioEngine graph.
         if airPlayBypassed {
             let hadSessions = !sessions.isEmpty ||
                 MainActor.assumeIsolated { !SharedOutputRenderer.shared.activeDeviceUIDs.isEmpty }
@@ -200,15 +219,47 @@ final class AppAudioEngine {
         // renderers for an empty session list is pure overhead.
         if apps.isEmpty && sessions.isEmpty { return }
         let devices = AudioOutputService.devices()
+        defer {
+            let requested = Set(apps.compactMap { Self.targetOutputUID(for: $0.bundleID) })
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.releaseUnusedAirPlayOutputs(keeping: requested) }
+        }
         let topology = Dictionary(devices.map { ($0.uid, $0.id) }, uniquingKeysWith: { first, _ in first })
         if topology != outputTopology {
             outputTopology = topology
             retryAfter.removeAll()
             failedProcessIDs.removeAll()
+            airPlayCaptureFailures.removeAll()
         }
         MainActor.assumeIsolated {
             let renderer = SharedOutputRenderer.shared
             renderer.rebindIfNeeded(devices: devices)
+        }
+        // A stopped remote receiver cannot retain muting taps. Check before
+        // any transient tap-format / process queries that might return early.
+        for session in Array(sessions.values) {
+            if let token = session.sourceToken,
+               let message = MainActor.assumeIsolated({ SharedOutputRenderer.shared.airPlayFailure(token) }) {
+                failAirPlay(session, message: message)
+                continue
+            }
+            if session.sourceToken?.isAirPlay == true, let transport = session.transport {
+                // A live sender alone does not prove the tap can capture this
+                // app (for example, offloaded playback). Restore direct audio
+                // if an actively playing producer has no capture callbacks.
+                let playing = session.processIDs.contains {
+                    Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
+                }
+                if playing && !transport.activity.recent {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    let since = session.airPlayCaptureStalledSince ?? now
+                    session.airPlayCaptureStalledSince = since
+                    if now - since > 5 {
+                        failAirPlay(session, message: "HomePod capture stopped receiving app audio. Native playback restored; use Reconnect to retry.")
+                    }
+                } else {
+                    session.airPlayCaptureStalledSince = nil
+                }
+            }
         }
         // Playback/process-object disappearance is not application termination.
         for pid in Array(sessions.keys) {
@@ -224,11 +275,34 @@ final class AppAudioEngine {
             let ids = objectsByOwner[app.pid] ?? []
             if let uid = Self.targetOutputUID(for: app.bundleID),
                let device = devices.first(where: { $0.uid == uid }),
-               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay {
+               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay,
+               !Self.airPlayProcessingEnabled {
                 bypassedPIDs.insert(app.pid)
                 stop(pid: app.pid)
                 errors.removeValue(forKey: app.pid)
                 continue
+            }
+            if Self.airPlayProcessingEnabled,
+               let uid = Self.targetOutputUID(for: app.bundleID),
+               let device = devices.first(where: { $0.uid == uid }),
+               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay,
+               sessions[app.pid] != nil || !ids.isEmpty {
+                let key = "\(uid)|\(app.bundleID)"
+                if let message = airPlayCaptureFailures[key] {
+                    errors[app.pid] = message
+                    continue
+                }
+                switch MainActor.assumeIsolated({ SharedOutputRenderer.shared.prepareAirPlay(device: device) }) {
+                case .preparing:
+                    pendingAirPlayPIDs.insert(app.pid)
+                    continue
+                case .failed(let message):
+                    if let session = sessions[app.pid] { failAirPlay(session, message: message) }
+                    errors[app.pid] = message
+                    continue
+                case .ready:
+                    break
+                }
             }
             if let failed = failedProcessIDs[app.pid], failed != ids {
                 retryAfter.removeValue(forKey: app.pid)
@@ -321,6 +395,7 @@ final class AppAudioEngine {
         if airPlayBypassed || bypassedPIDs.contains(pid) {
             return "AirPlay direct — volume, EQ and boost saved for local output"
         }
+        if pendingAirPlayPIDs.contains(pid) { return "Preparing HomePod output — current playback continues" }
         if let error = errors[pid] { return error }
         guard let session = sessions[pid], let transport = session.transport else {
             return pid <= 0 ? "App closed — settings saved" : "Waiting for app audio"
@@ -330,10 +405,20 @@ final class AppAudioEngine {
             return "Ready — waiting for app playback"
         }
         if activity.rendered == 0 { return "Waiting for output device…" }
+        if session.sourceToken?.isAirPlay == true {
+            return session.muted ? "Muted · HomePod" : "Processing locally → HomePod / AirPlay"
+        }
         return session.muted ? "Muted" : "Processing audio"
     }
 
     func retry(pid: pid_t) {
+        // A remote sender is shared: recovery must release all its sources
+        // before replacing it, rather than recovering only one app.
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        let remoteRoute = Self.targetOutputUID(for: bundleID).flatMap { uid in
+            AudioOutputService.devices().first(where: { $0.uid == uid })
+        }.map { Self.outputTransport($0.id) == kAudioDeviceTransportTypeAirPlay } ?? false
+        if sessions[pid]?.sourceToken?.isAirPlay == true || remoteRoute { retryAll(); return }
         stop(pid: pid)
         errors.removeValue(forKey: pid)
         retryAfter.removeValue(forKey: pid)
@@ -345,19 +430,23 @@ final class AppAudioEngine {
         // Explicit user recovery, performed in one reconciliation pass.
         for pid in Array(sessions.keys) { stop(pid: pid) }
         errors.removeAll(); retryAfter.removeAll(); failedProcessIDs.removeAll()
-        MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
+        airPlayCaptureFailures.removeAll()
+        MainActor.assumeIsolated {
+            SharedOutputRenderer.shared.resetAirPlayFailures()
+            SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices())
+        }
         syncActiveProcesses()
     }
 
     private func needsProcessing(_ bundleID: String) -> Bool {
-        guard isEnabled, !Self.isNativeAirPlayActive() else { return false }
-        // Avoid muted process taps even when a single app has a saved AirPlay
-        // route while the system default is a local output device.
+        guard isEnabled else { return false }
+        if Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled { return false }
         if let uid = Self.targetOutputUID(for: bundleID),
            let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
-           Self.shouldBypassAirPlayCapture(defaultTransport: nil,
-                                         routeTransport: Self.outputTransport(destination.id)) {
-            return false
+           Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+            // All apps on this route share the buffered clock, including unity
+            // gain apps, so changing an effect never rebuilds the connection.
+            return Self.airPlayProcessingEnabled
         }
         let d = UserDefaults.standard
         return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
@@ -378,6 +467,14 @@ final class AppAudioEngine {
             // request or an actual process/output topology change.
             retryAfter[pid] = .infinity
             failedProcessIDs[pid] = Self.processObjectIDs(for: pid).sorted()
+            if Self.airPlayProcessingEnabled, let uid = Self.targetOutputUID(for: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""),
+               let device = AudioOutputService.devices().first(where: { $0.uid == uid }),
+               Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay {
+                let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+                let message = (errors[pid] ?? "AirPlay capture failed.") + " Native playback restored; use Reconnect to retry."
+                airPlayCaptureFailures["\(uid)|\(bundleID)"] = message
+                errors[pid] = message
+            }
             return false
         }
         sessions[pid] = session
@@ -723,6 +820,7 @@ final class AppAudioEngine {
     func sessionsAll() -> [Session] { Array(sessions.values) }
 
     func stopAll() {
+        pendingAirPlayPIDs.removeAll()
         for pid in Array(sessions.keys) { stop(pid: pid) }
         MainActor.assumeIsolated { SharedOutputRenderer.shared.shutdown() }
     }
@@ -745,14 +843,14 @@ final class AppAudioEngine {
 
     private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        // A route transition can happen after the sync pass's initial check.
-        // Never create a muting tap before confirming both output transports.
-        guard !Self.isNativeAirPlayActive(),
-              let uid = Self.targetOutputUID(for: bundleID),
-              let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
-              !Self.shouldBypassAirPlayCapture(defaultTransport: nil,
-                                              routeTransport: Self.outputTransport(destination.id)) else {
-            return nil
+        // Never mute the original producer before the remote callback clock
+        // has been observed. Setup itself is asynchronous and outputs silence.
+        guard let uid = Self.targetOutputUID(for: bundleID),
+              let destination = AudioOutputService.devices().first(where: { $0.uid == uid }) else { return nil }
+        if Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled { return nil }
+        if Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+            guard Self.airPlayProcessingEnabled,
+                  case .ready = MainActor.assumeIsolated({ SharedOutputRenderer.shared.prepareAirPlay(device: destination) }) else { return nil }
         }
 
         // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
@@ -779,10 +877,7 @@ final class AppAudioEngine {
         let tapUID = description.uuid.uuidString
 
         // 4. Target hardware output device UID
-        guard let outUID = Self.targetOutputUID(for: bundleID) ?? Self.defaultOutputDeviceUID() else {
-            AudioHardwareDestroyProcessTap(tapID)
-            return nil
-        }
+        let outUID = uid
 
         // Capture-only aggregate: no microphone, hardware output streams,
         // or assumptions about the tap being the last buffer in a mixed device.
@@ -821,7 +916,8 @@ final class AppAudioEngine {
                          master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                          appBoost: appBoost, masterBoost: masterBoost)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
-        let transport = AppAudioTransport(sampleRate: sampleRate)
+        let transport = AppAudioTransport(sampleRate: sampleRate,
+            bufferedForAirPlay: Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay)
         // Add only a software render source; the hardware graph remains fixed.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: outUID, device: device,
@@ -906,9 +1002,20 @@ final class AppAudioEngine {
         if let old = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
         }
+        transport.setBufferedForAirPlay(source.isAirPlay)
         session.sourceToken = source
         session.outputUID = device.uid
         return true
+    }
+
+    private func failAirPlay(_ session: Session, message: String) {
+        let key = "\(session.outputUID)|\(session.bundleID)"
+        stop(pid: session.pid)
+        errors[session.pid] = message
+        airPlayCaptureFailures[key] = message
+        retryAfter[session.pid] = .infinity
+        failedProcessIDs[session.pid] = session.processIDs
+        GestureLog.shared.logFromAnyThread(message, level: .error)
     }
 
     private func fail(_ session: Session, message: String) {

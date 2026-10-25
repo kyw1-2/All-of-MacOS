@@ -279,6 +279,7 @@ private struct AOMAudioSidebarBadge: View {
     var body: some View {
         if !audio.soundEnabled { AOMSidebarStatusBadge(text: "Off", tint: AOMTheme.textSecondary) }
         else if audio.airPlayBypassed { AOMSidebarStatusBadge(text: "Direct", tint: AOMTheme.textSecondary) }
+        else if audio.airPlayProcessingActive { AOMSidebarStatusBadge(text: "AirPlay FX", tint: AOMTheme.positive) }
         else if audio.eqEnabled || audio.allAppsBoostEnabled {
             AOMSidebarStatusBadge(text: "FX", tint: AOMTheme.positive)
         }

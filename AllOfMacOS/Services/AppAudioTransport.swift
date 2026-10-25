@@ -8,6 +8,9 @@ import Accelerate
 /// callback. Storage and render scratch are allocated before audio starts.
 final class AppAudioTransport {
     private let lock = NSLock()
+    // A route handoff can briefly register this source on two output buses.
+    // Serialize the complete DSP render (including scratch / EQ state).
+    private let renderLock = NSLock()
     private let capacity = 32768
     private let samples: UnsafeMutablePointer<Float>
     private let scratch: UnsafeMutablePointer<Float>
@@ -20,16 +23,18 @@ final class AppAudioTransport {
     private var renderedFrames: UInt64 = 0
     private var inputPeak: Float = 0
     private var targetFrames: Int
+    private var bufferedForAirPlay: Bool
     private var sampleRate: Double
     private var lastCaptureTime: TimeInterval = 0
     private let secondsPerTick: Double
 
-    init(sampleRate: Double) {
+    init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
         self.sampleRate = sampleRate
-        targetFrames = max(256, min(4096, Int(sampleRate * 0.025)))
+        self.bufferedForAirPlay = bufferedForAirPlay
+        targetFrames = max(256, min(bufferedForAirPlay ? 16384 : 4096, Int(sampleRate * (bufferedForAirPlay ? 0.08 : 0.025))))
         samples = .allocate(capacity: capacity * 2)
         scratch = .allocate(capacity: capacity * 2)
         samples.initialize(repeating: 0, count: capacity * 2)
@@ -42,14 +47,24 @@ final class AppAudioTransport {
         lock.lock(); defer { lock.unlock() }
         guard rate != sampleRate else { return }
         sampleRate = rate
-        targetFrames = max(256, min(4096, Int(rate * 0.025)))
+        targetFrames = max(256, min(bufferedForAirPlay ? capacity / 2 : 4096, Int(rate * (bufferedForAirPlay ? 0.08 : 0.025))))
         readIndex = 0; writeIndex = 0; count = 0
         fractionalPosition = 0; buffered = false
     }
 
+    func setBufferedForAirPlay(_ enabled: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard enabled != bufferedForAirPlay else { return }
+        bufferedForAirPlay = enabled
+        targetFrames = max(256, min(enabled ? capacity / 2 : 4096, Int(sampleRate * (enabled ? 0.08 : 0.025))))
+        readIndex = writeIndex; count = 0; fractionalPosition = 0; buffered = false
+    }
+
     var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool) {
         lock.lock(); defer { lock.unlock() }
-        return (capturedFrames, renderedFrames, inputPeak, Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < 0.25)
+        let recentWindow = bufferedForAirPlay ? max(1, Double(targetFrames) / sampleRate * 4) : 0.25
+        return (capturedFrames, renderedFrames, inputPeak,
+                Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < recentWindow)
     }
 
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -66,8 +81,14 @@ final class AppAudioTransport {
             right = data
             frames = min(frames, Int(buffers[1].mDataByteSize) / 4)
         }
+        if bufferedForAirPlay {
+            targetFrames = min(capacity / 2, max(targetFrames, frames * 2))
+        }
         let now = Double(mach_absolute_time()) * secondsPerTick
-        if now - lastCaptureTime > 0.25 {
+        // AirPlay can deliver packets longer than the local 250 ms gap
+        // threshold. Do not reset every packet before its queue can prime.
+        let gapLimit = bufferedForAirPlay ? max(1, Double(frames) / sampleRate * 4) : 0.25
+        if now - lastCaptureTime > gapLimit {
             readIndex = 0; writeIndex = 0; count = 0
             fractionalPosition = 0; buffered = false
         }
@@ -102,6 +123,8 @@ final class AppAudioTransport {
                 vDSP_vclr(data, 1, vDSP_Length(Int(buffer.mDataByteSize) / MemoryLayout<Float32>.stride))
             }
         }
+        guard renderLock.try() else { return }
+        defer { renderLock.unlock() }
         guard frames > 0, frames <= capacity, lock.try() else { mixer.publishPeak(0); return }
         if !buffered {
             guard count >= targetFrames else { lock.unlock(); mixer.publishPeak(0); return }

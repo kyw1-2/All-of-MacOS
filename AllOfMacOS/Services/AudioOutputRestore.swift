@@ -149,6 +149,13 @@ extension AudioOutputRestore {
         UserDefaults.standard.object(forKey: protectKey) as? Bool ?? false
     }
 
+    /// The local-output fallback must not undo a HomePod processing session.
+    /// Keep the legacy preference stored, but suspend it while this mode is on.
+    private static var shouldForceLocalOutput: Bool {
+        if #available(macOS 14.2, *), AppAudioEngine.airPlayProcessingEnabled { return false }
+        return protectsMediaPlayback
+    }
+
     static func transportType(of id: AudioDeviceID) -> UInt32 {
         var address = propertyAddress(kAudioDevicePropertyTransportType)
         var value: UInt32 = 0
@@ -187,14 +194,14 @@ extension AudioOutputRestore {
     private nonisolated(unsafe) static var mediaGuardInstalled = false
 
     static func startMediaPlaybackGuard() {
-        guard !mediaGuardInstalled, protectsMediaPlayback else { return }
+        guard !mediaGuardInstalled, shouldForceLocalOutput else { return }
         mediaGuardInstalled = true
         var address = propertyAddress(kAudioHardwarePropertyDefaultOutputDevice)
         let block: AudioObjectPropertyListenerBlock = { _, _ in
             // Give the change a moment to settle, then only act on a route that is
             // still AirPlay and was not a change the user made inside AOM.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                guard protectsMediaPlayback, !hasPendingChange else { return }
+                guard shouldForceLocalOutput, !hasPendingChange else { return }
                 guard let uid = defaultOutputUID(), let current = deviceID(forUID: uid),
                       transportType(of: current) == kAudioDeviceTransportTypeAirPlay else { return }
                 guard let target = localFallback(), setDefaultOutput(target) else { return }
@@ -215,13 +222,13 @@ extension AudioOutputRestore {
     static func guardStartupOutputFlip() {
         // Only run when explicitly enabled. By default, users intentionally choose
         // HomePod / AirPlay and AOM must never revert or fight their choice.
-        guard protectsMediaPlayback, !hasPendingChange else { return }
+        guard shouldForceLocalOutput, !hasPendingChange else { return }
         guard let baselineUID = defaultOutputUID(), let baselineID = deviceID(forUID: baselineUID),
               transportType(of: baselineID) != kAudioDeviceTransportTypeAirPlay else { return }
         let name = self.name(of: baselineID)
         for delay in [2.0, 5.0, 9.0, 14.0, 20.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard protectsMediaPlayback, !hasPendingChange else { return }
+                guard shouldForceLocalOutput, !hasPendingChange else { return }
                 guard let currentUID = defaultOutputUID(), let currentID = deviceID(forUID: currentUID),
                       transportType(of: currentID) == kAudioDeviceTransportTypeAirPlay else { return }
                 // Re-resolve a UID: a disconnected device's numeric ID can be
@@ -241,7 +248,7 @@ extension AudioOutputRestore {
     /// launch, before anything tries to play.
     @discardableResult
     static func repairAirPlayDefaultAtLaunch() -> Bool {
-        guard protectsMediaPlayback, !hasPendingChange else { return false }
+        guard shouldForceLocalOutput, !hasPendingChange else { return false }
         guard let uid = defaultOutputUID(), let current = deviceID(forUID: uid),
               transportType(of: current) == kAudioDeviceTransportTypeAirPlay else {
             rememberLocalDefault()

@@ -10,6 +10,17 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     @Published private(set) var apps: [AppAudioState] = []
     @Published private(set) var airPlayBypassed = false
+    @Published private(set) var airPlayProcessingActive = false
+    @Published private(set) var airPlayPreparing = false
+    @Published var airPlayProcessingEnabled: Bool {
+        didSet {
+            guard airPlayProcessingEnabled != oldValue else { return }
+            if #available(macOS 14.2, *) {
+                AppAudioEngine.shared.setAirPlayProcessingEnabled(airPlayProcessingEnabled)
+            }
+            refresh()
+        }
+    }
     let meters = AppAudioMeters()
     private var meterClients = 0
     private var reloadScheduled = false
@@ -73,6 +84,8 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             }
             return true
         }())
+        _airPlayProcessingEnabled = Published(initialValue:
+            UserDefaults.standard.object(forKey: "AOMAudioAirPlayProcessingEnabled") as? Bool ?? true)
         _allAppsBoostEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled"))
         let savedBoostLevel = UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2
         _allAppsBoostLevel = Published(initialValue: min(3, max(1, savedBoostLevel)))
@@ -124,6 +137,8 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         let error = updated.compactMap(\.error).first
         if lastError != error { lastError = error }
         if airPlayBypassed != engine.airPlayBypassed { airPlayBypassed = engine.airPlayBypassed }
+        if airPlayProcessingActive != engine.airPlayProcessingActive { airPlayProcessingActive = engine.airPlayProcessingActive }
+        if airPlayPreparing != engine.airPlayPreparing { airPlayPreparing = engine.airPlayPreparing }
     }
 
     func refreshMeters() {
@@ -441,12 +456,16 @@ private struct AppAudioMixerView: View {
                 .padding(.vertical, 24)
             } else {
                 MixerOutputSection()
+                AirPlayProcessingControls(service: service).padding(12)
                 Divider()
                 MasterBoostControls(service: service)
                     .padding(12)
                 Divider()
                 if let error = service.lastError {
-                    Text(error).font(.caption).foregroundStyle(.red).padding(8)
+                    VStack(spacing: 6) {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                        Button("Reconnect Audio") { service.reconnectAll() }.controlSize(.small)
+                    }.padding(8)
                 }
                 EQSection(service: service)
                 Divider()
@@ -659,6 +678,30 @@ struct AppAudioRow: View {
         .onTapGesture(count: 2) { onMute() }
         .onChange(of: app.gain) { _, newGain in
             gain = min(max(newGain, 0), 2)
+        }
+    }
+}
+
+/// Controls describe audible behavior; transport mechanics stay out of the UI.
+struct AirPlayProcessingControls: View {
+    @ObservedObject var service: AppAudioMixerService
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("HomePod / AirPlay effects", isOn: $service.airPlayProcessingEnabled)
+                .toggleStyle(.switch).controlSize(.small)
+                .disabled(!service.soundEnabled)
+            if service.airPlayPreparing {
+                Label("Connecting — current audio continues", systemImage: "airplay.audio")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if service.airPlayProcessingActive {
+                Label("App volume, EQ and boost → HomePod", systemImage: "airplay.audio")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(service.airPlayProcessingEnabled
+                     ? "Apply app volume, EQ and boost to Mac audio sent to HomePod. Buffered playback adds latency."
+                     : "Direct playback: effects and app volume are bypassed on AirPlay.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

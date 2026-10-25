@@ -11,7 +11,10 @@ final class SharedOutputRenderer {
     final class SourceToken {
         let id: UUID
         fileprivate let uid: String
-        fileprivate init(id: UUID, uid: String) { self.id = id; self.uid = uid }
+        let isAirPlay: Bool
+        fileprivate init(id: UUID, uid: String, isAirPlay: Bool = false) {
+            self.id = id; self.uid = uid; self.isAirPlay = isAirPlay
+        }
     }
 
     private final class DeviceGraph {
@@ -29,10 +32,55 @@ final class SharedOutputRenderer {
         }
     }
     private var graphs: [String: DeviceGraph] = [:]
-    var activeDeviceUIDs: [String] { Array(graphs.keys) }
+    private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
+    var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
+
+    /// Start asynchronously before creating a muting process tap. A real HAL
+    /// render callback must arrive before this returns ready.
+    func prepareAirPlay(device: AudioOutputDevice) -> AirPlayOutputRenderer.State {
+        if let old = airPlayOutputs[device.uid], old.deviceID != device.id {
+            guard old.bus.isEmpty else { return .failed("AirPlay device reconnected. Reconnect audio processing.") }
+            old.stop(); airPlayOutputs.removeValue(forKey: device.uid)
+        }
+        if airPlayOutputs[device.uid] == nil {
+            airPlayOutputs[device.uid] = AirPlayOutputRenderer(deviceID: device.id) {
+                if #available(macOS 14.2, *) { AppAudioEngine.shared.requestSync() }
+            }
+        }
+        return airPlayOutputs[device.uid]!.state
+    }
+
+    func airPlayFailure(_ token: SourceToken) -> String? {
+        guard token.isAirPlay else { return nil }
+        guard let output = airPlayOutputs[token.uid] else {
+            return "AirPlay disconnected. Native playback restored."
+        }
+        if case .failed(let message) = output.state { return message }
+        return nil
+    }
+
+    func releaseUnusedAirPlayOutputs(keeping uids: Set<String>) {
+        for (uid, output) in Array(airPlayOutputs) where !uids.contains(uid) && output.bus.isEmpty {
+            output.stop(); airPlayOutputs.removeValue(forKey: uid)
+        }
+    }
+
+    func resetAirPlayFailures() {
+        for (uid, output) in Array(airPlayOutputs) where output.bus.isEmpty {
+            if case .failed = output.state {
+                output.stop(); airPlayOutputs.removeValue(forKey: uid)
+            }
+        }
+    }
 
     func addSource(uid: String, device: AudioOutputDevice,
                    render: @escaping AppAudioRenderBus.Render) -> SourceToken? {
+        if AudioOutputRestore.transportType(of: device.id) == kAudioDeviceTransportTypeAirPlay {
+            guard case .ready = prepareAirPlay(device: device), let output = airPlayOutputs[uid] else { return nil }
+            let id = UUID()
+            output.bus.add(id: id, render: render)
+            return SourceToken(id: id, uid: uid, isAirPlay: true)
+        }
         if let existing = graphs[uid], existing.deviceID != device.id {
             // A reconnected device may reuse its UID with a different object ID.
             // The caller first moves/removes its old sources; never overwrite them.
@@ -95,6 +143,10 @@ final class SharedOutputRenderer {
     }
 
     func isReady(_ token: SourceToken) -> Bool {
+        if token.isAirPlay {
+            guard let output = airPlayOutputs[token.uid], case .ready = output.state else { return false }
+            return true
+        }
         guard let graph = graphs[token.uid] else { return false }
         return graph.failure == nil && graph.engine.isRunning
     }
@@ -103,7 +155,9 @@ final class SharedOutputRenderer {
     /// change stops the HAL cycle, and starting again keeps the tap, the
     /// aggregate and every source node attached — no player sees device loss.
     func ensureRunning(token: SourceToken) {
-        guard var graph = graphs[token.uid] else { return }
+        // AirPlay failures release muting taps; only explicit recovery can
+        // reopen the remote session. Never start a reconnect loop here.
+        guard !token.isAirPlay, let graph = graphs[token.uid] else { return }
         guard !graph.engine.isRunning else { return }
         graph.failure = nil
         do { try graph.engine.start() } catch {
@@ -113,6 +167,10 @@ final class SharedOutputRenderer {
     }
 
     func removeSource(_ token: SourceToken) {
+        if token.isAirPlay {
+            airPlayOutputs[token.uid]?.bus.remove(id: token.id)
+            return
+        }
         guard let graph = graphs[token.uid] else { return }
         graph.bus.remove(id: token.id)
         // Keep an idle graph running for subsequent app playback. Explicit
@@ -120,6 +178,12 @@ final class SharedOutputRenderer {
     }
 
     func rebindIfNeeded(devices: [AudioOutputDevice]) {
+        for (uid, output) in Array(airPlayOutputs) {
+            if !devices.contains(where: { $0.uid == uid && $0.id == output.deviceID }) {
+                output.stop()
+                airPlayOutputs.removeValue(forKey: uid)
+            }
+        }
         for (uid, graph) in Array(graphs) {
             let present = devices.contains { $0.uid == uid && $0.id == graph.deviceID }
             if !present { graph.failure = "Audio output disconnected" }
@@ -131,6 +195,8 @@ final class SharedOutputRenderer {
     }
 
     func shutdown() {
+        for output in airPlayOutputs.values { output.stop() }
+        airPlayOutputs.removeAll()
         for graph in graphs.values { graph.engine.stop(); graph.bus.removeAll() }
         graphs.removeAll()
     }
