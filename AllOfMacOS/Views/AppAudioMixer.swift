@@ -177,7 +177,7 @@ private struct AppAudioMixerView: View {
 /// Master surface: the current output device, its volume and mute — the
 /// SoundSource header row. Uses AudioOutputService, which exists on every
 /// supported macOS version (no 14.2 gate).
-private struct MixerOutputSection: View {
+struct MixerOutputSection: View {
     @State private var devices: [AudioOutputDevice] = []
     @State private var volume: Double = 50
     @State private var muted = false
@@ -239,7 +239,7 @@ private struct MixerOutputSection: View {
 }
 
 /// SoundSource-style 10-band EQ: vertical sliders, presets, on/off.
-private struct EQSection: View {
+struct EQSection: View {
     @ObservedObject var service: AppAudioMixerService
 
     var body: some View {
@@ -282,7 +282,7 @@ private struct EQSection: View {
     }
 }
 
-private struct AppAudioRow: View {
+struct AppAudioRow: View {
     let app: AppAudioState
     let onGain: (Float) -> Void
     let onMute: () -> Void

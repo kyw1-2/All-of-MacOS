@@ -114,6 +114,7 @@ struct AOMSidebar: View {
         case .gestures where !appState.globalEnabled: return ("Paused", AOMTheme.warning)
         case .capture where recording.isRecording: return (recording.isPaused ? "Paused" : "REC", AOMTheme.danger)
         case .clipboard where clipboard.paused: return ("Paused", AOMTheme.warning)
+        case .audio where AppAudioMixerService.shared.eqEnabled: return ("EQ", AOMTheme.positive)
         default: return nil
         }
     }

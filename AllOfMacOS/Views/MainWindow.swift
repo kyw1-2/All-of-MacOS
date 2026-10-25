@@ -25,6 +25,7 @@ struct MainWindow: View {
                 case .snapping: ModernWindowSnappingView()
                 case .capture: CaptureStudioView()
                 case .clipboard: ClipboardStudioView()
+                case .audio: AudioWorkspaceView()
                 case .insights: StatisticsView()
                 }
             }

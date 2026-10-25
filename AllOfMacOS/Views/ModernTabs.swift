@@ -8,6 +8,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     case snapping = "Window Snapping"
     case capture = "Capture & Studio"
     case clipboard = "Clipboard Memory"
+    case audio = "Audio"
     case insights = "Statistics"
 
     var id: String { rawValue }
@@ -19,6 +20,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .snapping: return "Window Tiling"
         case .capture: return "Capture"
         case .clipboard: return "Clipboard"
+        case .audio: return "Audio"
         case .insights: return "Insights"
         }
     }
@@ -30,6 +32,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .snapping: return "Screen split, tile zones & display layouts"
         case .capture: return "Screenshots, recording, annotation & OCR"
         case .clipboard: return "Encrypted pasteboard history, pinboards & search"
+        case .audio: return "Per-app volume, the equalizer & output devices"
         case .insights: return "Gesture frequency and automation analytics"
         }
     }
@@ -41,6 +44,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .snapping: return "rectangle.split.2x2.fill"
         case .capture: return "camera.viewfinder"
         case .clipboard: return "doc.on.clipboard.fill"
+        case .audio: return "waveform"
         case .insights: return "chart.xyaxis.line"
         }
     }
@@ -53,6 +57,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .snapping: return "rectangle.split.2x2"
         case .capture: return "camera.viewfinder"
         case .clipboard: return "doc.on.clipboard"
+        case .audio: return "waveform"
         case .insights: return "chart.bar.xaxis"
         }
     }
@@ -65,6 +70,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .snapping: return .indigo
         case .capture: return .orange
         case .clipboard: return .purple
+        case .audio: return .pink
         case .insights: return .green
         }
     }

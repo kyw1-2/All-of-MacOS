@@ -495,9 +495,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.sectionHeader(title: "System"))
         let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
         menu.addItem(awakeMenuItem)
-        menu.addItem(entry("App Audio Mixer", "slider.horizontal.3", #selector(showAudioMixer)))
-        menu.addItem(entry("Mute Front App", "speaker.minus", #selector(muteFrontAppAudioAction)))
-        menu.addItem(MainActor.assumeIsolated { appAudioMenu() })
         menu.addItem(.separator())
 
         // Automation — the engine, snapping, pausing and what the app in front
@@ -655,62 +652,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func keepAwakeOff() { MainActor.assumeIsolated { KeepAwakeService.shared.stop() } }
     @objc func showAudioMixer() { MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() } }
-
-    /// App Audio ▸ EQ on/off, presets and the output devices — the menu-bar
-    /// control surface SoundSource users expect.
-    @MainActor private func appAudioMenu() -> NSMenuItem {
-        let item = NSMenuItem(title: "App Audio", action: nil, keyEquivalent: "")
-        item.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
-        let submenu = NSMenu()
-        let mixer = AppAudioMixerService.shared
-        let eq = NSMenuItem(title: "Equalizer", action: #selector(toggleAudioEQ), keyEquivalent: "")
-        eq.target = self
-        eq.state = mixer.eqEnabled ? .on : .off
-        submenu.addItem(eq)
-        let presets = NSMenuItem(title: "EQ Preset", action: nil, keyEquivalent: "")
-        let presetMenu = NSMenu()
-        for name in AudioEQ.presets.keys.sorted() {
-            let entry = NSMenuItem(title: name, action: #selector(chooseAudioEQPreset(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.state = mixer.eqPreset == name ? .on : .off
-            entry.representedObject = name
-            presetMenu.addItem(entry)
-        }
-        presets.submenu = presetMenu
-        submenu.addItem(presets)
-        submenu.addItem(.separator())
-        let outputs = NSMenuItem(title: "Output Device", action: nil, keyEquivalent: "")
-        let outputMenu = NSMenu()
-        let devices = AudioOutputService.devices()
-        let currentUID = AudioOutputService.currentDeviceID().map { String($0) }
-        for device in devices {
-            let entry = NSMenuItem(title: device.name, action: #selector(chooseAudioOutput(_:)), keyEquivalent: "")
-            entry.target = self
-            entry.state = device.uid == currentUID ? .on : .off
-            entry.representedObject = device.uid
-            outputMenu.addItem(entry)
-        }
-        outputs.submenu = outputMenu
-        submenu.addItem(outputs)
-        item.submenu = submenu
-        return item
-    }
-
-    @objc func toggleAudioEQ() {
-        MainActor.assumeIsolated { AppAudioMixerService.shared.eqEnabled.toggle() }
-    }
-
-    @objc func chooseAudioEQPreset(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        MainActor.assumeIsolated { AppAudioMixerService.shared.eqPreset = name }
-    }
-
-    @objc func chooseAudioOutput(_ sender: NSMenuItem) {
-        guard let uid = sender.representedObject as? String,
-              let device = AudioOutputService.devices().first(where: { $0.uid == uid }) else { return }
-        AudioOutputService.shared.select(name: device.name, uid: device.uid, completion: { _ in })
-    }
-    @objc func muteFrontAppAudioAction() { MainActor.assumeIsolated { AppAudioMixerService.shared.toggleMuteFront() } }
 
     // MARK: - Pause AOM (TriggerSuppression)
 
