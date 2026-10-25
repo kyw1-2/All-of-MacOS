@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import AudioToolbox
+import AVFoundation
 import Darwin
 
 /// SoundSource-lite per-app audio control on macOS 14.2+ Core Audio Process
@@ -27,6 +28,7 @@ struct AppAudioState: Identifiable, Equatable {
     var magicBoost: Bool = false
     var error: String? = nil
     var peakLevel: Float = 0
+    var processingStatus: String = "Ready"
     var id: Int32 { pid }
 
     static func == (lhs: AppAudioState, rhs: AppAudioState) -> Bool {
@@ -37,7 +39,7 @@ struct AppAudioState: Identifiable, Equatable {
         lhs.muted == rhs.muted &&
         lhs.tapped == rhs.tapped &&
         lhs.outputDeviceUID == rhs.outputDeviceUID &&
-        lhs.magicBoost == rhs.magicBoost && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel
+        lhs.magicBoost == rhs.magicBoost && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
     }
 }
 
@@ -59,6 +61,11 @@ final class AppAudioEngine {
         var processIDs: [AudioObjectID] = []
         var outputUID = ""
         var sampleRate: Double = 48000
+        var outputSampleRate: Double = 48000
+        var playback: AVAudioEngine?
+        var transport: AppAudioTransport?
+        let createdAt = ProcessInfo.processInfo.systemUptime
+
         init(pid: pid_t, bundleID: String, tapID: AudioObjectID, aggregateID: AudioObjectID,
              procID: AudioDeviceIOProcID?, box: Unmanaged<MixerBox>, gain: Float, muted: Bool) {
             self.pid = pid; self.bundleID = bundleID; self.tapID = tapID
@@ -113,11 +120,12 @@ final class AppAudioEngine {
             }
             let processIDs = Self.processObjectIDs(for: app.pid).sorted()
             let playing = processIDs.contains { Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1 }
-            guard playing else { stop(pid: app.pid); continue }
+            guard playing || sessions[app.pid] != nil else { continue }
             if let session = sessions[app.pid],
                session.bundleID != app.bundleID || session.processIDs != processIDs ||
                session.outputUID != Self.targetOutputUID(for: app.bundleID) ||
-               session.sampleRate != Self.outputSampleRate(uid: session.outputUID) {
+               session.outputSampleRate != Self.outputSampleRate(uid: session.outputUID) ||
+               session.playback?.isRunning != true {
                 stop(pid: app.pid)
             }
             if let session = sessions[app.pid] {
@@ -154,6 +162,27 @@ final class AppAudioEngine {
     }
 
     func level(pid: pid_t) -> Float { sessions[pid]?.box.takeUnretainedValue().peakLevel ?? 0 }
+
+    func status(pid: pid_t) -> String {
+        if let error = errors[pid] { return error }
+        guard let session = sessions[pid], let transport = session.transport else {
+            return pid <= 0 ? "App closed — settings saved" : "Waiting for app audio"
+        }
+        let activity = transport.activity
+        if activity.captured == 0 {
+            return ProcessInfo.processInfo.systemUptime - session.createdAt > 3
+                ? "No audio received — check audio recording permission" : "Connecting audio…"
+        }
+        if activity.rendered == 0 { return "Waiting for output device…" }
+        return session.muted ? "Muted" : "Processing audio"
+    }
+
+    func retry(pid: pid_t) {
+        stop(pid: pid)
+        errors.removeValue(forKey: pid)
+        retryAfter.removeValue(forKey: pid)
+        syncActiveProcesses()
+    }
 
     private func needsProcessing(_ bundleID: String) -> Bool {
         let d = UserDefaults.standard
@@ -301,22 +330,23 @@ final class AppAudioEngine {
                           Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { continue }
 
                     let app = Self.owner(of: object, pid: rawPid) ?? NSRunningApplication(processIdentifier: rawPid)
-                    let pid = app?.processIdentifier ?? rawPid
+                    guard let app, app.activationPolicy == .regular else { continue }
+                    let pid = app.processIdentifier
                     guard pid != ProcessInfo.processInfo.processIdentifier, !seenPIDs.contains(pid) else { continue }
                     seenPIDs.insert(pid)
 
-                    let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
+                    let bundleID = app.bundleIdentifier ?? "pid-\(pid)"
                     results.append(AppState(
                         pid: pid,
-                        name: app?.localizedName ?? "Process \(pid)",
+                        name: app.localizedName ?? "Process \(pid)",
                         bundleID: bundleID,
-                        icon: app?.icon,
+                        icon: app.icon,
                         gain: sessions[pid]?.gain ?? Self.storedGain(bundleID: bundleID),
                         muted: sessions[pid]?.muted ?? UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"),
                         tapped: sessions[pid] != nil,
                         outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
                         magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
-                        error: errors[pid], peakLevel: level(pid: pid)
+                        error: errors[pid], peakLevel: level(pid: pid), processingStatus: status(pid: pid)
                     ))
                 }
             }
@@ -351,7 +381,7 @@ final class AppAudioEngine {
                 tapped: sessions[pid] != nil,
                 outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
                 magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
-                        error: errors[pid], peakLevel: level(pid: pid)
+                        error: errors[pid], peakLevel: level(pid: pid), processingStatus: status(pid: pid)
             ))
         }
 
@@ -431,30 +461,6 @@ final class AppAudioEngine {
               let rate = property(device.id, selector: kAudioDevicePropertyNominalSampleRate, as: Double.self),
               rate.isFinite, rate > 0 else { return 48000 }
         return rate
-    }
-
-    private static func outputChannels(aggregateID: AudioObjectID, uid: String) -> (Int, Int)? {
-        var address = AudioOutputService.address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(aggregateID, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
-        var streams = [AudioStreamID](repeating: 0, count: Int(size) / MemoryLayout<AudioStreamID>.size)
-        guard AudioObjectGetPropertyData(aggregateID, &address, 0, nil, &size, &streams) == noErr else { return nil }
-        var channels = 0
-        for stream in streams {
-            guard let format = property(stream, selector: kAudioStreamPropertyVirtualFormat, as: AudioStreamBasicDescription.self),
-                  format.mFormatID == kAudioFormatLinearPCM,
-                  format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32 else { return nil }
-            channels += Int(format.mChannelsPerFrame)
-        }
-        guard channels > 0 else { return nil }
-        var stereo: [UInt32] = [1, UInt32(min(2, channels))]
-        if let device = AudioOutputService.devices().first(where: { $0.uid == uid }) {
-            var property = AudioOutputService.address(kAudioDevicePropertyPreferredChannelsForStereo, scope: kAudioDevicePropertyScopeOutput)
-            var bytes = UInt32(2 * MemoryLayout<UInt32>.size)
-            _ = AudioObjectGetPropertyData(device.id, &property, 0, nil, &bytes, &stereo)
-        }
-        guard stereo.allSatisfy({ $0 > 0 && Int($0) <= channels }) else { return (0, min(1, channels - 1)) }
-        return (Int(stereo[0]) - 1, Int(stereo[1]) - 1)
     }
 
     // MARK: - Gain / mute / lifecycle
@@ -542,100 +548,99 @@ final class AppAudioEngine {
             return nil
         }
 
-        // 5. Aggregate device wrapping BOTH Tap (via TapListKey) and Physical Output (via SubDeviceListKey)
+        // Capture-only aggregate: no microphone, hardware output streams,
+        // or assumptions about the tap being the last buffer in a mixed device.
         let aggregateDict: [String: Any] = [
-            kAudioAggregateDeviceNameKey as String: "AOM App Audio \(pid)",
-            kAudioAggregateDeviceUIDKey as String: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
-            kAudioAggregateDeviceIsPrivateKey as String: true,
-            kAudioAggregateDeviceTapAutoStartKey as String: false,
-            kAudioAggregateDeviceTapListKey as String: [
-                [
-                    kAudioSubTapUIDKey as String: tapUID,
-                    kAudioSubTapDriftCompensationKey as String: true
-                ]
-            ],
-            kAudioAggregateDeviceSubDeviceListKey as String: [
-                [
-                    kAudioSubDeviceUIDKey as String: outUID,
-                    kAudioSubDeviceDriftCompensationKey as String: true
-                ]
-            ],
-            kAudioAggregateDeviceMainSubDeviceKey as String: outUID
+            kAudioAggregateDeviceNameKey: "AOM App Audio \(pid)",
+            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: tapUID,
+                                              kAudioSubTapDriftCompensationKey: true]]
         ]
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
-        guard AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID) == noErr,
-              aggregateID != kAudioObjectUnknown else {
+        let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID)
+        guard aggregateStatus == noErr, aggregateID != kAudioObjectUnknown else {
+            errors[pid] = "Audio capture device could not be created (\(aggregateStatus))."
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
-
-        // The aggregate also contains the output hardware's input streams.
-        // Read only the appended tap buffers, never a microphone input.
         guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
               format.mFormatID == kAudioFormatLinearPCM,
-              format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32 else {
-            errors[pid] = "This audio stream format cannot be processed."
+              format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32,
+              format.mSampleRate.isFinite, format.mSampleRate > 0,
+              let sourceFormat = AVAudioFormat(standardFormatWithSampleRate: format.mSampleRate, channels: 2),
+              let device = AudioOutputService.devices().first(where: { $0.uid == outUID }) else {
+            errors[pid] = "The app audio format or selected output is unavailable."
             AudioHardwareDestroyAggregateDevice(aggregateID)
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
-        let sampleRate = Self.outputSampleRate(uid: outUID)
-        var rate = sampleRate
-        var rateAddress = AudioOutputService.address(kAudioDevicePropertyNominalSampleRate)
-        _ = AudioObjectSetPropertyData(aggregateID, &rateAddress, 0, nil, UInt32(MemoryLayout<Double>.size), &rate)
-        let tapBuffers = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? Int(format.mChannelsPerFrame) : 1
-        var configAddress = AudioOutputService.address(kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput)
-        var configSize: UInt32 = 0
-        var inputOffset: Int?
-        if AudioObjectGetPropertyDataSize(aggregateID, &configAddress, 0, nil, &configSize) == noErr,
-           configSize >= MemoryLayout<AudioBufferList>.size {
-            let storage = UnsafeMutableRawPointer.allocate(byteCount: Int(configSize), alignment: MemoryLayout<AudioBufferList>.alignment)
-            defer { storage.deallocate() }
-            if AudioObjectGetPropertyData(aggregateID, &configAddress, 0, nil, &configSize, storage) == noErr {
-                let count = Int(storage.assumingMemoryBound(to: AudioBufferList.self).pointee.mNumberBuffers)
-                if count >= tapBuffers { inputOffset = count - tapBuffers }
-            }
-        }
-        guard let inputOffset, let outputChannels = Self.outputChannels(aggregateID: aggregateID, uid: outUID) else {
-            errors[pid] = "The device did not expose a supported app audio input/output format."
-            AudioHardwareDestroyAggregateDevice(aggregateID)
-            AudioHardwareDestroyProcessTap(tapID)
-            return nil
-        }
-        let magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
-        let mixer = MixerBox(gain: gain, muted: muted, magicBoost: magicBoost,
+        let sampleRate = format.mSampleRate
+        let mixer = MixerBox(gain: gain, muted: muted,
+                             magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: sampleRate))
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: sampleRate), master: Self.masterEQ(sampleRate: sampleRate))
-        mixer.inputBufferOffset = inputOffset
-        mixer.leftOutputChannel = outputChannels.0
-        mixer.rightOutputChannel = outputChannels.1
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
-        let box = Unmanaged.passRetained(mixer)
-        var procID: AudioDeviceIOProcID?
-        let status = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, input, _, output, _ in
-            Mixer.mix(input: input, output: output, box: box.takeUnretainedValue())
+        let transport = AppAudioTransport(sampleRate: sampleRate)
+        let playback = AVAudioEngine()
+        let output = playback.outputNode
+        guard let unit = output.audioUnit else {
+            errors[pid] = "The selected output has no playback unit."
+            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
+            return nil
         }
-        guard status == noErr, let procID else {
-            errors[pid] = "Cannot start audio processing (\(status)). Check Screen & System Audio Recording permission."
-            box.release()
-            AudioHardwareDestroyAggregateDevice(aggregateID)
-            AudioHardwareDestroyProcessTap(tapID)
+        var deviceID = device.id
+        let routeStatus = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                               kAudioUnitScope_Global, 0, &deviceID,
+                                               UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard routeStatus == noErr, output.outputFormat(forBus: 0).channelCount > 0,
+              output.outputFormat(forBus: 0).sampleRate > 0 else {
+            errors[pid] = "Cannot play through \(device.name) (\(routeStatus)). Choose another output or reconnect it."
+            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+        let source = AVAudioSourceNode(format: sourceFormat) { _, _, frameCount, buffers in
+            transport.render(frames: Int(frameCount), output: buffers, mixer: mixer)
+            return noErr
+        }
+        playback.attach(source)
+        playback.connect(source, to: playback.mainMixerNode, format: sourceFormat)
+        // Leave the mixer-to-output connection negotiated by AVAudioEngine;
+        // it performs channel/sample-rate conversion for the selected device.
+        playback.prepare()
+        do { try playback.start() } catch {
+            errors[pid] = "Playback failed: \(error.localizedDescription)"
+            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+        var procID: AudioDeviceIOProcID?
+        let procStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, input, _, _, _ in
+            transport.capture(input)
+        }
+        guard procStatus == noErr, let procID else {
+            errors[pid] = "Audio capture could not start (\(procStatus)). Check Screen & System Audio Recording permission."
+            playback.stop()
+            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
         let startStatus = AudioDeviceStart(aggregateID, procID)
         guard startStatus == noErr else {
-            errors[pid] = "Audio output could not start (\(startStatus))."
+            errors[pid] = "Audio capture was refused (\(startStatus)). Check Screen & System Audio Recording permission."
+            playback.stop()
             AudioDeviceDestroyIOProcID(aggregateID, procID)
-            box.release()
-            AudioHardwareDestroyAggregateDevice(aggregateID)
-            AudioHardwareDestroyProcessTap(tapID)
+            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
+        let box = Unmanaged.passRetained(mixer)
         let session = Session(pid: pid, bundleID: bundleID, tapID: tapID, aggregateID: aggregateID,
                               procID: procID, box: box, gain: gain, muted: muted)
         session.processIDs = processObjIDs.sorted()
         session.outputUID = outUID
         session.sampleRate = sampleRate
+        session.outputSampleRate = Self.outputSampleRate(uid: outUID)
+        session.playback = playback
+        session.transport = transport
         return session
     }
 
@@ -644,6 +649,8 @@ final class AppAudioEngine {
             AudioDeviceStop(session.aggregateID, procID)
             AudioDeviceDestroyIOProcID(session.aggregateID, procID)
         }
+        session.playback?.stop()
+        session.playback = nil
         session.box.release()
         AudioHardwareDestroyAggregateDevice(session.aggregateID)
         AudioHardwareDestroyProcessTap(session.tapID)

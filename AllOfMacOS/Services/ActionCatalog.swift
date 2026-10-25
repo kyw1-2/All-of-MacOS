@@ -141,6 +141,10 @@ extension ActionType {
         // System
         case .sleepComputer: return "Puts the Mac to sleep."
         case .toggleKeepAwake: return "Keeps the Mac awake until it is toggled off or the optional minutes run out."
+        case .setAppVolume: return "Sets one app’s volume from 0–200%, preserving its mute setting."
+        case .toggleAppMute: return "Mutes or unmutes the selected app, or the frontmost app."
+        case .setAppAudioOutput: return "Routes one application to a selected audio output."
+        case .toggleMuteAllApps: return "Mutes all applications; toggling again restores their previous mute states."
         case .muteFrontAppAudio: return "Toggles a per-app mute on the frontmost app's audio (macOS 14.2+)."
         case .showAudioMixer: return "Opens the per-app audio mixer panel (macOS 14.2+)."
         case .lockScreen: return "Locks the screen."
@@ -286,6 +290,7 @@ extension ActionType {
     var defaultParameters: ActionParameters {
         var p = ActionParameters()
         switch self {
+        case .setAppVolume: p.levelPercent = 100
         case .setVolume: p.levelPercent = 50
         case .setBrightness: p.levelPercent = 70
         case .moveResizeWindow:
@@ -340,6 +345,10 @@ enum ActionParameterValidation {
         }
         func finite(_ values: [Double?]) -> Bool { values.compactMap { $0 }.allSatisfy { $0.isFinite } }
         switch action.actionType {
+        case .toggleKeepAwake:
+            if let minutes = p.keepAwakeMinutes, !minutes.isFinite || !(1...1440).contains(minutes) { return "Duration must be 1–1440 minutes." }
+        case .setAppVolume:
+            if let level = p.levelPercent, !level.isFinite || !(0...200).contains(level) { return "App volume must be 0–200%." }
         case .matchScreenImage:
             if TriggerSystemPaths.normalized(p.imageTemplatePath ?? "") == nil { return "Choose an absolute local template image path." }
             if let threshold = p.imageMatchThreshold, !threshold.isFinite || !(0.8...1).contains(threshold) { return "Image similarity must be 0.8–1.0." }

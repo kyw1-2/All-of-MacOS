@@ -30,6 +30,8 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     private var refreshTimer: Timer?
     private var audioObserver: NSObjectProtocol?
     @Published private(set) var lastError: String?
+    @Published private(set) var competingMixer: NSRunningApplication?
+    private var muteSnapshot: [String: Bool]?
 
     var isSupported: Bool {
         if #available(macOS 14.2, *) { return true }
@@ -61,6 +63,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     private func reloadApps() {
         guard #available(macOS 14.2, *) else { return }
         apps = AppAudioEngine.shared.runningAudioApps()
+        competingMixer = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.rogueamoeba.soundsource" }
         lastError = apps.compactMap(\.error).first
     }
 
@@ -69,6 +72,72 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         var updated = apps
         for index in updated.indices { updated[index].peakLevel = AppAudioEngine.shared.level(pid: updated[index].pid) }
         if updated != apps { apps = updated }
+    }
+
+    func reconnect(pid: pid_t) {
+        guard #available(macOS 14.2, *), pid > 0 else { return }
+        AppAudioEngine.shared.retry(pid: pid)
+        reloadApps()
+    }
+    func reconnectAll() {
+        guard #available(macOS 14.2, *) else { return }
+        for app in apps where app.pid > 0 { AppAudioEngine.shared.retry(pid: app.pid) }
+        reloadApps()
+    }
+
+    func quitCompetingMixer() {
+        guard let app = competingMixer else { return }
+        guard app.terminate() else { lastError = "SoundSource could not quit. Turn off its audio processing before reconnecting AOM."; return }
+        Task { @MainActor in
+            for _ in 0..<20 {
+                if app.isTerminated { reconnectAll(); return }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            lastError = "SoundSource is still running. Finish quitting it, then reconnect audio."
+        }
+    }
+
+    func perform(_ action: TriggerAction) -> Bool {
+        guard #available(macOS 14.2, *) else { return false }
+        if action.actionType == .toggleMuteAllApps {
+            if let saved = muteSnapshot {
+                for (bundle, muted) in saved { UserDefaults.standard.set(muted, forKey: "AOMAudioMute_\(bundle)") }
+                muteSnapshot = nil
+            } else {
+                refresh()
+                muteSnapshot = Dictionary(apps.filter { !$0.bundleID.isEmpty }.map { ($0.bundleID, $0.muted) }, uniquingKeysWith: { first, _ in first })
+                for bundle in muteSnapshot?.keys ?? Dictionary<String, Bool>().keys {
+                    UserDefaults.standard.set(true, forKey: "AOMAudioMute_\(bundle)")
+                }
+            }
+            AppAudioEngine.shared.stopAll()
+            refresh()
+            return lastError == nil
+        }
+        let specified = action.parameters.targetApplicationBundleID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let bundleID = specified.isEmpty ? NSWorkspace.shared.frontmostApplication?.bundleIdentifier : specified,
+              !bundleID.isEmpty, bundleID != Bundle.main.bundleIdentifier else { return false }
+        let engine = AppAudioEngine.shared
+        engine.addCustomApp(bundleID: bundleID)
+        let defaults = UserDefaults.standard
+        let gainKey = "AOMAudioGain_\(bundleID)", muteKey = "AOMAudioMute_\(bundleID)"
+        switch action.actionType {
+        case .setAppVolume:
+            let value = action.parameters.levelPercent ?? 100
+            guard value.isFinite, (0...200).contains(value) else { return false }
+            defaults.set(value / 100, forKey: gainKey)
+        case .setAppAudioOutput:
+            let uid = action.parameters.audioOutputUID ?? ""
+            engine.setRoute(uid: uid.isEmpty ? nil : uid, bundleID: bundleID)
+        default: defaults.set(!defaults.bool(forKey: muteKey), forKey: muteKey)
+        }
+        for app in engine.runningAudioApps() where app.bundleID == bundleID && app.pid > 0 {
+            if !engine.setGain(AppAudioEngine.storedGain(bundleID: bundleID), muted: defaults.bool(forKey: muteKey), pid: app.pid) {
+                reloadApps(); return false
+            }
+        }
+        refresh()
+        return !apps.contains { $0.bundleID == bundleID && $0.error != nil }
     }
 
     func start() { refresh() }
@@ -123,9 +192,10 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     func showPanel() {
         guard panel == nil else { panel?.orderFront(nil); return }
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 700),
                             styleMask: [.titled, .nonactivatingPanel, .closable, .resizable],
                             backing: .buffered, defer: false)
+        panel.minSize = NSSize(width: 520, height: 620)
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.titleVisibility = .hidden
@@ -135,7 +205,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: AppAudioMixerView(service: self))
         if let screen = NSScreen.main {
-            let size = CGSize(width: 380, height: 420)
+            let size = CGSize(width: 640, height: 700)
             let frame = NSRect(origin: screen.visibleFrame.origin, size: size)
                 .offsetBy(dx: screen.visibleFrame.width - size.width - 24,
                           dy: (screen.visibleFrame.height - size.height) / 2)
@@ -349,23 +419,10 @@ struct EQSection: View {
                 }
                 .labelsHidden().controlSize(.small).frame(maxWidth: 130)
             }
-            HStack(alignment: .bottom, spacing: 5) {
-                ForEach(0..<10, id: \.self) { band in
-                    VStack(spacing: 2) {
-                        Slider(value: Binding(
-                            get: { Double(service.eqGains[band]) },
-                            set: { service.setBand(band, gain: Float($0)) }), in: -12...12, step: 1)
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: 18, height: 90)
-                            .controlSize(.mini)
-                            .disabled(!service.eqEnabled)
-                        Text(Self.label(band)).font(.system(size: 8, weight: .medium).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            AudioEqualizerControls(gains: service.eqGains, enabled: service.eqEnabled) {
+                service.setBand($0, gain: $1)
             }
-            .frame(height: 110)
-            .opacity(service.eqEnabled ? 1 : 0.4)
+
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }

@@ -89,6 +89,25 @@ struct AudioWorkspaceView: View {
                         .help("Refresh applications")
                     }
 
+                    if service.competingMixer != nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("SoundSource is also processing audio", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline).foregroundStyle(.orange)
+                            Text("Two per-app audio mixers can compete for the same streams. Use one mixer for volume and routing.")
+                                .font(.callout)
+                            Button("Quit SoundSource & Reconnect AOM") { service.quitCompetingMixer() }
+                        }
+                        .padding().frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    HStack {
+                        Button("Audio Recording Permission…") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+                        }
+                        Button("Reconnect Audio") { service.reconnectAll() }
+                        Spacer()
+                        Text("Audio controls require Screen & System Audio Recording access.").font(.caption).foregroundStyle(.secondary)
+                    }
                     if let error = service.lastError {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .font(AOMType.caption).foregroundStyle(.red)
@@ -529,7 +548,7 @@ private struct SoundSourceAppCard: View {
                             .frame(maxWidth: 100)
                             .accessibilityLabel("Application audio level")
                     }
-                    Text(app.error ?? (app.tapped ? "Processing audio" : (app.pid <= 0 ? "App is closed — settings saved" : "Ready — applies when playback starts")))
+                    Text(app.error ?? app.processingStatus)
                         .font(.system(size: 10))
                         .foregroundStyle(AOMTheme.textTertiary)
                         .lineLimit(1)
@@ -589,6 +608,9 @@ private struct SoundSourceAppCard: View {
                 }
                 .buttonStyle(.plain)
                 .help("Toggle 10-Band EQ for this app")
+                Button("Reconnect") { AppAudioMixerService.shared.reconnect(pid: app.pid) }
+                    .buttonStyle(.borderless).disabled(app.pid <= 0)
+                    .help("Reconnect this app’s audio capture and output")
 
                 // Mute Button
                 Button {
@@ -659,8 +681,8 @@ private struct InlineAppEQView: View {
             HStack {
                 Toggle("EQ", isOn: Binding(get: { service.appEQEnabled(bundleID) },
                                             set: { service.setAppEQEnabled($0, bundleID: bundleID) }))
-                    .toggleStyle(.switch).controlSize(.mini)
-                Text("Equalizer Preset:").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
+                    .toggleStyle(.switch).controlSize(.regular)
+                Text("Equalizer Preset:").font(.system(size: 13, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
                 Picker("", selection: Binding(get: { service.appEQPreset(bundleID) }, set: { service.setAppEQPreset($0, bundleID: bundleID) })) {
                     ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
                     if service.appEQPreset(bundleID) == "Custom" { Text("Custom").tag("Custom") }
@@ -672,23 +694,10 @@ private struct InlineAppEQView: View {
                     .buttonStyle(.borderless)
             }
 
-            HStack(spacing: 8) {
-                ForEach(0..<10, id: \.self) { band in
-                    VStack(spacing: 2) {
-                        Slider(value: Binding(
-                            get: { Double(service.appEQGains(bundleID)[band]) },
-                            set: { service.setAppBand(band, gain: Float($0), bundleID: bundleID) }
-                        ), in: -12...12, step: 1)
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 14, height: 70)
-                        .controlSize(.mini)
-                        Text(EQSection.label(band))
-                            .font(.system(size: 8, weight: .medium).monospacedDigit())
-                            .foregroundStyle(AOMTheme.textTertiary)
-                    }
-                }
+            AudioEqualizerControls(gains: service.appEQGains(bundleID), enabled: service.appEQEnabled(bundleID)) {
+                service.setAppBand($0, gain: $1, bundleID: bundleID)
             }
-            .frame(height: 85)
+
         }
     }
 }
@@ -726,31 +735,10 @@ private struct MasterStudioEQCard: View {
 
             Divider()
 
-            HStack(alignment: .bottom, spacing: 14) {
-                ForEach(0..<10, id: \.self) { band in
-                    VStack(spacing: 4) {
-                        Text(String(format: "%+.0fdB", service.eqGains[band]))
-                            .font(.system(size: 8, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(service.eqGains[band] != 0 ? Color.accentColor : AOMTheme.textTertiary)
-
-                        Slider(value: Binding(
-                            get: { Double(service.eqGains[band]) },
-                            set: { service.setBand(band, gain: Float($0)) }
-                        ), in: -12...12, step: 1)
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 22, height: 110)
-                        .controlSize(.small)
-                        .disabled(!service.eqEnabled)
-
-                        Text(EQSection.label(band))
-                            .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(AOMTheme.textSecondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
+            AudioEqualizerControls(gains: service.eqGains, enabled: service.eqEnabled) {
+                service.setBand($0, gain: $1)
             }
-            .frame(height: 150)
-            .opacity(service.eqEnabled ? 1 : 0.4)
+
         }
         .padding(16)
         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))

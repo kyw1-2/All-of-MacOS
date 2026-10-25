@@ -387,6 +387,18 @@ class ActionExecutor {
                                                          isCancelled: isCancelled, completion: completion) }
             return
         }
+        if action.actionType == .showWindowSwitcher {
+            onMain { WindowSwitcherController.shared.show(); completion(true) }
+            return
+        }
+        if [.setAppVolume, .toggleAppMute, .setAppAudioOutput, .toggleMuteAllApps, .muteFrontAppAudio].contains(action.actionType) {
+            onMain { completion(AppAudioMixerService.shared.perform(action)) }
+            return
+        }
+        if action.actionType == .muteVolume {
+            onMain { AudioOutputService.shared.toggleOutputMute(completion: completion) }
+            return
+        }
         if action.actionType.category == .windowManagement {
             WindowManager.shared.execute(action.actionType, target: windowTarget,
                 parameters: action.parameters, completion: completion)
@@ -515,13 +527,15 @@ class ActionExecutor {
         case .toggleKeepAwake:
             // Imported JSON/MCP values can be fractional or absurd; clamp to
             // the same 1...1440 range the form offers.
-            let minutes = action.parameters.keepAwakeMinutes.map { min(max(Int($0), 1), 1440) }
+            let minutes = action.parameters.keepAwakeMinutes.flatMap { $0.isFinite ? Int(min(max($0, 1), 1440)) : nil }
             let keepDisplay = action.parameters.keepDisplayOn ?? false
             MainActor.assumeIsolated {
                 KeepAwakeService.shared.toggle(minutes: minutes, keepDisplay: keepDisplay)
             }
         case .showWindowSwitcher:
             MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
+        case .setAppVolume, .toggleAppMute, .setAppAudioOutput, .toggleMuteAllApps:
+            break // Handled above with completion reporting.
         case .muteFrontAppAudio:
             MainActor.assumeIsolated {
                 AppAudioMixerService.shared.toggleMuteFront()

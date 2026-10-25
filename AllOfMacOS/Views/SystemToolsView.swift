@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 /// Sidebar-only (the menu bar stays lean); every tool is one click and
 /// collects its own inputs via panels.
 struct SystemToolsView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var showGroups = false
+    @State private var showActionLibrary = false
     private let service = MacMagicSystemToolService.shared
     @State private var toast: String?
 
@@ -20,6 +23,12 @@ struct SystemToolsView: View {
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: AOMSpace.l) {
+                HStack(spacing: 12) {
+                    Button("Floating Menus & Widgets…") { FloatingMenuController.shared.edit() }
+                    Button("Conditional Activation Groups…") { showGroups = true }
+                    Button(showActionLibrary ? "Hide All Actions" : "Browse All Actions") { showActionLibrary.toggle() }
+                }
+                if showActionLibrary { ActionLibraryView().environmentObject(appState) }
                 ForEach(groups, id: \.name) { group in
                     VStack(alignment: .leading, spacing: AOMSpace.s) {
                         Text(group.name.uppercased())
@@ -38,6 +47,7 @@ struct SystemToolsView: View {
         }
         .background(AOMTheme.workspace)
         .aomToast(toast)
+        .sheet(isPresented: $showGroups) { ActivationGroupsEditor().environmentObject(appState) }
         .onChange(of: toast) { _, message in
             guard message != nil else { return }
             Task { @MainActor in
@@ -64,15 +74,15 @@ struct SystemToolsView: View {
             ]),
             ("Network & System", [
                 Tool(id: "dns", title: "Flush DNS", symbol: "network", tint: .indigo) {
-                    Task { try? await service.flushDNSCache(); toast = "DNS cache flushed" }
+                    Task { do { try await service.flushDNSCache(); toast = "DNS cache flushed" } catch { toast = error.localizedDescription } }
                 },
                 Tool(id: "wifi", title: "Wi-Fi Off", symbol: "wifi.slash", tint: .indigo) {
-                    Task { try? await service.disconnectWiFi(); toast = "Wi-Fi turned off" }
+                    Task { do { try await service.disconnectWiFi(); toast = "Wi-Fi turned off" } catch { toast = error.localizedDescription } }
                 },
                 Tool(id: "cache", title: "Clear Caches", symbol: "paintbrush", tint: .indigo) {
                     Task {
                         do {
-                            let freed = try service.clearDiskCache()
+                            let freed = try await Task.detached { try MacMagicSystemToolService.shared.clearDiskCache() }.value
                             toast = "Freed \(ByteCountFormatter.string(fromByteCount: freed, countStyle: .file))"
                         } catch { toast = error.localizedDescription }
                     }
@@ -112,7 +122,7 @@ struct SystemToolsView: View {
                     forceDelete()
                 },
                 Tool(id: "trash", title: "Empty Trash", symbol: "trash.fill", tint: .red) {
-                    Task { try? await service.forceEmptyTrash(); toast = "Trash emptied" }
+                    confirmEmptyTrash()
                 }
             ])
         ]
@@ -174,14 +184,18 @@ struct SystemToolsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         if let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
            let png = bitmap.representation(using: .png, properties: [:]) {
-            try? png.write(to: url)
-            toast = "QR saved"
+            do { try png.write(to: url); toast = "QR saved" }
+            catch { toast = error.localizedDescription }
         }
     }
 
     private func convertVideo() {
         guard let url = pickFiles(types: [UTType.movie, UTType.mpeg4Movie], multiple: false)?.first else { return }
-        let destination = url.deletingPathExtension().appendingPathExtension("mp4")
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Movie]
+        panel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent + "-converted.mp4"
+        guard panel.runModal() == .OK, let destination = panel.url,
+              destination.standardizedFileURL != url.standardizedFileURL else { return }
         Task {
             do {
                 try await service.convertVideo(url: url, to: destination)
@@ -195,8 +209,8 @@ struct SystemToolsView: View {
     private func eraseDSStore() {
         guard let folder = pickFolder() else { return }
         Task {
-            let count = (try? await service.eraseDSStoreFiles(in: folder)) ?? 0
-            await MainActor.run { toast = "\(count) .DS_Store removed" }
+            do { let count = try await service.eraseDSStoreFiles(in: folder); toast = "\(count) .DS_Store removed" }
+            catch { toast = error.localizedDescription }
         }
     }
 
@@ -221,11 +235,10 @@ struct SystemToolsView: View {
     private func whoIsUsing() {
         guard let url = pickFiles(types: [UTType.data], multiple: false)?.first else { return }
         Task {
-            let lockers = (try? await service.findProcessesLockingFile(at: url)) ?? []
-            await MainActor.run {
-                toast = lockers.isEmpty ? "No process holds this file open"
-                    : lockers.map { "\($0.command) (\($0.pid))" }.joined(separator: ", ")
-            }
+            do {
+                let lockers = try await service.findProcessesLockingFile(at: url)
+                toast = lockers.isEmpty ? "No process holds this file open" : lockers.map { "\($0.command) (\($0.pid))" }.joined(separator: ", ")
+            } catch { toast = error.localizedDescription }
         }
     }
 
@@ -248,6 +261,16 @@ struct SystemToolsView: View {
             let renamed = try service.batchRename(urls: urls, pattern: find.stringValue, replacement: replace.stringValue)
             toast = "Renamed \(renamed.count) files"
         } catch { toast = error.localizedDescription }
+    }
+
+    private func confirmEmptyTrash() {
+        let alert = NSAlert()
+        alert.messageText = "Empty Trash?"
+        alert.informativeText = "Items in your Trash will be permanently deleted."
+        alert.addButton(withTitle: "Empty Trash")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { do { try await service.forceEmptyTrash(); toast = "Trash emptied" } catch { toast = error.localizedDescription } }
     }
 
     private func forceDelete() {

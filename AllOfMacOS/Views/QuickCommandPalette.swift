@@ -175,6 +175,19 @@ struct QuickCommandPalette: View {
             AppAudioMixerService.shared.showPanel()
         }
 
+        command("menus.edit", "Floating Menus & Widgets", "Create menus, clocks and variable widgets · 플로팅 메뉴", "rectangle.grid.2x2", keys: nil) {
+            FloatingMenuController.shared.edit()
+        }
+        // Every action is searchable, including capabilities which previously
+        // existed only inside the automation picker. Opening creates a draft.
+        if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            for type in ActionType.allCases {
+                items.append(PaletteItem(id: "action.\(type.rawValue)", title: type.rawValue,
+                    subtitle: type.description + " · Configure Automation", icon: type.iconName, section: .commands,
+                    primary: PaletteAction(title: "Configure Automation") { close(); appState.createDraft(for: type) }))
+            }
+        }
+
         for trigger in appState.currentPreset.triggers {
             var keys: String?
             if case .keyboardShortcut(let shortcut) = trigger.input { keys = shortcut.displayString }
