@@ -9,6 +9,20 @@ final class AppAudioMixerService: ObservableObject {
     static let shared = AppAudioMixerService()
 
     @Published private(set) var apps: [AppAudioState] = []
+    @Published var eqGains: [Float] = AudioEQ.presets["Flat"]!
+    @Published var eqEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(eqEnabled, forKey: "AOMAudioEQEnabled")
+            applyEQ()
+        }
+    }
+    @Published var eqPreset: String = "Flat" {
+        didSet {
+            if let gains = AudioEQ.presets[eqPreset] { eqGains = gains }
+            UserDefaults.standard.set(eqPreset, forKey: "AOMAudioEQPreset")
+            applyEQ()
+        }
+    }
     @Published private(set) var isShowing = false
     private var panel: NSPanel?
     private var monitor: Any?
@@ -19,9 +33,35 @@ final class AppAudioMixerService: ObservableObject {
         return false
     }
 
+    private init() {
+        _eqEnabled = Published(initialValue: UserDefaults.standard.object(forKey: "AOMAudioEQEnabled") as? Bool ?? false)
+        let preset = UserDefaults.standard.string(forKey: "AOMAudioEQPreset")
+        _eqPreset = Published(initialValue: preset ?? "Flat")
+        if let preset, let gains = AudioEQ.presets[preset] {
+            _eqGains = Published(initialValue: gains)
+        }
+    }
+
     func refresh() {
         guard isSupported, #available(macOS 14.2, *) else { return }
         apps = AppAudioEngine.shared.runningAudioApps()
+    }
+
+    /// Pushes the current EQ to every live tap session (master EQ, like
+    /// SoundSource's output EQ).
+    func applyEQ() {
+        guard #available(macOS 14.2, *) else { return }
+        let eq = AudioEQ(gains: eqEnabled ? eqGains : AudioEQ.presetFlat)
+        for session in AppAudioEngine.shared.sessionsAll() {
+            session.box.takeUnretainedValue().eq.current = eq
+        }
+    }
+
+    func setBand(_ index: Int, gain: Float) {
+        guard (0..<10).contains(index) else { return }
+        eqGains[index] = min(max(gain, -12), 12)
+        eqPreset = "Custom"
+        applyEQ()
     }
 
     func showPanel() {
@@ -68,7 +108,10 @@ final class AppAudioMixerService: ObservableObject {
     /// Per-app gain: starts the tap session lazily on first adjustment.
     func setGain(_ gain: Float, pid: pid_t) {
         guard #available(macOS 14.2, *) else { return }
-        _ = AppAudioEngine.shared.setGain(gain, muted: false, pid: pid)
+        if AppAudioEngine.shared.setGain(gain, muted: false, pid: pid) {
+            // New sessions start flat; fan the master EQ out to them too.
+            applyEQ()
+        }
         refresh()
     }
 
@@ -103,6 +146,8 @@ private struct AppAudioMixerView: View {
                     .buttonStyle(.plain)
             }.padding(12)
             MixerOutputSection()
+            Divider()
+            EQSection(service: service)
             Divider()
             if service.apps.isEmpty {
                 VStack(spacing: 8) {
@@ -190,6 +235,50 @@ private struct MixerOutputSection: View {
         devices = AudioOutputService.devices()
         volume = Double(AudioOutputService.currentVolume() ?? 0.5) * 100
         muted = false
+    }
+}
+
+/// SoundSource-style 10-band EQ: vertical sliders, presets, on/off.
+private struct EQSection: View {
+    @ObservedObject var service: AppAudioMixerService
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text("Equalizer").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Toggle("", isOn: $service.eqEnabled).labelsHidden().controlSize(.mini)
+                    .help("Applies to every app you've adjusted")
+                Spacer()
+                Picker("", selection: $service.eqPreset) {
+                    ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
+                    if service.eqPreset == "Custom" { Text("Custom").tag("Custom") }
+                }
+                .labelsHidden().controlSize(.small).frame(maxWidth: 130)
+            }
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(0..<10, id: \.self) { band in
+                    VStack(spacing: 2) {
+                        Slider(value: Binding(
+                            get: { Double(service.eqGains[band]) },
+                            set: { service.setBand(band, gain: Float($0)) }), in: -12...12, step: 1)
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 18, height: 90)
+                            .controlSize(.mini)
+                            .disabled(!service.eqEnabled)
+                        Text(Self.label(band)).font(.system(size: 8, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(height: 110)
+            .opacity(service.eqEnabled ? 1 : 0.4)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    static func label(_ band: Int) -> String {
+        let hz = AudioEQ.bandFrequencies[band]
+        return hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))"
     }
 }
 

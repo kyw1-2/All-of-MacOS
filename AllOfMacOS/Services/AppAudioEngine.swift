@@ -116,6 +116,9 @@ final class AppAudioEngine {
         Self.destroy(session)
     }
 
+    /// All live sessions (for master-EQ fan-out).
+    func sessionsAll() -> [Session] { Array(sessions.values) }
+
     func stopAll() {
         for pid in Array(sessions.keys) { stop(pid: pid) }
     }
@@ -208,12 +211,17 @@ final class AppAudioEngine {
     }
 }
 
-/// The gain/mute state an IOProc reads. Updated from the main thread by the
-/// engine; the audio thread only reads two floats — no torn-read concerns.
+/// The gain/mute/EQ state an IOProc reads. Updated from the main thread by
+/// the engine; the audio thread reads plain value properties per cycle.
 final class MixerBox {
     var gain: Float
     var muted: Bool
-    init(gain: Float, muted: Bool) { self.gain = gain; self.muted = muted }
+    let eq: EQBox
+    /// Preallocated EQ scratch — the audio thread must not allocate.
+    var scratch = [Float](repeating: 0, count: 8192)
+    init(gain: Float, muted: Bool, eq: AudioEQ = AudioEQ()) {
+        self.gain = gain; self.muted = muted; self.eq = EQBox(eq)
+    }
 }
 
 /// Realtime-safe mixing: scale tapped input into the output, no allocation.
@@ -231,8 +239,14 @@ nonisolated enum Mixer {
                   let inputPtr = inputList[index].mData?.assumingMemoryBound(to: Float32.self),
                   let outputPtr = outBuffer.mData?.assumingMemoryBound(to: Float32.self) else { continue }
             let frames = Int(outBuffer.mDataByteSize) / MemoryLayout<Float32>.size
-            for frame in 0..<frames {
-                outputPtr[frame] = inputPtr[frame] * gain
+            // Realtime path: gain in place, then the EQ's zero-allocation
+            // variant through the box's scratch buffer.
+            for frame in 0..<frames { outputPtr[frame] = inputPtr[frame] * gain }
+            if box.eq.current.isEnabled {
+                box.scratch.withUnsafeMutableBufferPointer { scratch in
+                    guard let base = scratch.baseAddress, scratch.count >= frames else { return }
+                    box.eq.current.process(into: outputPtr, input: outputPtr, frames: frames, scratch: base)
+                }
             }
         }
     }
