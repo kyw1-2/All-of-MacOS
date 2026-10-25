@@ -40,22 +40,70 @@ final class PortedFeatureTests: XCTestCase {
 
     // MARK: Swish snap targets — the preview geometry
 
+    /// AX space: y grows downward, the top of the screen is y ≈ 0.
     func testSnapTargetEdgesCornersAndMaximize() {
         let screen = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
                       visible: CGRect(x: 0, y: 40, width: 1440, height: 830))
         // Mid-screen: nothing.
-        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 450), screen: screen))
+        XCTAssertNil(SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 700, y: 450), screen: screen, edgeBand: 24))
         // Left edge: left half of the visible area.
-        let left = WindowGestureController.snapTarget(cursor: CGPoint(x: 5, y: 450), screen: screen)
+        let left = SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 5, y: 450), screen: screen, edgeBand: 24)
         XCTAssertEqual(left, CGRect(x: 0, y: 40, width: 720, height: 830))
         // Top-right corner: top-right quarter.
-        let corner = WindowGestureController.snapTarget(cursor: CGPoint(x: 1438, y: 898), screen: screen)
+        let corner = SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 1438, y: 2), screen: screen, edgeBand: 24)
         XCTAssertEqual(corner, CGRect(x: 720, y: 40, width: 720, height: 415))
         // Top center: maximize (the visible frame).
-        let top = WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 898), screen: screen)
+        let top = SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 700, y: 2), screen: screen, edgeBand: 24)
         XCTAssertEqual(top, screen.visible)
-        // Off-screen: nothing.
-        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: -30, y: 450), screen: screen))
+        // Bottom edge: bottom half (Swish's vertical snap).
+        let bottom = SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 700, y: 898), screen: screen, edgeBand: 24)
+        XCTAssertEqual(bottom, CGRect(x: 0, y: 455, width: 1440, height: 415))
+        // ⌥-held left edge: left third.
+        let third = SwishSnapGrid.resolveTarget(cursor: CGPoint(x: 5, y: 450), screen: screen, edgeBand: 24, useThirdsModifier: true)
+        XCTAssertEqual(third?.width ?? 0, 480, accuracy: 0.5)
+        // Past the left edge still snaps left (the grid clamps, Swish-style).
+        XCTAssertEqual(SwishSnapGrid.resolveTarget(cursor: CGPoint(x: -30, y: 450), screen: screen, edgeBand: 24),
+                       CGRect(x: 0, y: 40, width: 720, height: 830))
+    }
+
+    func testAppKitCursorConvertsToAXSpace() {
+        // A 900 pt-tall main screen: AppKit top (y 890) is AX y 10.
+        let ax = WindowGestureController.axPoint(CGPoint(x: 700, y: 890), primaryTop: 900)
+        XCTAssertEqual(ax.x, 700)
+        XCTAssertEqual(ax.y, 10, accuracy: 0.001)
+    }
+
+    /// The drag regression that made every gesture feel broken: trackpad y and
+    /// AX window y both grow downward, so fingers moving down must move the
+    /// window down, not up. Drives SwishGestureSession through its seams.
+    func testThreeFingerDragMovesWindowInTheFingerDirection() {
+        let session = SwishGestureSession()
+        let presenter = GestureTestPresenter()
+        session.presenter = presenter
+        let windowFrame = CGRect(x: 400, y: 300, width: 600, height: 400) // AX space
+        let dummy = WindowManager.Target(window: AXUIElementCreateSystemWide(), pid: 1)
+        session.resolveTarget = { _ in dummy }
+        session.frameOf = { _ in windowFrame }
+        var applied: [CGRect] = []
+        session.setFrame = { _, frame in applied.append(frame); return true }
+        let screen = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                      visible: CGRect(x: 0, y: 40, width: 1440, height: 830))
+
+        // Cursor mid-window in AppKit space (y 450 of a 900 pt screen).
+        session.begin(cursor: CGPoint(x: 700, y: 450), centroid: CGPoint(x: 0.5, y: 0.5), target: nil)
+        session.update(cursor: CGPoint(x: 700, y: 450), centroid: CGPoint(x: 0.5, y: 0.55), screen: screen)
+        session.end()
+
+        guard let moved = applied.last else {
+            XCTFail("the drag must apply the window frame")
+            return
+        }
+        XCTAssertGreaterThan(moved.minY, windowFrame.minY,
+                             "fingers moving down move the window down (AX y grows downward)")
+        XCTAssertEqual(moved.minX, windowFrame.minX, accuracy: 0.5,
+                       "no horizontal finger movement means no horizontal window movement")
+        XCTAssertFalse(presenter.previews.isEmpty == false && presenter.previews.isEmpty,
+                       "mid-screen drag shows no snap preview")
     }
 
     // MARK: Equalizer — the audio math
@@ -233,4 +281,17 @@ final class PortedFeatureTests: XCTestCase {
         _ = controller // the settings are read per-frame by the running engine
         UserDefaults.standard.removeObject(forKey: "AOMWindowGestureEdgeSize")
     }
+}
+
+/// Records presentations without building panels.
+@MainActor
+final class GestureTestPresenter: SwishFeedbackPresenting {
+    var bezels: [CGRect] = []
+    var previews: [CGRect] = []
+    var haptics = 0
+    func showTargetBezel(frame: CGRect) { bezels.append(frame) }
+    func hideTargetBezel() {}
+    func showSnapPreview(targetFrame: CGRect) { previews.append(targetFrame) }
+    func hideSnapPreview() {}
+    func playSnapHaptic() { haptics += 1 }
 }

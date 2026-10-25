@@ -19,3 +19,10 @@ xcuserdata/
 *.profraw
 *.profdata
 *.dmg
+
+# Swish reverse-engineering reference: the inventory doc is committed, the
+# extracted bundle payloads stay local.
+SwishReference/AppSupport/
+SwishReference/Preferences/
+SwishReference/Resources/
+SwishReference/Info.plist
