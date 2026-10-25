@@ -26,6 +26,7 @@ struct MainWindow: View {
                 case .capture: CaptureStudioView()
                 case .clipboard: ClipboardStudioView()
                 case .audio: AudioWorkspaceView()
+                case .tools: SystemToolsView()
                 case .insights: StatisticsView()
                 }
             }

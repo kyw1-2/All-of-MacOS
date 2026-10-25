@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BuildMachineOSBuild</key>
+	<string>24G407</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Swish</string>
+	<key>CFBundleIconFile</key>
+	<string>SwishAppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>SwishAppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>co.highlyopinionated.swish</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Swish</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.13.2</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>79</string>
+	<key>DTCompiler</key>
+	<string>com.apple.compilers.llvm.clang.1_0</string>
+	<key>DTPlatformBuild</key>
+	<string>25B74</string>
+	<key>DTPlatformName</key>
+	<string>macosx</string>
+	<key>DTPlatformVersion</key>
+	<string>26.1</string>
+	<key>DTSDKBuild</key>
+	<string>25B74</string>
+	<key>DTSDKName</key>
+	<string>macosx26.1</string>
+	<key>DTXcode</key>
+	<string>2610</string>
+	<key>DTXcodeBuild</key>
+	<string>17B55</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>MDItemKeywords</key>
+	<string>touch,trackpad,gesture,window,snapping,tiling</string>
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Swish needs to control System Settings to fix a bug on Apple's side.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © Christian Renninger</string>
+	<key>NSMainNibFile</key>
+	<string>MainMenu</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSUpdateSecurityPolicy</key>
+	<dict>
+		<key>AllowProcesses</key>
+		<dict>
+			<key>MEHY5QF425</key>
+			<array>
+				<string>com.setapp.DesktopClient.SetappAgent</string>
+			</array>
+		</dict>
+	</dict>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://highlyopinionated.co/swish/appcast</string>
+	<key>SUPublicEDKey</key>
+	<string>eeguxzDEnOgv60/G5CTONyBUjAKhi5/bCo66RLS61tU=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>604800</integer>
+</dict>
+</plist>

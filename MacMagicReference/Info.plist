@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>pdf</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>PDF Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>sqlite</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>SQLite Database</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>xml</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>XML File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>json</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>JSON File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>txt</string>
+				<string>asc</string>
+				<string>ascii</string>
+				<string>bas</string>
+				<string>c</string>
+				<string>class</string>
+				<string>cp</string>
+				<string>cpp</string>
+				<string>h</string>
+				<string>hp</string>
+				<string>hpp</string>
+				<string>i3</string>
+				<string>java</string>
+				<string>m2</string>
+				<string>m3</string>
+				<string>mak</string>
+				<string>text</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>text/plain</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.text</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>MacMagic</string>
+	<key>CFBundleIconFile</key>
+	<string>App</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.koingosw.MacMagic</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>MacMagic</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>2.0</string>
+	<key>DTSDKBuild</key>
+	<string>25A352</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>MDItemKeywords</key>
+	<array>
+		<string>finder</string>
+		<string>hidden files</string>
+		<string>force delete</string>
+		<string>batch rename</string>
+		<string>compress pdf</string>
+		<string>qr code</string>
+		<string>sqlite</string>
+		<string>text editor</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>This app requires camera access to scan barcodes.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Automatically fills the support ticket with your contact details from your personal contact card when you click the auto-fill (pencil) icon.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>2.0, Copyright Koingo Software, Inc.</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>public.item</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>*</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>A Portable Document Format file for reliable viewing and printing across platforms.</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.adobe.pdf</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>com.apple.ostype</key>
+				<array>
+					<string>PDF </string>
+				</array>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pdf</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/pdf</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Plain Text File</string>
+			<key>UTTypeIdentifier</key>
+			<string>public.text</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>com.apple.ostype</key>
+				<array>
+					<string>TEXT</string>
+				</array>
+				<key>public.filename-extension</key>
+				<array>
+					<string>txt</string>
+					<string>asc</string>
+					<string>ascii</string>
+					<string>bas</string>
+					<string>c</string>
+					<string>class</string>
+					<string>cp</string>
+					<string>cpp</string>
+					<string>h</string>
+					<string>hp</string>
+					<string>hpp</string>
+					<string>i3</string>
+					<string>java</string>
+					<string>m2</string>
+					<string>m3</string>
+					<string>mak</string>
+					<string>text</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>text/plain</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
