@@ -62,7 +62,7 @@ final class AppAudioEngine {
         var outputUID = ""
         var sampleRate: Double = 48000
         var outputSampleRate: Double = 48000
-        var playback: AVAudioEngine?
+        var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
         let createdAt = ProcessInfo.processInfo.systemUptime
 
@@ -109,6 +109,9 @@ final class AppAudioEngine {
         syncing = true
         defer { syncing = false }
         updatePlaybackListeners()
+        if #available(macOS 14.2, *) {
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
+        }
         let apps = runningAudioApps()
         let livePIDs = Set(apps.map(\.pid))
         for pid in Array(sessions.keys) where !livePIDs.contains(pid) { stop(pid: pid) }
@@ -128,22 +131,16 @@ final class AppAudioEngine {
                     session.outputUID != Self.targetOutputUID(for: app.bundleID) {
                     stop(pid: app.pid)
                 } else {
-                    // A stopped AVAudioEngine (output hiccup) restarts in
-                    // place — the tap and aggregate survive untouched.
-                    if let playback = session.playback, !playback.isRunning {
-                        do { try playback.start() } catch { stop(pid: app.pid) }
-                    }
-                    let rate = Self.outputSampleRate(uid: session.outputUID)
-                    if rate > 0, session.outputSampleRate != rate {
-                        stop(pid: app.pid) // genuine sample-rate change: rebuild once
-                    } else {
-                        session.box.takeUnretainedValue().deviceGain = AudioOutputService.softwareGain(uid: session.outputUID)
-                    }
+                    // Sample-rate drift on Bluetooth devices must not rebuild:
+                    // the pooled engine converts, so the tap just keeps running.
+                    session.box.takeUnretainedValue().deviceGain = AudioOutputService.softwareGain(uid: session.outputUID)
                 }
             }
             guard sessions[app.pid] == nil,
                   ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
-            _ = attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted)
+            if attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted) {
+            GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
+        }
         }
         NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
     }
@@ -498,6 +495,9 @@ final class AppAudioEngine {
 
     func stop(pid: pid_t) {
         guard let session = sessions.removeValue(forKey: pid) else { return }
+        // Audit checklist 1: make teardown→attach loops visible instead of
+        // guessing. Frequent lines here mean the sync loop is still churning.
+        GestureLog.shared.logFromAnyThread("Audio session stopped: pid \(pid) (\(session.bundleID))", level: .noMatch)
         Self.destroy(session)
     }
 
@@ -589,34 +589,13 @@ final class AppAudioEngine {
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: sampleRate), master: Self.masterEQ(sampleRate: sampleRate))
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let transport = AppAudioTransport(sampleRate: sampleRate)
-        let playback = AVAudioEngine()
-        let output = playback.outputNode
-        guard let unit = output.audioUnit else {
-            errors[pid] = "The selected output has no playback unit."
-            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
-            return nil
-        }
-        var deviceID = device.id
-        let routeStatus = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
-                                               kAudioUnitScope_Global, 0, &deviceID,
-                                               UInt32(MemoryLayout<AudioDeviceID>.size))
-        guard routeStatus == noErr, output.outputFormat(forBus: 0).channelCount > 0,
-              output.outputFormat(forBus: 0).sampleRate > 0 else {
-            errors[pid] = "Cannot play through \(device.name) (\(routeStatus)). Choose another output or reconnect it."
-            AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
-            return nil
-        }
-        let source = AVAudioSourceNode(format: sourceFormat) { _, _, frameCount, buffers in
-            transport.render(frames: Int(frameCount), output: buffers, mixer: mixer)
-            return noErr
-        }
-        playback.attach(source)
-        playback.connect(source, to: playback.mainMixerNode, format: sourceFormat)
-        // Leave the mixer-to-output connection negotiated by AVAudioEngine;
-        // it performs channel/sample-rate conversion for the selected device.
-        playback.prepare()
-        do { try playback.start() } catch {
-            errors[pid] = "Playback failed: \(error.localizedDescription)"
+        // One shared engine per output device (SoundSource's architecture):
+        // per-session engines start/stop on every attach, and each start is a
+        // HAL configuration change that pauses every video on the system.
+        guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
+            uid: outUID, device: device, format: sourceFormat,
+            render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else {
+            errors[pid] = "Cannot play through \(device.name). Choose another output or reconnect it."
             AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
@@ -626,14 +605,14 @@ final class AppAudioEngine {
         }
         guard procStatus == noErr, let procID else {
             errors[pid] = "Audio capture could not start (\(procStatus)). Check Screen & System Audio Recording permission."
-            playback.stop()
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
             AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
         let startStatus = AudioDeviceStart(aggregateID, procID)
         guard startStatus == noErr else {
             errors[pid] = "Audio capture was refused (\(startStatus)). Check Screen & System Audio Recording permission."
-            playback.stop()
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
             AudioDeviceDestroyIOProcID(aggregateID, procID)
             AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
@@ -645,8 +624,8 @@ final class AppAudioEngine {
         session.outputUID = outUID
         session.sampleRate = sampleRate
         session.outputSampleRate = Self.outputSampleRate(uid: outUID)
-        session.playback = playback
         session.transport = transport
+        session.sourceToken = source
         return session
     }
 
@@ -655,8 +634,7 @@ final class AppAudioEngine {
             AudioDeviceStop(session.aggregateID, procID)
             AudioDeviceDestroyIOProcID(session.aggregateID, procID)
         }
-        session.playback?.stop()
-        session.playback = nil
+        session.transport = nil
         session.box.release()
         AudioHardwareDestroyAggregateDevice(session.aggregateID)
         AudioHardwareDestroyProcessTap(session.tapID)
