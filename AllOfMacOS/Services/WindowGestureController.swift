@@ -41,7 +41,9 @@ final class WindowGestureController: ObservableObject {
     private var lastApplyAt: TimeInterval = 0
     private var snapTarget: CGRect?
     private var minimizedDuringBatch: [WindowManager.Target] = []
-    private var savedPreMaximize: CGRect?
+    private var savedPreMaximize: [(target: WindowManager.Target, frame: CGRect)] = []
+    private var pendingFrame: CGRect?
+    private var pinchPID: pid_t?
 
     var isDragging: Bool { mode != .idle }
 
@@ -60,28 +62,30 @@ final class WindowGestureController: ObservableObject {
     // MARK: - Frame entry
 
     func observe(points: [TouchPoint], timestamp: Double) {
-        guard isEnabled, !ScreenLock.isLocked,
+        guard isEnabled, !ScreenLock.isLocked, TriggerSuppression.shared.allows(kind: .trackpad),
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier else {
             end(); return
         }
         if requiresModifier, !NSEvent.modifierFlags.contains(.control) {
             end(); return
         }
-        if points.count >= 3 {
+        if points.count == 3 {
             let centroid = Self.centroid(points)
             if mode == .idle {
-                begin(at: centroid)
+                begin(at: centroid, spread: Self.spread(points))
             } else {
                 update(centroid: centroid, points: points, timestamp: timestamp)
             }
-        } else {
+        } else if points.count < 3 {
             finish(timestamp: timestamp)
+        } else {
+            end()
         }
     }
 
     // MARK: - Gesture state machine
 
-    private func begin(at centroid: CGPoint) {
+    private func begin(at centroid: CGPoint, spread: CGFloat) {
         let cursor = cursorLocation()
         guard let target = captureTarget(cursor),
               let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == target.pid }),
@@ -90,10 +94,14 @@ final class WindowGestureController: ObservableObject {
               let frame = WindowManager.shared.frame(of: target) else { return }
         self.target = target
         startFrame = frame
+        startSpread = spread
+        lastSpread = spread
+        lastApplyAt = 0
+        pendingFrame = nil
         startCentroid = centroid
         lastCentroid = centroid
         // Starting on a window edge resizes; starting inside moves.
-        let edges = Self.edges(near: cursor, frame: frame, within: edgeSize)
+        let edges = Self.edges(near: Self.axPoint(cursor), frame: frame, within: edgeSize)
         mode = edges.isEmpty ? .move : .resize(edges)
         presentation.showBezel(frame: frame)
     }
@@ -120,16 +128,16 @@ final class WindowGestureController: ObservableObject {
         }
         guard let current = WindowManager.shared.frame(of: target),
               let screen = screenForCursor() else { end(); return }
-        var frame = current
+        var frame = pendingFrame ?? current
         switch mode {
         case .move:
             let dx = (centroid.x - lastCentroid.x) * screen.visible.width
             let dy = (centroid.y - lastCentroid.y) * screen.visible.height
             frame.origin.x += dx
-            frame.origin.y -= dy // trackpad y grows downward, screen y upward
+            frame.origin.y += dy // Both touch coordinates and AX frames grow downward.
             // The snap target follows the cursor, not the window: Swish decides
             // from where your fingers are pointing.
-            snapTarget = Self.snapTarget(cursor: cursorLocation(), screen: screen)
+            snapTarget = Self.snapTarget(cursor: Self.axPoint(cursorLocation()), screen: screen)
             if let snapTarget { presentation.showSnapPreview(snapTarget) } else { presentation.hideSnapPreview() }
         case .resize(let edges):
             let dx = (centroid.x - lastCentroid.x) * screen.visible.width
@@ -142,18 +150,22 @@ final class WindowGestureController: ObservableObject {
             }
             if edges.contains(.maxX) { frame.size.width = max(minSize.width, frame.width + dx) }
             if edges.contains(.minY) {
-                let newHeight = max(minSize.height, frame.height + dy)
-                frame.origin.y -= newHeight - frame.height
+                let newHeight = max(minSize.height, frame.height - dy)
+                frame.origin.y += frame.height - newHeight
                 frame.size.height = newHeight
             }
-            if edges.contains(.maxY) { frame.size.height = max(minSize.height, frame.height - dy) }
+            if edges.contains(.maxY) { frame.size.height = max(minSize.height, frame.height + dy) }
         case .pinch, .idle: return
         }
         lastCentroid = centroid
+        pendingFrame = frame
         // Throttle AX writes: 60 Hz touch frames would flood the AX server.
         if timestamp - lastApplyAt >= 0.016 {
             lastApplyAt = timestamp
-            if applyFrame(target, frame) { presentation.showBezel(frame: frame) }
+            if applyFrame(target, frame) {
+                pendingFrame = nil
+                presentation.showBezel(frame: frame)
+            }
         }
     }
 
@@ -163,12 +175,13 @@ final class WindowGestureController: ObservableObject {
         case .pinch:
             let ratio = startSpread > 0 ? lastSpread / startSpread : 1
             guard ratio > 1.15 || ratio < 0.87 else { return }
-            if timestamp - lastPinchAt < 2.5 {
+            if timestamp - lastPinchAt < 0.65, pinchPID == target?.pid {
                 pinchCount += 1
             } else {
                 pinchCount = 1
             }
             lastPinchAt = timestamp
+            pinchPID = target?.pid
             if pinchCount >= 2 {
                 pinchCount = 0
                 toggleMinimizeAll()
@@ -176,19 +189,21 @@ final class WindowGestureController: ObservableObject {
                 toggleMaximize(target: target)
             }
         case .move:
-            // Release over a snap zone: apply the previewed frame.
-            if let snapTarget, let target {
-                _ = applyFrame(target, snapTarget)
-            }
-        case .resize, .idle: break
+            if let frame = snapTarget ?? pendingFrame, let target { _ = applyFrame(target, frame) }
+        case .resize:
+            if let frame = pendingFrame, let target { _ = applyFrame(target, frame) }
+        case .idle: break
         }
     }
     private var pinchCount = 0
     private var lastPinchAt: TimeInterval = 0
 
+    func cancel() { end() }
+
     private func end() {
         mode = .idle
         target = nil
+        pendingFrame = nil
         startSpread = 0
         lastSpread = 0
         snapTarget = nil
@@ -201,16 +216,20 @@ final class WindowGestureController: ObservableObject {
     private func toggleMaximize(target: WindowManager.Target) {
         guard let frame = WindowManager.shared.frame(of: target) else { return }
         let screens = WindowManager.shared.screens()
-        let visible = screens.first { $0.visible.intersects(frame) }?.visible
-            ?? screens.first?.visible
+        let visible = screens.max { lhs, rhs in
+            let a = lhs.visible.intersection(frame), b = rhs.visible.intersection(frame)
+            return (a.isNull ? 0 : a.width * a.height) < (b.isNull ? 0 : b.width * b.height)
+        }?.visible
         guard let visible else { return }
+        savedPreMaximize.removeAll { NSRunningApplication(processIdentifier: $0.target.pid) == nil }
+        let index = savedPreMaximize.firstIndex { $0.target.pid == target.pid && CFEqual($0.target.window, target.window) }
         if abs(frame.width - visible.width) <= 8, abs(frame.height - visible.height) <= 8,
-           let restored = savedPreMaximize {
-            _ = applyFrame(target, restored)
-            savedPreMaximize = nil
-        } else {
-            savedPreMaximize = frame
-            _ = applyFrame(target, visible)
+           abs(frame.minX - visible.minX) <= 8, abs(frame.minY - visible.minY) <= 8 {
+            let restored = index.map { savedPreMaximize[$0].frame } ?? visible.insetBy(dx: visible.width * 0.15, dy: visible.height * 0.15)
+            if applyFrame(target, restored), let index { savedPreMaximize.remove(at: index) }
+        } else if applyFrame(target, visible) {
+            if let index { savedPreMaximize[index].frame = frame }
+            else { savedPreMaximize.append((target, frame)) }
         }
     }
 
@@ -225,8 +244,9 @@ final class WindowGestureController: ObservableObject {
                 var minimized: CFTypeRef?
                 guard AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized) == .success,
                       (minimized as? Bool) == false else { continue }
-                AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-                minimizedDuringBatch.append(WindowManager.Target(window: window, pid: app.processIdentifier))
+                if AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success {
+                    minimizedDuringBatch.append(WindowManager.Target(window: window, pid: app.processIdentifier))
+                }
             }
         } else {
             for target in minimizedDuringBatch {
@@ -249,8 +269,8 @@ final class WindowGestureController: ObservableObject {
         let edge: CGFloat = 24
         let nearLeft = cursor.x <= frame.minX + edge
         let nearRight = cursor.x >= frame.maxX - edge
-        let nearTop = cursor.y >= frame.maxY - edge
-        let nearBottom = cursor.y <= frame.minY + edge
+        let nearTop = cursor.y <= frame.minY + edge
+        let nearBottom = cursor.y >= frame.maxY - edge
         // Corners: quarters (top corners only in Swish; bottom corners too —
         // users expect symmetry, and Swish supports them via the outer thirds).
         if nearTop && nearLeft { return CGRect(origin: visible.origin, size: CGSize(width: visible.width / 2, height: visible.height / 2)) }
@@ -260,6 +280,7 @@ final class WindowGestureController: ObservableObject {
         if nearLeft { return CGRect(origin: visible.origin, size: CGSize(width: visible.width / 2, height: visible.height)) }
         if nearRight { return CGRect(x: visible.midX, y: visible.minY, width: visible.width / 2, height: visible.height) }
         if nearTop { return visible }
+        if nearBottom { return CGRect(x: visible.minX, y: visible.midY, width: visible.width, height: visible.height / 2) }
         return nil
     }
 
@@ -287,8 +308,12 @@ final class WindowGestureController: ObservableObject {
         return points.map { hypot(CGFloat($0.x - first.x), CGFloat($0.y - first.y)) }.max() ?? 0
     }
 
+    static func axPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: point.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - point.y)
+    }
+
     private func screenForCursor() -> (frame: CGRect, visible: CGRect)? {
-        WindowManager.shared.screens().first { $0.frame.contains(cursorLocation()) }
+        WindowManager.shared.screens().first { $0.frame.contains(Self.axPoint(cursorLocation())) }
             ?? WindowManager.shared.screens().first
     }
 }

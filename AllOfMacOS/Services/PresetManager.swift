@@ -145,7 +145,9 @@ class PresetManager {
             "AOMTipTapMinRestTime",
             "AOMSuppressMouseDuringDrawing",
             "launchAtLogin",
-            "showMenuBarIcon"
+            "showMenuBarIcon",
+            "AOMAudioEQEnabled", "AOMAudioEQPreset", "AOMAudioEQGains", "AOMAudioUserApps",
+            "AOMWindowGesturesEnabled", "AOMWindowGestureEdgeSize", "AOMWindowGestureRequireModifier"
         ]
         // Add per-gesture swipe velocity keys
         for gesture in TrackpadGesture.allCases {
@@ -186,7 +188,13 @@ class PresetManager {
 
     private static func saveUserDefaultsBackup() {
         var dict: [String: Any] = [:]
-        for key in userDefaultsKeys {
+        let audioPrefixes = ["AOMAudioGain_", "AOMAudioMute_", "AOMAudioRoute_", "AOMAudioMagicBoost_",
+                             "AOMAudioAppEQEnabled_", "AOMAudioAppEQGains_", "AOMAudioAppEQPreset_",
+                             "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_"]
+        let audioKeys = UserDefaults.standard.dictionaryRepresentation().keys.filter { key in
+            audioPrefixes.contains { key.hasPrefix($0) }
+        }
+        for key in Set(userDefaultsKeys + audioKeys) {
             if let value = UserDefaults.standard.object(forKey: key) {
                 dict[key] = value
             }

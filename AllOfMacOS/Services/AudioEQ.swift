@@ -4,9 +4,9 @@ import Foundation
 /// realtime mix path. Peaking biquads (RBJ cookbook) cascaded per band; the
 /// lowest and highest bands are shelves, like a classic graphic EQ.
 ///
-/// Realtime rules: `process` allocates nothing and locks nothing. UI updates
-/// build a fresh `AudioEQ` value and swap the reference — the audio thread
-/// keeps rendering the old one until the swap lands.
+/// Runtime filtering uses AudioEQProcessor: coefficients are prepared on the
+/// control thread, while separate channel histories live on the audio thread.
+/// MixerBox synchronizes configuration handoff without blocking rendering.
 struct AudioEQ: Equatable {
     static let bandFrequencies: [Double] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
     static let presetFlat = [Float](repeating: 0, count: 10)
@@ -30,8 +30,11 @@ struct AudioEQ: Equatable {
     let sampleRate: Double
 
     init(gains: [Float] = AudioEQ.presetFlat, sampleRate: Double = 48000) {
-        self.gains = Array(gains.prefix(10))
-        self.sampleRate = max(1, sampleRate)
+        self.gains = (0..<10).map { index in
+            guard index < gains.count, gains[index].isFinite else { return 0 }
+            return min(12, max(-12, gains[index]))
+        }
+        self.sampleRate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
     }
 
     var isEnabled: Bool { gains.contains { $0 != 0 } }
@@ -134,10 +137,25 @@ struct AudioEQ: Equatable {
     }
 }
 
-/// The audio-thread-side EQ holder: value swapped atomically by reference.
-/// A plain class-property write of a value type is not torn, so the mix path
-/// reads `current` once per cycle and uses it for the whole buffer.
-final class EQBox {
-    var current: AudioEQ
-    init(_ eq: AudioEQ) { current = eq }
+/// Each session owns two channel histories which survive IO callbacks.
+/// Coefficients are prepared on the control thread, never per audio sample.
+final class AudioEQProcessor {
+    let eq: AudioEQ
+    private let coefficients: [AudioEQ.Coefficients]
+    private var z1 = [Float](repeating: 0, count: 20)
+    private var z2 = [Float](repeating: 0, count: 20)
+    init(_ eq: AudioEQ) { self.eq = eq; coefficients = eq.coefficients }
+
+    func process(_ sample: Float, channel: Int) -> Float {
+        var value = sample
+        for band in 0..<10 where eq.gains[band] != 0 {
+            let index = channel * 10 + band
+            let c = coefficients[band]
+            let output = c.b0 * value + z1[index]
+            z1[index] = c.b1 * value - c.a1 * output + z2[index]
+            z2[index] = c.b2 * value - c.a2 * output
+            value = output
+        }
+        return value
+    }
 }

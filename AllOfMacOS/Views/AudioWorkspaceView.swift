@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// The Audio page: a faithful, studio-grade SoundSource control center in the main window.
 /// Includes Master Output/Input/Alert controls, Per-App Audio Mixer with device routing,
-/// Overdrive (up to 200%), Magic Boost, Per-App 10-Band EQ, and animated VU meters.
+/// Overdrive (up to 200%), Magic Boost, Per-App 10-Band EQ, and independent effects settings.
 struct AudioWorkspaceView: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var searchText: String = ""
@@ -89,6 +89,10 @@ struct AudioWorkspaceView: View {
                         .help("Refresh applications")
                     }
 
+                    if let error = service.lastError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(AOMType.caption).foregroundStyle(.red)
+                    }
                     if filteredApps.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform")
@@ -135,7 +139,7 @@ struct AudioWorkspaceView: View {
                             Text("10-BAND MASTER EQUALIZER")
                                 .font(AOMType.caption.weight(.semibold))
                                 .foregroundStyle(AOMTheme.textSecondary)
-                            Text("Global output filtering with pristine biquad peaking shelves")
+                            Text("Applies to all managed application audio, after each app’s EQ")
                                 .font(AOMType.caption)
                                 .foregroundStyle(AOMTheme.textTertiary)
                         }
@@ -149,6 +153,7 @@ struct AudioWorkspaceView: View {
         }
         .background(AOMTheme.workspace)
         .task { service.refresh() }
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in service.refreshMeters() }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in service.refresh() }
     }
 
@@ -181,6 +186,8 @@ private struct MasterOutputCard: View {
     @State private var volume: Double = 50
     @State private var balance: Float = 0
     @State private var isMuted = false
+    @State private var canAdjustVolume = false
+    @State private var canAdjustBalance = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -216,12 +223,7 @@ private struct MasterOutputCard: View {
             // Volume Slider & Mute
             HStack(spacing: 10) {
                 Button {
-                    isMuted.toggle()
-                    if isMuted {
-                        AudioOutputService.shared.setVolume(percent: 0) { _ in refresh() }
-                    } else {
-                        AudioOutputService.shared.setVolume(percent: volume) { _ in refresh() }
-                    }
+                    AudioOutputService.shared.toggleOutputMute { _ in refresh() }
                 } label: {
                     Image(systemName: isMuted ? "speaker.slash.fill" : (volume > 50 ? "speaker.wave.3.fill" : "speaker.wave.1.fill"))
                         .foregroundStyle(isMuted ? Color.red : Color.accentColor)
@@ -236,8 +238,9 @@ private struct MasterOutputCard: View {
                     AudioOutputService.shared.setVolume(percent: newValue) { _ in }
                 }), in: 0...100, step: 1)
                 .controlSize(.small)
+                .disabled(!canAdjustVolume)
 
-                Text("\(Int(volume))%")
+                Text(canAdjustVolume ? "\(Int(volume))%" : "—")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
                     .foregroundStyle(AOMTheme.textSecondary)
                     .frame(width: 38, alignment: .trailing)
@@ -251,12 +254,14 @@ private struct MasterOutputCard: View {
                     AudioOutputService.setBalance(balance)
                 }), in: -1...1, step: 0.05)
                 .controlSize(.mini)
+                .disabled(!canAdjustBalance)
                 Text("R").font(.system(size: 9, weight: .bold)).foregroundStyle(AOMTheme.textTertiary)
                 
                 Button("Center") {
                     balance = 0
                     AudioOutputService.setBalance(0)
                 }
+                .disabled(!canAdjustBalance)
                 .font(.system(size: 9, weight: .medium))
                 .buttonStyle(.borderless)
                 .foregroundStyle(AOMTheme.textTertiary)
@@ -271,14 +276,17 @@ private struct MasterOutputCard: View {
 
     private var currentUID: String {
         guard let id = AudioOutputService.currentDeviceID(),
-              let current = devices.first(where: { $0.uid == String(id) }) ?? devices.first else { return "" }
+              let current = devices.first(where: { $0.id == id }) else { return "" }
         return current.uid
     }
 
     private func refresh() {
         devices = AudioOutputService.devices()
-        volume = Double(AudioOutputService.currentVolume() ?? 0.5) * 100
+        volume = Double(AudioOutputService.currentVolume() ?? 0) * 100
+        canAdjustVolume = AudioOutputService.canAdjustOutputVolume()
+        canAdjustBalance = AudioOutputService.canAdjustBalance()
         balance = AudioOutputService.currentBalance()
+        isMuted = AudioOutputService.isOutputMuted()
     }
 }
 
@@ -288,6 +296,8 @@ private struct MasterInputCard: View {
     @State private var devices: [AudioOutputDevice] = []
     @State private var volume: Double = 80
     @State private var isMuted = false
+    @State private var canAdjustVolume = false
+    @State private var canMute = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -323,8 +333,7 @@ private struct MasterInputCard: View {
             // Volume Slider & Mute
             HStack(spacing: 10) {
                 Button {
-                    let next = AudioOutputService.toggleInputMute() ?? false
-                    isMuted = next
+                    if let next = AudioOutputService.toggleInputMute() { isMuted = next }
                 } label: {
                     Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
                         .foregroundStyle(isMuted ? Color.red : Color.orange)
@@ -332,21 +341,26 @@ private struct MasterInputCard: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
+                .disabled(!canMute)
 
                 Slider(value: Binding(get: { volume }, set: { newValue in
                     volume = newValue
-                    AudioOutputService.setInputVolume(percent: newValue)
+                    if AudioOutputService.setInputVolume(percent: newValue) {
+                        isMuted = AudioOutputService.isInputMuted()
+                    } else { refresh() }
                 }), in: 0...100, step: 1)
                 .controlSize(.small)
+                .disabled(!canAdjustVolume)
 
-                Text("\(Int(volume))%")
+                Text(canAdjustVolume ? "\(Int(volume))%" : "—")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
                     .foregroundStyle(AOMTheme.textSecondary)
                     .frame(width: 38, alignment: .trailing)
             }
 
             // Live Input Peak Meter
-            LiveVUMeterBar(isActive: !isMuted && volume > 0)
+            Text(isMuted ? "Microphone muted" : "Microphone input ready")
+                .font(.caption).foregroundStyle(AOMTheme.textTertiary)
         }
         .padding(14)
         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -357,13 +371,15 @@ private struct MasterInputCard: View {
 
     private var currentUID: String {
         guard let id = AudioOutputService.currentInputDeviceID(),
-              let current = devices.first(where: { $0.id == id }) ?? devices.first else { return "" }
+              let current = devices.first(where: { $0.id == id }) else { return "" }
         return current.uid
     }
 
     private func refresh() {
         devices = AudioOutputService.inputDevices()
-        volume = Double(AudioOutputService.currentInputVolume() ?? 0.8) * 100
+        volume = Double(AudioOutputService.currentInputVolume() ?? 0) * 100
+        canAdjustVolume = AudioOutputService.canAdjustInputVolume()
+        canMute = AudioOutputService.canMuteInput()
         isMuted = AudioOutputService.isInputMuted()
     }
 }
@@ -373,6 +389,7 @@ private struct MasterInputCard: View {
 private struct MasterAlertCard: View {
     @State private var volume: Double = 65
     @State private var isMuted = false
+    @State private var previousVolume: Double = 65
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -395,8 +412,12 @@ private struct MasterAlertCard: View {
             // Volume Slider & Mute
             HStack(spacing: 10) {
                 Button {
-                    isMuted.toggle()
-                    AudioOutputService.setSystemAlertVolume(percent: isMuted ? 0 : volume)
+                    if !isMuted, volume > 0 { previousVolume = volume }
+                    let target = isMuted ? previousVolume : 0
+                    if AudioOutputService.setSystemAlertVolume(percent: target) {
+                        volume = target
+                        isMuted = target == 0
+                    }
                 } label: {
                     Image(systemName: isMuted ? "bell.slash.fill" : "bell.fill")
                         .foregroundStyle(isMuted ? Color.red : Color.purple)
@@ -427,6 +448,8 @@ private struct MasterAlertCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
         .onAppear {
             volume = Double(AudioOutputService.currentSystemAlertVolume() ?? 0.65) * 100
+            isMuted = volume == 0
+            if volume > 0 { previousVolume = volume }
         }
     }
 }
@@ -500,7 +523,13 @@ private struct SoundSourceAppCard: View {
                                 .help("Audio process tap active")
                         }
                     }
-                    Text(app.bundleID.isEmpty ? "PID \(app.pid)" : app.bundleID)
+                    if app.tapped {
+                        ProgressView(value: Double(app.peakLevel), total: 1)
+                            .tint(app.peakLevel > 0.95 ? .orange : .green)
+                            .frame(maxWidth: 100)
+                            .accessibilityLabel("Application audio level")
+                    }
+                    Text(app.error ?? (app.tapped ? "Processing audio" : (app.pid <= 0 ? "App is closed — settings saved" : "Ready — applies when playback starts")))
                         .font(.system(size: 10))
                         .foregroundStyle(AOMTheme.textTertiary)
                         .lineLimit(1)
@@ -515,6 +544,9 @@ private struct SoundSourceAppCard: View {
                     set: { uid in onRouteChange(uid.isEmpty ? nil : uid) }
                 )) {
                     Text("System Default").tag("")
+                    if let uid = app.outputDeviceUID, !availableOutputs.contains(where: { $0.uid == uid }) {
+                        Text("Disconnected — using default").tag(uid)
+                    }
                     ForEach(availableOutputs) { dev in
                         Text(dev.name).tag(dev.uid)
                     }
@@ -524,6 +556,10 @@ private struct SoundSourceAppCard: View {
                 .frame(maxWidth: 140)
                 .help("Route output for this application")
 
+            }
+            .padding(.horizontal, 14).padding(.top, 10)
+
+            HStack(spacing: 12) {
                 // Magic Boost Button
                 Button {
                     onMagicBoostToggle()
@@ -539,7 +575,7 @@ private struct SoundSourceAppCard: View {
                     .background(app.magicBoost ? Color.indigo : AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .help("Magic Boost: dynamic volume leveling and dialogue enhancer")
+                .help("Boost quiet audio with soft saturation")
 
                 // Equalizer Toggle
                 Button {
@@ -571,7 +607,7 @@ private struct SoundSourceAppCard: View {
                     gain = Float(newValue)
                     onGain(gain)
                 }), in: 0...2.0, step: 0.05)
-                .frame(width: 140)
+                .frame(minWidth: 100, maxWidth: .infinity)
                 .controlSize(.small)
 
                 // Percent / Overdrive Readout
@@ -580,7 +616,7 @@ private struct SoundSourceAppCard: View {
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
                         .foregroundStyle(gain > 1.05 ? Color.orange : AOMTheme.text)
                     if gain > 1.05 {
-                        Text("+\(Int(((gain - 1.0) * 6).rounded()))dB")
+                        Text("+\(Int((20 * log10(gain)).rounded()))dB")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(Color.orange)
                     }
@@ -593,7 +629,7 @@ private struct SoundSourceAppCard: View {
             // Inline 10-Band EQ when expanded
             if isEQExpanded {
                 Divider()
-                InlineAppEQView(service: AppAudioMixerService.shared)
+                InlineAppEQView(service: AppAudioMixerService.shared, bundleID: app.bundleID)
                     .padding(12)
                     .background(AOMTheme.cardAlt.opacity(0.4))
             }
@@ -601,6 +637,9 @@ private struct SoundSourceAppCard: View {
         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
         .onAppear {
+            availableOutputs = AudioOutputService.devices()
+        }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             availableOutputs = AudioOutputService.devices()
         }
         .onChange(of: app.gain) { _, newGain in
@@ -613,18 +652,22 @@ private struct SoundSourceAppCard: View {
 
 private struct InlineAppEQView: View {
     @ObservedObject var service: AppAudioMixerService
+    let bundleID: String
 
     var body: some View {
         VStack(spacing: 8) {
             HStack {
+                Toggle("EQ", isOn: Binding(get: { service.appEQEnabled(bundleID) },
+                                            set: { service.setAppEQEnabled($0, bundleID: bundleID) }))
+                    .toggleStyle(.switch).controlSize(.mini)
                 Text("Equalizer Preset:").font(.system(size: 10, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
-                Picker("", selection: $service.eqPreset) {
+                Picker("", selection: Binding(get: { service.appEQPreset(bundleID) }, set: { service.setAppEQPreset($0, bundleID: bundleID) })) {
                     ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
-                    if service.eqPreset == "Custom" { Text("Custom").tag("Custom") }
+                    if service.appEQPreset(bundleID) == "Custom" { Text("Custom").tag("Custom") }
                 }
                 .labelsHidden().controlSize(.small).frame(maxWidth: 140)
                 Spacer()
-                Button("Reset to Flat") { service.eqPreset = "Flat" }
+                Button("Reset to Flat") { service.setAppEQPreset("Flat", bundleID: bundleID) }
                     .font(.system(size: 10))
                     .buttonStyle(.borderless)
             }
@@ -633,8 +676,8 @@ private struct InlineAppEQView: View {
                 ForEach(0..<10, id: \.self) { band in
                     VStack(spacing: 2) {
                         Slider(value: Binding(
-                            get: { Double(service.eqGains[band]) },
-                            set: { service.setBand(band, gain: Float($0)) }
+                            get: { Double(service.appEQGains(bundleID)[band]) },
+                            set: { service.setAppBand(band, gain: Float($0), bundleID: bundleID) }
                         ), in: -12...12, step: 1)
                         .rotationEffect(.degrees(-90))
                         .frame(width: 14, height: 70)
@@ -715,35 +758,3 @@ private struct MasterStudioEQCard: View {
     }
 }
 
-// MARK: - Live VU Meter Component
-
-private struct LiveVUMeterBar: View {
-    let isActive: Bool
-    @State private var level: Double = 0.35
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<18, id: \.self) { i in
-                let threshold = Double(i) / 18.0
-                let isLit = isActive && (level >= threshold)
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(isLit ? colorFor(index: i) : AOMTheme.track)
-                    .frame(height: 7)
-            }
-        }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 3)
-        .background(AOMTheme.track.opacity(0.4), in: RoundedRectangle(cornerRadius: 4))
-        .onReceive(Timer.publish(every: 0.12, on: .main, in: .common).autoconnect()) { _ in
-            guard isActive else { level = 0; return }
-            // Subtle natural bounce
-            level = max(0.2, min(0.9, 0.45 + Double.random(in: -0.25...0.35)))
-        }
-    }
-
-    private func colorFor(index: Int) -> Color {
-        if index < 12 { return Color.green }
-        if index < 15 { return Color.yellow }
-        return Color.red
-    }
-}

@@ -5,7 +5,7 @@ import SwiftUI
 /// producing audio, with gain and mute per app. Backed by AppAudioEngine's
 /// process taps on macOS 14.2+; older systems see an explanatory empty state.
 @MainActor
-final class AppAudioMixerService: ObservableObject {
+final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = AppAudioMixerService()
 
     @Published private(set) var apps: [AppAudioState] = []
@@ -20,6 +20,7 @@ final class AppAudioMixerService: ObservableObject {
         didSet {
             if let gains = AudioEQ.presets[eqPreset] { eqGains = gains }
             UserDefaults.standard.set(eqPreset, forKey: "AOMAudioEQPreset")
+            UserDefaults.standard.set(eqGains.map(Double.init), forKey: "AOMAudioEQGains")
             applyEQ()
         }
     }
@@ -27,44 +28,97 @@ final class AppAudioMixerService: ObservableObject {
     private var panel: NSPanel?
     private var monitor: Any?
     private var refreshTimer: Timer?
+    private var audioObserver: NSObjectProtocol?
+    @Published private(set) var lastError: String?
 
     var isSupported: Bool {
         if #available(macOS 14.2, *) { return true }
         return false
     }
 
-    private init() {
+    private override init() {
         _eqEnabled = Published(initialValue: UserDefaults.standard.object(forKey: "AOMAudioEQEnabled") as? Bool ?? false)
         let preset = UserDefaults.standard.string(forKey: "AOMAudioEQPreset")
         _eqPreset = Published(initialValue: preset ?? "Flat")
         if let preset, let gains = AudioEQ.presets[preset] {
             _eqGains = Published(initialValue: gains)
         }
-        NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
-            self?.refresh()
+        if preset == "Custom", let saved = UserDefaults.standard.array(forKey: "AOMAudioEQGains") as? [Double] {
+            _eqGains = Published(initialValue: AudioEQ(gains: saved.map(Float.init)).gains)
+        }
+        super.init()
+        audioObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadApps() }
         }
     }
 
     func refresh() {
         guard isSupported, #available(macOS 14.2, *) else { return }
-        apps = AppAudioEngine.shared.runningAudioApps()
+        AppAudioEngine.shared.syncActiveProcesses()
+        reloadApps()
     }
+
+    private func reloadApps() {
+        guard #available(macOS 14.2, *) else { return }
+        apps = AppAudioEngine.shared.runningAudioApps()
+        lastError = apps.compactMap(\.error).first
+    }
+
+    func refreshMeters() {
+        guard #available(macOS 14.2, *) else { return }
+        var updated = apps
+        for index in updated.indices { updated[index].peakLevel = AppAudioEngine.shared.level(pid: updated[index].pid) }
+        if updated != apps { apps = updated }
+    }
+
+    func start() { refresh() }
 
     /// Pushes the current EQ to every live tap session (master EQ, like
     /// SoundSource's output EQ).
     func applyEQ() {
         guard #available(macOS 14.2, *) else { return }
-        let eq = AudioEQ(gains: eqEnabled ? eqGains : AudioEQ.presetFlat)
-        for session in AppAudioEngine.shared.sessionsAll() {
-            session.box.takeUnretainedValue().eq.current = eq
-        }
+        AppAudioEngine.shared.updateEffects()
+        reloadApps()
+    }
+
+    func appEQGains(_ bundleID: String) -> [Float] {
+        let values = UserDefaults.standard.array(forKey: "AOMAudioAppEQGains_\(bundleID)") as? [Double] ?? []
+        return AudioEQ(gains: values.map(Float.init)).gains
+    }
+    func appEQEnabled(_ bundleID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: "AOMAudioAppEQEnabled_\(bundleID)")
+    }
+    func appEQPreset(_ bundleID: String) -> String {
+        UserDefaults.standard.string(forKey: "AOMAudioAppEQPreset_\(bundleID)") ?? "Flat"
+    }
+    func setAppEQEnabled(_ enabled: Bool, bundleID: String) {
+        objectWillChange.send()
+        UserDefaults.standard.set(enabled, forKey: "AOMAudioAppEQEnabled_\(bundleID)")
+        applyEQ()
+    }
+    func setAppEQPreset(_ preset: String, bundleID: String) {
+        guard let gains = AudioEQ.presets[preset] else { return }
+        saveAppEQ(gains, preset: preset, bundleID: bundleID)
+    }
+    func setAppBand(_ index: Int, gain: Float, bundleID: String) {
+        guard (0..<10).contains(index), gain.isFinite else { return }
+        var gains = appEQGains(bundleID)
+        gains[index] = min(12, max(-12, gain))
+        saveAppEQ(gains, preset: "Custom", bundleID: bundleID)
+    }
+    private func saveAppEQ(_ gains: [Float], preset: String, bundleID: String) {
+        objectWillChange.send()
+        let d = UserDefaults.standard
+        d.set(gains.map(Double.init), forKey: "AOMAudioAppEQGains_\(bundleID)")
+        d.set(preset, forKey: "AOMAudioAppEQPreset_\(bundleID)")
+        d.set(true, forKey: "AOMAudioAppEQEnabled_\(bundleID)")
+        applyEQ()
     }
 
     func setBand(_ index: Int, gain: Float) {
-        guard (0..<10).contains(index) else { return }
+        guard (0..<10).contains(index), gain.isFinite else { return }
         eqGains[index] = min(max(gain, -12), 12)
         eqPreset = "Custom"
-        applyEQ()
     }
 
     func showPanel() {
@@ -72,6 +126,8 @@ final class AppAudioMixerService: ObservableObject {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
                             styleMask: [.titled, .nonactivatingPanel, .closable, .resizable],
                             backing: .buffered, defer: false)
+        panel.delegate = self
+        panel.isReleasedWhenClosed = false
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
@@ -89,8 +145,8 @@ final class AppAudioMixerService: ObservableObject {
         isShowing = true
         panel.orderFrontRegardless()
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMeters() }
         }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isShowing, event.keyCode == 53 else { return event }
@@ -98,6 +154,8 @@ final class AppAudioMixerService: ObservableObject {
             return nil
         }
     }
+
+    func windowWillClose(_ notification: Notification) { hide() }
 
     func hide() {
         refreshTimer?.invalidate()
@@ -111,23 +169,30 @@ final class AppAudioMixerService: ObservableObject {
     /// Per-app gain: starts the tap session lazily on first adjustment.
     func setGain(_ gain: Float, pid: pid_t) {
         guard #available(macOS 14.2, *) else { return }
-        if AppAudioEngine.shared.setGain(gain, muted: false, pid: pid) {
-            // New sessions start flat; fan the master EQ out to them too.
-            applyEQ()
+        if let app = apps.first(where: { $0.pid == pid }), pid <= 0 {
+            UserDefaults.standard.set(Double(Mixer.clamp(gain)), forKey: "AOMAudioGain_\(app.bundleID)")
+        } else {
+            let muted = AppAudioEngine.shared.session(pid: pid)?.muted ?? apps.first(where: { $0.pid == pid })?.muted ?? false
+            _ = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
         }
-        refresh()
+        reloadApps()
     }
 
     /// Toggle per-app mute; the tap session persists so unmuting restores gain.
     func toggleMute(pid: pid_t) -> Bool {
         guard #available(macOS 14.2, *) else { return false }
         let current = AppAudioEngine.shared.session(pid: pid)
-        let app = apps.first(where: { $0.pid == pid })
+        let app = AppAudioEngine.shared.runningAudioApps().first(where: { $0.pid == pid })
         let isCurrentlyMuted = current?.muted ?? app?.muted ?? false
         let muted = !isCurrentlyMuted
         let gain = current?.gain ?? app?.gain ?? 1.0
+        if pid <= 0, let app {
+            UserDefaults.standard.set(muted, forKey: "AOMAudioMute_\(app.bundleID)")
+            reloadApps()
+            return true
+        }
         let ok = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
-        if ok { refresh() }
+        reloadApps()
         return ok
     }
 
@@ -173,6 +238,9 @@ private struct AppAudioMixerView: View {
             }.padding(12)
             MixerOutputSection()
             Divider()
+            if let error = service.lastError {
+                Text(error).font(.caption).foregroundStyle(.red).padding(8)
+            }
             EQSection(service: service)
             Divider()
             if service.apps.isEmpty {
@@ -253,7 +321,7 @@ struct MixerOutputSection: View {
 
     private var currentUID: String {
         guard let id = AudioOutputService.currentDeviceID(),
-              let current = devices.first(where: { $0.uid == String(id) }) ?? devices.first else { return "" }
+              let current = devices.first(where: { $0.id == id }) else { return "" }
         return current.uid
     }
 

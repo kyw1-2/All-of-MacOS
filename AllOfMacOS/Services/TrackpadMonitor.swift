@@ -343,7 +343,8 @@ class TrackpadMonitor {
         // Gesture layers first: nothing below this line may skip them — an
         // early return for another device or an inactive secondary trackpad
         // used to swallow the window/utility gesture frames entirely.
-        MainActor.assumeIsolated {
+        if systemMonitoringEnabled, !suspended {
+            MainActor.assumeIsolated {
             // Every frame reaches the window gesture layer: the release frame
             // (count 0-2) is what commits a snap — routing it only to the
             // utility layer stranded every gesture mid-air.
@@ -351,6 +352,7 @@ class TrackpadMonitor {
             if points.count <= 2 {
                 TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
             }
+        }
         }
         tipTapShield.observe(device: deviceID, count: points.count, now: ProcessInfo.processInfo.systemUptime)
         // Track the peak so a click arriving from the mouse tap can tell a
@@ -1459,6 +1461,7 @@ class TrackpadMonitor {
         stopSuppressingMouse(); resetCircleState(); resetTriangleState(); resetEdgeDragState()
     }
     private func stopHardware() {
+        if systemMonitoringEnabled { MainActor.assumeIsolated { WindowGestureController.shared.cancel() } }
         source.stop(); source.onFrame = nil
         tearDownClickSuppressionTap()
         monitors.forEach(NSEvent.removeMonitor); monitors.removeAll()

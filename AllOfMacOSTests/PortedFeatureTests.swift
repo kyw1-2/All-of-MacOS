@@ -49,10 +49,10 @@ final class PortedFeatureTests: XCTestCase {
         let left = WindowGestureController.snapTarget(cursor: CGPoint(x: 5, y: 450), screen: screen)
         XCTAssertEqual(left, CGRect(x: 0, y: 40, width: 720, height: 830))
         // Top-right corner: top-right quarter.
-        let corner = WindowGestureController.snapTarget(cursor: CGPoint(x: 1438, y: 898), screen: screen)
+        let corner = WindowGestureController.snapTarget(cursor: CGPoint(x: 1438, y: 2), screen: screen)
         XCTAssertEqual(corner, CGRect(x: 720, y: 40, width: 720, height: 415))
         // Top center: maximize (the visible frame).
-        let top = WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 898), screen: screen)
+        let top = WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 2), screen: screen)
         XCTAssertEqual(top, screen.visible)
         // Off-screen: nothing.
         XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: -30, y: 450), screen: screen))

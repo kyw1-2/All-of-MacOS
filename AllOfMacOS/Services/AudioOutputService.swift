@@ -42,7 +42,9 @@ final class AudioOutputService {
             var output = address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)
             var bytes: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(id, &output, 0, nil, &bytes) == noErr, bytes > 0 else { return nil }
-            return AudioOutputDevice(id: id, uid: string(id, kAudioDevicePropertyDeviceUID), name: string(id, kAudioObjectPropertyName))
+            let uid = string(id, kAudioDevicePropertyDeviceUID)
+            guard !uid.isEmpty, !uid.hasPrefix("com.kyw.allofmacos.tap.") else { return nil }
+            return AudioOutputDevice(id: id, uid: uid, name: string(id, kAudioObjectPropertyName))
         }
     }
     static func currentDeviceID() -> AudioDeviceID? {
@@ -72,59 +74,120 @@ final class AudioOutputService {
         }
         return nil
     }
+    private static func outputMuteProperties(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {
+        var result: [AudioObjectPropertyAddress] = []
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {
+            var p = address(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput)
+            p.mElement = element
+            var writable: DarwinBoolean = false
+            guard AudioObjectIsPropertySettable(device, &p, &writable) == noErr, writable.boolValue else { continue }
+            if element == kAudioObjectPropertyElementMain { return [p] }
+            result.append(p)
+        }
+        return result
+    }
+
     static func shouldUnmuteOnIncrease(isMuted: Bool, percentagePoints: Double) -> Bool {
         isMuted && percentagePoints > 0
     }
     private static func clearMuteForVolumeIncrease(device: AudioDeviceID, delta: Double) -> Bool {
-        guard delta > 0, var property = muteProperty(device) else { return true }
-        var current: UInt32 = 0
-        var size = UInt32(MemoryLayout.size(ofValue: current))
-        guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &current) == noErr else { return false }
-        guard shouldUnmuteOnIncrease(isMuted: current != 0, percentagePoints: delta) else { return true }
-        var writable: DarwinBoolean = false
-        guard AudioObjectIsPropertySettable(device, &property, &writable) == noErr, writable.boolValue else { return false }
-        var unmuted: UInt32 = 0
-        guard AudioObjectSetPropertyData(device, &property, 0, nil, UInt32(MemoryLayout.size(ofValue: unmuted)), &unmuted) == noErr else { return false }
-        // Confirm the mute bit is clear before changing the scalar. Some output
-        // devices silently ignore volume writes while this bit is still set.
-        current = 1
-        size = UInt32(MemoryLayout.size(ofValue: current))
-        return AudioObjectGetPropertyData(device, &property, 0, nil, &size, &current) == noErr && current == 0
+        guard delta > 0 else { return true }
+        for var p in outputMuteProperties(device) {
+            var value: UInt32 = 0, size: UInt32 = 4
+            guard AudioObjectGetPropertyData(device, &p, 0, nil, &size, &value) == noErr else { return false }
+            if value != 0 {
+                value = 0
+                guard AudioObjectSetPropertyData(device, &p, 0, nil, 4, &value) == noErr else { return false }
+            }
+        }
+        return true
     }
-    private static func currentMuteState(_ device: AudioDeviceID) -> Bool? {
-        guard var property = muteProperty(device) else { return nil }
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout.size(ofValue: value))
-        guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr else { return nil }
-        return value != 0
+    static func currentMuteState(_ device: AudioDeviceID) -> Bool? {
+        let properties = outputMuteProperties(device)
+        guard !properties.isEmpty else { return nil }
+        var allMuted = true
+        for var p in properties {
+            var value: UInt32 = 0, size: UInt32 = 4
+            guard AudioObjectGetPropertyData(device, &p, 0, nil, &size, &value) == noErr else { return nil }
+            allMuted = allMuted && value != 0
+        }
+        return allMuted
     }
+    static func canAdjustOutputVolume() -> Bool {
+        guard let device = currentDeviceID() else { return false }
+        if volumeProperty(device) != nil { return true }
+        if #available(macOS 14.2, *) { return true }
+        return false
+    }
+    static func canAdjustBalance() -> Bool {
+        guard let device = currentDeviceID() else { return false }
+        return [1, 2].allSatisfy { channel in
+            var p = address(kAudioDevicePropertyVolumeScalar, scope: kAudioDevicePropertyScopeOutput)
+            p.mElement = AudioObjectPropertyElement(channel)
+            var writable: DarwinBoolean = false
+            return AudioObjectIsPropertySettable(device, &p, &writable) == noErr && writable.boolValue
+        }
+    }
+
     static func currentVolume() -> Float32? {
-        guard let device = currentDeviceID(), var property = volumeProperty(device) else { return nil }
+        guard let device = currentDeviceID() else { return nil }
+        guard var property = volumeProperty(device) else {
+            if #available(macOS 14.2, *) { return softwareGain(uid: string(device, kAudioDevicePropertyDeviceUID)) }
+            return nil
+        }
         var value: Float32 = 0; var size: UInt32 = 4
         guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
         return value
     }
+    static func softwareGain(uid: String) -> Float {
+        guard let device = devices().first(where: { $0.uid == uid }), volumeProperty(device.id) == nil else { return 1 }
+        let value = UserDefaults.standard.object(forKey: "AOMAudioDeviceGain_\(uid)") as? Double ?? 1
+        return value.isFinite ? Float(min(1, max(0, value))) : 1
+    }
+
     private var changingVolume = false
-    private var volumeRequests: [(Double, (Bool) -> Void)] = []
+    private struct VolumeRequest {
+        let value: Double
+        let absolute: Bool
+        let device: AudioDeviceID?
+        let completion: (Bool) -> Void
+    }
+    private var volumeRequests: [VolumeRequest] = []
     func adjustVolume(percentagePoints: Double, completion: @escaping (Bool) -> Void) {
         guard percentagePoints.isFinite, abs(percentagePoints) <= 100 else { completion(false); return }
-        volumeRequests.append((percentagePoints, completion))
+        volumeRequests.append(VolumeRequest(value: percentagePoints, absolute: false,
+                                            device: Self.currentDeviceID(), completion: completion))
         if !changingVolume { changingVolume = true; applyNextVolumeChange() }
     }
     private func applyNextVolumeChange() {
-        guard let (delta, completion) = volumeRequests.first else { return }
+        guard let request = volumeRequests.first else { return }
+        let completion = request.completion
         func done(_ success: Bool, _ message: String) {
             self.volumeRequests.removeFirst()
             self.finish(success, message, completion)
             if !self.volumeRequests.isEmpty { DispatchQueue.main.async { self.applyNextVolumeChange() } }
             else { self.changingVolume = false }
         }
-        guard let device = Self.currentDeviceID(), var property = Self.volumeProperty(device) else {
-            done(false, "Current output does not expose adjustable volume"); return
+        guard let device = Self.currentDeviceID() else { done(false, "No output device is connected"); return }
+        guard device == request.device else { done(false, "Output changed during volume adjustment"); return }
+        guard var property = Self.volumeProperty(device) else {
+            if #available(macOS 14.2, *) {
+                let uid = Self.string(device, kAudioDevicePropertyDeviceUID)
+                let current = Double(Self.softwareGain(uid: uid)) * 100
+                let target = min(100, max(0, request.absolute ? request.value : current + request.value))
+                UserDefaults.standard.set(target / 100, forKey: "AOMAudioDeviceGain_\(uid)")
+                AppAudioEngine.shared.syncActiveProcesses()
+                done(true, "Software output volume: \(Int(target))%")
+            } else { done(false, "Software output volume requires macOS 14.2 or newer") }
+            return
         }
+        guard device == request.device, let initial = Self.currentVolume() else {
+            done(false, "Output changed during volume adjustment"); return
+        }
+        let delta = request.absolute ? request.value - Double(initial) * 100 : request.value
         // 0% is also hardware-mute on many macOS outputs. Unmute first so the
         // subsequent scalar write is applied rather than silently ignored.
-        guard Self.clearMuteForVolumeIncrease(device: device, delta: delta) else {
+        guard Self.clearMuteForVolumeIncrease(device: device, delta: request.absolute && request.value > 0 ? max(delta, 0.001) : delta) else {
             done(false, "Output could not be unmuted for volume increase"); return
         }
         guard let current = Self.currentVolume() else {
@@ -286,10 +349,40 @@ extension AudioOutputService {
     /// Sets the output volume to an exact percentage by stepping through
     /// `adjustVolume`, so unmute-on-increase and read-back verification apply.
     func setVolume(percent: Double, completion: @escaping (Bool) -> Void) {
-        guard let current = Self.currentVolume(),
-              let delta = Self.volumeDelta(current: current, targetPercent: percent) else { completion(false); return }
-        if abs(delta) < 0.05 { completion(true); return }
-        adjustVolume(percentagePoints: delta, completion: completion)
+        guard percent.isFinite, (0...100).contains(percent) else { completion(false); return }
+        volumeRequests.append(VolumeRequest(value: percent, absolute: true,
+                                            device: Self.currentDeviceID(), completion: completion))
+        if !changingVolume { changingVolume = true; applyNextVolumeChange() }
+    }
+
+    static func isOutputMuted() -> Bool {
+        guard let device = currentDeviceID() else { return false }
+        return currentMuteState(device) ?? ((currentVolume() ?? 1) == 0)
+    }
+
+    /// Mute is independent of the volume fader. Devices without a mute switch
+    /// restore their last nonzero level, keyed by the physical device UID.
+    func toggleOutputMute(completion: @escaping (Bool) -> Void) {
+        guard let device = Self.currentDeviceID() else { completion(false); return }
+        let muteProperties = Self.outputMuteProperties(device)
+        if !muteProperties.isEmpty, let muted = Self.currentMuteState(device) {
+            var value: UInt32 = muted ? 0 : 1
+            var ok = true
+            for var property in muteProperties {
+                ok = AudioObjectSetPropertyData(device, &property, 0, nil, 4, &value) == noErr && ok
+            }
+            completion(ok)
+            return
+        }
+        guard let volume = Self.currentVolume() else { completion(false); return }
+        let key = "AOMAudioOutputUnmute_" + Self.string(device, kAudioDevicePropertyDeviceUID)
+        if volume > 0 {
+            UserDefaults.standard.set(Double(volume), forKey: key)
+            setVolume(percent: 0, completion: completion)
+        } else {
+            let saved = UserDefaults.standard.object(forKey: key) as? Double ?? 0.5
+            setVolume(percent: max(1, min(100, saved * 100)), completion: completion)
+        }
     }
 
     static func defaultInputDeviceID() -> AudioDeviceID? {
@@ -322,7 +415,16 @@ extension AudioOutputService {
     static func toggleInputMute() -> Bool? {
         guard let device = defaultInputDeviceID() else { return nil }
         var properties = inputMuteProperties(device)
-        guard !properties.isEmpty else { return nil }
+        if properties.isEmpty {
+            guard let current = currentInputVolume() else { return nil }
+            let key = "AOMAudioInputUnmute_" + string(device, kAudioDevicePropertyDeviceUID)
+            if current > 0 {
+                UserDefaults.standard.set(Double(current), forKey: key)
+                return setInputVolume(percent: 0) ? true : nil
+            }
+            let saved = UserDefaults.standard.object(forKey: key) as? Double ?? 0.8
+            return setInputVolume(percent: max(1, min(100, saved * 100))) ? false : nil
+        }
         var first: UInt32 = 0; var size = UInt32(MemoryLayout.size(ofValue: first))
         guard AudioObjectGetPropertyData(device, &properties[0], 0, nil, &size, &first) == noErr else { return nil }
         var next: UInt32 = first == 0 ? 1 : 0
@@ -347,7 +449,9 @@ extension AudioOutputService {
             var input = address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput)
             var bytes: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(id, &input, 0, nil, &bytes) == noErr, bytes > 0 else { return nil }
-            return AudioOutputDevice(id: id, uid: string(id, kAudioDevicePropertyDeviceUID), name: string(id, kAudioObjectPropertyName))
+            let uid = string(id, kAudioDevicePropertyDeviceUID)
+            guard !uid.isEmpty, !uid.hasPrefix("com.kyw.allofmacos.tap.") else { return nil }
+            return AudioOutputDevice(id: id, uid: uid, name: string(id, kAudioObjectPropertyName))
         }
     }
 
@@ -359,30 +463,53 @@ extension AudioOutputService {
                                        UInt32(MemoryLayout.size(ofValue: id)), &id)
     }
 
+    private static func inputVolumeProperties(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {
+        var result: [AudioObjectPropertyAddress] = []
+        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {
+            var p = address(kAudioDevicePropertyVolumeScalar, scope: kAudioDevicePropertyScopeInput)
+            p.mElement = element
+            var writable: DarwinBoolean = false
+            guard AudioObjectIsPropertySettable(device, &p, &writable) == noErr, writable.boolValue else { continue }
+            if element == kAudioObjectPropertyElementMain { return [p] }
+            result.append(p)
+        }
+        return result
+    }
+    static func canAdjustInputVolume() -> Bool {
+        guard let device = defaultInputDeviceID() else { return false }
+        return !inputVolumeProperties(device).isEmpty
+    }
+    static func canMuteInput() -> Bool {
+        guard let device = defaultInputDeviceID() else { return false }
+        return !inputMuteProperties(device).isEmpty || !inputVolumeProperties(device).isEmpty
+    }
     static func currentInputVolume() -> Float32? {
         guard let device = defaultInputDeviceID() else { return nil }
-        var property = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
-                                                  mScope: kAudioDevicePropertyScopeInput,
-                                                  mElement: kAudioObjectPropertyElementMain)
-        var value: Float32 = 0
-        var size: UInt32 = 4
-        guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
-        return value
+        var total: Float = 0
+        let properties = inputVolumeProperties(device)
+        guard !properties.isEmpty else { return nil }
+        for var p in properties {
+            var value: Float32 = 0, size: UInt32 = 4
+            guard AudioObjectGetPropertyData(device, &p, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
+            total += value
+        }
+        return total / Float(properties.count)
     }
-
-    static func setInputVolume(percent: Double) {
-        guard let device = defaultInputDeviceID() else { return }
-        var property = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
-                                                  mScope: kAudioDevicePropertyScopeInput,
-                                                  mElement: kAudioObjectPropertyElementMain)
-        var value = Float32(max(0, min(1, percent / 100)))
-        _ = AudioObjectSetPropertyData(device, &property, 0, nil, 4, &value)
+    @discardableResult
+    static func setInputVolume(percent: Double) -> Bool {
+        guard percent.isFinite, (0...100).contains(percent), let device = defaultInputDeviceID() else { return false }
+        let properties = inputVolumeProperties(device)
+        guard !properties.isEmpty else { return false }
+        var value = Float32(percent / 100)
+        var ok = true
+        for var p in properties { ok = AudioObjectSetPropertyData(device, &p, 0, nil, 4, &value) == noErr && ok }
+        return ok
     }
 
     static func isInputMuted() -> Bool {
         guard let device = defaultInputDeviceID() else { return false }
         let props = inputMuteProperties(device)
-        guard var first = props.first else { return false }
+        guard var first = props.first else { return currentInputVolume() == 0 }
         var value: UInt32 = 0
         var size: UInt32 = 4
         guard AudioObjectGetPropertyData(device, &first, 0, nil, &size, &value) == noErr else { return false }
@@ -392,27 +519,20 @@ extension AudioOutputService {
     // MARK: - System Alert Sounds Volume
 
     static func currentSystemAlertVolume() -> Float32? {
-        var alertAddr = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
-        var alertID: AudioDeviceID = 0
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &alertAddr, 0, nil, &size, &alertID) == noErr, alertID != 0 else {
-            return currentVolume()
-        }
-        guard var property = volumeProperty(alertID) else { return currentVolume() }
-        var value: Float32 = 0
-        var valSize: UInt32 = 4
-        guard AudioObjectGetPropertyData(alertID, &property, 0, nil, &valSize, &value) == noErr, value.isFinite else { return nil }
-        return value
+        // The system alert scalar is NOT the volume of the system-output
+        // hardware device, which is often the very same device as music.
+        var error: NSDictionary?
+        let value = NSAppleScript(source: "alert volume of (get volume settings)")?.executeAndReturnError(&error)
+        guard error == nil, let value else { return nil }
+        return Float32(value.int32Value) / 100
     }
 
-    static func setSystemAlertVolume(percent: Double) {
-        var alertAddr = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
-        var alertID: AudioDeviceID = 0
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &alertAddr, 0, nil, &size, &alertID) == noErr, alertID != 0 else { return }
-        guard var property = volumeProperty(alertID) else { return }
-        var value = Float32(max(0, min(1, percent / 100)))
-        _ = AudioObjectSetPropertyData(alertID, &property, 0, nil, 4, &value)
+    @discardableResult
+    static func setSystemAlertVolume(percent: Double) -> Bool {
+        guard percent.isFinite, (0...100).contains(percent) else { return false }
+        var error: NSDictionary?
+        NSAppleScript(source: "set volume alert volume \(Int(percent.rounded()))")?.executeAndReturnError(&error)
+        return error == nil
     }
 
     // MARK: - Stereo Balance
@@ -429,13 +549,20 @@ extension AudioOutputService {
         var size: UInt32 = 4
         _ = AudioObjectGetPropertyData(device, &propLeft, 0, nil, &size, &left)
         _ = AudioObjectGetPropertyData(device, &propRight, 0, nil, &size, &right)
-        let total = left + right
-        guard total > 0.001 else { return 0 }
-        return (right - left) / total
+        let peak = max(left, right)
+        guard peak > 0.001 else { return 0 }
+        return (right - left) / peak
     }
 
     static func setBalance(_ balance: Float32) {
-        guard let device = currentDeviceID(), let master = currentVolume() else { return }
+        guard balance.isFinite, let device = currentDeviceID() else { return }
+        var lp = address(kAudioDevicePropertyVolumeScalar, scope: kAudioDevicePropertyScopeOutput)
+        lp.mElement = 1
+        var rp = lp; rp.mElement = 2
+        var oldLeft: Float32 = 0, oldRight: Float32 = 0, size: UInt32 = 4
+        guard AudioObjectGetPropertyData(device, &lp, 0, nil, &size, &oldLeft) == noErr,
+              AudioObjectGetPropertyData(device, &rp, 0, nil, &size, &oldRight) == noErr else { return }
+        let master = max(oldLeft, oldRight)
         let clamped = max(-1, min(1, balance))
         var left = master * (clamped < 0 ? 1 : max(0, 1 - clamped))
         var right = master * (clamped > 0 ? 1 : max(0, 1 + clamped))
