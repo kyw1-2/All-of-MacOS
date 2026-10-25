@@ -522,6 +522,12 @@ class ActionExecutor {
             }
         case .showWindowSwitcher:
             MainActor.assumeIsolated { WindowSwitcherController.shared.show() }
+        case .muteFrontAppAudio:
+            MainActor.assumeIsolated {
+                AppAudioMixerService.shared.toggleMuteFront()
+            }
+        case .showAudioMixer:
+            MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() }
         case .lockScreen:
             if let lib = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY) {
                 typealias LockFn = @convention(c) () -> Void

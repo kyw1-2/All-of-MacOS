@@ -141,6 +141,8 @@ extension ActionType {
         // System
         case .sleepComputer: return "Puts the Mac to sleep."
         case .toggleKeepAwake: return "Keeps the Mac awake until it is toggled off or the optional minutes run out."
+        case .muteFrontAppAudio: return "Toggles a per-app mute on the frontmost app's audio (macOS 14.2+)."
+        case .showAudioMixer: return "Opens the per-app audio mixer panel (macOS 14.2+)."
         case .lockScreen: return "Locks the screen."
         case .toggleDarkMode: return "Switches AOM between light and dark appearance."
         case .toggleDoNotDisturb: return "Not implemented; use a script or shortcut instead."

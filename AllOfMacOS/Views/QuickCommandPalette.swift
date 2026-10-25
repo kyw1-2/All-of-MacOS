@@ -170,6 +170,10 @@ struct QuickCommandPalette: View {
                 keys: captureKeys(.keepAwake)) {
             KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false)
         }
+        command("audio.mixer", "App Audio Mixer", "Per-app volume and mute (macOS 14.2+)", "slider.horizontal.3",
+                keys: nil) {
+            AppAudioMixerService.shared.showPanel()
+        }
 
         for trigger in appState.currentPreset.triggers {
             var keys: String?

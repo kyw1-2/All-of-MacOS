@@ -123,6 +123,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     // System Actions
     case sleepComputer = "Sleep Computer"
     case toggleKeepAwake = "Toggle Keep Awake"
+    case muteFrontAppAudio = "Mute Front App Audio"
+    case showAudioMixer = "Show Audio Mixer"
     case showWindowSwitcher = "Show Window Switcher"
     case lockScreen = "Lock Screen"
     case toggleDarkMode = "Toggle Dark Mode"
@@ -293,7 +295,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
             return .keyboardActions
         case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
             return .applicationControl
-        case .sleepComputer, .toggleKeepAwake, .lockScreen, .toggleDarkMode, .toggleDoNotDisturb,
+        case .sleepComputer, .toggleKeepAwake, .muteFrontAppAudio, .showAudioMixer, .lockScreen, .toggleDarkMode, .toggleDoNotDisturb,
              .volumeUp, .volumeDown, .brightnessUp, .brightnessDown, .muteVolume, .setSoundOutput:
             return .systemActions
         case .runAppleScript, .runShellScript, .openURL:
@@ -402,6 +404,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .toggleApplication: return "app.badge.checkmark"
         case .sleepComputer: return "moon"
         case .toggleKeepAwake: return "flask"
+        case .muteFrontAppAudio: return "speaker.minus"
+        case .showAudioMixer: return "slider.horizontal.3"
         case .lockScreen: return "lock"
         case .toggleDarkMode: return "circle.lefthalf.filled"
         case .toggleDoNotDisturb: return "moon.circle"

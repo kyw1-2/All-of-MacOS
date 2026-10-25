@@ -1,0 +1,239 @@
+import AppKit
+import CoreAudio
+import AudioToolbox
+
+/// SoundSource-lite per-app audio control on macOS 14.2+ Core Audio Process
+/// Taps. For each app the user adjusts: a process tap is created with
+/// `.whenRunning` mute behavior (the app's own output is silenced while the
+/// tap runs), the tapped stream is mixed with the app's gain into the default
+/// output device through an IOProc owned by this engine.
+///
+/// Everything here is macOS 14.2+; callers gate with `isSupported`. The mixer
+/// math and persisted state are pure and unit-tested in isolation. Requires
+/// the system audio-recording approval (macOS 14.4+ prompt), which SoundSource
+/// needs identically.
+/// Un-gated so panels and actions can reference it before the availability
+/// check; the engine itself stays 14.2+.
+struct AppAudioState: Identifiable, Equatable {
+    let pid: pid_t
+    let name: String
+    var gain: Float // 0...2, 1 = unity
+    var muted: Bool
+    var tapped: Bool
+    var id: Int32 { pid }
+}
+
+@available(macOS 14.2, *)
+final class AppAudioEngine {
+    static let shared = AppAudioEngine()
+
+    typealias AppState = AppAudioState
+
+    final class Session {
+        let pid: pid_t
+        let bundleID: String
+        let tapID: AudioObjectID
+        let aggregateID: AudioObjectID
+        var procID: AudioDeviceIOProcID?
+        var box: Unmanaged<MixerBox>
+        var gain: Float
+        var muted: Bool
+        init(pid: pid_t, bundleID: String, tapID: AudioObjectID, aggregateID: AudioObjectID,
+             procID: AudioDeviceIOProcID?, box: Unmanaged<MixerBox>, gain: Float, muted: Bool) {
+            self.pid = pid; self.bundleID = bundleID; self.tapID = tapID
+            self.aggregateID = aggregateID; self.procID = procID; self.box = box
+            self.gain = gain; self.muted = muted
+        }
+    }
+
+    @Published private(set) var authorizationDenied = false
+    private var sessions: [pid_t: Session] = [:]
+
+    var isSupported: Bool { true } // the type itself is 14.2-gated
+
+    // MARK: - Running audio apps (process objects, 14.2+)
+
+    func runningAudioApps() -> [AppState] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr,
+              size > 0 else { return [] }
+        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
+        var objects = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return [] }
+        return objects.compactMap { object -> AppState? in
+            guard let pid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), pid > 0,
+                  Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { return nil }
+            let app = NSRunningApplication(processIdentifier: pid)
+            let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
+            return AppState(pid: pid, name: app?.localizedName ?? "Process \(pid)",
+                            gain: Self.storedGain(bundleID: bundleID), muted: false,
+                            tapped: sessions[pid] != nil)
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
+                                                as type: T.Type) -> T? {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        let value = UnsafeMutablePointer<T>.allocate(capacity: 1)
+        defer { value.deallocate() }
+        var size = UInt32(MemoryLayout<T>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, value) == noErr else { return nil }
+        return value.pointee
+    }
+
+    // MARK: - Gain / mute / lifecycle
+
+    /// Starts (or retunes) the tap session for a pid. Returns false when the
+    /// OS gates us out (denied capture) — pre-14.2 callers never get here.
+    func setGain(_ gain: Float, muted: Bool = false, pid: pid_t) -> Bool {
+        let clamped = Mixer.clamp(gain)
+        if var session = sessions[pid] {
+            session.box.takeUnretainedValue().gain = clamped
+            session.box.takeUnretainedValue().muted = muted
+            session.gain = clamped
+            session.muted = muted
+            sessions[pid] = session
+            persistGain(clamped, pid: pid)
+            return true
+        }
+        guard let session = createSession(pid: pid, gain: clamped, muted: muted) else {
+            authorizationDenied = true
+            return false
+        }
+        sessions[pid] = session
+        persistGain(clamped, pid: pid)
+        return true
+    }
+
+    func stop(pid: pid_t) {
+        guard let session = sessions.removeValue(forKey: pid) else { return }
+        Self.destroy(session)
+    }
+
+    func stopAll() {
+        for pid in Array(sessions.keys) { stop(pid: pid) }
+    }
+
+    func session(pid: pid_t) -> Session? { sessions[pid] }
+
+    private func persistGain(_ gain: Float, pid: pid_t) {
+        if let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier {
+            UserDefaults.standard.set(Double(gain), forKey: "AOMAudioGain_\(bundleID)")
+        }
+    }
+
+    static func storedGain(bundleID: String) -> Float {
+        Float(UserDefaults.standard.object(forKey: "AOMAudioGain_\(bundleID)") as? Double ?? 1)
+    }
+
+    // MARK: - Core Audio plumbing
+
+    private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
+        let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        // 1. The process tap; `.whenRunning` silences the app's own output
+        //    while the tap runs, so the mixed render is the only audible path.
+        // The Swift-refined API: plain init + [AudioObjectID] processes.
+        let description = CATapDescription()
+        description.processes = [AudioObjectID(pid)]
+        description.isMono = true
+        // .mutedWhenTapped silences the app's own hardware output exactly
+        // while another client reads the tap — our mixer is that client.
+        description.muteBehavior = .mutedWhenTapped
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateProcessTap(description, &tapID) == noErr, tapID != kAudioObjectUnknown else { return nil }
+
+        // 2. The tap's UID, then a private aggregate device wrapping it.
+        var uidAddress = AudioObjectPropertyAddress(mSelector: kAudioTapPropertyUID,
+                                                    mScope: kAudioObjectPropertyScopeGlobal,
+                                                    mElement: kAudioObjectPropertyElementMain)
+        var uidSize: UInt32 = 0
+        var tapUID: CFString?
+        guard AudioObjectGetPropertyDataSize(tapID, &uidAddress, 0, nil, &uidSize) == noErr, uidSize > 0,
+              AudioObjectGetPropertyData(tapID, &uidAddress, 0, nil, &uidSize, &tapUID) == noErr,
+              let tapUIDString = tapUID as String?, !tapUIDString.isEmpty else {
+            AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+        let aggregateDict: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "AOM App Audio \(pid)",
+            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid)",
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: [[
+                kAudioSubDeviceUIDKey: tapUIDString,
+                kAudioSubDeviceDriftCompensationKey: 1
+            ]],
+            kAudioAggregateDeviceMainSubDeviceKey: tapUIDString
+        ]
+        var aggregateID = AudioObjectID(kAudioObjectUnknown)
+        guard AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID) == noErr,
+              aggregateID != kAudioObjectUnknown else {
+            AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+
+        // 3. The IOProc: pull tapped audio from input scope, apply gain, write
+        //    to output scope. Runs on the realtime thread — no allocation.
+        let box = Unmanaged.passRetained(MixerBox(gain: gain, muted: muted))
+        var procID: AudioDeviceIOProcID?
+        let status = AudioDeviceCreateIOProcIDWithBlock(
+            &procID, aggregateID, nil,
+            { _, input, _, output, _ in
+                Mixer.mix(input: input, output: output, box: box.takeUnretainedValue())
+            })
+        guard status == noErr, procID != nil else {
+            box.release()
+            AudioHardwareDestroyAggregateDevice(aggregateID)
+            AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+        AudioDeviceStart(aggregateID, procID!)
+        return Session(pid: pid, bundleID: bundleID, tapID: tapID, aggregateID: aggregateID,
+                       procID: procID, box: box, gain: gain, muted: muted)
+    }
+
+    static func destroy(_ session: Session) {
+        if let procID = session.procID {
+            AudioDeviceStop(session.aggregateID, procID)
+            AudioDeviceDestroyIOProcID(session.aggregateID, procID)
+        }
+        session.box.release()
+        AudioHardwareDestroyAggregateDevice(session.aggregateID)
+        AudioHardwareDestroyProcessTap(session.tapID)
+    }
+}
+
+/// The gain/mute state an IOProc reads. Updated from the main thread by the
+/// engine; the audio thread only reads two floats — no torn-read concerns.
+final class MixerBox {
+    var gain: Float
+    var muted: Bool
+    init(gain: Float, muted: Bool) { self.gain = gain; self.muted = muted }
+}
+
+/// Realtime-safe mixing: scale tapped input into the output, no allocation.
+nonisolated enum Mixer {
+    static func clamp(_ gain: Float) -> Float { min(max(gain, 0), 2) }
+
+    static func mix(input: UnsafePointer<AudioBufferList>,
+                    output: UnsafeMutablePointer<AudioBufferList>,
+                    box: MixerBox) {
+        let gain = box.muted ? Float(0) : box.gain
+        let inputList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        let outputList = UnsafeMutableAudioBufferListPointer(output)
+        for (index, outBuffer) in outputList.enumerated() {
+            guard index < inputList.count,
+                  let inputPtr = inputList[index].mData?.assumingMemoryBound(to: Float32.self),
+                  let outputPtr = outBuffer.mData?.assumingMemoryBound(to: Float32.self) else { continue }
+            let frames = Int(outBuffer.mDataByteSize) / MemoryLayout<Float32>.size
+            for frame in 0..<frames {
+                outputPtr[frame] = inputPtr[frame] * gain
+            }
+        }
+    }
+}
