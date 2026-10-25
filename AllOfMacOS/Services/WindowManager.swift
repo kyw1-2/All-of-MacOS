@@ -254,6 +254,17 @@ final class WindowManager: ObservableObject {
         }
         return nil
     }
+    /// Continuous gesture path (window drag layer): writes position and
+    /// optionally size in one AX round-trip. AX frames are top-left based.
+    func setFrame(_ frame: CGRect, of target: Target) -> Bool {
+        var position = frame.origin
+        var size = frame.size
+        guard let posValue = AXValueCreate(.cgPoint, &position),
+              let sizeValue = AXValueCreate(.cgSize, &size) else { return false }
+        let setResult = AXUIElementSetAttributeValue(target.window, kAXPositionAttribute as CFString, posValue)
+        let sizeResult = AXUIElementSetAttributeValue(target.window, kAXSizeAttribute as CFString, sizeValue)
+        return setResult == .success && sizeResult == .success
+    }
     func frame(of target: Target) -> CGRect? {
         var p: CFTypeRef?; var s: CFTypeRef?
         guard AXUIElementCopyAttributeValue(target.window, kAXPositionAttribute as CFString, &p) == .success,

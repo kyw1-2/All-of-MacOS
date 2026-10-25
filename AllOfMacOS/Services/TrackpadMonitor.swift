@@ -404,6 +404,11 @@ class TrackpadMonitor {
             resetCircleState(); resetTriangleState(); resetEdgeDragState(); stopSuppressingMouse()
         }
         if points.isEmpty { activeDevice = nil }
+        // Window gesture layer (three-finger drag/pinch): sees every frame,
+        // including the empty frame that ends a gesture.
+        MainActor.assumeIsolated {
+            WindowGestureController.shared.observe(points: points, timestamp: timestamp)
+        }
     }
 
     private func handleTap(_ single: TrackpadGesture, double: TrackpadGesture,
