@@ -148,6 +148,7 @@ class PresetManager {
             "showMenuBarIcon",
             "AOMAudioEQEnabled", "AOMAudioEQPreset", "AOMAudioEQGains", "AOMAudioUserApps",
             "AOMAudioMasterBoostEnabled", "AOMAudioMasterBoostLevel",
+            "AOMSoundEnabled", "AOMAudioEngineEnabled",
             "AOMWindowGesturesEnabled", "AOMWindowGestureEdgeSize", "AOMWindowGestureRequireModifier"
         ]
         // Add per-gesture swipe velocity keys

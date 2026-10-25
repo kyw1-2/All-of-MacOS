@@ -9,6 +9,15 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = AppAudioMixerService()
 
     @Published private(set) var apps: [AppAudioState] = []
+    @Published var soundEnabled: Bool {
+        didSet {
+            guard soundEnabled != oldValue else { return }
+            if #available(macOS 14.2, *) {
+                AppAudioEngine.shared.isEnabled = soundEnabled
+            }
+            refresh()
+        }
+    }
     @Published var allAppsBoostEnabled: Bool {
         didSet {
             guard allAppsBoostEnabled != oldValue else { return }
@@ -54,6 +63,12 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private override init() {
+        _soundEnabled = Published(initialValue: {
+            if #available(macOS 14.2, *) {
+                return AppAudioEngine.shared.isEnabled
+            }
+            return true
+        }())
         _allAppsBoostEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled"))
         let savedBoostLevel = UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2
         _allAppsBoostLevel = Published(initialValue: min(3, max(1, savedBoostLevel)))
@@ -68,7 +83,12 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         }
         super.init()
         audioObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadApps() }
+            MainActor.assumeIsolated {
+                if #available(macOS 14.2, *) {
+                    self?.soundEnabled = AppAudioEngine.shared.isEnabled
+                }
+                self?.reloadApps()
+            }
         }
     }
 
@@ -333,35 +353,64 @@ private struct AppAudioMixerView: View {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(.tint)
                 Text("App Audio").font(.system(size: 13, weight: .semibold))
                 Spacer()
+                if service.isSupported {
+                    Toggle("Sound", isOn: $service.soundEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                }
                 Button { service.hide() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
             }.padding(12)
-            MixerOutputSection()
-            Divider()
-            MasterBoostControls(service: service)
-                .padding(12)
-            Divider()
-            if let error = service.lastError {
-                Text(error).font(.caption).foregroundStyle(.red).padding(8)
-            }
-            EQSection(service: service)
-            Divider()
-            if service.apps.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "waveform").font(.system(size: 28)).foregroundStyle(.secondary)
-                    Text(service.isSupported ? "No app is playing audio right now."
-                                             : "Per-app audio needs macOS 14.2 or newer.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+            if !service.soundEnabled {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "speaker.slash.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("App Audio is Disabled")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Apps output directly through standard macOS audio paths without tap interception.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.horizontal, 24)
+                    Button("Enable App Audio") {
+                        service.soundEnabled = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.vertical, 24)
             } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        ForEach(service.apps) { app in
-                            AppAudioRow(app: app,
-                                        onGain: { service.setGain($0, pid: app.pid) },
-                                        onMute: { service.toggleMute(pid: app.pid) })
-                            Divider().padding(.leading, 12)
+                MixerOutputSection()
+                Divider()
+                MasterBoostControls(service: service)
+                    .padding(12)
+                Divider()
+                if let error = service.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red).padding(8)
+                }
+                EQSection(service: service)
+                Divider()
+                if service.apps.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "waveform").font(.system(size: 28)).foregroundStyle(.secondary)
+                        Text(service.isSupported ? "No app is playing audio right now."
+                                                 : "Per-app audio needs macOS 14.2 or newer.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            ForEach(service.apps) { app in
+                                AppAudioRow(app: app,
+                                            onGain: { service.setGain($0, pid: app.pid) },
+                                            onMute: { service.toggleMute(pid: app.pid) })
+                                Divider().padding(.leading, 12)
+                            }
                         }
                     }
                 }

@@ -87,6 +87,14 @@ struct AudioWorkspaceView: View {
                         }
                         .buttonStyle(.plain)
 
+                        // Sound Engine Toggle
+                        if service.isSupported {
+                            Toggle("", isOn: $service.soundEnabled)
+                                .toggleStyle(.switch)
+                                .controlSize(.mini)
+                                .help(service.soundEnabled ? "Disable App Audio Engine" : "Enable App Audio Engine")
+                        }
+
                         // Refresh button
                         Button { service.refresh() } label: {
                             Image(systemName: "arrow.clockwise")
@@ -99,7 +107,26 @@ struct AudioWorkspaceView: View {
                         .help("Refresh applications")
                     }
 
-                    if service.competingMixer != nil {
+                    if !service.soundEnabled {
+                        VStack(spacing: 12) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "speaker.slash.fill").foregroundStyle(.secondary)
+                                Text("App Audio Engine is Disabled").font(AOMType.body.weight(.semibold))
+                            }
+                            Text("All applications output audio directly through standard macOS output devices without background capture or modification.")
+                                .font(AOMType.caption)
+                                .foregroundStyle(AOMTheme.textSecondary)
+                                .multilineTextAlignment(.center)
+                            Button("Enable App Audio") {
+                                service.soundEnabled = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity)
+                        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    } else if service.competingMixer != nil {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("SoundSource is also processing audio", systemImage: "exclamationmark.triangle.fill")
                                 .font(.headline).foregroundStyle(.orange)

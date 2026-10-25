@@ -71,6 +71,22 @@ final class AppAudioEngine {
 
     var isSupported: Bool { true } // the type itself is 14.2-gated
 
+    /// Master toggle for App Audio Engine. When disabled, all process taps and
+    /// aggregate devices are destroyed, and no background audio capture will run.
+    var isEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "AOMSoundEnabled") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "AOMSoundEnabled")
+            UserDefaults.standard.set(newValue, forKey: "AOMAudioEngineEnabled")
+            if !newValue {
+                stopAll()
+            } else {
+                scheduleSync()
+            }
+            NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+        }
+    }
+
     private var timer: Timer?
     private var syncing = false
     private var syncScheduled = false
@@ -111,6 +127,10 @@ final class AppAudioEngine {
     }
 
     func syncActiveProcesses() {
+        guard isEnabled else {
+            if !sessions.isEmpty { stopAll() }
+            return
+        }
         guard !syncing else { return }
         syncing = true
         defer { syncing = false }
@@ -124,15 +144,6 @@ final class AppAudioEngine {
         }
         MainActor.assumeIsolated {
             let renderer = SharedOutputRenderer.shared
-            renderer.rebindIfNeeded(devices: devices)
-            // Detach all sources from a failed graph before rebuilding it. A
-            // per-session retry would otherwise strand every app except the last.
-            for session in sessions.values {
-                if let token = session.sourceToken, !renderer.isReady(token) {
-                    renderer.removeSource(token)
-                    session.sourceToken = nil
-                }
-            }
             renderer.rebindIfNeeded(devices: devices)
         }
         let apps = runningAudioApps()
@@ -160,27 +171,25 @@ final class AppAudioEngine {
                 mixer.gain = session.gain; mixer.muted = session.muted
                 mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
                 guard updateProcesses(session, ids: ids) else {
-                    fail(session, message: "App audio capture could not follow its helper process. Reconnect audio to retry.")
                     continue
                 }
                 guard let format = Self.property(session.tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
                       Self.supports(format) else {
-                    fail(session, message: "The app changed to an unsupported audio format. Original audio restored.")
+                    // Transient format query during stream startup or playback state change.
+                    // Never destroy the session tap here — doing so pauses media players.
                     continue
                 }
                 session.transport?.updateSampleRate(format.mSampleRate)
                 session.sampleRate = format.mSampleRate
                 guard let uid = Self.targetOutputUID(for: app.bundleID),
                       let device = devices.first(where: { $0.uid == uid }) else {
-                    fail(session, message: "No output device is available. Original audio restored.")
                     continue
                 }
                 let ready = session.sourceToken.map { token in
                     MainActor.assumeIsolated { SharedOutputRenderer.shared.isReady(token) }
                 } ?? false
-                if session.outputUID != uid {
+                if session.sourceToken == nil || session.outputUID != uid {
                     guard moveOutput(session, device: device) else {
-                        fail(session, message: "Audio output could not start. Original audio restored; reconnect to retry.")
                         continue
                     }
                 } else if !ready {
@@ -268,6 +277,7 @@ final class AppAudioEngine {
     }
 
     private func needsProcessing(_ bundleID: String) -> Bool {
+        guard isEnabled else { return false }
         let d = UserDefaults.standard
         return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
             d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
@@ -277,6 +287,7 @@ final class AppAudioEngine {
     }
 
     private func attach(pid: pid_t, gain: Float, muted: Bool) -> Bool {
+        guard isEnabled else { return false }
         errors.removeValue(forKey: pid)
         guard let session = createSession(pid: pid, gain: gain, muted: muted) else {
             if errors[pid] == nil { errors[pid] = "Audio processing could not start. Check Screen & System Audio Recording permission." }

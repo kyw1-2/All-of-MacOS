@@ -508,6 +508,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let engine = entry("Gestures & Shortcuts", "bolt", #selector(toggleEnabled))
         engine.state = enabled ? .on : .off
         menu.addItem(engine)
+        if #available(macOS 14.2, *) {
+            let soundOn = AppAudioEngine.shared.isEnabled
+            let soundItem = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
+            soundItem.state = soundOn ? .on : .off
+            menu.addItem(soundItem)
+        }
         let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
         let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
         snapItem.state = snapping ? .on : .off
@@ -555,6 +561,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             appState?.toggleGlobalEnabled()
         }
         updateStatusIcon()
+    }
+
+    @objc private func toggleAppAudio() {
+        if #available(macOS 14.2, *) {
+            AppAudioEngine.shared.isEnabled.toggle()
+        }
     }
 
     @objc private func openSettings() {

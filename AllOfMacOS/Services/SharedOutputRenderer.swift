@@ -84,13 +84,12 @@ final class SharedOutputRenderer {
     }
 
     private func recover(_ graph: DeviceGraph, uid: String) {
-        guard graph.failure == nil, !graph.engine.isRunning else { return }
+        guard !graph.engine.isRunning else { return }
         guard AudioOutputService.devices().contains(where: { $0.uid == uid && $0.id == graph.deviceID }) else {
             graph.failure = "Audio output disconnected"
             return
         }
-        // A device format change can stop the engine. Keep the fixed 48 kHz
-        // source and let the mixer negotiate the new hardware format.
+        graph.failure = nil
         do { try graph.engine.start() }
         catch { graph.failure = "Audio output could not restart: \(error.localizedDescription)" }
     }
