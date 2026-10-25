@@ -80,6 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
+            AudioOutputRestore.guardStartupOutputFlip()
             AudioOutputRestore.restoreIfNeeded(reason: "a previous session")
             AudioOutputRestore.repairAirPlayDefaultAtLaunch()
         }

@@ -176,6 +176,30 @@ extension AudioOutputRestore {
         return deviceIDs().first { transportType(of: $0) == kAudioDeviceTransportTypeBuiltIn && hasOutput($0) }
     }
 
+    /// Starting the app-audio engine can make macOS re-open the last AirPlay route
+    /// and take it as the system default a few seconds after launch. The captured
+    /// apps then play into an AirPlay buffer, which stalls video about a second in
+    /// and keeps stalling after AOM quits. Watch the first seconds of a launch and
+    /// put the device we started on back.
+    static func guardStartupOutputFlip() {
+        // Deliberately not gated on the AirPlay-repair preference: this undoes a
+        // change our own engine just caused, not a choice the user made.
+        guard !hasPendingChange else { return }
+        guard let baselineUID = defaultOutputUID(), let baselineID = deviceID(forUID: baselineUID),
+              transportType(of: baselineID) != kAudioDeviceTransportTypeAirPlay else { return }
+        let name = self.name(of: baselineID)
+        for delay in [2.0, 5.0, 9.0, 14.0, 20.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let currentUID = defaultOutputUID(), let currentID = deviceID(forUID: currentUID),
+                      transportType(of: currentID) == kAudioDeviceTransportTypeAirPlay else { return }
+                guard setDefaultOutput(baselineID) else { return }
+                GestureLog.shared.logFromAnyThread(
+                    "AOM's audio engine woke AirPlay and macOS moved the default output; returned audio to \(name)",
+                    level: .action)
+            }
+        }
+    }
+
     /// An AirPlay default that outlives the process is what keeps video frozen
     /// about a second in, even with AOM quit. Put a local device back once, at
     /// launch, before anything tries to play.

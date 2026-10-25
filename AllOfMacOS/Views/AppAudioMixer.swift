@@ -467,6 +467,7 @@ struct MixerOutputSection: View {
     @State private var devices: [AudioOutputDevice] = []
     @State private var volume: Double = 50
     @State private var muted = false
+    @State private var isSwitchingOutput = false
 
     var body: some View {
         VStack(spacing: 6) {
@@ -476,8 +477,19 @@ struct MixerOutputSection: View {
                 Picker("", selection: Binding(
                     get: { currentUID },
                     set: { uid in
-                        guard let device = devices.first(where: { $0.uid == uid }) else { return }
-                        AudioOutputService.shared.select(name: device.name, uid: device.uid, completion: { _ in })
+                        // This picker drives the machine-wide default output, and
+                        // SwiftUI re-syncs a picker on its own whenever its items
+                        // change. AirPlay reconnects with a fresh UID, which made
+                        // the control snap to it and push every other app's audio
+                        // onto AirPlay — the video-stalling default that survives
+                        // quitting AOM. Only a real user choice may act.
+                        guard !isSwitchingOutput, uid != currentUID, !uid.isEmpty,
+                              let device = devices.first(where: { $0.uid == uid }) else { return }
+                        isSwitchingOutput = true
+                        AudioOutputService.shared.select(name: device.name, uid: device.uid, completion: { _ in
+                            isSwitchingOutput = false
+                            refresh()
+                        })
                     })) {
                     ForEach(devices) { device in
                         Text(device.name).tag(device.uid)
