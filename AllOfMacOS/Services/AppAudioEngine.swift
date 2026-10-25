@@ -4,18 +4,9 @@ import AudioToolbox
 import AVFoundation
 import Darwin
 
-/// SoundSource-lite per-app audio control on macOS 14.2+ Core Audio Process
-/// Taps. For each app the user adjusts: a process tap is created with
-/// `.mutedWhenTapped` mute behavior (the app's own output is silenced while the
-/// tap runs), the tapped stream is mixed with the app's gain into the default
-/// output device through an IOProc owned by this engine.
-///
-/// Everything here is macOS 14.2+; callers gate with `isSupported`. The mixer
-/// math and persisted state are pure and unit-tested in isolation. Requires
-/// the system audio-recording approval (macOS 14.4+ prompt), which SoundSource
-/// needs identically.
-/// Un-gated so panels and actions can reference it before the availability
-/// check; the engine itself stays 14.2+.
+/// Per-app control through public Core Audio process taps. Capture lifetime is
+/// independent of playback activity; output is mixed by a stable device graph.
+/// This is an AOM implementation, not Rogue Amoeba's proprietary ARK backend.
 struct AppAudioState: Identifiable, Equatable {
     let pid: pid_t
     let name: String
@@ -59,6 +50,7 @@ final class AppAudioEngine {
         var gain: Float
         var muted: Bool
         var processIDs: [AudioObjectID] = []
+        var tapDescription: CATapDescription?
         var outputUID = ""
         var sampleRate: Double = 48000
         var outputSampleRate: Double = 48000
@@ -80,6 +72,9 @@ final class AppAudioEngine {
 
     private var timer: Timer?
     private var syncing = false
+    private var syncScheduled = false
+    private var failedProcessIDs: [pid_t: [AudioObjectID]] = [:]
+    private var outputTopology: [String: AudioDeviceID] = [:]
     private var processListeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var errors: [pid_t: String] = [:]
     private var retryAfter: [pid_t: TimeInterval] = [:]
@@ -93,15 +88,25 @@ final class AppAudioEngine {
                          kAudioHardwarePropertyDevices] {
             var address = AudioOutputService.address(selector)
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                self?.syncActiveProcesses()
+                self?.scheduleSync()
             }
             if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address,
                                                    DispatchQueue.main, block) == noErr {
                 listeners.append((address, block))
             }
         }
-        timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.syncActiveProcesses() }
+        timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.scheduleSync() }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
+    }
+
+    private func scheduleSync() {
+        guard !syncScheduled else { return }
+        syncScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.syncScheduled = false
+            self.syncActiveProcesses()
+        }
     }
 
     func syncActiveProcesses() {
@@ -109,38 +114,93 @@ final class AppAudioEngine {
         syncing = true
         defer { syncing = false }
         updatePlaybackListeners()
-        if #available(macOS 14.2, *) {
-            MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
+        let devices = AudioOutputService.devices()
+        let topology = Dictionary(devices.map { ($0.uid, $0.id) }, uniquingKeysWith: { first, _ in first })
+        if topology != outputTopology {
+            outputTopology = topology
+            retryAfter.removeAll()
+            failedProcessIDs.removeAll()
         }
-        let apps = runningAudioApps()
-        let livePIDs = Set(apps.map(\.pid))
-        for pid in Array(sessions.keys) where !livePIDs.contains(pid) { stop(pid: pid) }
-        errors = errors.filter { livePIDs.contains($0.key) }
-        retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
-        for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
-            guard needsProcessing(app.bundleID) else {
-                stop(pid: app.pid); errors.removeValue(forKey: app.pid); continue
-            }
-            // NEVER tear a session down for playback pauses or browser helper
-            // churn: destroying the aggregate removes the app's (re-routed)
-            // audio device mid-playback, and every player auto-pauses on
-            // device loss. Sessions live until the app exits, the user's
-            // preferences change, or the output target actually moves.
-            if let session = sessions[app.pid] {
-                if session.bundleID != app.bundleID ||
-                    session.outputUID != Self.targetOutputUID(for: app.bundleID) {
-                    stop(pid: app.pid)
-                } else {
-                    // Sample-rate drift on Bluetooth devices must not rebuild:
-                    // the pooled engine converts, so the tap just keeps running.
-                    session.box.takeUnretainedValue().deviceGain = AudioOutputService.softwareGain(uid: session.outputUID)
+        MainActor.assumeIsolated {
+            let renderer = SharedOutputRenderer.shared
+            renderer.rebindIfNeeded(devices: devices)
+            // Detach all sources from a failed graph before rebuilding it. A
+            // per-session retry would otherwise strand every app except the last.
+            for session in sessions.values {
+                if let token = session.sourceToken, !renderer.isReady(token) {
+                    renderer.removeSource(token)
+                    session.sourceToken = nil
                 }
             }
-            guard sessions[app.pid] == nil,
-                  ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
-            if attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted) {
-            GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
+            renderer.rebindIfNeeded(devices: devices)
         }
+        let apps = runningAudioApps()
+        // Playback/process-object disappearance is not application termination.
+        for pid in Array(sessions.keys) {
+            if NSRunningApplication(processIdentifier: pid)?.isTerminated != false { stop(pid: pid) }
+        }
+        let livePIDs = Set(apps.map(\.pid)).union(sessions.keys)
+        errors = errors.filter { livePIDs.contains($0.key) }
+        retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
+        failedProcessIDs = failedProcessIDs.filter { livePIDs.contains($0.key) }
+        for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
+            if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
+            let ids = Self.processObjectIDs(for: app.pid).sorted()
+            if let failed = failedProcessIDs[app.pid], failed != ids {
+                retryAfter.removeValue(forKey: app.pid)
+                failedProcessIDs.removeValue(forKey: app.pid)
+            }
+            if let session = sessions[app.pid] {
+                // Unity gain, unmute and bypass are parameter changes, not
+                // reasons to destroy the app's current audio device.
+                let mixer = session.box.takeUnretainedValue()
+                session.gain = Self.storedGain(bundleID: app.bundleID)
+                session.muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")
+                mixer.gain = session.gain; mixer.muted = session.muted
+                mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
+                guard updateProcesses(session, ids: ids) else {
+                    fail(session, message: "App audio capture could not follow its helper process. Reconnect audio to retry.")
+                    continue
+                }
+                guard let format = Self.property(session.tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
+                      Self.supports(format) else {
+                    fail(session, message: "The app changed to an unsupported audio format. Original audio restored.")
+                    continue
+                }
+                session.transport?.updateSampleRate(format.mSampleRate)
+                session.sampleRate = format.mSampleRate
+                guard let uid = Self.targetOutputUID(for: app.bundleID),
+                      let device = devices.first(where: { $0.uid == uid }) else {
+                    fail(session, message: "No output device is available. Original audio restored.")
+                    continue
+                }
+                let ready = session.sourceToken.map { token in
+                    MainActor.assumeIsolated { SharedOutputRenderer.shared.isReady(token) }
+                } ?? false
+                if session.outputUID != uid || !ready {
+                    guard moveOutput(session, device: device) else {
+                        fail(session, message: "Audio output could not start. Original audio restored; reconnect to retry.")
+                        continue
+                    }
+                }
+                mixer.deviceGain = AudioOutputService.softwareGain(uid: uid)
+                continue
+            }
+            guard needsProcessing(app.bundleID) else {
+                errors.removeValue(forKey: app.pid)
+                retryAfter.removeValue(forKey: app.pid)
+                failedProcessIDs.removeValue(forKey: app.pid)
+                continue
+            }
+            guard ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
+            // macOS 26 can arm a bundle before its first audio process exists.
+            // On older releases wait without treating a quiet app as a failure.
+            if ids.isEmpty {
+                if #available(macOS 26.0, *) { } else { continue }
+            }
+            if attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted) {
+                GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
+            }
         }
         NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
     }
@@ -161,7 +221,7 @@ final class AppAudioEngine {
             }
         }
         for id in live where processListeners[id] == nil {
-            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.syncActiveProcesses() }
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.scheduleSync() }
             if AudioObjectAddPropertyListenerBlock(id, &playingAddress, DispatchQueue.main, block) == noErr {
                 processListeners[id] = block
             }
@@ -176,9 +236,8 @@ final class AppAudioEngine {
             return pid <= 0 ? "App closed — settings saved" : "Waiting for app audio"
         }
         let activity = transport.activity
-        if activity.captured == 0 {
-            return ProcessInfo.processInfo.systemUptime - session.createdAt > 3
-                ? "No audio received — check audio recording permission" : "Connecting audio…"
+        if activity.captured == 0 || !activity.recent {
+            return "Ready — waiting for app playback"
         }
         if activity.rendered == 0 { return "Waiting for output device…" }
         return session.muted ? "Muted" : "Processing audio"
@@ -188,6 +247,15 @@ final class AppAudioEngine {
         stop(pid: pid)
         errors.removeValue(forKey: pid)
         retryAfter.removeValue(forKey: pid)
+        failedProcessIDs.removeValue(forKey: pid)
+        syncActiveProcesses()
+    }
+
+    func retryAll() {
+        // Explicit user recovery, performed in one reconciliation pass.
+        for pid in Array(sessions.keys) { stop(pid: pid) }
+        errors.removeAll(); retryAfter.removeAll(); failedProcessIDs.removeAll()
+        MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
         syncActiveProcesses()
     }
 
@@ -204,10 +272,15 @@ final class AppAudioEngine {
         errors.removeValue(forKey: pid)
         guard let session = createSession(pid: pid, gain: gain, muted: muted) else {
             if errors[pid] == nil { errors[pid] = "Audio processing could not start. Check Screen & System Audio Recording permission." }
-            retryAfter[pid] = ProcessInfo.processInfo.systemUptime + 5
+            // A permission/format/start failure must not repeatedly create and
+            // destroy devices underneath a video player. Retry on explicit
+            // request or an actual process/output topology change.
+            retryAfter[pid] = .infinity
+            failedProcessIDs[pid] = Self.processObjectIDs(for: pid).sorted()
             return false
         }
         sessions[pid] = session
+        failedProcessIDs.removeValue(forKey: pid)
         retryAfter.removeValue(forKey: pid)
         return true
     }
@@ -231,8 +304,8 @@ final class AppAudioEngine {
     func updateEffects() {
         for session in sessions.values {
             session.box.takeUnretainedValue().setEffects(
-                app: Self.appEQ(bundleID: session.bundleID, sampleRate: session.sampleRate),
-                master: Self.masterEQ(sampleRate: session.sampleRate))
+                app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
+                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate))
         }
         syncActiveProcesses()
     }
@@ -418,8 +491,8 @@ final class AppAudioEngine {
     func setRoute(uid: String?, bundleID: String) {
         UserDefaults.standard.set(uid, forKey: "AOMAudioRoute_\(bundleID)")
         for app in runningAudioApps() where app.bundleID == bundleID && app.pid > 0 {
-            stop(pid: app.pid)
             retryAfter.removeValue(forKey: app.pid)
+            failedProcessIDs.removeValue(forKey: app.pid)
         }
         syncActiveProcesses()
     }
@@ -463,13 +536,6 @@ final class AppAudioEngine {
         return defaultOutputDeviceUID()
     }
 
-    private static func outputSampleRate(uid: String) -> Double {
-        guard let device = AudioOutputService.devices().first(where: { $0.uid == uid }),
-              let rate = property(device.id, selector: kAudioDevicePropertyNominalSampleRate, as: Double.self),
-              rate.isFinite, rate > 0 else { return 48000 }
-        return rate
-    }
-
     // MARK: - Gain / mute / lifecycle
 
     /// Starts (or retunes) the tap session for a pid.
@@ -485,12 +551,10 @@ final class AppAudioEngine {
             sessions[pid] = session
             return true
         }
-        guard pid != ProcessInfo.processInfo.processIdentifier else { return false }
-        // Attach immediately, even while the app is silent: a process tap
-        // exists on the process and captures whatever it plays later. Gating
-        // on IsRunningOutput made the slider report success while doing
-        // nothing for quiet apps (the audit's "per-app volume doesn't work").
-        return attach(pid: pid, gain: clamped, muted: muted)
+        // Persist quiet-app settings and arm once process objects are available.
+        // All attachment policy (including failed-start suppression) lives in sync.
+        syncActiveProcesses()
+        return errors[pid] == nil
     }
 
     func stop(pid: pid_t) {
@@ -506,6 +570,7 @@ final class AppAudioEngine {
 
     func stopAll() {
         for pid in Array(sessions.keys) { stop(pid: pid) }
+        MainActor.assumeIsolated { SharedOutputRenderer.shared.shutdown() }
     }
 
     func session(pid: pid_t) -> Session? { sessions[pid] }
@@ -529,15 +594,19 @@ final class AppAudioEngine {
 
         // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
         let processObjIDs = Self.processObjectIDs(for: pid)
-        guard !processObjIDs.isEmpty else {
-            return nil
+        if processObjIDs.isEmpty {
+            if #available(macOS 26.0, *) { } else { return nil }
         }
-
-        // 2. The stereo process tap; .mutedWhenTapped silences the app's original
-        //    unattenuated output while our aggregate device renders the scaled audio.
         let description = CATapDescription(stereoMixdownOfProcesses: processObjIDs)
+        description.name = "AOM App Audio \(bundleID)"
         description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
+        if #available(macOS 26.0, *) {
+            // Bundle matching arms capture before the first playback callback.
+            // Explicit process IDs still cover verified browser helper owners.
+            description.bundleIDs = bundleID.isEmpty ? [] : [bundleID]
+            description.isProcessRestoreEnabled = true
+        }
         var tapID = AudioObjectID(kAudioObjectUnknown)
         let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
         guard tapStatus == noErr, tapID != kAudioObjectUnknown else {
@@ -572,10 +641,7 @@ final class AppAudioEngine {
             return nil
         }
         guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
-              format.mFormatID == kAudioFormatLinearPCM,
-              format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32,
-              format.mSampleRate.isFinite, format.mSampleRate > 0,
-              let sourceFormat = AVAudioFormat(standardFormatWithSampleRate: format.mSampleRate, channels: 2),
+              Self.supports(format),
               let device = AudioOutputService.devices().first(where: { $0.uid == outUID }) else {
             errors[pid] = "The app audio format or selected output is unavailable."
             AudioHardwareDestroyAggregateDevice(aggregateID)
@@ -585,15 +651,13 @@ final class AppAudioEngine {
         let sampleRate = format.mSampleRate
         let mixer = MixerBox(gain: gain, muted: muted,
                              magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
-                             eq: Self.appEQ(bundleID: bundleID, sampleRate: sampleRate))
-        mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: sampleRate), master: Self.masterEQ(sampleRate: sampleRate))
+                             eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
+        mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate), master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate))
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let transport = AppAudioTransport(sampleRate: sampleRate)
-        // One shared engine per output device (SoundSource's architecture):
-        // per-session engines start/stop on every attach, and each start is a
-        // HAL configuration change that pauses every video on the system.
+        // Add only a software render source; the hardware graph remains fixed.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
-            uid: outUID, device: device, format: sourceFormat,
+            uid: outUID, device: device,
             render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else {
             errors[pid] = "Cannot play through \(device.name). Choose another output or reconnect it."
             AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
@@ -621,18 +685,75 @@ final class AppAudioEngine {
         let session = Session(pid: pid, bundleID: bundleID, tapID: tapID, aggregateID: aggregateID,
                               procID: procID, box: box, gain: gain, muted: muted)
         session.processIDs = processObjIDs.sorted()
+        session.tapDescription = description
         session.outputUID = outUID
         session.sampleRate = sampleRate
-        session.outputSampleRate = Self.outputSampleRate(uid: outUID)
+        session.outputSampleRate = SharedOutputRenderer.sampleRate
         session.transport = transport
         session.sourceToken = source
         return session
     }
 
+    private static func supports(_ format: AudioStreamBasicDescription) -> Bool {
+        format.mFormatID == kAudioFormatLinearPCM &&
+        format.mFormatFlags & kAudioFormatFlagIsFloat != 0 &&
+        format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0 &&
+        format.mBitsPerChannel == 32 && (1...2).contains(format.mChannelsPerFrame) &&
+        format.mSampleRate.isFinite && format.mSampleRate > 0
+    }
+
+    private func updateProcesses(_ session: Session, ids: [AudioObjectID]) -> Bool {
+        guard ids != session.processIDs else { return true }
+        // An empty snapshot during helper replacement is transient. Keep the
+        // tap alive; the next process-list notification updates its membership.
+        guard !ids.isEmpty, let description = session.tapDescription else { return true }
+        let previous = session.processIDs
+        description.processes = ids
+        var value = Unmanaged.passUnretained(description).toOpaque()
+        var address = AudioOutputService.address(kAudioTapPropertyDescription)
+        let result = AudioObjectSetPropertyData(session.tapID, &address, 0, nil,
+                                                UInt32(MemoryLayout.size(ofValue: value)), &value)
+        guard result == noErr else { description.processes = previous; return false }
+        session.processIDs = ids
+        return true
+    }
+
+    private func moveOutput(_ session: Session, device: AudioOutputDevice) -> Bool {
+        guard let transport = session.transport else { return false }
+        if let source = session.sourceToken {
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
+            session.sourceToken = nil
+        }
+        // Removal is a render barrier: two device clocks cannot consume the
+        // same transport or EQ history concurrently during migration.
+        MainActor.assumeIsolated { SharedOutputRenderer.shared.rebindIfNeeded(devices: AudioOutputService.devices()) }
+        let mixer = session.box.takeUnretainedValue()
+        guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
+            uid: device.uid, device: device,
+            render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else { return false }
+        session.sourceToken = source
+        session.outputUID = device.uid
+        return true
+    }
+
+    private func fail(_ session: Session, message: String) {
+        stop(pid: session.pid)
+        errors[session.pid] = message
+        retryAfter[session.pid] = .infinity
+        failedProcessIDs[session.pid] = Self.processObjectIDs(for: session.pid).sorted()
+        GestureLog.shared.logFromAnyThread(message, level: .error)
+    }
+
     static func destroy(_ session: Session) {
+        // Stop both callbacks before releasing the transport, mixer or tap.
         if let procID = session.procID {
             AudioDeviceStop(session.aggregateID, procID)
             AudioDeviceDestroyIOProcID(session.aggregateID, procID)
+            session.procID = nil
+        }
+        if let source = session.sourceToken {
+            MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
+            session.sourceToken = nil
         }
         session.transport = nil
         session.box.release()
@@ -653,7 +774,7 @@ final class MixerBox {
     var peakLevel: Float {
         lock.lock(); defer { lock.unlock() }; return peak
     }
-    fileprivate func publishPeak(_ value: Float) {
+    func publishPeak(_ value: Float) {
         guard lock.try() else { return }
         peak = value
         lock.unlock()

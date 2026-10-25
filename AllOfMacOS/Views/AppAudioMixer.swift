@@ -81,7 +81,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     }
     func reconnectAll() {
         guard #available(macOS 14.2, *) else { return }
-        for app in apps where app.pid > 0 { AppAudioEngine.shared.retry(pid: app.pid) }
+        AppAudioEngine.shared.retryAll()
         reloadApps()
     }
 
@@ -110,7 +110,6 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
                     UserDefaults.standard.set(true, forKey: "AOMAudioMute_\(bundle)")
                 }
             }
-            AppAudioEngine.shared.stopAll()
             refresh()
             return lastError == nil
         }

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreAudio
+import Darwin
 
 /// Bounded stereo bridge between the tap clock and the playback clock. Both
 /// audio callbacks use try-lock only; neither can wait on the UI or the other
@@ -17,9 +18,16 @@ final class AppAudioTransport {
     private var capturedFrames: UInt64 = 0
     private var renderedFrames: UInt64 = 0
     private var inputPeak: Float = 0
-    private let targetFrames: Int
+    private var targetFrames: Int
+    private var sampleRate: Double
+    private var lastCaptureTime: TimeInterval = 0
+    private let secondsPerTick: Double
 
     init(sampleRate: Double) {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+        self.sampleRate = sampleRate
         targetFrames = max(256, min(4096, Int(sampleRate * 0.025)))
         samples = .allocate(capacity: capacity * 2)
         scratch = .allocate(capacity: capacity * 2)
@@ -28,9 +36,19 @@ final class AppAudioTransport {
     }
     deinit { samples.deallocate(); scratch.deallocate() }
 
-    var activity: (captured: UInt64, rendered: UInt64, peak: Float) {
+    func updateSampleRate(_ rate: Double) {
+        guard rate.isFinite, rate > 0 else { return }
         lock.lock(); defer { lock.unlock() }
-        return (capturedFrames, renderedFrames, inputPeak)
+        guard rate != sampleRate else { return }
+        sampleRate = rate
+        targetFrames = max(256, min(4096, Int(rate * 0.025)))
+        readIndex = 0; writeIndex = 0; count = 0
+        fractionalPosition = 0; buffered = false
+    }
+
+    var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        return (capturedFrames, renderedFrames, inputPeak, Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < 0.25)
     }
 
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -47,6 +65,17 @@ final class AppAudioTransport {
             right = data
             frames = min(frames, Int(buffers[1].mDataByteSize) / 4)
         }
+        let now = Double(mach_absolute_time()) * secondsPerTick
+        if now - lastCaptureTime > 0.25 {
+            readIndex = 0; writeIndex = 0; count = 0
+            fractionalPosition = 0; buffered = false
+        }
+        lastCaptureTime = now
+        // Bound latency after a stalled consumer rather than replaying an old
+        // half-second of audio when a device recovers.
+        if count + frames > max(targetFrames * 4, frames * 2) {
+            readIndex = writeIndex; count = 0; fractionalPosition = 0; buffered = false
+        }
         var peak: Float = 0
         for frame in 0..<frames {
             if count == capacity {
@@ -57,7 +86,7 @@ final class AppAudioTransport {
             let r = planar ? right[frame] : left[frame * channels + min(1, channels - 1)]
             samples[writeIndex * 2] = l.isFinite ? l : 0
             samples[writeIndex * 2 + 1] = r.isFinite ? r : 0
-            peak = max(peak, max(abs(l), abs(r)))
+            peak = max(peak, max(abs(samples[writeIndex * 2]), abs(samples[writeIndex * 2 + 1])))
             writeIndex = (writeIndex + 1) % capacity
             count += 1
         }
@@ -68,24 +97,24 @@ final class AppAudioTransport {
     func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox) {
         let outputs = UnsafeMutableAudioBufferListPointer(output)
         for buffer in outputs { if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) } }
-        guard frames > 0, frames <= capacity, lock.try() else { return }
+        guard frames > 0, frames <= capacity, lock.try() else { mixer.publishPeak(0); return }
         if !buffered {
-            guard count >= targetFrames else { lock.unlock(); return }
+            guard count >= targetFrames else { lock.unlock(); mixer.publishPeak(0); return }
             buffered = true
         }
-        // Very small interpolation corrections prevent independent clocks from
-        // slowly draining/filling the ring. AVAudioEngine handles nominal-rate
-        // conversion; this only follows drift around the short target buffer.
+        // Convert the tap's nominal rate to the stable 48 kHz render bus,
+        // then apply a small drift correction for independent device clocks.
         let correction = max(-0.002, min(0.002, Double(count - targetFrames) / Double(targetFrames) * 0.001))
+        let step = sampleRate / SharedOutputRenderer.sampleRate * (1 + correction)
         var filled = 0
-        while filled < frames && count > 1 {
+        while filled < frames && count > max(1, Int(fractionalPosition + step)) {
             let next = (readIndex + 1) % capacity
             let fraction = Float(fractionalPosition)
             for channel in 0..<2 {
                 let a = samples[readIndex * 2 + channel], b = samples[next * 2 + channel]
                 scratch[filled * 2 + channel] = a + (b - a) * fraction
             }
-            fractionalPosition += 1 + correction
+            fractionalPosition += step
             let advance = min(count, Int(fractionalPosition))
             readIndex = (readIndex + advance) % capacity
             count -= advance
