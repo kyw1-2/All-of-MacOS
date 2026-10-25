@@ -32,6 +32,11 @@ final class TrackpadUtilityGestures: ObservableObject {
     var cursorLocation: () -> CGPoint = { NSEvent.mouseLocation }
     /// Test seam for the menu-bar band check.
     var cursorInTopBand: (CGPoint) -> Bool = { TrackpadUtilityGestures.cursorInTopBand($0) }
+    /// Test seam: the "not inside our own app" guard (host-app test runs
+    /// would otherwise depend on whatever happens to be frontmost).
+    var isOutsideOwnApp: () -> Bool = {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
+    }
 
     private var twoFingerStart: (centroid: CGPoint, spread: CGFloat)?
     private var spaceFired = false
@@ -44,12 +49,14 @@ final class TrackpadUtilityGestures: ObservableObject {
     var dockQuitEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.dockQuitEnabledKey) as? Bool ?? true
     }
+    /// True when any utility gesture can fire — the trackpad hardware must
+    /// stay up for these even without trackpad triggers.
+    var anyLayerEnabled: Bool { spacesEnabled || dockQuitEnabled }
 
     /// Entry: every touch frame. Two fingers begin a gesture, any other count
     /// ends it (fires nothing).
     func observe(points: [TouchPoint], timestamp: Double) {
-        guard !ScreenLock.isLocked,
-              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+        guard !ScreenLock.isLocked, isOutsideOwnApp() else {
             reset(); return
         }
         guard points.count == 2 else {

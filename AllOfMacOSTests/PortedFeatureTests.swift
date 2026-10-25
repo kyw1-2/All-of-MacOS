@@ -38,6 +38,65 @@ final class PortedFeatureTests: XCTestCase {
         XCTAssertTrue(CGRect(origin: tallTarget, size: tall.size).intersects(desktop))
     }
 
+    // MARK: Swish snap targets — the preview geometry
+
+    func testSnapTargetEdgesCornersAndMaximize() {
+        let screen = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                      visible: CGRect(x: 0, y: 40, width: 1440, height: 830))
+        // Mid-screen: nothing.
+        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 450), screen: screen))
+        // Left edge: left half of the visible area.
+        let left = WindowGestureController.snapTarget(cursor: CGPoint(x: 5, y: 450), screen: screen)
+        XCTAssertEqual(left, CGRect(x: 0, y: 40, width: 720, height: 830))
+        // Top-right corner: top-right quarter.
+        let corner = WindowGestureController.snapTarget(cursor: CGPoint(x: 1438, y: 898), screen: screen)
+        XCTAssertEqual(corner, CGRect(x: 720, y: 40, width: 720, height: 415))
+        // Top center: maximize (the visible frame).
+        let top = WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 898), screen: screen)
+        XCTAssertEqual(top, screen.visible)
+        // Off-screen: nothing.
+        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: -30, y: 450), screen: screen))
+    }
+
+    // MARK: Equalizer — the audio math
+
+    func testFlatEQIsUnity() {
+        let eq = AudioEQ(gains: AudioEQ.presetFlat, sampleRate: 48000)
+        XCTAssertFalse(eq.isEnabled)
+        let input = (0..<256).map { Float(sin(2 * .pi * 1000 * Double($0) / 48000)) * 0.5 }
+        let output = eq.process(input)
+        zip(input, output).forEach { XCTAssertEqual($0, $1, accuracy: 0.00001) }
+    }
+
+    func testBassBoostLiftsLowFrequencies() {
+        let flat = AudioEQ(gains: AudioEQ.presetFlat, sampleRate: 48000)
+        let boost = AudioEQ(gains: AudioEQ.presets["Bass Boost"]!, sampleRate: 48000)
+        let low = (0..<4096).map { Float(sin(2 * .pi * 62.5 * Double($0) / 48000)) * 0.2 }
+        func rms(_ signal: [Float]) -> Float { sqrt(signal.map { $0 * $0 }.reduce(0, +) / Float(signal.count)) }
+        let boosted = rms(boost.process(low).suffix(2048))
+        let original = rms(flat.process(low).suffix(2048))
+        XCTAssertGreaterThan(boosted, original * 1.4, "the 32 Hz shelf at +6 dB must lift the 62.5 Hz tone")
+    }
+
+    func testEQBandClampAndPresets() {
+        XCTAssertEqual(AudioEQ.bandFrequencies.count, 10)
+        XCTAssertEqual(AudioEQ.presets["Flat"], [Float](repeating: 0, count: 10))
+        for gains in AudioEQ.presets.values {
+            XCTAssertEqual(gains.count, 10)
+            XCTAssertTrue(gains.allSatisfy { $0 >= -12 && $0 <= 12 })
+        }
+    }
+
+    // MARK: Gesture layer gating — the dead-layer regression
+
+    func testWindowGestureLayersReportEnabled() {
+        UserDefaults.standard.removeObject(forKey: "AOMWindowGesturesEnabled")
+        XCTAssertTrue(WindowGestureController.shared.anyLayerEnabled)
+        UserDefaults.standard.set(false, forKey: "AOMWindowGesturesEnabled")
+        XCTAssertFalse(WindowGestureController.shared.anyLayerEnabled)
+        UserDefaults.standard.removeObject(forKey: "AOMWindowGesturesEnabled")
+    }
+
     // MARK: Audio mixer — pure math and state
 
     func testMixerGainClamp() {
@@ -125,9 +184,13 @@ final class PortedFeatureTests: XCTestCase {
         // Cursor pinned in the top band by the seams.
         service.cursorLocation = { CGPoint(x: 700, y: 895) }
         service.cursorInTopBand = { _ in true }
+        service.isOutsideOwnApp = { true }
         defer {
             service.cursorLocation = { NSEvent.mouseLocation }
             service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+            service.isOutsideOwnApp = {
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
         }
 
         var t: Double = 10

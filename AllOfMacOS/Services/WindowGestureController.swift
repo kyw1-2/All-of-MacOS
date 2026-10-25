@@ -2,15 +2,15 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
-/// Swish-parity continuous window gestures: three-finger drag moves the window
-/// under the cursor, edge contact resizes it, a three-finger pinch toggles
-/// maximize (two pinches minimize/restore the frontmost app's windows).
+/// Swish-parity window gestures, fed from the multitouch stream:
 ///
-/// Feed every multitouch frame with three or more contacts — or an empty frame
-/// that ends a drag — into `observe`. Screen-space deltas come from the
-/// trackpad's normalized centroid movement scaled by the display under the
-/// cursor; the target window is captured at gesture start via AX and driven
-/// with kAXPosition/kAXSize, exactly the path Swish uses.
+/// - **Three-finger drag** moves the window under the cursor. Near a screen
+///   edge or corner a live preview of the snap target appears (Swish's
+///   signature "expected shape"); releasing there snaps the window, releasing
+///   mid-screen leaves it wherever it was dragged.
+/// - **Edge contact at gesture start** resizes instead, in eight directions.
+/// - **Three-finger pinch** toggles maximize; two pinches minimize/restore the
+///   frontmost app's windows.
 @MainActor
 final class WindowGestureController: ObservableObject {
     static let shared = WindowGestureController()
@@ -22,34 +22,34 @@ final class WindowGestureController: ObservableObject {
     enum Edge: String, Equatable { case minX, maxX, minY, maxY }
     enum Mode: Equatable { case idle, move, resize(Set<Edge>), pinch }
 
-    /// Test seam: resolves the window under a screen point.
+    /// Test seams.
     var captureTarget: (CGPoint) -> WindowManager.Target? = { WindowManager.shared.captureTarget(atMousePoint: $0) }
-    /// Test seam: applies frame changes. The default writes through AX.
     var applyFrame: (WindowManager.Target, CGRect) -> Bool = { target, frame in
         WindowManager.shared.setFrame(frame, of: target)
     }
-    /// Test seam: the cursor location (mouse events are hard to fake in tests).
     var cursorLocation: () -> CGPoint = { NSEvent.mouseLocation }
+    /// Preview + bezel presentation seam so unit tests never build panels.
+    var presentation: WindowGesturePresenting = LiveGesturePresenter()
 
     private(set) var mode: Mode = .idle
     private var target: WindowManager.Target?
     private var startFrame: CGRect = .zero
-    private var startCursor: CGPoint = .zero
     private var startCentroid: CGPoint = .zero
     private var lastCentroid: CGPoint = .zero
     private var startSpread: CGFloat = 0
     private var lastSpread: CGFloat = 0
-    private var pinchSettled = false
-    private var pinchCount = 0
-    private var lastPinchAt: TimeInterval = 0
     private var lastApplyAt: TimeInterval = 0
+    private var snapTarget: CGRect?
     private var minimizedDuringBatch: [WindowManager.Target] = []
+    private var savedPreMaximize: CGRect?
 
     var isDragging: Bool { mode != .idle }
 
-    private var isEnabled: Bool {
+    var isEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
     }
+    var anyLayerEnabled: Bool { isEnabled }
+
     private var edgeSize: CGFloat {
         CGFloat(UserDefaults.standard.object(forKey: Self.defaultsEdgeKey) as? Double ?? 40)
     }
@@ -70,45 +70,56 @@ final class WindowGestureController: ObservableObject {
         if points.count >= 3 {
             let centroid = Self.centroid(points)
             if mode == .idle {
-                begin(at: centroid, timestamp: timestamp)
+                begin(at: centroid)
             } else {
                 update(centroid: centroid, points: points, timestamp: timestamp)
             }
-        } else if points.isEmpty || points.count < 3 {
+        } else {
             finish(timestamp: timestamp)
         }
     }
 
     // MARK: - Gesture state machine
 
-    private func begin(at centroid: CGPoint, timestamp: Double) {
+    private func begin(at centroid: CGPoint) {
         let cursor = cursorLocation()
         guard let target = captureTarget(cursor),
-              NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == target.pid })?.bundleIdentifier != Bundle.main.bundleIdentifier,
+              let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == target.pid }),
+              app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              app.activationPolicy == .regular,
               let frame = WindowManager.shared.frame(of: target) else { return }
         self.target = target
         startFrame = frame
-        startCursor = cursor
         startCentroid = centroid
         lastCentroid = centroid
-        let spread = lastSpread
-        _ = spread
-        // Edge detection decides move vs resize: the cursor must sit within
-        // `edgeSize` of a window edge to resize; corners win over edges.
+        // Starting on a window edge resizes; starting inside moves.
         let edges = Self.edges(near: cursor, frame: frame, within: edgeSize)
-        if edges.isEmpty {
-            mode = .move
-        } else {
-            mode = .resize(edges)
-        }
-        startSpread = 0
-        showBezel(frame: frame)
+        mode = edges.isEmpty ? .move : .resize(edges)
+        presentation.showBezel(frame: frame)
     }
 
     private func update(centroid: CGPoint, points: [TouchPoint], timestamp: Double) {
-        guard let target, let current = WindowManager.shared.frame(of: target) else { end(); return }
-        let screen = screenForCursor()
-        guard let screen else { end(); return }
+        guard let target else { end(); return }
+        // A pinch begins when three fingers converge/diverge without the
+        // centroid travelling — translation is a drag, spread change is a pinch.
+        let spread = Self.spread(points)
+        if startSpread == 0 { startSpread = spread }
+        lastSpread = spread
+        let travel = hypot(centroid.x - startCentroid.x, centroid.y - startCentroid.y)
+        if case .move = mode, startSpread > 0.06,
+           abs(spread / startSpread - 1) > 0.22, travel < 0.045 {
+            mode = .pinch
+            presentation.hideSnapPreview()
+            snapTarget = nil
+            lastCentroid = centroid
+            return // pinches resolve on lift
+        }
+        if case .pinch = mode {
+            lastCentroid = centroid
+            return
+        }
+        guard let current = WindowManager.shared.frame(of: target),
+              let screen = screenForCursor() else { end(); return }
         var frame = current
         switch mode {
         case .move:
@@ -116,6 +127,10 @@ final class WindowGestureController: ObservableObject {
             let dy = (centroid.y - lastCentroid.y) * screen.visible.height
             frame.origin.x += dx
             frame.origin.y -= dy // trackpad y grows downward, screen y upward
+            // The snap target follows the cursor, not the window: Swish decides
+            // from where your fingers are pointing.
+            snapTarget = Self.snapTarget(cursor: cursorLocation(), screen: screen)
+            if let snapTarget { presentation.showSnapPreview(snapTarget) } else { presentation.hideSnapPreview() }
         case .resize(let edges):
             let dx = (centroid.x - lastCentroid.x) * screen.visible.width
             let dy = (centroid.y - lastCentroid.y) * screen.visible.height
@@ -132,19 +147,13 @@ final class WindowGestureController: ObservableObject {
                 frame.size.height = newHeight
             }
             if edges.contains(.maxY) { frame.size.height = max(minSize.height, frame.height - dy) }
-        case .pinch:
-            let spread = Self.spread(points)
-            if startSpread == 0 { startSpread = spread }
-            lastSpread = spread
-            lastCentroid = centroid
-            return // pinch resolves on lift
-        case .idle: return
+        case .pinch, .idle: return
         }
         lastCentroid = centroid
         // Throttle AX writes: 60 Hz touch frames would flood the AX server.
         if timestamp - lastApplyAt >= 0.016 {
             lastApplyAt = timestamp
-            if applyFrame(target, frame) { showBezel(frame: frame) }
+            if applyFrame(target, frame) { presentation.showBezel(frame: frame) }
         }
     }
 
@@ -153,8 +162,7 @@ final class WindowGestureController: ObservableObject {
         switch mode {
         case .pinch:
             let ratio = startSpread > 0 ? lastSpread / startSpread : 1
-            guard !pinchSettled, ratio > 1.15 || ratio < 0.87 else { return }
-            pinchSettled = true
+            guard ratio > 1.15 || ratio < 0.87 else { return }
             if timestamp - lastPinchAt < 2.5 {
                 pinchCount += 1
             } else {
@@ -167,21 +175,29 @@ final class WindowGestureController: ObservableObject {
             } else if let target = target {
                 toggleMaximize(target: target)
             }
-        default: break
+        case .move:
+            // Release over a snap zone: apply the previewed frame.
+            if let snapTarget, let target {
+                _ = applyFrame(target, snapTarget)
+            }
+        case .resize, .idle: break
         }
     }
+    private var pinchCount = 0
+    private var lastPinchAt: TimeInterval = 0
 
     private func end() {
         mode = .idle
         target = nil
         startSpread = 0
         lastSpread = 0
-        pinchSettled = false
-        hideBezel()
+        snapTarget = nil
+        presentation.hideSnapPreview()
+        presentation.hideBezel()
     }
 
-    /// Three-finger pinch on a window toggles its zoom (macOS zoom semantics:
-    /// fill the visible screen, restore on the second pinch).
+    // MARK: - Pinch verbs
+
     private func toggleMaximize(target: WindowManager.Target) {
         guard let frame = WindowManager.shared.frame(of: target) else { return }
         let screens = WindowManager.shared.screens()
@@ -197,14 +213,9 @@ final class WindowGestureController: ObservableObject {
             _ = applyFrame(target, visible)
         }
     }
-    private var savedPreMaximize: CGRect?
 
-    /// Two consecutive pinches minimize the frontmost app's windows; the next
-    /// double pinch restores them.
     private func toggleMinimizeAll() {
         if minimizedDuringBatch.isEmpty {
-            // AX path: NSRunningApplication exposes no window list, and the AX
-            // elements double as the restore handles.
             guard let app = NSWorkspace.shared.frontmostApplication else { return }
             let ref = AXUIElementCreateApplication(app.processIdentifier)
             var value: CFTypeRef?
@@ -225,6 +236,44 @@ final class WindowGestureController: ObservableObject {
         }
     }
 
+    // MARK: - Snap geometry (Swish grammar, pure and unit-tested)
+
+    /// The snap frame the cursor is currently pointing at, or nil mid-screen.
+    /// Left/right thirds of the screen edges give halves, the corners give
+    /// quarters, the top center gives maximize — with a 24 pt dead band at the
+    /// exact screen corners so the corner intent stays unambiguous.
+    static func snapTarget(cursor: CGPoint, screen: (frame: CGRect, visible: CGRect)) -> CGRect? {
+        let frame = screen.frame
+        let visible = screen.visible
+        guard frame.insetBy(dx: -2, dy: -2).contains(cursor) else { return nil }
+        let edge: CGFloat = 24
+        let nearLeft = cursor.x <= frame.minX + edge
+        let nearRight = cursor.x >= frame.maxX - edge
+        let nearTop = cursor.y >= frame.maxY - edge
+        let nearBottom = cursor.y <= frame.minY + edge
+        // Corners: quarters (top corners only in Swish; bottom corners too —
+        // users expect symmetry, and Swish supports them via the outer thirds).
+        if nearTop && nearLeft { return CGRect(origin: visible.origin, size: CGSize(width: visible.width / 2, height: visible.height / 2)) }
+        if nearTop && nearRight { return CGRect(x: visible.midX, y: visible.minY, width: visible.width / 2, height: visible.height / 2) }
+        if nearBottom && nearLeft { return CGRect(x: visible.minX, y: visible.midY, width: visible.width / 2, height: visible.height / 2) }
+        if nearBottom && nearRight { return CGRect(x: visible.midX, y: visible.midY, width: visible.width / 2, height: visible.height / 2) }
+        if nearLeft { return CGRect(origin: visible.origin, size: CGSize(width: visible.width / 2, height: visible.height)) }
+        if nearRight { return CGRect(x: visible.midX, y: visible.minY, width: visible.width / 2, height: visible.height) }
+        if nearTop { return visible }
+        return nil
+    }
+
+    static func edges(near point: CGPoint, frame: CGRect, within edge: CGFloat) -> Set<Edge> {
+        var edges = Set<Edge>()
+        if abs(point.x - frame.minX) <= edge { edges.insert(.minX) }
+        if abs(point.x - frame.maxX) <= edge { edges.insert(.maxX) }
+        if abs(point.y - frame.minY) <= edge { edges.insert(.minY) }
+        if abs(point.y - frame.maxY) <= edge { edges.insert(.maxY) }
+        guard !edges.isEmpty else { return edges }
+        let inside = frame.insetBy(dx: -edge, dy: -edge).contains(point)
+        return inside ? edges : []
+    }
+
     // MARK: - Helpers
 
     private static func centroid(_ points: [TouchPoint]) -> CGPoint {
@@ -238,59 +287,97 @@ final class WindowGestureController: ObservableObject {
         return points.map { hypot(CGFloat($0.x - first.x), CGFloat($0.y - first.y)) }.max() ?? 0
     }
 
-    static func edges(near point: CGPoint, frame: CGRect, within edge: CGFloat) -> Set<Edge> {
-        var edges = Set<Edge>()
-        if abs(point.x - frame.minX) <= edge { edges.insert(.minX) }
-        if abs(point.x - frame.maxX) <= edge { edges.insert(.maxX) }
-        if abs(point.y - frame.minY) <= edge { edges.insert(.minY) }
-        if abs(point.y - frame.maxY) <= edge { edges.insert(.maxY) }
-        // Corners only resize when the point actually sits in both edge bands,
-        // otherwise every interior point near an edge line would resize.
-        guard !edges.isEmpty else { return edges }
-        let inside = frame.insetBy(dx: -edge, dy: -edge).contains(point)
-        return inside ? edges : []
-    }
-
     private func screenForCursor() -> (frame: CGRect, visible: CGRect)? {
-        WindowManager.shared.screens().first { $0.visible.contains(cursorLocation()) }
+        WindowManager.shared.screens().first { $0.frame.contains(cursorLocation()) }
             ?? WindowManager.shared.screens().first
-    }
-
-    // MARK: - Bezel feedback (Swish's highlight, AOM's floating surface)
-
-    private var bezel: NSPanel?
-
-    private func showBezel(frame: CGRect) {
-        // AX frames are top-left based; AppKit windows are bottom-left.
-        let top = NSScreen.screens.first?.frame.maxY ?? 0
-        let flipped = CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
-        if let bezel {
-            bezel.setFrame(flipped.insetBy(dx: -4, dy: -4), display: true)
-            return
-        }
-        let panel = NSPanel(contentRect: flipped.insetBy(dx: -4, dy: -4),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .floating + 1
-        panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: BezelShape())
-        panel.orderFrontRegardless()
-        self.bezel = panel
-    }
-
-    private func hideBezel() {
-        bezel?.orderOut(nil)
-        bezel = nil
     }
 }
 
-/// The gesture target's outline: an accent border with a faint wash.
-private struct BezelShape: View {
+// MARK: - Presentation
+
+/// The live gestures' on-screen furniture: the target bezel and the snap
+/// preview (Swish's translucent "expected shape"). Extracted so tests verify
+/// the geometry without panels.
+@MainActor
+protocol WindowGesturePresenting: AnyObject {
+    func showBezel(frame: CGRect)
+    func hideBezel()
+    func showSnapPreview(_ frame: CGRect)
+    func hideSnapPreview()
+}
+
+@MainActor
+final class LiveGesturePresenter: WindowGesturePresenting {
+    private var bezel: NSPanel?
+    private var snapPreview: NSPanel?
+
+    private func flipped(_ frame: CGRect) -> CGRect {
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        return CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
+    }
+
+    private func makePanel(content: some View, level: NSWindow.Level) -> NSPanel {
+        let panel = NSPanel(contentRect: .zero,
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = level
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentView = NSHostingView(rootView: content)
+        return panel
+    }
+
+    func showBezel(frame: CGRect) {
+        let target = flipped(frame).insetBy(dx: -3, dy: -3)
+        if let bezel {
+            bezel.setFrame(target, display: true, animate: false)
+            return
+        }
+        let panel = makePanel(content: GestureBezelShape(), level: .floating + 1)
+        panel.setFrame(target, display: false)
+        panel.orderFrontRegardless()
+        bezel = panel
+    }
+
+    func hideBezel() {
+        bezel?.orderOut(nil)
+        bezel = nil
+    }
+
+    func showSnapPreview(_ frame: CGRect) {
+        let target = flipped(frame)
+        if let snapPreview {
+            snapPreview.setFrame(target, display: true, animate: false)
+            if !snapPreview.isVisible { snapPreview.orderFrontRegardless() }
+            return
+        }
+        let panel = makePanel(content: SnapPreviewShape(), level: .floating + 2)
+        panel.setFrame(target, display: false)
+        panel.orderFrontRegardless()
+        snapPreview = panel
+    }
+
+    func hideSnapPreview() {
+        snapPreview?.orderOut(nil)
+        snapPreview = nil
+    }
+}
+
+private struct GestureBezelShape: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(Color.accentColor, lineWidth: 3)
             .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Swish's expected-shape preview: a soft accent fill with a bright edge.
+private struct SnapPreviewShape: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.accentColor.opacity(0.22))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: 2))
     }
 }

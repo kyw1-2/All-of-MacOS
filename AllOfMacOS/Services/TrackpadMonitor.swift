@@ -178,7 +178,13 @@ class TrackpadMonitor {
             return (trigger.id, gesture, trigger.actions, trigger.appBundleID, trigger.suppressClick, trigger.hapticFeedback, trigger.requiredModifiers, trigger.activationGroupID)
         }
         guard systemMonitoringEnabled else { return }
-        if registeredTriggers.isEmpty { stopHardware(); return }
+        // The Swish-style gesture layers read the same hardware stream; with
+        // no trackpad trigger configured they were the only consumer, and the
+        // stream used to shut down — every ported gesture went dead.
+        let layersNeedHardware = MainActor.assumeIsolated {
+            WindowGestureController.shared.anyLayerEnabled || TrackpadUtilityGestures.shared.anyLayerEnabled
+        }
+        if registeredTriggers.isEmpty && !layersNeedHardware { stopHardware(); return }
         if monitors.isEmpty { setupNSEventMonitors() }
         if healthTimer == nil { setupLifecycle() }
         if !source.running { startHardware(reason: "registration") }
@@ -187,7 +193,10 @@ class TrackpadMonitor {
     }
 
     private func startHardware(reason: String) {
-        guard !suspended, !registeredTriggers.isEmpty else { return }
+        let layersNeedHardware = MainActor.assumeIsolated {
+            WindowGestureController.shared.anyLayerEnabled || TrackpadUtilityGestures.shared.anyLayerEnabled
+        }
+        guard !suspended, !registeredTriggers.isEmpty || layersNeedHardware else { return }
         invalidateRecognition()
         source.onFrame = { [weak self] device, frame, timestamp in
             guard let self else { return }
@@ -328,6 +337,16 @@ class TrackpadMonitor {
 
     func processTouchFrame(_ points: [TouchPoint], count: Int, timestamp: Double,
                            pressedButtons: Int, deviceID: UInt64 = 0) {
+        // Gesture layers first: nothing below this line may skip them — an
+        // early return for another device or an inactive secondary trackpad
+        // used to swallow the window/utility gesture frames entirely.
+        MainActor.assumeIsolated {
+            if points.count >= 3 {
+                WindowGestureController.shared.observe(points: points, timestamp: timestamp)
+            } else {
+                TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
+            }
+        }
         tipTapShield.observe(device: deviceID, count: points.count, now: ProcessInfo.processInfo.systemUptime)
         // Track the peak so a click arriving from the mouse tap can tell a
         // force press from an ordinary one; the fingers lifting resets it.
@@ -404,15 +423,6 @@ class TrackpadMonitor {
             resetCircleState(); resetTriangleState(); resetEdgeDragState(); stopSuppressingMouse()
         }
         if points.isEmpty { activeDevice = nil }
-        // Window gesture layer (three-finger drag/pinch): sees every frame,
-        // including the empty frame that ends a gesture. Two-finger frames
-        // feed the utility layer (top-band space swipe, Dock pinch quit).
-        MainActor.assumeIsolated {
-            WindowGestureController.shared.observe(points: points, timestamp: timestamp)
-            if points.count <= 2 {
-                TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
-            }
-        }
     }
 
     private func handleTap(_ single: TrackpadGesture, double: TrackpadGesture,
