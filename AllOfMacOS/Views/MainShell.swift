@@ -97,6 +97,8 @@ struct AOMSidebar: View {
                 navigationItem(.snapping)
                 navigationItem(.capture)
                 navigationItem(.clipboard)
+                navigationItem(.audio)
+                navigationItem(.tools)
             }
             Section("Activity") {
                 navigationItem(.insights)

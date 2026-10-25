@@ -56,7 +56,8 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// Entry: every touch frame. Two fingers begin a gesture, any other count
     /// ends it (fires nothing).
     func observe(points: [TouchPoint], timestamp: Double) {
-        guard !ScreenLock.isLocked, isOutsideOwnApp() else {
+        // Spatial gestures (top band, Dock) are global — no frontmost guard.
+        guard !ScreenLock.isLocked else {
             reset(); return
         }
         guard points.count == 2 else {

@@ -246,7 +246,10 @@ class TrackpadMonitor {
     }
 
     func checkHardwareHealth() {
-        guard systemMonitoringEnabled, !suspended, !registeredTriggers.isEmpty else { return }
+        let layersNeedHardware = MainActor.assumeIsolated {
+            WindowGestureController.shared.anyLayerEnabled || TrackpadUtilityGestures.shared.anyLayerEnabled
+        }
+        guard systemMonitoringEnabled, !suspended, !registeredTriggers.isEmpty || layersNeedHardware else { return }
         let now = ProcessInfo.processInfo.systemUptime
         if circleDrawingActive && now >= suppressionDeadline { stopSuppressingMouse() }
         if now - lastRecovery >= 5 {
@@ -341,9 +344,11 @@ class TrackpadMonitor {
         // early return for another device or an inactive secondary trackpad
         // used to swallow the window/utility gesture frames entirely.
         MainActor.assumeIsolated {
-            if points.count >= 3 {
-                WindowGestureController.shared.observe(points: points, timestamp: timestamp)
-            } else {
+            // Every frame reaches the window gesture layer: the release frame
+            // (count 0-2) is what commits a snap — routing it only to the
+            // utility layer stranded every gesture mid-air.
+            WindowGestureController.shared.observe(points: points, timestamp: timestamp)
+            if points.count <= 2 {
                 TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
             }
         }

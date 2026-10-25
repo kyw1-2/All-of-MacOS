@@ -43,8 +43,10 @@ final class WindowGestureController: ObservableObject {
     // MARK: - Frame entry
 
     func observe(points: [TouchPoint], timestamp: Double) {
-        guard isEnabled, !ScreenLock.isLocked,
-              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+        // No frontmost-app guard: a global gesture must work while AOM's own
+        // window happens to be focused. The session itself refuses AOM windows
+        // (blacklist), so our UI can never be dragged by its own gestures.
+        guard isEnabled, !ScreenLock.isLocked else {
             end()
             return
         }
@@ -53,6 +55,7 @@ final class WindowGestureController: ObservableObject {
             return
         }
         if points.count >= 3 {
+            Self.noteFramesArriving()
             let centroid = Self.centroid(points)
             let spread = Self.spread(points)
             if !inGesture {
@@ -145,6 +148,15 @@ final class WindowGestureController: ObservableObject {
             }
             minimizedDuringBatch.removeAll()
         }
+    }
+
+    /// One-shot runtime evidence: if gestures "don't work", the Gesture
+    /// Console shows whether this layer ever saw a three-finger frame at all.
+    private static var loggedFrames = false
+    private static func noteFramesArriving() {
+        guard !loggedFrames else { return }
+        loggedFrames = true
+        GestureLog.shared.logFromAnyThread("Window gestures: 3-finger frames are arriving", level: .detect)
     }
 
     // MARK: - Shared geometry (used by SwishGestureSession and tests)
