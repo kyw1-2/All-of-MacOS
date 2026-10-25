@@ -17,10 +17,25 @@ import AudioToolbox
 struct AppAudioState: Identifiable, Equatable {
     let pid: pid_t
     let name: String
+    var bundleID: String = ""
+    var icon: NSImage? = nil
     var gain: Float // 0...2, 1 = unity
     var muted: Bool
     var tapped: Bool
+    var outputDeviceUID: String? = nil
+    var magicBoost: Bool = false
     var id: Int32 { pid }
+
+    static func == (lhs: AppAudioState, rhs: AppAudioState) -> Bool {
+        lhs.pid == rhs.pid &&
+        lhs.name == rhs.name &&
+        lhs.bundleID == rhs.bundleID &&
+        lhs.gain == rhs.gain &&
+        lhs.muted == rhs.muted &&
+        lhs.tapped == rhs.tapped &&
+        lhs.outputDeviceUID == rhs.outputDeviceUID &&
+        lhs.magicBoost == rhs.magicBoost
+    }
 }
 
 @available(macOS 14.2, *)
@@ -54,26 +69,90 @@ final class AppAudioEngine {
     // MARK: - Running audio apps (process objects, 14.2+)
 
     func runningAudioApps() -> [AppState] {
+        var results: [AppState] = []
+        var seenPIDs = Set<pid_t>()
+
+        // 1. Process tap objects from CoreAudio
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyProcessObjectList,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr,
-              size > 0 else { return [] }
-        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
-        var objects = [AudioObjectID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return [] }
-        return objects.compactMap { object -> AppState? in
-            guard let pid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), pid > 0,
-                  Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { return nil }
-            let app = NSRunningApplication(processIdentifier: pid)
-            let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
-            return AppState(pid: pid, name: app?.localizedName ?? "Process \(pid)",
-                            gain: Self.storedGain(bundleID: bundleID), muted: false,
-                            tapped: sessions[pid] != nil)
+        if AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr,
+           size > 0 {
+            let count = Int(size) / MemoryLayout<AudioObjectID>.stride
+            var objects = [AudioObjectID](repeating: 0, count: count)
+            if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr {
+                for object in objects {
+                    guard let pid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), pid > 0,
+                          Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { continue }
+                    let app = NSRunningApplication(processIdentifier: pid)
+                    let bundleID = app?.bundleIdentifier ?? "pid-\(pid)"
+                    seenPIDs.insert(pid)
+                    results.append(AppState(
+                        pid: pid,
+                        name: app?.localizedName ?? "Process \(pid)",
+                        bundleID: bundleID,
+                        icon: app?.icon,
+                        gain: sessions[pid]?.gain ?? Self.storedGain(bundleID: bundleID),
+                        muted: sessions[pid]?.muted ?? UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"),
+                        tapped: sessions[pid] != nil,
+                        outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
+                        magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+                    ))
+                }
+            }
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+
+        // 2. Discover running media & regular user apps (SoundSource parity)
+        let knownMedia = Set([
+            "com.apple.Music", "com.spotify.client", "com.apple.Safari",
+            "com.google.Chrome", "org.mozilla.firefox", "org.videolan.vlc",
+            "com.apple.QuickTimePlayerX", "com.tinyspeck.slackmacgap",
+            "com.hnc.Discord", "us.zoom.xos", "com.apple.FaceTime",
+            "com.apple.Podcasts", "com.apple.TV"
+        ])
+        let customApps = Set(UserDefaults.standard.stringArray(forKey: "AOMAudioUserApps") ?? [])
+
+        for app in NSWorkspace.shared.runningApplications {
+            let pid = app.processIdentifier
+            guard !seenPIDs.contains(pid) else { continue }
+            let bundleID = app.bundleIdentifier ?? ""
+            let isMedia = knownMedia.contains(bundleID) || customApps.contains(bundleID)
+            let isRegular = app.activationPolicy == .regular
+            guard isMedia || (isRegular && bundleID != Bundle.main.bundleIdentifier) else { continue }
+
+            seenPIDs.insert(pid)
+            results.append(AppState(
+                pid: pid,
+                name: app.localizedName ?? bundleID,
+                bundleID: bundleID,
+                icon: app.icon,
+                gain: sessions[pid]?.gain ?? Self.storedGain(bundleID: bundleID),
+                muted: sessions[pid]?.muted ?? UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"),
+                tapped: sessions[pid] != nil,
+                outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
+                magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+            ))
+        }
+
+        return results.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func addCustomApp(bundleID: String) {
+        var list = UserDefaults.standard.stringArray(forKey: "AOMAudioUserApps") ?? []
+        if !list.contains(bundleID) {
+            list.append(bundleID)
+            UserDefaults.standard.set(list, forKey: "AOMAudioUserApps")
+        }
+    }
+
+    func setRoute(uid: String?, bundleID: String) {
+        UserDefaults.standard.set(uid, forKey: "AOMAudioRoute_\(bundleID)")
+    }
+
+    func setMagicBoost(_ enabled: Bool, bundleID: String) {
+        UserDefaults.standard.set(enabled, forKey: "AOMAudioMagicBoost_\(bundleID)")
     }
 
     nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,

@@ -131,6 +131,27 @@ final class AppAudioMixerService: ObservableObject {
         guard isSupported, let front = NSWorkspace.shared.frontmostApplication else { return }
         _ = toggleMute(pid: front.processIdentifier)
     }
+
+    func setOutputRoute(uid: String?, bundleID: String) {
+        guard #available(macOS 14.2, *) else { return }
+        AppAudioEngine.shared.setRoute(uid: uid, bundleID: bundleID)
+        refresh()
+    }
+
+    func toggleMagicBoost(bundleID: String) {
+        guard #available(macOS 14.2, *) else { return }
+        let current = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+        AppAudioEngine.shared.setMagicBoost(!current, bundleID: bundleID)
+        refresh()
+    }
+
+    func addCustomApp(url: URL) {
+        guard let bundle = Bundle(url: url), let bundleID = bundle.bundleIdentifier else { return }
+        if #available(macOS 14.2, *) {
+            AppAudioEngine.shared.addCustomApp(bundleID: bundleID)
+            refresh()
+        }
+    }
 }
 
 private struct AppAudioMixerView: View {

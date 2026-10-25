@@ -10,7 +10,7 @@ final class SwishGestureSession {
 
     enum Mode {
         case idle
-        case moving(target: WindowManager.Target, startFrame: CGRect, startCentroid: CGPoint, lastCentroid: CGPoint)
+        case moving(target: WindowManager.Target, startFrame: CGRect, startCentroid: CGPoint, lastCentroid: CGPoint, startSpread: CGFloat)
         case resizing(target: WindowManager.Target, edges: Set<WindowGestureController.Edge>, startFrame: CGRect, startCentroid: CGPoint, lastCentroid: CGPoint)
     }
 
@@ -25,6 +25,7 @@ final class SwishGestureSession {
     var setFrame: (WindowManager.Target, CGRect) -> Bool = { WindowManager.shared.setFrame($1, of: $0) }
 
     private var activeSnapTarget: CGRect?
+    private var activeResult: SwishSnapGrid.GestureResult?
     private var lastHapticSnapTarget: CGRect?
 
     init() {}
@@ -39,7 +40,7 @@ final class SwishGestureSession {
     // MARK: - Lifecycle
 
     /// Begins a Swish gesture session at the given trackpad centroid and cursor position.
-    func begin(cursor: CGPoint, centroid: CGPoint, target: WindowManager.Target?) {
+    func begin(cursor: CGPoint, centroid: CGPoint, spread: CGFloat = 0, target: WindowManager.Target?) {
         guard config.isEnabled else { Self.noteBeginFailure("disabled") ; return }
         
         // 1. Modifier key validation if required
@@ -71,55 +72,77 @@ final class SwishGestureSession {
         let edges = WindowGestureController.edges(near: axCursor, frame: frame, within: config.edgeTriggerBand)
 
         if edges.isEmpty {
-            mode = .moving(target: windowTarget, startFrame: frame, startCentroid: centroid, lastCentroid: centroid)
+            mode = .moving(target: windowTarget, startFrame: frame, startCentroid: centroid, lastCentroid: centroid, startSpread: spread)
         } else {
             mode = .resizing(target: windowTarget, edges: edges, startFrame: frame, startCentroid: centroid, lastCentroid: centroid)
         }
 
         activeSnapTarget = nil
+        activeResult = nil
         lastHapticSnapTarget = nil
         presenter.showTargetBezel(frame: frame)
     }
 
+    func begin(cursor: CGPoint, centroid: CGPoint, target: WindowManager.Target?) {
+        begin(cursor: cursor, centroid: centroid, spread: 0, target: target)
+    }
+
     /// Updates the continuous drag position.
-    func update(cursor: CGPoint, centroid: CGPoint, screen: (frame: CGRect, visible: CGRect)?) {
+    func update(cursor: CGPoint, centroid: CGPoint, spread: CGFloat = 0, screen: (frame: CGRect, visible: CGRect)?) {
         guard let screen else { return }
 
         switch mode {
-        case .moving(let target, let startFrame, let startCentroid, let lastCentroid):
-            let dx = (centroid.x - lastCentroid.x) * screen.visible.width
-            let dy = (centroid.y - lastCentroid.y) * screen.visible.height
-
-            var newFrame = startFrame
-            newFrame.origin.x += dx
-            newFrame.origin.y += dy
-
-            // Check dynamic snap target under cursor
-            let axCursor = WindowGestureController.axPoint(cursor, primaryTop: WindowGestureController.primaryTop)
+        case .moving(let target, let startFrame, let startCentroid, _, let startSpread):
+            let dx = centroid.x - startCentroid.x
+            let dy = centroid.y - startCentroid.y
+            let spreadRatio = startSpread > 0.04 ? spread / startSpread : 1.0
             let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-            let snap = SwishSnapGrid.resolveTarget(
-                cursor: axCursor,
-                screen: screen,
-                edgeBand: config.edgeTriggerBand,
-                useThirdsModifier: isOptionPressed
-            )
 
-            if let snap {
-                activeSnapTarget = snap
-                presenter.showSnapPreview(targetFrame: snap)
-                if lastHapticSnapTarget != snap {
+            if let result = SwishSnapGrid.resolveGesture(
+                deltaX: dx,
+                deltaY: dy,
+                spreadRatio: spreadRatio,
+                targetFrame: startFrame,
+                screenVisible: screen.visible,
+                useThirds: isOptionPressed
+            ) {
+                activeSnapTarget = result.frame
+                activeResult = result
+                presenter.showSnapPreview(targetFrame: result.frame, title: result.title, symbol: result.symbol)
+                if lastHapticSnapTarget != result.frame {
                     presenter.playSnapHaptic()
-                    lastHapticSnapTarget = snap
+                    lastHapticSnapTarget = result.frame
                 }
             } else {
-                activeSnapTarget = nil
-                lastHapticSnapTarget = nil
-                presenter.hideSnapPreview()
-                // Continuous live move when not locked into a snap zone
-                _ = setFrame(target, newFrame)
+                // Fallback to cursor edge snapping if gesture distance is small
+                let axCursor = WindowGestureController.axPoint(cursor, primaryTop: WindowGestureController.primaryTop)
+                if let edgeSnap = SwishSnapGrid.resolveTarget(
+                    cursor: axCursor,
+                    screen: screen,
+                    edgeBand: config.edgeTriggerBand,
+                    useThirdsModifier: isOptionPressed
+                ) {
+                    activeSnapTarget = edgeSnap
+                    activeResult = SwishSnapGrid.GestureResult(action: .snapLeftHalf, frame: edgeSnap, title: "Snap", symbol: "macwindow")
+                    presenter.showSnapPreview(targetFrame: edgeSnap, title: "Snap", symbol: "macwindow")
+                    if lastHapticSnapTarget != edgeSnap {
+                        presenter.playSnapHaptic()
+                        lastHapticSnapTarget = edgeSnap
+                    }
+                } else {
+                    activeSnapTarget = nil
+                    activeResult = nil
+                    lastHapticSnapTarget = nil
+                    presenter.hideSnapPreview()
+
+                    var liveFrame = startFrame
+                    liveFrame.origin.x += dx * screen.visible.width
+                    liveFrame.origin.y += dy * screen.visible.height
+                    _ = setFrame(target, liveFrame)
+                }
             }
 
-            mode = .moving(target: target, startFrame: startFrame, startCentroid: startCentroid, lastCentroid: centroid)
+            mode = .moving(target: target, startFrame: startFrame, startCentroid: startCentroid, lastCentroid: centroid, startSpread: startSpread)
 
         case .resizing(let target, let edges, let startFrame, let startCentroid, let lastCentroid):
             let dx = (centroid.x - lastCentroid.x) * screen.visible.width
@@ -153,6 +176,10 @@ final class SwishGestureSession {
         }
     }
 
+    func update(cursor: CGPoint, centroid: CGPoint, screen: (frame: CGRect, visible: CGRect)?) {
+        update(cursor: cursor, centroid: centroid, spread: 0, screen: screen)
+    }
+
     /// Commits the active gesture or applies the resolved snap target.
     func end() {
         defer {
@@ -160,13 +187,29 @@ final class SwishGestureSession {
             presenter.hideSnapPreview()
             mode = .idle
             activeSnapTarget = nil
+            activeResult = nil
             lastHapticSnapTarget = nil
         }
 
         switch mode {
-        case .moving(let target, let startFrame, _, _):
-            if let snapTarget = activeSnapTarget {
-                // Record pre-snap geometry for Swish Unsnap
+        case .moving(let target, let startFrame, _, _, _):
+            if let result = activeResult {
+                switch result.action {
+                case .snapLeftHalf, .snapRightHalf, .snapTopHalf, .snapBottomHalf,
+                     .snapLeftThird, .snapRightThird,
+                     .snapTopLeftQuarter, .snapTopRightQuarter, .snapBottomLeftQuarter, .snapBottomRightQuarter,
+                     .maximize:
+                    history.recordPreSnap(pid: target.pid, initialFrame: startFrame, targetSnapFrame: result.frame)
+                    _ = setFrame(target, result.frame)
+                case .minimize:
+                    history.recordPreSnap(pid: target.pid, initialFrame: startFrame, targetSnapFrame: startFrame)
+                    WindowManager.shared.execute(.minimizeWindow, target: target) { _ in }
+                case .close:
+                    WindowManager.shared.execute(.closeWindow, target: target) { _ in }
+                case .fullscreen:
+                    WindowManager.shared.execute(.toggleFullscreenWindow, target: target) { _ in }
+                }
+            } else if let snapTarget = activeSnapTarget {
                 history.recordPreSnap(pid: target.pid, initialFrame: startFrame, targetSnapFrame: snapTarget)
                 _ = setFrame(target, snapTarget)
             }
@@ -179,13 +222,14 @@ final class SwishGestureSession {
 
     /// Cancels gesture tracking and restores the initial frame.
     func cancel() {
-        if case .moving(let target, let startFrame, _, _) = mode {
+        if case .moving(let target, let startFrame, _, _, _) = mode {
             _ = setFrame(target, startFrame)
         }
         presenter.hideTargetBezel()
         presenter.hideSnapPreview()
         mode = .idle
         activeSnapTarget = nil
+        activeResult = nil
         lastHapticSnapTarget = nil
     }
 }

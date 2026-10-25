@@ -292,12 +292,16 @@ extension AudioOutputService {
         adjustVolume(percentagePoints: delta, completion: completion)
     }
 
-    private static func defaultInputDeviceID() -> AudioDeviceID? {
+    static func defaultInputDeviceID() -> AudioDeviceID? {
         var property = address(kAudioHardwarePropertyDefaultInputDevice)
         var id: AudioDeviceID = 0; var size = UInt32(MemoryLayout.size(ofValue: id))
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil, &size, &id) == noErr,
               id != 0 else { return nil }
         return id
+    }
+
+    static func currentInputDeviceID() -> AudioDeviceID? {
+        defaultInputDeviceID()
     }
 
     /// Mute switches on the default input device, one per channel that has one.
@@ -327,5 +331,121 @@ extension AudioOutputService {
             ok = AudioObjectSetPropertyData(device, &properties[index], 0, nil, UInt32(MemoryLayout.size(ofValue: next)), &next) == noErr && ok
         }
         return ok ? next != 0 : nil
+    }
+
+    // MARK: - Input Device Discovery & Control
+
+    static func inputDevices() -> [AudioOutputDevice] {
+        var property = address(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        guard AudioObjectGetPropertyDataSize(system, &property, 0, nil, &size) == noErr, size > 0 else { return [] }
+        var devs = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        let status = devs.withUnsafeMutableBytes { AudioObjectGetPropertyData(system, &property, 0, nil, &size, $0.baseAddress!) }
+        guard status == noErr else { return [] }
+        return devs.compactMap { id in
+            var input = address(kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeInput)
+            var bytes: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(id, &input, 0, nil, &bytes) == noErr, bytes > 0 else { return nil }
+            return AudioOutputDevice(id: id, uid: string(id, kAudioDevicePropertyDeviceUID), name: string(id, kAudioObjectPropertyName))
+        }
+    }
+
+    static func selectInput(uid: String) {
+        guard let device = inputDevices().first(where: { $0.uid == uid }) else { return }
+        var property = address(kAudioHardwarePropertyDefaultInputDevice)
+        var id = device.id
+        _ = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil,
+                                       UInt32(MemoryLayout.size(ofValue: id)), &id)
+    }
+
+    static func currentInputVolume() -> Float32? {
+        guard let device = defaultInputDeviceID() else { return nil }
+        var property = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                  mScope: kAudioDevicePropertyScopeInput,
+                                                  mElement: kAudioObjectPropertyElementMain)
+        var value: Float32 = 0
+        var size: UInt32 = 4
+        guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
+        return value
+    }
+
+    static func setInputVolume(percent: Double) {
+        guard let device = defaultInputDeviceID() else { return }
+        var property = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                  mScope: kAudioDevicePropertyScopeInput,
+                                                  mElement: kAudioObjectPropertyElementMain)
+        var value = Float32(max(0, min(1, percent / 100)))
+        _ = AudioObjectSetPropertyData(device, &property, 0, nil, 4, &value)
+    }
+
+    static func isInputMuted() -> Bool {
+        guard let device = defaultInputDeviceID() else { return false }
+        let props = inputMuteProperties(device)
+        guard var first = props.first else { return false }
+        var value: UInt32 = 0
+        var size: UInt32 = 4
+        guard AudioObjectGetPropertyData(device, &first, 0, nil, &size, &value) == noErr else { return false }
+        return value != 0
+    }
+
+    // MARK: - System Alert Sounds Volume
+
+    static func currentSystemAlertVolume() -> Float32? {
+        var alertAddr = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var alertID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &alertAddr, 0, nil, &size, &alertID) == noErr, alertID != 0 else {
+            return currentVolume()
+        }
+        guard var property = volumeProperty(alertID) else { return currentVolume() }
+        var value: Float32 = 0
+        var valSize: UInt32 = 4
+        guard AudioObjectGetPropertyData(alertID, &property, 0, nil, &valSize, &value) == noErr, value.isFinite else { return nil }
+        return value
+    }
+
+    static func setSystemAlertVolume(percent: Double) {
+        var alertAddr = address(kAudioHardwarePropertyDefaultSystemOutputDevice)
+        var alertID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &alertAddr, 0, nil, &size, &alertID) == noErr, alertID != 0 else { return }
+        guard var property = volumeProperty(alertID) else { return }
+        var value = Float32(max(0, min(1, percent / 100)))
+        _ = AudioObjectSetPropertyData(alertID, &property, 0, nil, 4, &value)
+    }
+
+    // MARK: - Stereo Balance
+
+    static func currentBalance() -> Float32 {
+        guard let device = currentDeviceID() else { return 0 }
+        var propLeft = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                  mScope: kAudioDevicePropertyScopeOutput,
+                                                  mElement: 1)
+        var propRight = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                   mScope: kAudioDevicePropertyScopeOutput,
+                                                   mElement: 2)
+        var left: Float32 = 1, right: Float32 = 1
+        var size: UInt32 = 4
+        _ = AudioObjectGetPropertyData(device, &propLeft, 0, nil, &size, &left)
+        _ = AudioObjectGetPropertyData(device, &propRight, 0, nil, &size, &right)
+        let total = left + right
+        guard total > 0.001 else { return 0 }
+        return (right - left) / total
+    }
+
+    static func setBalance(_ balance: Float32) {
+        guard let device = currentDeviceID(), let master = currentVolume() else { return }
+        let clamped = max(-1, min(1, balance))
+        var left = master * (clamped < 0 ? 1 : max(0, 1 - clamped))
+        var right = master * (clamped > 0 ? 1 : max(0, 1 + clamped))
+        var propLeft = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                  mScope: kAudioDevicePropertyScopeOutput,
+                                                  mElement: 1)
+        var propRight = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar,
+                                                   mScope: kAudioDevicePropertyScopeOutput,
+                                                   mElement: 2)
+        _ = AudioObjectSetPropertyData(device, &propLeft, 0, nil, 4, &left)
+        _ = AudioObjectSetPropertyData(device, &propRight, 0, nil, 4, &right)
     }
 }

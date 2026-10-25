@@ -2,10 +2,12 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
-/// Routes the three-finger touch stream: window move/resize/snap goes to
-/// SwishGestureSession (the faithful port), while the pinch verbs — maximize
-/// toggle and the double-pinch minimize/restore — are detected here, because
-/// they resolve on finger spread, not drag.
+/// Routes the multi-finger touch stream: window move/resize/snap/minimize/close
+/// goes to SwishGestureSession (the faithful Swish port).
+/// Supports:
+/// - 2 fingers over window title bar (zero modifier needed, like native Swish)
+/// - 2 fingers with modifier (Control / Option) anywhere on window
+/// - 3 fingers anywhere on window
 @MainActor
 final class WindowGestureController: ObservableObject {
     static let shared = WindowGestureController()
@@ -40,6 +42,15 @@ final class WindowGestureController: ObservableObject {
         UserDefaults.standard.object(forKey: Self.defaultsModifierKey) as? Bool ?? false
     }
 
+    /// Checks if the cursor is positioned over the top title bar of the target window.
+    func isOverTitleBar(cursor: CGPoint) -> Bool {
+        guard let target = session.resolveTarget(cursor),
+              let frame = session.frameOf(target) else { return false }
+        let axCursor = Self.axPoint(cursor, primaryTop: Self.primaryTop)
+        let titlebar = CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: 40)
+        return titlebar.contains(axCursor)
+    }
+
     // MARK: - Frame entry
 
     func observe(points: [TouchPoint], timestamp: Double) {
@@ -50,34 +61,37 @@ final class WindowGestureController: ObservableObject {
             end()
             return
         }
-        if requiresModifier, !NSEvent.modifierFlags.contains(.control) {
-            end()
-            return
-        }
-        if points.count >= 3 {
-            Self.noteFramesArriving()
+
+        let isThreeFinger = points.count >= 3
+        let isTwoFinger = points.count == 2
+
+        if isThreeFinger || isTwoFinger {
+            let cursor = cursorLocation()
             let centroid = Self.centroid(points)
             let spread = Self.spread(points)
+
             if !inGesture {
+                // Two fingers requires cursor on titlebar or modifier key held
+                if isTwoFinger {
+                    let hasModifier = NSEvent.modifierFlags.contains(.control) || NSEvent.modifierFlags.contains(.option)
+                    let isTitlebar = isOverTitleBar(cursor: cursor)
+                    guard hasModifier || isTitlebar else { return }
+                } else if requiresModifier {
+                    guard NSEvent.modifierFlags.contains(.control) else { return }
+                }
+
+                Self.noteFramesArriving()
                 inGesture = true
                 isPinch = false
                 startCentroid = centroid
                 startSpread = spread
                 lastSpread = spread
-                session.begin(cursor: cursorLocation(), centroid: centroid, target: nil)
+                session.begin(cursor: cursor, centroid: centroid, spread: spread, target: nil)
                 return
             }
+
             lastSpread = spread
-            // A pinch begins when three fingers converge/diverge without the
-            // centroid travelling — translation is a drag, spread change is a pinch.
-            if !isPinch, startSpread > 0.06, abs(spread / startSpread - 1) > 0.22,
-               hypot(centroid.x - startCentroid.x, centroid.y - startCentroid.y) < 0.045 {
-                isPinch = true
-                session.cancel()
-                return
-            }
-            if isPinch { return } // pinches resolve on lift
-            session.update(cursor: cursorLocation(), centroid: centroid, screen: screenForCursor())
+            session.update(cursor: cursor, centroid: centroid, spread: spread, screen: screenForCursor())
         } else {
             finish(timestamp: timestamp)
         }
@@ -86,24 +100,11 @@ final class WindowGestureController: ObservableObject {
     private func finish(timestamp: Double) {
         defer { end() }
         guard inGesture else { return }
-        if isPinch {
-            let ratio = startSpread > 0 ? lastSpread / startSpread : 1
-            guard ratio > 1.15 || ratio < 0.87 else { return }
-            if timestamp - lastPinchAt < 2.5 { pinchCount += 1 } else { pinchCount = 1 }
-            lastPinchAt = timestamp
-            if pinchCount >= 2 {
-                pinchCount = 0
-                toggleMinimizeAll()
-            } else if let target = session.resolveTarget(cursorLocation()) {
-                toggleMaximize(target: target)
-            }
-        } else {
-            session.end()
-        }
+        session.end()
     }
 
     private func end() {
-        if inGesture, !isPinch { session.end() }
+        if inGesture { session.end() }
         inGesture = false
         isPinch = false
         startSpread = 0
@@ -151,12 +152,12 @@ final class WindowGestureController: ObservableObject {
     }
 
     /// One-shot runtime evidence: if gestures "don't work", the Gesture
-    /// Console shows whether this layer ever saw a three-finger frame at all.
+    /// Console shows whether this layer ever saw a touch frame.
     private static var loggedFrames = false
     private static func noteFramesArriving() {
         guard !loggedFrames else { return }
         loggedFrames = true
-        GestureLog.shared.logFromAnyThread("Window gestures: 3-finger frames are arriving", level: .detect)
+        GestureLog.shared.logFromAnyThread("Window gestures: touch frames are arriving", level: .detect)
     }
 
     // MARK: - Shared geometry (used by SwishGestureSession and tests)

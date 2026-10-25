@@ -150,4 +150,101 @@ enum SwishSnapGrid {
 
         return nil
     }
+
+    // MARK: - Trackpad Gesture Vector Resolver (Swish Directional Engine)
+
+    enum Action: Equatable {
+        case snapLeftHalf
+        case snapRightHalf
+        case snapTopHalf
+        case snapBottomHalf
+        case snapLeftThird
+        case snapRightThird
+        case snapTopLeftQuarter
+        case snapTopRightQuarter
+        case snapBottomLeftQuarter
+        case snapBottomRightQuarter
+        case maximize
+        case minimize
+        case close
+        case fullscreen
+    }
+
+    struct GestureResult: Equatable {
+        let action: Action
+        let frame: CGRect
+        let title: String
+        let symbol: String
+    }
+
+    /// Resolves snap target frame and action from gesture vector and modifier state.
+    static func resolveGesture(
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        spreadRatio: CGFloat,
+        targetFrame: CGRect,
+        screenVisible: CGRect,
+        useThirds: Bool = false
+    ) -> GestureResult? {
+        // 1. Pinch In -> Close Window
+        if spreadRatio < 0.78 {
+            let insetFrame = targetFrame.insetBy(dx: targetFrame.width * 0.12, dy: targetFrame.height * 0.12)
+            return GestureResult(action: .close, frame: insetFrame, title: "Close Window", symbol: "xmark.circle.fill")
+        }
+
+        // 2. Pinch Out -> Fullscreen
+        if spreadRatio > 1.25 {
+            return GestureResult(action: .fullscreen, frame: screenVisible, title: "Fullscreen", symbol: "arrow.up.left.and.arrow.down.right")
+        }
+
+        // 3. Directional Swipes on Trackpad
+        let dist = hypot(deltaX, deltaY)
+        guard dist >= 0.08 else { return nil }
+
+        // Primary axes vs Diagonal
+        if abs(deltaX) > abs(deltaY) * 1.3 {
+            // Horizontal swipe
+            if deltaX < 0 {
+                let f = useThirds ? third(in: screenVisible, column: .left) : half(in: screenVisible, direction: .left)
+                return GestureResult(action: useThirds ? .snapLeftThird : .snapLeftHalf, frame: f,
+                                     title: useThirds ? "Left 1/3" : "Left Half",
+                                     symbol: useThirds ? "rectangle.split.3x1" : "rectangle.lefthalf.filled")
+            } else {
+                let f = useThirds ? third(in: screenVisible, column: .right) : half(in: screenVisible, direction: .right)
+                return GestureResult(action: useThirds ? .snapRightThird : .snapRightHalf, frame: f,
+                                     title: useThirds ? "Right 1/3" : "Right Half",
+                                     symbol: useThirds ? "rectangle.split.3x1" : "rectangle.righthalf.filled")
+            }
+        } else if abs(deltaY) > abs(deltaX) * 1.3 {
+            // Vertical swipe (deltaY > 0 is up towards display, deltaY < 0 is down towards user)
+            if deltaY > 0 {
+                if useThirds {
+                    let f = half(in: screenVisible, direction: .top)
+                    return GestureResult(action: .snapTopHalf, frame: f, title: "Top Half", symbol: "rectangle.tophalf.filled")
+                } else {
+                    return GestureResult(action: .maximize, frame: screenVisible, title: "Maximize", symbol: "arrow.up.left.and.arrow.down.right")
+                }
+            } else {
+                let minFrame = CGRect(x: targetFrame.midX - 120, y: screenVisible.maxY - 50, width: 240, height: 44)
+                return GestureResult(action: .minimize, frame: minFrame, title: "Minimize", symbol: "arrow.down.to.line")
+            }
+        } else {
+            // Diagonal swipe: 4 quarters
+            if deltaX < 0 && deltaY > 0 {
+                let f = quarter(in: screenVisible, corner: .topLeft)
+                return GestureResult(action: .snapTopLeftQuarter, frame: f, title: "Top-Left", symbol: "square.grid.2x2")
+            } else if deltaX > 0 && deltaY > 0 {
+                let f = quarter(in: screenVisible, corner: .topRight)
+                return GestureResult(action: .snapTopRightQuarter, frame: f, title: "Top-Right", symbol: "square.grid.2x2")
+            } else if deltaX < 0 && deltaY < 0 {
+                let f = quarter(in: screenVisible, corner: .bottomLeft)
+                return GestureResult(action: .snapBottomLeftQuarter, frame: f, title: "Bottom-Left", symbol: "square.grid.2x2")
+            } else if deltaX > 0 && deltaY < 0 {
+                let f = quarter(in: screenVisible, corner: .bottomRight)
+                return GestureResult(action: .snapBottomRightQuarter, frame: f, title: "Bottom-Right", symbol: "square.grid.2x2")
+            }
+        }
+
+        return nil
+    }
 }
