@@ -88,6 +88,7 @@ final class AppAudioEngine {
     }
 
     private var timer: Timer?
+    private var lastSyncAt: TimeInterval = 0
     private var syncing = false
     private var syncScheduled = false
     private var failedProcessIDs: [pid_t: [AudioObjectID]] = [:]
@@ -112,7 +113,16 @@ final class AppAudioEngine {
                 listeners.append((address, block))
             }
         }
-        timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.scheduleSync() }
+        timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // While nothing is captured the timer is only a backstop: the CoreAudio
+            // process and device listeners already wake us as soon as playback starts.
+            // Sweeping the whole process table every second kept an idle MacBook Air
+            // at 3-4% CPU, so idle sweeps run one tick in three.
+            let now = ProcessInfo.processInfo.systemUptime
+            guard !self.sessions.isEmpty || now - self.lastSyncAt >= 3 else { return }
+            self.scheduleSync()
+        }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 
@@ -126,15 +136,54 @@ final class AppAudioEngine {
         }
     }
 
+    /// Remote AirPlay streams must keep their native producer clock and routing.
+    /// Capturing with .mutedWhenTapped, then trying to re-render through an
+    /// AVAudioEngine bound to the generic AirPlay HAL device, can stall clients.
+    /// Detect transport type, not a user-facing room name or a device ID.
+    static func shouldBypassAirPlayCapture(defaultTransport: UInt32?, routeTransport: UInt32?) -> Bool {
+        defaultTransport == kAudioDeviceTransportTypeAirPlay ||
+            routeTransport == kAudioDeviceTransportTypeAirPlay
+    }
+
+    private static func outputTransport(_ id: AudioDeviceID?) -> UInt32? {
+        guard let id, id != AudioObjectID(kAudioObjectUnknown) else { return nil }
+        var property = AudioOutputService.address(kAudioDevicePropertyTransportType)
+        var type: UInt32 = 0
+        var size = UInt32(MemoryLayout.size(ofValue: type))
+        return AudioObjectGetPropertyData(id, &property, 0, nil, &size, &type) == noErr ? type : nil
+    }
+
+    private static func isNativeAirPlayActive() -> Bool {
+        shouldBypassAirPlayCapture(defaultTransport: outputTransport(AudioOutputService.currentDeviceID()),
+                                    routeTransport: nil)
+    }
+
     func syncActiveProcesses() {
         guard isEnabled else {
             if !sessions.isEmpty { stopAll() }
             return
         }
         guard !syncing else { return }
+        // An AirPlay route change can arrive while app audio taps are running.
+        // Release them so Chrome/Safari resumes its own unmodified audio route.
+        // Do not change the user's selected HomePod or macOS sound settings.
+        if Self.isNativeAirPlayActive() {
+            let hadSessions = !sessions.isEmpty ||
+                MainActor.assumeIsolated { !SharedOutputRenderer.shared.activeDeviceUIDs.isEmpty }
+            if hadSessions {
+                stopAll()
+                NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
+            }
+            return
+        }
         syncing = true
         defer { syncing = false }
+        lastSyncAt = ProcessInfo.processInfo.systemUptime
         updatePlaybackListeners()
+        let apps = runningAudioApps()
+        // Nothing playing and nothing captured: enumerating devices and rebinding
+        // renderers for an empty session list is pure overhead.
+        if apps.isEmpty && sessions.isEmpty { return }
         let devices = AudioOutputService.devices()
         let topology = Dictionary(devices.map { ($0.uid, $0.id) }, uniquingKeysWith: { first, _ in first })
         if topology != outputTopology {
@@ -146,7 +195,6 @@ final class AppAudioEngine {
             let renderer = SharedOutputRenderer.shared
             renderer.rebindIfNeeded(devices: devices)
         }
-        let apps = runningAudioApps()
         // Playback/process-object disappearance is not application termination.
         for pid in Array(sessions.keys) {
             if NSRunningApplication(processIdentifier: pid)?.isTerminated != false { stop(pid: pid) }
@@ -155,9 +203,10 @@ final class AppAudioEngine {
         errors = errors.filter { livePIDs.contains($0.key) }
         retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
         failedProcessIDs = failedProcessIDs.filter { livePIDs.contains($0.key) }
+        let objectsByOwner = Self.processObjectsByOwner()
         for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
             if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
-            let ids = Self.processObjectIDs(for: app.pid).sorted()
+            let ids = objectsByOwner[app.pid] ?? []
             if let failed = failedProcessIDs[app.pid], failed != ids {
                 retryAfter.removeValue(forKey: app.pid)
                 failedProcessIDs.removeValue(forKey: app.pid)
@@ -277,7 +326,15 @@ final class AppAudioEngine {
     }
 
     private func needsProcessing(_ bundleID: String) -> Bool {
-        guard isEnabled else { return false }
+        guard isEnabled, !Self.isNativeAirPlayActive() else { return false }
+        // Avoid muted process taps even when a single app has a saved AirPlay
+        // route while the system default is a local output device.
+        if let uid = Self.targetOutputUID(for: bundleID),
+           let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
+           Self.shouldBypassAirPlayCapture(defaultTransport: nil,
+                                         routeTransport: Self.outputTransport(destination.id)) {
+            return false
+        }
         let d = UserDefaults.standard
         return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
             d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
@@ -376,7 +433,21 @@ final class AppAudioEngine {
         return nil
     }
 
+    /// Resolving an owner scans every running app, and the sweep used to do that
+    /// once per process object. Short-lived memoisation keeps the answer stable
+    /// within a sweep without changing behaviour when an app really does change.
+    private nonisolated(unsafe) static var ownerResolutionCache: [pid_t: (app: NSRunningApplication?, at: TimeInterval)] = [:]
+
     private static func owner(of object: AudioObjectID, pid: pid_t) -> NSRunningApplication? {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let hit = ownerResolutionCache[pid], now - hit.at < 5 { return hit.app }
+        let app = resolveOwner(of: object, pid: pid)
+        if ownerResolutionCache.count > 512 { ownerResolutionCache.removeAll(keepingCapacity: true) }
+        ownerResolutionCache[pid] = (app, now)
+        return app
+    }
+
+    private static func resolveOwner(of object: AudioObjectID, pid: pid_t) -> NSRunningApplication? {
         if let app = mainApp(for: pid) { return app }
         let bundleID = AudioOutputService.string(object, kAudioProcessPropertyBundleID)
         let processURL = NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL.path
@@ -392,26 +463,36 @@ final class AppAudioEngine {
     }
 
     static func processObjectIDs(for targetPID: pid_t) -> [AudioObjectID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
+        processObjectsByOwner()[targetPID] ?? []
+    }
+
+    /// One pass over the process-object list with owner resolution memoised.
+    /// Callers used to re-read the whole list, and re-scan every running app, once
+    /// per pid, which is what made the once-a-second sweep expensive.
+    static func processObjectsByOwner() -> [pid_t: [AudioObjectID]] {
+        var map: [pid_t: [AudioObjectID]] = [:]
+        var ownerCache: [pid_t: pid_t] = [:]
+        for obj in processObjectList() {
+            guard let rawPID = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPID > 0 else { continue }
+            let ownerPID: pid_t
+            if let cached = ownerCache[rawPID] { ownerPID = cached }
+            else {
+                let resolved = owner(of: obj, pid: rawPID)?.processIdentifier ?? rawPID
+                ownerCache[rawPID] = resolved
+                ownerPID = resolved
+            }
+            map[ownerPID, default: []].append(obj)
+        }
+        return map.mapValues { $0.sorted() }
+    }
+
+    private static func processObjectList() -> [AudioObjectID] {
+        var address = AudioOutputService.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return [] }
-        let count = Int(size) / MemoryLayout<AudioObjectID>.stride
-        var objects = [AudioObjectID](repeating: 0, count: count)
+        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.stride)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return [] }
-
-        var result: [AudioObjectID] = []
-        for obj in objects {
-            guard let p = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), p > 0 else { continue }
-            if p == targetPID {
-                result.append(obj)
-            } else if let main = owner(of: obj, pid: p), main.processIdentifier == targetPID {
-                result.append(obj)
-            }
-        }
-        return result
+        return objects
     }
 
     // MARK: - Running audio apps (process objects, 14.2+)
@@ -617,6 +698,15 @@ final class AppAudioEngine {
 
     private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        // A route transition can happen after the sync pass's initial check.
+        // Never create a muting tap before confirming both output transports.
+        guard !Self.isNativeAirPlayActive(),
+              let uid = Self.targetOutputUID(for: bundleID),
+              let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
+              !Self.shouldBypassAirPlayCapture(defaultTransport: nil,
+                                              routeTransport: Self.outputTransport(destination.id)) else {
+            return nil
+        }
 
         // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
         let processObjIDs = Self.processObjectIDs(for: pid)

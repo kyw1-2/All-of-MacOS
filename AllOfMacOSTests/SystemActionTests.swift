@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import CoreAudio
 @testable import AllOfMacOS
 
 final class SystemActionTests: XCTestCase {
@@ -58,6 +59,16 @@ final class SystemActionTests: XCTestCase {
         XCTAssertEqual(AudioOutputSelection.resolve(name: "Old name", uid: "B", devices: devices)?.id, 2)
         XCTAssertNil(AudioOutputSelection.resolve(name: "Speakers", uid: "disconnected", devices: devices))
     }
+    @available(macOS 14.2, *)
+    func testNativeAirPlayOutputBypassesProcessTapsWithoutHardcodedRoomOrDeviceID() {
+        let local: UInt32 = kAudioDeviceTransportTypeBuiltIn
+        let remote: UInt32 = kAudioDeviceTransportTypeAirPlay
+        XCTAssertTrue(AppAudioEngine.shouldBypassAirPlayCapture(defaultTransport: remote, routeTransport: nil))
+        XCTAssertTrue(AppAudioEngine.shouldBypassAirPlayCapture(defaultTransport: local, routeTransport: remote))
+        XCTAssertFalse(AppAudioEngine.shouldBypassAirPlayCapture(defaultTransport: local, routeTransport: local))
+        XCTAssertFalse(AppAudioEngine.shouldBypassAirPlayCapture(defaultTransport: nil, routeTransport: nil))
+    }
+
     func testAirPlayRoomDoesNotResolveToGenericHALAirPlayDevice() {
         let devices = [AudioOutputDevice(id: 131, uid: "generic", name: "AirPlay")]
         XCTAssertNil(AudioOutputSelection.resolve(name: "Bedroom", uid: nil, devices: devices))
