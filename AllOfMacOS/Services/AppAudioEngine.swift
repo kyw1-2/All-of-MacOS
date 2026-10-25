@@ -118,20 +118,30 @@ final class AppAudioEngine {
             guard needsProcessing(app.bundleID) else {
                 stop(pid: app.pid); errors.removeValue(forKey: app.pid); continue
             }
-            let processIDs = Self.processObjectIDs(for: app.pid).sorted()
-            let playing = processIDs.contains { Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1 }
-            guard playing || sessions[app.pid] != nil else { continue }
-            if let session = sessions[app.pid],
-               session.bundleID != app.bundleID || session.processIDs != processIDs ||
-               session.outputUID != Self.targetOutputUID(for: app.bundleID) ||
-               session.outputSampleRate != Self.outputSampleRate(uid: session.outputUID) ||
-               session.playback?.isRunning != true {
-                stop(pid: app.pid)
-            }
+            // NEVER tear a session down for playback pauses or browser helper
+            // churn: destroying the aggregate removes the app's (re-routed)
+            // audio device mid-playback, and every player auto-pauses on
+            // device loss. Sessions live until the app exits, the user's
+            // preferences change, or the output target actually moves.
             if let session = sessions[app.pid] {
-                session.box.takeUnretainedValue().deviceGain = AudioOutputService.softwareGain(uid: session.outputUID)
+                if session.bundleID != app.bundleID ||
+                    session.outputUID != Self.targetOutputUID(for: app.bundleID) {
+                    stop(pid: app.pid)
+                } else {
+                    // A stopped AVAudioEngine (output hiccup) restarts in
+                    // place — the tap and aggregate survive untouched.
+                    if let playback = session.playback, !playback.isRunning {
+                        do { try playback.start() } catch { stop(pid: app.pid) }
+                    }
+                    let rate = Self.outputSampleRate(uid: session.outputUID)
+                    if rate > 0, session.outputSampleRate != rate {
+                        stop(pid: app.pid) // genuine sample-rate change: rebuild once
+                    } else {
+                        session.box.takeUnretainedValue().deviceGain = AudioOutputService.softwareGain(uid: session.outputUID)
+                    }
+                }
             }
-            guard sessions[app.pid] == nil, !processIDs.isEmpty,
+            guard sessions[app.pid] == nil,
                   ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
             _ = attach(pid: app.pid, gain: Self.storedGain(bundleID: app.bundleID), muted: app.muted)
         }
@@ -479,14 +489,10 @@ final class AppAudioEngine {
             return true
         }
         guard pid != ProcessInfo.processInfo.processIdentifier else { return false }
-        // A silent app can have its settings queued. A real Core Audio error
-        // must remain visible instead of falsely reporting an active tap.
-        guard Self.processObjectIDs(for: pid).contains(where: {
-            Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
-        }) else {
-            errors.removeValue(forKey: pid)
-            return true
-        }
+        // Attach immediately, even while the app is silent: a process tap
+        // exists on the process and captures whatever it plays later. Gating
+        // on IsRunningOutput made the slider report success while doing
+        // nothing for quiet apps (the audit's "per-app volume doesn't work").
         return attach(pid: pid, gain: clamped, muted: muted)
     }
 

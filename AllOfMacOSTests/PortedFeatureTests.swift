@@ -7,19 +7,6 @@ import CoreAudio
 @MainActor
 final class PortedFeatureTests: XCTestCase {
 
-    // MARK: Swish — edge detection for drag→resize
-
-    func testEdgeDetectionFindsEdgesWithinBand() {
-        let frame = CGRect(x: 100, y: 100, width: 600, height: 400)
-        let right = WindowGestureController.edges(near: CGPoint(x: 698, y: 300), frame: frame, within: 40)
-        XCTAssertTrue(right.contains(.maxX) && right.count == 1)
-        let corner = WindowGestureController.edges(near: CGPoint(x: 695, y: 105), frame: frame, within: 40)
-        XCTAssertTrue(corner.contains(.maxX) && corner.contains(.minY), "corners resize on two edges")
-        let interior = WindowGestureController.edges(near: CGPoint(x: 400, y: 300), frame: frame, within: 40)
-        XCTAssertTrue(interior.isEmpty, "the middle of a window is a move, not a resize")
-        let outside = WindowGestureController.edges(near: CGPoint(x: 900, y: 300), frame: frame, within: 40)
-        XCTAssertTrue(outside.isEmpty, "points off the window never resize")
-    }
 
     // MARK: Pin parking — the sliver that keeps translucent pins live
 
@@ -38,25 +25,6 @@ final class PortedFeatureTests: XCTestCase {
         XCTAssertTrue(CGRect(origin: tallTarget, size: tall.size).intersects(desktop))
     }
 
-    // MARK: Swish snap targets — the preview geometry
-
-    func testSnapTargetEdgesCornersAndMaximize() {
-        let screen = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
-                      visible: CGRect(x: 0, y: 40, width: 1440, height: 830))
-        // Mid-screen: nothing.
-        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 450), screen: screen))
-        // Left edge: left half of the visible area.
-        let left = WindowGestureController.snapTarget(cursor: CGPoint(x: 5, y: 450), screen: screen)
-        XCTAssertEqual(left, CGRect(x: 0, y: 40, width: 720, height: 830))
-        // Top-right corner: top-right quarter.
-        let corner = WindowGestureController.snapTarget(cursor: CGPoint(x: 1438, y: 2), screen: screen)
-        XCTAssertEqual(corner, CGRect(x: 720, y: 40, width: 720, height: 415))
-        // Top center: maximize (the visible frame).
-        let top = WindowGestureController.snapTarget(cursor: CGPoint(x: 700, y: 2), screen: screen)
-        XCTAssertEqual(top, screen.visible)
-        // Off-screen: nothing.
-        XCTAssertNil(WindowGestureController.snapTarget(cursor: CGPoint(x: -30, y: 450), screen: screen))
-    }
 
     // MARK: Equalizer — the audio math
 
@@ -87,15 +55,6 @@ final class PortedFeatureTests: XCTestCase {
         }
     }
 
-    // MARK: Gesture layer gating — the dead-layer regression
-
-    func testWindowGestureLayersReportEnabled() {
-        UserDefaults.standard.removeObject(forKey: "AOMWindowGesturesEnabled")
-        XCTAssertTrue(WindowGestureController.shared.anyLayerEnabled)
-        UserDefaults.standard.set(false, forKey: "AOMWindowGesturesEnabled")
-        XCTAssertFalse(WindowGestureController.shared.anyLayerEnabled)
-        UserDefaults.standard.removeObject(forKey: "AOMWindowGesturesEnabled")
-    }
 
     // MARK: Audio mixer — pure math and state
 
@@ -216,23 +175,6 @@ final class PortedFeatureTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "AOMDockPinchQuit")
     }
 
-    // MARK: Window gestures setting contract
-
-    func testWindowGesturesSettingContract() {
-        UserDefaults.standard.removeObject(forKey: "AOMWindowGesturesEnabled")
-        UserDefaults.standard.removeObject(forKey: "AOMWindowGestureEdgeSize")
-        let controller = WindowGestureController.shared
-        // Defaults: enabled, 40 pt edge band. The engine reads them live.
-        XCTAssertTrue(UserDefaults.standard.object(forKey: "AOMWindowGesturesEnabled") as? Bool ?? true)
-        UserDefaults.standard.set(60.0, forKey: "AOMWindowGestureEdgeSize")
-        // A point 45 pt from the right edge: inside a 60 pt band, outside 40.
-        let frame = CGRect(x: 100, y: 100, width: 600, height: 400)
-        let point = CGPoint(x: 655, y: 300)
-        XCTAssertTrue(WindowGestureController.edges(near: point, frame: frame, within: 60).contains(.maxX))
-        XCTAssertFalse(WindowGestureController.edges(near: point, frame: frame, within: 40).contains(.maxX))
-        _ = controller // the settings are read per-frame by the running engine
-        UserDefaults.standard.removeObject(forKey: "AOMWindowGestureEdgeSize")
-    }
 
     func testAppAudioEngineMixingZeroWhenMuted() {
         let box = MixerBox(gain: 1.5, muted: true)
