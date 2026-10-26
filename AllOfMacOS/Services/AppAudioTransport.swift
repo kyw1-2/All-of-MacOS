@@ -3,164 +3,112 @@ import CoreAudio
 import Darwin
 import Accelerate
 
-/// Bounded stereo bridge between the tap clock and the playback clock. Both
-/// audio callbacks use try-lock only; neither can wait on the UI or the other
-/// callback. Storage and render scratch are allocated before audio starts.
+/// Separate tap and output clocks connected by a single-producer/consumer
+/// queue. Capture and sample transport never acquire a mutex. DSP rendering is
+/// serialized only for the brief interval when two output routes overlap.
 final class AppAudioTransport {
-    private let lock = NSLock()
-    // A route handoff can briefly register this source on two output buses.
-    // Serialize the complete DSP render (including scratch / EQ state).
     private let renderLock = NSLock()
     private let capacity = 32768
-    private let samples: UnsafeMutablePointer<Float>
+    private let queue = StereoPCMQueue(capacity: 32768)
     private let scratch: UnsafeMutablePointer<Float>
-    private var readIndex = 0
-    private var writeIndex = 0
-    private var count = 0
-    private var fractionalPosition: Double = 0
-    private var buffered = false
-    private var capturedFrames: UInt64 = 0
-    private var renderedFrames: UInt64 = 0
-    private var inputPeak: Float = 0
-    private var targetFrames: Int
-    private var bufferedForAirPlay: Bool
-    private var sampleRate: Double
-    private var lastCaptureTime: TimeInterval = -.infinity
-    private var lastRenderTime: TimeInterval = -.infinity
+    private let rateBits: AudioAtomicCounter
+    private let remote: AudioAtomicCounter
+    private let largestPacket = AudioAtomicCounter()
+    private let peakBits = AudioAtomicCounter()
+    private let captureTick = AudioAtomicCounter()
+    private let renderTick = AudioAtomicCounter()
+    private let renderContentions = AudioAtomicCounter()
     private let secondsPerTick: Double
 
     init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
-        self.sampleRate = sampleRate
-        self.bufferedForAirPlay = bufferedForAirPlay
-        targetFrames = max(256, min(bufferedForAirPlay ? 16384 : 4096, Int(sampleRate * (bufferedForAirPlay ? 0.08 : 0.025))))
-        samples = .allocate(capacity: capacity * 2)
+        let rate = sampleRate.isFinite && (8000...384000).contains(sampleRate) ? sampleRate : 48000
+        rateBits = AudioAtomicCounter(rate.bitPattern)
+        remote = AudioAtomicCounter(bufferedForAirPlay ? 1 : 0)
         scratch = .allocate(capacity: capacity * 2)
-        samples.initialize(repeating: 0, count: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
     }
-    deinit { samples.deallocate(); scratch.deallocate() }
+    deinit { scratch.deallocate() }
 
     func updateSampleRate(_ rate: Double) {
-        guard rate.isFinite, rate > 0 else { return }
-        lock.lock(); defer { lock.unlock() }
-        guard rate != sampleRate else { return }
-        sampleRate = rate
-        targetFrames = max(256, min(bufferedForAirPlay ? capacity / 2 : 4096, Int(rate * (bufferedForAirPlay ? 0.08 : 0.025))))
-        readIndex = 0; writeIndex = 0; count = 0
-        fractionalPosition = 0; buffered = false
+        guard rate.isFinite, (8000...384000).contains(rate), rate.bitPattern != rateBits.load() else { return }
+        rateBits.store(rate.bitPattern)
+        queue.requestClear()
     }
-
     func setBufferedForAirPlay(_ enabled: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        guard enabled != bufferedForAirPlay else { return }
-        bufferedForAirPlay = enabled
-        targetFrames = max(256, min(enabled ? capacity / 2 : 4096, Int(sampleRate * (enabled ? 0.08 : 0.025))))
-        readIndex = writeIndex; count = 0; fractionalPosition = 0; buffered = false
+        let value: UInt64 = enabled ? 1 : 0
+        guard value != remote.load() else { return }
+        remote.store(value)
+        queue.requestClear()
     }
-
+    private var targetFrames: Int {
+        let rate = Double(bitPattern: rateBits.load())
+        if remote.load() == 1 {
+            return min(capacity / 2, max(Int(rate * 0.08), Int(largestPacket.load()) * 2))
+        }
+        return max(256, min(4096, Int(rate * 0.025)))
+    }
     var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool, rendering: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        let recentWindow = bufferedForAirPlay ? max(1, Double(targetFrames) / sampleRate * 4) : 0.25
-        return (capturedFrames, renderedFrames, inputPeak,
-                Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < recentWindow,
-                Double(mach_absolute_time()) * secondsPerTick - lastRenderTime < recentWindow)
+        let stats = queue.statistics
+        let rate = Double(bitPattern: rateBits.load())
+        let recentWindow = remote.load() == 1 ? max(1, Double(targetFrames) / rate * 4) : 0.25
+        let now = Double(mach_absolute_time()) * secondsPerTick
+        let capture = captureTick.load(), render = renderTick.load()
+        return (stats["capturedFrames"] ?? 0, stats["renderedFrames"] ?? 0,
+                Float(bitPattern: UInt32(truncatingIfNeeded: peakBits.load())),
+                capture > 0 && now - Double(capture) * secondsPerTick < recentWindow,
+                render > 0 && now - Double(render) * secondsPerTick < recentWindow)
     }
-
+    var statistics: [String: Any] {
+        var result = queue.statistics.mapValues { $0 as Any }
+        result["sampleRate"] = Double(bitPattern: rateBits.load())
+        result["targetFrames"] = targetFrames
+        result["largestPacketFrames"] = largestPacket.load()
+        result["renderContentions"] = renderContentions.load()
+        return result
+    }
     func capture(_ input: UnsafePointer<AudioBufferList>) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         guard let first = buffers.first, first.mNumberChannels > 0,
-              let left = first.mData?.assumingMemoryBound(to: Float.self), lock.try() else { return }
-        defer { lock.unlock() }
+              let left = first.mData?.assumingMemoryBound(to: Float.self) else { return }
         let planar = first.mNumberChannels == 1 && buffers.count >= 2
         let channels = Int(first.mNumberChannels)
         var frames = Int(first.mDataByteSize) / (4 * channels)
         var right = left
         if planar {
             guard let data = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
-            right = data
-            frames = min(frames, Int(buffers[1].mDataByteSize) / 4)
+            right = data; frames = min(frames, Int(buffers[1].mDataByteSize) / 4)
         }
-        if bufferedForAirPlay {
-            targetFrames = min(capacity / 2, max(targetFrames, frames * 2))
-        }
-        let now = Double(mach_absolute_time()) * secondsPerTick
-        // AirPlay can deliver packets longer than the local 250 ms gap
-        // threshold. Do not reset every packet before its queue can prime.
-        let gapLimit = bufferedForAirPlay ? max(1, Double(frames) / sampleRate * 4) : 0.25
-        if now - lastCaptureTime > gapLimit {
-            readIndex = 0; writeIndex = 0; count = 0
-            fractionalPosition = 0; buffered = false
-        }
-        lastCaptureTime = now
-        // Bound latency after a stalled consumer rather than replaying an old
-        // half-second of audio when a device recovers.
-        if count + frames > max(targetFrames * 4, frames * 2) {
-            readIndex = writeIndex; count = 0; fractionalPosition = 0; buffered = false
-        }
+        let rate = Double(bitPattern: rateBits.load())
+        let gapLimit = remote.load() == 1 ? max(1, Double(frames) / rate * 4) : 0.25
+        let now = mach_absolute_time(), previous = captureTick.load()
+        if previous > 0 && Double(now - previous) * secondsPerTick > gapLimit { queue.requestClear() }
+        largestPacket.raise(to: UInt64(frames))
         var peak: Float = 0
-        for frame in 0..<frames {
-            if count == capacity {
-                readIndex = (readIndex + 1) % capacity
-                count -= 1
-            }
+        queue.write(frames: frames) { frame in
             let l = left[planar ? frame : frame * channels]
             let r = planar ? right[frame] : left[frame * channels + min(1, channels - 1)]
-            samples[writeIndex * 2] = l.isFinite ? l : 0
-            samples[writeIndex * 2 + 1] = r.isFinite ? r : 0
-            peak = max(peak, max(abs(samples[writeIndex * 2]), abs(samples[writeIndex * 2 + 1])))
-            writeIndex = (writeIndex + 1) % capacity
-            count += 1
+            peak = max(peak, max(l.isFinite ? abs(l) : 0, r.isFinite ? abs(r) : 0))
+            return (l, r)
         }
-        capturedFrames &+= UInt64(frames)
-        inputPeak = peak
+        peakBits.store(UInt64(peak.bitPattern)); captureTick.store(now)
     }
-
-    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox) {
-        let outputs = UnsafeMutableAudioBufferListPointer(output)
-        for buffer in outputs {
-            if let data = buffer.mData?.assumingMemoryBound(to: Float.self) {
-                vDSP_vclr(data, 1, vDSP_Length(Int(buffer.mDataByteSize) / MemoryLayout<Float32>.stride))
-            }
+    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox, allowWaiting: Bool = false) {
+        for buffer in UnsafeMutableAudioBufferListPointer(output) {
+            if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
-        guard renderLock.try() else { return }
+        guard frames > 0, frames <= capacity else { return }
+        if allowWaiting { renderLock.lock() }
+        else if !renderLock.try() { renderContentions.add(); return }
         defer { renderLock.unlock() }
-        guard frames > 0, frames <= capacity, lock.try() else { mixer.publishPeak(0); return }
-        if !buffered {
-            guard count >= targetFrames else { lock.unlock(); mixer.publishPeak(0); return }
-            buffered = true
-        }
-        // Convert the tap's nominal rate to the stable 48 kHz render bus,
-        // then apply a small drift correction for independent device clocks.
-        let correction = max(-0.002, min(0.002, Double(count - targetFrames) / Double(targetFrames) * 0.001))
-        let step = sampleRate / SharedOutputRenderer.sampleRate * (1 + correction)
-        var filled = 0
-        while filled < frames && count > max(1, Int(fractionalPosition + step)) {
-            let next = (readIndex + 1) % capacity
-            let fraction = Float(fractionalPosition)
-            for channel in 0..<2 {
-                let a = samples[readIndex * 2 + channel], b = samples[next * 2 + channel]
-                scratch[filled * 2 + channel] = a + (b - a) * fraction
-            }
-            fractionalPosition += step
-            let advance = min(count, Int(fractionalPosition))
-            readIndex = (readIndex + advance) % capacity
-            count -= advance
-            fractionalPosition -= Double(advance)
-            filled += 1
-        }
-        if filled < frames {
-            vDSP_vclr(scratch + filled * 2, 1, vDSP_Length((frames - filled) * 2))
-            buffered = false
-            fractionalPosition = 0
-        }
-        renderedFrames &+= UInt64(filled)
-        if filled > 0 { lastRenderTime = Double(mach_absolute_time()) * secondsPerTick }
-        lock.unlock()
-        var input = AudioBufferList(mNumberBuffers: 1,
-                                    mBuffers: AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
+        let rate = Double(bitPattern: rateBits.load())
+        let filled = queue.render(into: scratch, frames: frames,
+                                  ratio: rate / SharedOutputRenderer.sampleRate, targetFrames: targetFrames)
+        if filled > 0 { renderTick.store(mach_absolute_time()) }
+        var input = AudioBufferList(mNumberBuffers: 1, mBuffers:
+            AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
         withUnsafePointer(to: &input) { Mixer.mix(input: $0, output: output, box: mixer) }
     }
 }

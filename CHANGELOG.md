@@ -1,3 +1,12 @@
+## 3.0.10 — Continuous audio delivery (2026-10-26)
+
+- Replace mutex-protected capture and AirPlay queues with bounded single-producer/single-consumer stereo queues. A busy control or producer lock no longer turns an entire IO block into silence.
+- Use acquire/release atomic cursors, consumer-owned resampling state and coordinated clear requests; never overwrite frames still in use.
+- The dedicated AirPlay mixing worker waits for short source-list/handoff operations instead of dropping its mix block. HAL callbacks remain non-blocking.
+- Request a 1,024-frame quantum on AOM's private AirPlay capture aggregates where supported, reducing unnecessary 128-frame wakeups without changing the system output device.
+- Add opt-in local queue/dropout counters without recording audio, plus wraparound, clear and concurrent ordering regressions.
+- Retain the 3.0.9 EQ headroom, linked stereo limiter and full-session native mute protections.
+
 ## 3.0.9 — EQ distortion and audio recovery (2026-10-26)
 
 - Hold native audio mute for the full capture session, and resolve returning helpers by verified ownership instead of shared helper bundle IDs to prevent overlapping tap membership.

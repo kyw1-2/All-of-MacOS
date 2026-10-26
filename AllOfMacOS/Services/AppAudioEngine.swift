@@ -194,6 +194,17 @@ final class AppAudioEngine {
         lastSyncAt = ProcessInfo.processInfo.systemUptime
         defer {
             syncing = false
+            if UserDefaults.standard.bool(forKey: "AOMAudioDiagnostics") {
+                let capture = Dictionary(uniqueKeysWithValues: sessions.values.compactMap { session -> (String, [String: Any])? in
+                    guard let transport = session.transport else { return nil }
+                    var stats = transport.statistics
+                    stats["bundleID"] = session.bundleID
+                    stats["airPlay"] = session.sourceToken?.isAirPlay ?? false
+                    return (String(session.pid), stats)
+                })
+                let outputs = MainActor.assumeIsolated { SharedOutputRenderer.shared.airPlayStatistics }
+                AudioDiagnostics.write(captures: capture, outputs: outputs)
+            }
             NotificationCenter.default.post(name: NSNotification.Name("AOMAudioAppsChanged"), object: nil)
         }
         airPlayBypassed = Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled
@@ -917,6 +928,19 @@ final class AppAudioEngine {
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
+        if Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
+            var address = AudioOutputService.address(kAudioDevicePropertyBufferFrameSize)
+            var writable: DarwinBoolean = false
+            if AudioObjectIsPropertySettable(aggregateID, &address, &writable) == noErr, writable.boolValue {
+                var preferred: UInt32 = 1024
+                if let range = Self.property(aggregateID, selector: kAudioDevicePropertyBufferFrameSizeRange, as: AudioValueRange.self),
+                   range.mMinimum.isFinite, range.mMaximum.isFinite,
+                   range.mMinimum >= 1, range.mMaximum >= range.mMinimum, range.mMaximum <= 32768 {
+                    preferred = UInt32(min(range.mMaximum, max(range.mMinimum, Double(preferred))))
+                }
+                _ = AudioObjectSetPropertyData(aggregateID, &address, 0, nil, 4, &preferred)
+            }
+        }
         guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
               Self.supports(format),
               let device = AudioOutputService.devices().first(where: { $0.uid == outUID }) else {
@@ -937,12 +961,12 @@ final class AppAudioEngine {
                          master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                          appBoost: appBoost, masterBoost: masterBoost)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
-        let transport = AppAudioTransport(sampleRate: sampleRate,
-            bufferedForAirPlay: Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay)
+        let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
+        let transport = AppAudioTransport(sampleRate: sampleRate, bufferedForAirPlay: isAirPlay)
         // Add only a software render source; the hardware graph remains fixed.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: outUID, device: device,
-            render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else {
+            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay) }) }) else {
             errors[pid] = "Cannot play through \(device.name). Choose another output or reconnect it."
             AudioHardwareDestroyAggregateDevice(aggregateID); AudioHardwareDestroyProcessTap(tapID)
             return nil
@@ -1014,12 +1038,13 @@ final class AppAudioEngine {
     private func moveOutput(_ session: Session, device: AudioOutputDevice) -> Bool {
         guard let transport = session.transport else { return false }
         let mixer = session.box.takeUnretainedValue()
+        let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
         // Bridge, don't break: the new source is added before the old one is
         // removed. A failed add must leave the session playing through its
         // existing output — losing the device is what pauses every player.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: device.uid, device: device,
-            render: { transport.render(frames: $0, output: $1, mixer: mixer) }) }) else { return false }
+            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay) }) }) else { return false }
         if let old = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
         }

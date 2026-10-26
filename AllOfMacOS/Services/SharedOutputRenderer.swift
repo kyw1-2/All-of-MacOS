@@ -199,6 +199,8 @@ final class SharedOutputRenderer {
         }
     }
 
+    var airPlayStatistics: [String: [String: Any]] { airPlayOutputs.mapValues { $0.statistics } }
+
     func shutdown() {
         for output in airPlayOutputs.values { output.stop() }
         airPlayOutputs.removeAll()
@@ -234,12 +236,13 @@ final class AppAudioRenderBus {
     }
     func removeAll() { lock.lock(); defer { lock.unlock() }; sources.removeAll() }
 
-    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>) {
+    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, allowWaiting: Bool = false) {
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         for buffer in buffers {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
-        guard frames > 0, frames <= capacity, lock.try() else { return }
+        guard frames > 0, frames <= capacity else { return }
+        if allowWaiting { lock.lock() } else if !lock.try() { return }
         defer { lock.unlock() }
         memset(sum, 0, frames * 2 * MemoryLayout<Float>.size)
         for source in sources {

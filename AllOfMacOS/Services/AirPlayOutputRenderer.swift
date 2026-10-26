@@ -30,6 +30,8 @@ final class AirPlayOutputRenderer {
     private var configuredFrames: UInt32 = 0
     private var configuredChannels: UInt32 = 0
     private var nextMixTime: UInt64 = 0
+    private let delayedMixResets = AudioAtomicCounter()
+    private let maximumMixDelay = AudioAtomicCounter()
     private var stopped = false
     private var failureDelivered = false
     private let scratch = UnsafeMutablePointer<Float>.allocate(capacity: 480 * 2)
@@ -186,12 +188,21 @@ final class AirPlayOutputRenderer {
         }
     }
 
+    var statistics: [String: Any] {
+        var result = bridge.statistics
+        result["delayedMixResets"] = delayedMixResets.load()
+        result["maximumMixDelayMS"] = Double(maximumMixDelay.load()) / 1_000_000
+        return result
+    }
+
     private func tick() {
         guard !stopped, !failureDelivered else { return }
         let now = DispatchTime.now().uptimeNanoseconds
+        if now > nextMixTime { maximumMixDelay.raise(to: now - nextMixTime) }
         // A delayed dispatch timer never renders an unbounded backlog after
         // sleep or contention. Drop stale PCM and resume with a fade instead.
         if now > nextMixTime && now - nextMixTime > 100_000_000 {
+            delayedMixResets.add()
             bridge.discard()
             nextMixTime = now
         }
@@ -199,7 +210,7 @@ final class AirPlayOutputRenderer {
         while nextMixTime <= now && blocks < 4 {
             var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers:
                 AudioBuffer(mNumberChannels: 2, mDataByteSize: 3840, mData: scratch))
-            withUnsafeMutablePointer(to: &buffers) { bus.render(frames: 480, output: $0) }
+            withUnsafeMutablePointer(to: &buffers) { bus.render(frames: 480, output: $0, allowWaiting: true) }
             bridge.push(scratch, frames: 480)
             nextMixTime += 10_000_000
             blocks += 1
@@ -248,101 +259,54 @@ final class AirPlayOutputRenderer {
 /// A bounded, preallocated PCM queue between the local mix clock and AirPlay's
 /// device clock. The HAL callback never runs DSP, dispatches work, or waits.
 final class AirPlayPCMBridge {
-    private let lock = NSLock()
-    private let capacity = 96000
-    private let samples = UnsafeMutablePointer<Float>.allocate(capacity: 192000)
-    private var read = 0
-    private var write = 0
-    private var count = 0
-    private var fraction: Double = 0
-    private var step: Double = 1
-    private var target = 7200 // 150 ms, independent of HomePod's own latency
-    private var primed = false
-    private var fade: Float = 0
-    private var lastCallback: TimeInterval = 0
-    private var lastAudio: TimeInterval = 0
-    private var invalidFormat = false
+    private let queue = StereoPCMQueue(capacity: 96000)
+    private var target = 7200
     private var outputRate: Double = 48000
-    private var correction: Double = 0
+    private let outputRateBits = AudioAtomicCounter(Double(48000).bitPattern)
+    private let targetValue = AudioAtomicCounter(7200)
+    private let callbackTick = AudioAtomicCounter()
+    private let audioTick = AudioAtomicCounter()
+    private let invalid = AudioAtomicCounter()
     private let secondsPerTick: Double
 
     init() {
-        samples.initialize(repeating: 0, count: 192000)
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
     }
-    deinit { samples.deallocate() }
-
-    // Setup only, before starting the HAL callback or producer.
+    // Setup only, before the producer and HAL callback start.
     func configure(outputRate: Double, deviceFrames: Int) {
         self.outputRate = outputRate
-        step = 48000 / outputRate
-        target = min(capacity / 2, max(7200, Int(ceil(Double(deviceFrames) * step)) * 3))
+        outputRateBits.store(outputRate.bitPattern)
+        target = min(48000, max(7200, Int(ceil(Double(deviceFrames) * 48000 / outputRate)) * 3))
+        targetValue.store(UInt64(target))
     }
-    func prime() { count = target; write = target; primed = true }
-
+    func prime() { queue.prime(frames: target) }
     var health: (lastCallback: TimeInterval, lastAudio: TimeInterval, invalidFormat: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        return (lastCallback, lastAudio, invalidFormat)
+        (Double(callbackTick.load()) * secondsPerTick, Double(audioTick.load()) * secondsPerTick, invalid.load() != 0)
     }
-    func discard() {
-        lock.lock(); defer { lock.unlock() }
-        read = write; count = 0; fraction = 0; primed = false; fade = 0; correction = 0
+    var statistics: [String: Any] {
+        var result = queue.statistics.mapValues { $0 as Any }
+        result["outputRate"] = Double(bitPattern: outputRateBits.load()); result["targetFrames"] = targetValue.load()
+        return result
     }
+    func discard() { queue.requestClear() }
     func push(_ input: UnsafePointer<Float>, frames: Int) {
-        // The producer is a dedicated worker, not a HAL callback. Waiting for
-        // the bounded consumer avoids silently dropping whole mix blocks.
-        lock.lock()
-        defer { lock.unlock() }
-        if count + frames > min(capacity - 1, target * 3) {
-            // A stalled receiver must not replay stale buffered audio.
-            read = write; count = 0; fraction = 0; primed = false; fade = 0
-        }
-        let first = min(frames, capacity - write)
-        memcpy(samples + write * 2, input, first * 8)
-        if first < frames { memcpy(samples, input + first * 2, (frames - first) * 8) }
-        write = (write + frames) % capacity
-        count += frames
+        queue.write(frames: frames) { (input[$0 * 2], input[$0 * 2 + 1]) }
     }
     func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>) {
+        callbackTick.store(mach_absolute_time())
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         for buffer in buffers {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
-        guard frames > 0, lock.try() else { return }
-        defer { lock.unlock() }
-        let now = Double(mach_absolute_time()) * secondsPerTick
-        lastCallback = now
         guard frames > 0, frames <= 16384, buffers.count == 1,
               buffers[0].mNumberChannels == 2, Int(buffers[0].mDataByteSize) >= frames * 8,
               let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) else {
-            invalidFormat = true; return
+            invalid.store(1); return
         }
-        if !primed {
-            guard count >= target else { return }
-            primed = true
-        }
-        // Slow bounded clock correction, not an abrupt rate reset on every UI
-        // change. Interpolation also handles 44.1 / 48 kHz hardware differences.
-        let desired = max(-0.005, min(0.005, Double(count - target) / Double(target) * 0.001))
-        correction += (desired - correction) * 0.02
-        let increment = step * (1 + correction)
-        var produced = 0
-        while produced < frames && count > max(1, Int(fraction + increment)) {
-            let next = (read + 1) % capacity
-            fade = min(1, fade + Float(1 / (outputRate * 0.02)))
-            for channel in 0..<2 {
-                let a = samples[read * 2 + channel], b = samples[next * 2 + channel]
-                data[produced * 2 + channel] = (a + (b - a) * Float(fraction)) * fade
-            }
-            fraction += increment
-            let advance = Int(fraction)
-            read = (read + advance) % capacity
-            count -= advance; fraction -= Double(advance)
-            produced += 1
-        }
-        if produced > 0 { lastAudio = now }
-        if produced < frames { primed = false; fraction = 0; fade = 0 }
+        let produced = queue.render(into: data, frames: frames, ratio: 48000 / outputRate,
+            targetFrames: target, driftLimit: 0.005, smoothing: 0.02, fadeFrames: Int(outputRate * 0.02))
+        if produced > 0 { audioTick.store(mach_absolute_time()) }
     }
 }
