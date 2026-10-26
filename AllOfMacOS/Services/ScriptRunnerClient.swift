@@ -30,6 +30,10 @@ final class ScriptRunnerClient {
     private var calls: [UUID: NSXPCConnection] = [:]
     func run(kind: String, source: String, timeout: Double = 30,
              completion: @escaping (Int32, String, Bool) -> Void) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.run(kind: kind, source: source, timeout: timeout, completion: completion) }
+            return
+        }
         guard calls.count < 2 else { completion(-1, "Two scripts are already running", false); return }
         guard source.utf8.count <= 1_048_576, ScriptRunnerKinds.allowed.contains(kind), timeout.isFinite else {
             completion(-1, "Invalid script request", false); return

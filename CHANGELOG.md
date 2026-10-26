@@ -1,3 +1,14 @@
+## 3.0.8 — Automation, audio and capture follow-up audit (2026-10-26)
+
+- Mouse positioning uses converted Quartz display coordinates, including vertically arranged displays and Dock/menu-bar insets.
+- Mouse actions and scrolling-capture events carry AOM's self-event tag to avoid recursive input triggers.
+- Small smooth-scroll amounts span the requested duration. Integer extremes in imported scroll actions are rejected without overflow; function-key lookup handles extreme indices.
+- EQ filters recover from NaN, infinity and arithmetic overflow instead of poisoning persistent channel state.
+- Clipboard preview statistics stream through text without word/line arrays and count CRLF as one line break.
+- Script client requests enter on main so its active-call dictionary and completion lifecycle share one queue. Removed unreachable legacy in-process script implementations.
+- Trimming preserves click-only overlays and camera-only sidecars even without a cursor track.
+- Added behavioral regressions; scope and interactive-test limitations are in docs/audit-3.0.8.md.
+
 ## 3.0.7 — File utilities and export reliability (2026-10-26)
 
 - Recursive .DS_Store cleanup now visits hidden files and folders.

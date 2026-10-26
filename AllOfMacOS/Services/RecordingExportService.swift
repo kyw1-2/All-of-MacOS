@@ -60,10 +60,12 @@ enum RecordingExportService {
     static func trim(source: URL, start: Double, end: Double) async throws -> URL {
         // Cursor-track recordings intentionally omit the baked pointer. Render
         // it into standalone trims so playback never depends on a missing sidecar.
-        if let track = AOMCursorTrack.read(for: source), !track.points.isEmpty || !(track.keystrokes ?? []).isEmpty || FileManager.default.fileExists(atPath: AOMStudioCameraFrames.url(for: source).path) {
+        let track = AOMCursorTrack.read(for: source)
+        let hasOverlays = track.map { !$0.points.isEmpty || !($0.clicks ?? []).isEmpty || !($0.keystrokes ?? []).isEmpty } ?? false
+        if hasOverlays || FileManager.default.fileExists(atPath: AOMStudioCameraFrames.url(for: source).path) {
             return try await render(source: source, start: start, end: end,
                                     muteAudio: false, quality: .high,
-                                    studio: AOMStudioSettings(cursorPoints: track.points, clicks: track.clicks ?? [], keystrokes: track.keystrokes ?? []),
+                                    studio: AOMStudioSettings(cursorPoints: track?.points ?? [], clicks: track?.clicks ?? [], keystrokes: track?.keystrokes ?? []),
                                     outputSuffix: "Trimmed")
         }
         let total = try await duration(for: source)

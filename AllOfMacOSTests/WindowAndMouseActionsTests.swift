@@ -4,6 +4,21 @@ import XCTest
 /// The window geometry the new thirds, sixths and move actions rely on, plus
 /// the classification of the mouse actions that synthesise pointer events.
 final class WindowAndMouseActionsTests: XCTestCase {
+    func testQuartzPointerFindsDisplayAbovePrimaryAndExcludesDock() {
+        let top: CGFloat = 900
+        let appKit = [
+            (CGRect(x: 0, y: 0, width: 1440, height: 900), CGRect(x: 0, y: 80, width: 1440, height: 796)),
+            (CGRect(x: 200, y: 900, width: 1200, height: 800), CGRect(x: 200, y: 900, width: 1200, height: 776))
+        ]
+        let screens = appKit.map { (frame: WindowGeometry.accessibilityFrame($0.0, primaryTop: top),
+                                   visible: WindowGeometry.accessibilityFrame($0.1, primaryTop: top)) }
+        XCTAssertEqual(PointerGeometry.visibleFrame(at: CGPoint(x: 400, y: -400), screens: screens),
+                       CGRect(x: 200, y: -776, width: 1200, height: 776))
+        XCTAssertEqual(PointerGeometry.visibleFrame(at: CGPoint(x: 400, y: 400), screens: screens),
+                       CGRect(x: 0, y: 24, width: 1440, height: 796))
+        XCTAssertEqual(PointerGeometry.visibleFrame(at: .zero, screens: []), .zero)
+    }
+
     private let visible = CGRect(x: 100, y: 50, width: 1200, height: 800)
 
     private func frame(_ type: ActionType) -> CGRect {

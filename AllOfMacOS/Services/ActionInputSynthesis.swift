@@ -12,7 +12,8 @@ enum KeyCodes {
     private static let functionKeys: [UInt16] = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111,
                                                  105, 107, 113, 106, 64, 79, 80, 90]
     static func functionKey(_ number: Int) -> UInt16? {
-        functionKeys.indices.contains(number - 1) ? functionKeys[number - 1] : nil
+        guard (1...functionKeys.count).contains(number) else { return nil }
+        return functionKeys[number - 1]
     }
 }
 
@@ -37,18 +38,23 @@ enum ScrollPlan {
     struct Step: Equatable { let vertical: Int32; let horizontal: Int32; let delayMs: Int }
     static let maxSteps = 600
     static func steps(direction: String, amount: Int, durationMs: Int) -> [Step]? {
-        guard ActionParameterValidation.directions.contains(direction), amount > 0, durationMs >= 0 else { return nil }
-        let count = durationMs == 0 ? 1 : min(maxSteps, max(1, durationMs / 16))
+        guard ActionParameterValidation.directions.contains(direction),
+              (1...Int(Int32.max)).contains(amount), (0...60_000).contains(durationMs) else { return nil }
+        let count = durationMs == 0 ? 1 : min(amount, maxSteps, max(1, durationMs / 16))
         let base = amount / count, remainder = amount % count
-        let interval = count > 1 ? durationMs / count : 0
-        return (0..<count).compactMap { index in
+        return (0..<count).map { index in
             let part = Int32(base + (index < remainder ? 1 : 0))
-            guard part > 0 else { return nil }
+            // Spread nonzero events over the whole requested interval, even
+            // when the amount is smaller than the nominal 60 Hz step count.
+            func offset(_ index: Int) -> Int {
+                count > 1 ? Int((Double(index) * Double(durationMs) / Double(count - 1)).rounded()) : 0
+            }
+            let delay = index == 0 ? 0 : offset(index) - offset(index - 1)
             switch direction {
-            case "up": return Step(vertical: part, horizontal: 0, delayMs: index == 0 ? 0 : interval)
-            case "down": return Step(vertical: -part, horizontal: 0, delayMs: index == 0 ? 0 : interval)
-            case "left": return Step(vertical: 0, horizontal: -part, delayMs: index == 0 ? 0 : interval)
-            default: return Step(vertical: 0, horizontal: part, delayMs: index == 0 ? 0 : interval)
+            case "up": return Step(vertical: part, horizontal: 0, delayMs: delay)
+            case "down": return Step(vertical: -part, horizontal: 0, delayMs: delay)
+            case "left": return Step(vertical: 0, horizontal: -part, delayMs: delay)
+            default: return Step(vertical: 0, horizontal: part, delayMs: delay)
             }
         }
     }
@@ -222,5 +228,12 @@ enum SyntheticInput {
         var state = false
         guard IOHIDGetModifierLockState(connect, Int32(kIOHIDCapsLockState), &state) == KERN_SUCCESS else { return false }
         return IOHIDSetModifierLockState(connect, Int32(kIOHIDCapsLockState), !state) == KERN_SUCCESS
+    }
+}
+
+/// Screen rectangles supplied here use Quartz/Accessibility top-left coordinates.
+enum PointerGeometry {
+    static func visibleFrame(at point: CGPoint, screens: [(frame: CGRect, visible: CGRect)]) -> CGRect {
+        screens.first { $0.frame.contains(point) }?.visible ?? screens.first?.visible ?? .zero
     }
 }

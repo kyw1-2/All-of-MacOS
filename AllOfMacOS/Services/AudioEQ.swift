@@ -147,13 +147,22 @@ final class AudioEQProcessor {
     init(_ eq: AudioEQ) { self.eq = eq; coefficients = eq.coefficients }
 
     func process(_ sample: Float, channel: Int) -> Float {
-        var value = sample
+        guard (0..<2).contains(channel) else { return 0 }
+        var value = sample.isFinite ? sample : 0
         for band in 0..<10 where eq.gains[band] != 0 {
             let index = channel * 10 + band
             let c = coefficients[band]
             let output = c.b0 * value + z1[index]
-            z1[index] = c.b1 * value - c.a1 * output + z2[index]
-            z2[index] = c.b2 * value - c.a2 * output
+            let nextZ1 = c.b1 * value - c.a1 * output + z2[index]
+            let nextZ2 = c.b2 * value - c.a2 * output
+            guard output.isFinite, nextZ1.isFinite, nextZ2.isFinite else {
+                // One malformed/overflowing sample must not poison the band's
+                // persistent history and silence this channel until reconnect.
+                z1[index] = 0; z2[index] = 0; value = 0
+                continue
+            }
+            z1[index] = nextZ1
+            z2[index] = nextZ2
             value = output
         }
         return value

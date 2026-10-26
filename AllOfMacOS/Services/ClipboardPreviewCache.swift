@@ -71,9 +71,16 @@ final class ClipboardPreviewCache: @unchecked Sendable {
         let characterCount: Int?
         let attributedText: NSAttributedString?
         if let text = entry.text {
-            let characters = text.count
-            let words = text.split(whereSeparator: \.isWhitespace).count
-            let lines = text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
+            var characters = 0, words = 0, lines = text.isEmpty ? 0 : 1
+            var inWord = false
+            // Stream graphemes once, without allocating arrays of every word
+            // and line. CRLF is one line break, as it is one Character.
+            for character in text {
+                characters += 1
+                if character.isNewline { lines += 1 }
+                if character.isWhitespace { inWord = false }
+                else if !inWord { words += 1; inWord = true }
+            }
             summary = "\(characters.formatted()) characters · \(words.formatted()) words · \(lines.formatted()) lines"
             characterCount = characters
             if let rtf = entry.items.first?[NSPasteboard.PasteboardType.rtf.rawValue],

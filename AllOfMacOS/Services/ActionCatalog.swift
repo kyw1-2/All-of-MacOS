@@ -383,8 +383,10 @@ enum ActionParameterValidation {
         case .scrollCustom:
             if let d = p.scrollDirection, !directions.contains(d) { return "Unknown scroll direction." }
             if let u = p.scrollUnit, !["lines", "pixels"].contains(u) { return "Scroll unit must be lines or pixels." }
-            if let a = p.scrollAmount, !(1...10_000).contains(abs(a)) { return "Scroll amount must be 1–10,000." }
+            if let a = p.scrollAmount, a == 0 || !(-10_000...10_000).contains(a) { return "Scroll amount must be 1–10,000." }
             if let ms = p.scrollDurationMs, !(0...10_000).contains(ms) { return "Scroll duration must be 0–10,000 ms." }
+        case .scrollUp, .scrollDown, .scrollLeft, .scrollRight:
+            if let a = p.scrollAmount, a == 0 || !(-10_000...10_000).contains(a) { return "Scroll amount must be 1–10,000." }
         case .moveMouseRelative:
             guard finite([p.mouseDeltaX, p.mouseDeltaY]) else { return "Mouse offsets must be numbers." }
             if abs(p.mouseDeltaX ?? 0) > 10_000 || abs(p.mouseDeltaY ?? 0) > 10_000 { return "Mouse offset is too large." }

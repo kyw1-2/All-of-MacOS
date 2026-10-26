@@ -28,6 +28,23 @@ final class PortedFeatureTests: XCTestCase {
 
     // MARK: Equalizer — the audio math
 
+    func testEQRecoversAfterNonfiniteAndOverflowingSamples() {
+        let eq = AudioEQ(gains: Array(repeating: 12, count: 10))
+        let processor = AudioEQProcessor(eq)
+        for bad in [Float.nan, Float.infinity, -Float.infinity, Float.greatestFiniteMagnitude] {
+            XCTAssertTrue(processor.process(bad, channel: 0).isFinite)
+            var peak: Float = 0
+            for index in 0..<1024 {
+                let output = processor.process(Float(sin(Double(index) * 0.1)) * 0.1, channel: 0)
+                XCTAssertTrue(output.isFinite)
+                peak = max(peak, abs(output))
+            }
+            XCTAssertGreaterThan(peak, 0.01, "A bad sample must not permanently poison EQ state")
+        }
+        XCTAssertEqual(processor.process(0.2, channel: -1), 0)
+        XCTAssertEqual(processor.process(0.2, channel: 2), 0)
+    }
+
     func testFlatEQIsUnity() {
         let eq = AudioEQ(gains: AudioEQ.presetFlat, sampleRate: 48000)
         XCTAssertFalse(eq.isEnabled)

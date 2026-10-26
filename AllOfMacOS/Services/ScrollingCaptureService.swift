@@ -35,7 +35,7 @@ final class ScrollingCaptureService {
 
         guard let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved,
                                  mouseCursorPosition: centre, mouseButton: .left) else { return false }
-        move.post(tap: .cghidEventTap)
+        SyntheticInput.post(move, tap: .cghidEventTap)
 
         // A short, smooth scroll: a large jump would move past the overlap the
         // stitcher needs to find.
@@ -47,7 +47,7 @@ final class ScrollingCaptureService {
                                    wheel2: direction == .horizontal ? -step : 0,
                                    wheel3: 0) else { return false }
         scroll.location = centre
-        scroll.post(tap: .cghidEventTap)
+        SyntheticInput.post(scroll, tap: .cghidEventTap)
         return true
     }
 

@@ -16,8 +16,14 @@ final class ClipboardPreviewCacheTests: XCTestCase {
         XCTAssertEqual(content.characterCount, 14 * repetitions,
                        "Swift counts CRLF as one grapheme cluster")
         XCTAssertEqual(content.summary,
-            "\((14 * repetitions).formatted()) characters · \((4 * repetitions).formatted()) words · \((3 * repetitions + 1).formatted()) lines")
+            "\((14 * repetitions).formatted()) characters · \((4 * repetitions).formatted()) words · \((2 * repetitions + 1).formatted()) lines")
         XCTAssertNil(content.image)
+    }
+
+    func testMixedNewlinesAndWhitespaceHaveCorrectStatistics() async {
+        let entry = ClipboardEntry(title: "Mixed", text: "one\r\ntwo\rthree\n\n", items: [])
+        let content = await ClipboardPreviewCache.shared.content(for: entry)
+        XCTAssertEqual(content.summary, "15 characters · 3 words · 5 lines")
     }
 
     func testEmptyTextHasZeroStatistics() async {

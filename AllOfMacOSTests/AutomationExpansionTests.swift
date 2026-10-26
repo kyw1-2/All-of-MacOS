@@ -3,6 +3,22 @@ import CoreMIDI
 @testable import AllOfMacOS
 
 final class AutomationExpansionTests: XCTestCase {
+    func testInvalidScriptRequestsFromBackgroundReplyOnMain() async {
+        let replied = expectation(description: "Invalid requests replied")
+        replied.expectedFulfillmentCount = 8
+        for _ in 0..<8 {
+            DispatchQueue.global().async {
+                ScriptRunnerClient.shared.run(kind: "unsupported", source: "", timeout: .nan) { code, _, timedOut in
+                    XCTAssertTrue(Thread.isMainThread)
+                    XCTAssertEqual(code, -1)
+                    XCTAssertFalse(timedOut)
+                    replied.fulfill()
+                }
+            }
+        }
+        await fulfillment(of: [replied], timeout: 3)
+    }
+
     func testMenusPersistActionsAndWidgetsWithoutLosingIDs() throws {
         let suite = "AOM.MenuTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!

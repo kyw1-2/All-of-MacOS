@@ -8,6 +8,20 @@ import XCTest
 
 @MainActor
 final class RecordingExportTests: XCTestCase {
+    func testTrimRendersClickOnlyTrackAndPreservesSource() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("clicks.mp4")
+        try await makeSyntheticVideo(at: source)
+        let before = try Data(contentsOf: source)
+        try AOMCursorTrack(points: [], clicks: [AOMClickEvent(time: 0.2, x: 0.5, y: 0.5)]).write(for: source)
+        let output = try await RecordingExportService.trim(source: source, start: 0.1, end: 1.1)
+        XCTAssertEqual(AOMStudioSourceLink.resolve(output), source, "Click-only recordings need a rendered standalone trim")
+        XCTAssertGreaterThan(try Data(contentsOf: output).count, 0)
+        XCTAssertEqual(try Data(contentsOf: source), before)
+    }
+
     func testCancelledGIFDoesNotPublishOutput() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

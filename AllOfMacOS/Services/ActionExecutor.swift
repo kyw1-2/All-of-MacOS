@@ -568,15 +568,9 @@ class ActionExecutor {
         case .brightnessDown:
             sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_DOWN)
 
-        // Script Execution
-        case .runAppleScript:
-            if let script = action.parameters.scriptContent {
-                runAppleScript(script)
-            }
-        case .runShellScript:
-            if let script = action.parameters.scriptContent {
-                runShellScript(script)
-            }
+        // Script execution is completed asynchronously through ScriptRunnerClient above.
+        case .runAppleScript, .runShellScript:
+            break
         case .openURL:
             if let urlString = action.parameters.url, let url = URL(string: urlString) {
                 NSWorkspace.shared.open(url)
@@ -679,8 +673,7 @@ class ActionExecutor {
 
         func post(_ event: CGEvent?) -> Bool {
             guard let event else { return false }
-            event.post(tap: .cgSessionEventTap)
-            return true
+            return SyntheticInput.post(event)
         }
         func click(_ button: CGMouseButton, count: Int64, flags: CGEventFlags = []) {
             let down = CGEvent(mouseEventSource: source, mouseType: button == .right ? .rightMouseDown : (button == .center ? .otherMouseDown : .leftMouseDown),
@@ -747,14 +740,9 @@ class ActionExecutor {
     /// Normalized to the pointer display's visible frame; nil until saved.
     private static var savedMousePosition: CGPoint?
 
-    /// The display whose visible area contains the point, falling back to the
-    /// main display. `NSScreen.frame` and CG event coordinates share the same
-    /// space (origin at the primary display's top-left, y increasing downward),
-    /// so no axis flip is needed here.
+    /// Quartz pointer coordinates must be matched against converted screen frames.
     private static func pointerVisibleFrame(at point: CGPoint) -> CGRect {
-        NSScreen.screens.first { $0.frame.contains(point) }?.visibleFrame
-            ?? NSScreen.main?.visibleFrame
-            ?? .zero
+        PointerGeometry.visibleFrame(at: point, screens: WindowManager.shared.screens())
     }
 
     /// Converts a normalized position (y from the top, as the snap zones use)
@@ -962,31 +950,6 @@ class ActionExecutor {
             },
             schedule: { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }), completion: finish)
         DispatchQueue.main.async { session.start() }
-    }
-
-    private static func runAppleScript(_ script: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var error: NSDictionary?
-            if let appleScript = NSAppleScript(source: script) {
-                appleScript.executeAndReturnError(&error)
-                if let error = error {
-                    NSLog("[ActionExecutor] AppleScript error: %@", "\(error)")
-                }
-            }
-        }
-    }
-
-    private static func runShellScript(_ script: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let task = Process()
-            task.launchPath = "/bin/zsh"
-            task.arguments = ["-c", script]
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = pipe
-            try? task.run()
-            task.waitUntilExit()
-        }
     }
 
     private static func sendMediaKey(keyCode: Int32) {

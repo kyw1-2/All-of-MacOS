@@ -293,7 +293,9 @@ enum ExtendedActions {
     }
 
     private static func scroll(_ p: ActionParameters, isCancelled: @escaping () -> Bool, _ completion: @escaping (Bool) -> Void) {
-        guard let steps = ScrollPlan.steps(direction: p.scrollDirection ?? "down", amount: abs(p.scrollAmount ?? 3),
+        let amount = p.scrollAmount ?? 3
+        guard amount != Int.min,
+              let steps = ScrollPlan.steps(direction: p.scrollDirection ?? "down", amount: abs(amount),
                                            durationMs: p.scrollDurationMs ?? 0) else { completion(false); return }
         let unit: CGScrollEventUnit = (p.scrollUnit ?? "lines") == "pixels" ? .pixel : .line
         let source = CGEventSource(stateID: .hidSystemState)

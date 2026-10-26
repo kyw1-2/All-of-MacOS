@@ -241,6 +241,7 @@ final class BTTActionParityTests: XCTestCase {
         XCTAssertEqual(KeyCodes.functionKey(1), 122); XCTAssertEqual(KeyCodes.functionKey(12), 111)
         XCTAssertEqual(KeyCodes.functionKey(13), 105); XCTAssertEqual(KeyCodes.functionKey(20), 90)
         XCTAssertNil(KeyCodes.functionKey(21)); XCTAssertNil(KeyCodes.functionKey(0))
+        XCTAssertNil(KeyCodes.functionKey(Int.min)); XCTAssertNil(KeyCodes.functionKey(Int.max))
         XCTAssertEqual(Set((1...20).compactMap(KeyCodes.functionKey)).count, 20)
         XCTAssertNotNil(ActionParameterValidation.problem(for: with(.pressFunctionKey) { $0.functionKeyNumber = 21 }))
     }
@@ -290,6 +291,28 @@ final class BTTActionParityTests: XCTestCase {
         XCTAssertNil(ScrollPlan.steps(direction: "diagonal", amount: 5, durationMs: 0))
         XCTAssertNil(ScrollPlan.steps(direction: "up", amount: 0, durationMs: 0))
         XCTAssertLessThanOrEqual(ScrollPlan.steps(direction: "up", amount: 10_000, durationMs: 10_000)!.count, ScrollPlan.maxSteps)
+    }
+
+    func testImportedScrollIntegerExtremesAreRejectedWithoutOverflow() {
+        for type in [ActionType.scrollCustom, .scrollUp, .scrollDown, .scrollLeft, .scrollRight] {
+            for amount in [Int.min, Int.max, 0] {
+                var action = TriggerAction(actionType: type)
+                action.parameters.scrollAmount = amount
+                XCTAssertNotNil(ActionTree.problem([action]))
+            }
+        }
+    }
+
+    func testSmallScrollUsesFullDurationWithoutDroppingAmount() throws {
+        for (amount, duration) in [(3, 1600), (100, 161), (10000, 10000)] {
+            let steps = try XCTUnwrap(ScrollPlan.steps(direction: "up", amount: amount, durationMs: duration))
+            XCTAssertEqual(steps.reduce(0) { $0 + Int($1.vertical) }, amount)
+            XCTAssertEqual(steps.reduce(0) { $0 + $1.delayMs }, duration)
+            XCTAssertTrue(steps.allSatisfy { $0.vertical > 0 && $0.delayMs >= 0 })
+            XCTAssertEqual(steps.first?.delayMs, 0)
+        }
+        XCTAssertNil(ScrollPlan.steps(direction: "up", amount: Int.max, durationMs: 0))
+        XCTAssertNil(ScrollPlan.steps(direction: "up", amount: 3, durationMs: Int.max))
     }
 
     func testPasteboardSnapshotRoundTripsEveryType() {
