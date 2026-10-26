@@ -2,6 +2,42 @@ import XCTest
 @testable import AllOfMacOS
 
 final class AudioPCMQueueTests: XCTestCase {
+    func testLargeOutputSliceWaitsForEnoughPCMInsteadOfRepeatedPartialBlocks() {
+        let queue = StereoPCMQueue(capacity: 8192)
+        let output = UnsafeMutablePointer<Float>.allocate(capacity: 2048)
+        defer { output.deallocate() }
+        queue.write(frames: 300) { _ in (0.25, -0.25) }
+        XCTAssertEqual(queue.render(into: output, frames: 1024, ratio: 1,
+            targetFrames: 256, driftLimit: 0, fadeFrames: 0), 0)
+        XCTAssertEqual(queue.queuedFrames, 300, "Priming must not consume a partial slice")
+        XCTAssertEqual(queue.statistics["underruns"], 0)
+        queue.write(frames: 730) { _ in (0.25, -0.25) }
+        XCTAssertEqual(queue.render(into: output, frames: 1024, ratio: 1,
+            targetFrames: 256, driftLimit: 0, fadeFrames: 0), 1024)
+        XCTAssertEqual(output[0], 0.25)
+        XCTAssertEqual(output[2047], -0.25)
+        XCTAssertEqual(queue.statistics["underruns"], 0)
+    }
+
+    func testLargeSlicesAtNonUnitySampleRateStayPrimedAcrossPacketBoundaries() {
+        let queue = StereoPCMQueue(capacity: 16384)
+        let output = UnsafeMutablePointer<Float>.allocate(capacity: 4096)
+        defer { output.deallocate() }
+        let ratio = 44100.0 / 48000.0
+        queue.write(frames: 4096) { _ in (0.25, -0.25) }
+        var sourceFraction = 0.0
+        for _ in 0..<1000 {
+            XCTAssertEqual(queue.render(into: output, frames: 2048, ratio: ratio,
+                targetFrames: 256, driftLimit: 0, fadeFrames: 0), 2048)
+            sourceFraction += 2048 * ratio
+            let count = Int(sourceFraction)
+            sourceFraction -= Double(count)
+            XCTAssertEqual(queue.write(frames: count) { _ in (0.25, -0.25) }, count)
+        }
+        XCTAssertEqual(queue.statistics["underruns"], 0)
+        XCTAssertEqual(queue.statistics["droppedFrames"], 0)
+    }
+
     func testWraparoundPreservesEveryStereoFrameWithoutGapsOrRepeats() {
         let queue = StereoPCMQueue(capacity: 2048)
         var next = 0

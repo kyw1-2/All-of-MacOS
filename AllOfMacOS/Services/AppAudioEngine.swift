@@ -417,7 +417,9 @@ final class AppAudioEngine {
         if pendingAirPlayPIDs.contains(pid) { return "Preparing HomePod output — current playback continues" }
         if let error = errors[pid] { return error }
         guard let session = sessions[pid], let transport = session.transport else {
-            return pid <= 0 ? "App closed — settings saved" : "Waiting for app audio"
+            if pid <= 0 { return "App closed — settings saved" }
+            let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+            return needsProcessing(bundleID) ? "Waiting for app audio" : "Native playback — no effects applied"
         }
         let activity = transport.activity
         if activity.captured == 0 || !activity.recent {
@@ -437,11 +439,36 @@ final class AppAudioEngine {
         let remoteRoute = Self.targetOutputUID(for: bundleID).flatMap { uid in
             AudioOutputService.devices().first(where: { $0.uid == uid })
         }.map { Self.outputTransport($0.id) == kAudioDeviceTransportTypeAirPlay } ?? false
-        if sessions[pid]?.sourceToken?.isAirPlay == true || remoteRoute { retryAll(); return }
+        if sessions[pid]?.sourceToken?.isAirPlay == true || remoteRoute,
+           let uid = sessions[pid]?.outputUID ?? Self.targetOutputUID(for: bundleID) {
+            retryAirPlay(uid: uid, requestedPID: pid)
+            return
+        }
         stop(pid: pid)
         errors.removeValue(forKey: pid)
         retryAfter.removeValue(forKey: pid)
         failedProcessIDs.removeValue(forKey: pid)
+        syncActiveProcesses()
+    }
+
+    private func retryAirPlay(uid: String, requestedPID: pid_t) {
+        // Only apps sharing this receiver need their capture restarted.
+        // A per-app Reconnect must not tear down unrelated local video players.
+        var affected = Set(runningAudioApps().filter {
+            Self.targetOutputUID(for: $0.bundleID) == uid
+        }.map(\.pid))
+        affected.formUnion(sessions.values.filter { $0.outputUID == uid }.map(\.pid))
+        affected.insert(requestedPID)
+        for pid in affected {
+            stop(pid: pid)
+            errors.removeValue(forKey: pid)
+            retryAfter.removeValue(forKey: pid)
+            failedProcessIDs.removeValue(forKey: pid)
+        }
+        airPlayCaptureFailures = airPlayCaptureFailures.filter { !$0.key.hasPrefix(uid + "|") }
+        MainActor.assumeIsolated {
+            SharedOutputRenderer.shared.resetAirPlayFailures(uid: uid)
+        }
         syncActiveProcesses()
     }
 
@@ -1092,6 +1119,26 @@ final class AppAudioEngine {
     }
 }
 
+/// Five-millisecond, sample-counted ramps stay continuous across callback sizes.
+struct AudioGainRamp {
+    private(set) var current: Float
+    private var target: Float
+    private var remaining = 0
+    init(_ value: Float) { current = value; target = value }
+    mutating func setTarget(_ value: Float) {
+        guard value != target else { return }
+        target = value
+        remaining = 240
+    }
+    mutating func next() -> Float {
+        if remaining > 0 {
+            current += (target - current) / Float(remaining)
+            remaining -= 1
+        }
+        return current
+    }
+}
+
 /// Control writes are short and synchronized. The audio callback never waits
 /// for the UI; it retains the previous render configuration on contention.
 final class MixerBox {
@@ -1113,6 +1160,12 @@ final class MixerBox {
     private var desiredMasterEQ: AudioEQProcessor
     private var desiredEQHeadroom: Float
     fileprivate var renderEQHeadroom: Float
+    fileprivate var gainRamp: AudioGainRamp
+    private var hasRendered = false
+    private var previousAppEQ: AudioEQProcessor?
+    private var previousMasterEQ: AudioEQProcessor?
+    private var previousEQHeadroom: Float = 1
+    private var eqTransitionRemaining = 0
     fileprivate var renderGain: Float
     fileprivate var renderMuted: Bool
     fileprivate var renderBoost: Bool
@@ -1131,7 +1184,7 @@ final class MixerBox {
 
     var deviceGain: Float {
         get { lock.lock(); defer { lock.unlock() }; return desiredDeviceGain }
-        set { lock.lock(); desiredDeviceGain = newValue; lock.unlock() }
+        set { lock.lock(); desiredDeviceGain = Mixer.clamp(newValue); lock.unlock() }
     }
     var gain: Float {
         get { lock.lock(); defer { lock.unlock() }; return desiredGain }
@@ -1147,6 +1200,7 @@ final class MixerBox {
     }
     init(gain: Float, muted: Bool, magicBoost: Bool = false, eq: AudioEQ = AudioEQ()) {
         desiredGain = Mixer.clamp(gain); renderGain = Mixer.clamp(gain)
+        gainRamp = AudioGainRamp(muted ? 0 : Mixer.clamp(gain))
         desiredMuted = muted; renderMuted = muted
         desiredBoost = magicBoost; renderBoost = magicBoost
         desiredAppBoost = magicBoost ? 2 : 0
@@ -1162,9 +1216,11 @@ final class MixerBox {
         lock.lock(); defer { lock.unlock() }
         if desiredAppEQ.eq != app || desiredMasterEQ.eq != master {
             desiredEQHeadroom = AudioEQ.headroomGain(app: app, master: master)
+            // Both chains need independent histories during a crossfade, even
+            // if only one EQ changed. Never process the same filter twice.
+            desiredAppEQ = AudioEQProcessor(app)
+            desiredMasterEQ = AudioEQProcessor(master)
         }
-        if desiredAppEQ.eq != app { desiredAppEQ = AudioEQProcessor(app) }
-        if desiredMasterEQ.eq != master { desiredMasterEQ = AudioEQProcessor(master) }
         desiredAppBoost = min(3, max(0, appBoost))
         desiredBoost = desiredAppBoost > 0
         desiredMasterBoost = min(3, max(0, masterBoost))
@@ -1177,9 +1233,33 @@ final class MixerBox {
         renderBoost = desiredBoost && desiredAppBoost == 0
         renderBoostLevel = max(desiredAppBoost, desiredMasterBoost)
         renderDeviceGain = desiredDeviceGain
-        renderEQHeadroom = desiredEQHeadroom
-        appEQ = desiredAppEQ; masterEQ = desiredMasterEQ
+        if !hasRendered || (eqTransitionRemaining == 0 && appEQ !== desiredAppEQ) {
+            if hasRendered {
+                previousAppEQ = appEQ; previousMasterEQ = masterEQ
+                previousEQHeadroom = renderEQHeadroom
+                eqTransitionRemaining = 480
+            }
+            renderEQHeadroom = desiredEQHeadroom
+            appEQ = desiredAppEQ; masterEQ = desiredMasterEQ
+        }
+        let target = renderMuted ? 0 : renderGain * renderDeviceGain
+        if !hasRendered { gainRamp = AudioGainRamp(target); hasRendered = true }
+        else { gainRamp.setTarget(target) }
         lock.unlock()
+    }
+
+    fileprivate func filter(left: inout Float, right: inout Float) {
+        let inputLeft = left, inputRight = right
+        left = masterEQ.process(appEQ.process(inputLeft * renderEQHeadroom, channel: 0), channel: 0)
+        right = masterEQ.process(appEQ.process(inputRight * renderEQHeadroom, channel: 1), channel: 1)
+        if eqTransitionRemaining > 0, let previousAppEQ, let previousMasterEQ {
+            let oldLeft = previousMasterEQ.process(previousAppEQ.process(inputLeft * previousEQHeadroom, channel: 0), channel: 0)
+            let oldRight = previousMasterEQ.process(previousAppEQ.process(inputRight * previousEQHeadroom, channel: 1), channel: 1)
+            let blend = Float(481 - eqTransitionRemaining) / 480
+            left = oldLeft + (left - oldLeft) * blend
+            right = oldRight + (right - oldRight) * blend
+            eqTransitionRemaining -= 1
+        }
     }
 }
 
@@ -1200,7 +1280,6 @@ nonisolated enum Mixer {
         defer { box.publishPeak(peak) }
         guard box.inputBufferOffset < inputs.count else { return }
         box.beginRender()
-        guard !box.renderMuted else { return }
         let first = inputs[box.inputBufferOffset]
         let planar = first.mNumberChannels == 1 && inputs.count > box.inputBufferOffset + 1
         let channels = planar ? 2 : Int(first.mNumberChannels)
@@ -1212,12 +1291,12 @@ nonisolated enum Mixer {
         let outputChannels = outputs.reduce(0) { $0 + Int($1.mNumberChannels) }
         guard outputChannels > 0 else { return }
         for frame in 0..<frames {
-            var l = left[planar ? frame : frame * channels] * box.renderEQHeadroom
-            var r = (planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]) * box.renderEQHeadroom
-            l = box.masterEQ.process(box.appEQ.process(l, channel: 0), channel: 0)
-            r = box.masterEQ.process(box.appEQ.process(r, channel: 1), channel: 1)
+            var l = left[planar ? frame : frame * channels]
+            var r = planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]
+            box.filter(left: &l, right: &r)
             box.boostProcessor.process(left: &l, right: &r, level: box.renderBoostLevel)
-            l *= box.renderGain * box.renderDeviceGain; r *= box.renderGain * box.renderDeviceGain
+            let gain = box.gainRamp.next()
+            l *= gain; r *= gain
             // Preserve peaks until the linked limiter on the final summing bus.
             // Clipping here permanently distorts EQ/boost before apps are mixed.
             l = l.isFinite ? l : 0

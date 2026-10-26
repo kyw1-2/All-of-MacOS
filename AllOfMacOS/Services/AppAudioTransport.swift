@@ -81,6 +81,10 @@ final class AppAudioTransport {
             guard let data = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
             right = data; frames = min(frames, Int(buffers[1].mDataByteSize) / 4)
         }
+        // HAL may invoke a tap with zero frames during a media transition.
+        // This is not capture activity: counting it would arm the output-stall
+        // watchdog while the player is paused or replacing its audio stream.
+        guard frames > 0 else { return }
         let rate = Double(bitPattern: rateBits.load())
         let gapLimit = remote.load() == 1 ? max(1, Double(frames) / rate * 4) : 0.25
         let now = mach_absolute_time(), previous = captureTick.load()
@@ -127,7 +131,9 @@ struct AudioActivityWatchdog {
             missingCaptureSince = since
             if now - since > 5 { return .capture }
         } else { missingCaptureSince = nil }
-        if capturing && !rendering {
+        // Paused producers can still emit empty/silent callbacks. Never
+        // infer a broken output clock unless the producer is playing.
+        if playing && capturing && !rendering {
             let since = missingOutputSince ?? now
             missingOutputSince = since
             if now - since > 5 { return .output }

@@ -603,8 +603,10 @@ private struct SoundSourceAppCard: View {
                     }
                     Text(app.error ?? app.processingStatus)
                         .font(.system(size: 10))
-                        .foregroundStyle(AOMTheme.textTertiary)
-                        .lineLimit(1)
+                        .foregroundStyle(app.error == nil ? AOMTheme.textTertiary : Color.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .help(app.error ?? app.processingStatus)
                 }
                 .frame(minWidth: 120, alignment: .leading)
 
@@ -678,7 +680,7 @@ private struct SoundSourceAppCard: View {
                 .buttonStyle(.plain)
                 .help("Toggle 10-Band EQ for this app")
                 Button("Reconnect") { AppAudioMixerService.shared.reconnect(pid: app.pid) }
-                    .buttonStyle(.borderless).disabled(app.pid <= 0)
+                    .buttonStyle(.borderless).disabled(app.pid <= 0 || !mixerService.soundEnabled)
                     .help("Reconnect this app’s audio capture and output")
             }
             .padding(.horizontal, 14)
@@ -696,12 +698,15 @@ private struct SoundSourceAppCard: View {
                 }
                 .buttonStyle(.plain)
                 .help(app.muted ? "Unmute" : "Mute")
+                .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
 
                 // Volume Slider (0...200% Overdrive)
                 Slider(value: Binding(get: { Double(gain) }, set: { newValue in
                     gain = Float(newValue)
                     onGain(gain)
                 }), in: 0...2.0, step: 0.05)
+                .accessibilityLabel("App volume")
+                .accessibilityValue("\(Int((gain * 100).rounded())) percent")
                 .frame(minWidth: 100, maxWidth: .infinity)
                 .controlSize(.small)
 
@@ -819,4 +824,3 @@ private struct MasterStudioEQCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
     }
 }
-

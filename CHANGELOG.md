@@ -1,3 +1,13 @@
+## 3.0.11 — AirPlay playback continuity (2026-10-27)
+
+- Prevent zero-frame capture callbacks and paused video transitions from being interpreted as active output stalls; preserve the native route while playback switches streams.
+- Keep large AirPlay output slices fully primed before rendering to avoid repeated partial-block silence at 44.1/48 kHz.
+- Isolate remote-output lifecycle queues by device while preserving same-device teardown/start ordering, so one slow receiver cannot block other speakers.
+- Ramp volume and mute changes over 5 ms; crossfade live EQ updates instead of applying abrupt filter state changes.
+- Scope manual remote reconnection to apps sharing the chosen receiver; leave unrelated local video players and receiver sessions undisturbed.
+- Clarify native/direct playback and connection errors in audio workspace; improve reconnect, mute and volume accessibility.
+- Add regressions for callback transitions, large output slices, independent receiver teardown, ramp continuity, EQ changes and PCM stability. Physical-device AirPlay testing is still recommended.
+
 ## 3.0.10 — Continuous audio delivery (2026-10-26)
 
 - Replace mutex-protected capture and AirPlay queues with bounded single-producer/single-consumer stereo queues. A busy control or producer lock no longer turns an entire IO block into silence.

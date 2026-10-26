@@ -80,6 +80,32 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertFalse(transport.activity.rendering)
     }
 
+    func testZeroFrameCaptureIsNotPlaybackAndPausedCallbacksDoNotDisconnect() {
+        let transport = AppAudioTransport(sampleRate: 48000)
+        var backing: [Float] = [0, 0]
+        backing.withUnsafeMutableBufferPointer { pointer in
+            var packet = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                mNumberChannels: 2, mDataByteSize: 0, mData: pointer.baseAddress))
+            withUnsafePointer(to: &packet) { transport.capture($0) }
+        }
+        XCTAssertEqual(transport.activity.captured, 0)
+        XCTAssertFalse(transport.activity.recent, "Zero-frame callbacks cannot arm capture activity")
+
+        var watchdog = AudioActivityWatchdog()
+        for time in [0.0, 6.0, 12.0] {
+            XCTAssertNil(watchdog.failure(playing: false, capturing: true,
+                                         rendering: false, now: time),
+                         "Pausing or switching video streams must not tear down output")
+        }
+        XCTAssertNil(watchdog.failure(playing: true, capturing: true, rendering: false, now: 13))
+        XCTAssertEqual(watchdog.failure(playing: true, capturing: true,
+                                        rendering: false, now: 19), .output)
+        backing = [0.25, -0.25]
+        withStereoBuffer(&backing) { transport.capture(UnsafePointer($0)) }
+        XCTAssertEqual(transport.activity.captured, 1)
+        XCTAssertTrue(transport.activity.recent)
+    }
+
     func testWatchdogAllowsIdleAndBriefGapsButReleasesSustainedCaptureAndOutputStalls() {
         var watchdog = AudioActivityWatchdog()
         for time in [0.0, 10, 100] {
@@ -109,13 +135,90 @@ final class AudioPipelineTests: XCTestCase {
         withStereoBuffer(&input) { source in
             withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
         }
-        XCTAssertTrue(output.allSatisfy { $0 == 0 })
+        XCTAssertTrue(output.suffix(480).allSatisfy { $0 == 0 }, "Mute settles after a short click-free ramp")
         box.muted = false
         box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0, masterBoost: 0)
         withStereoBuffer(&input) { source in
             withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
         }
-        XCTAssertEqual(output[0], 0.05, accuracy: 0.001)
+        XCTAssertEqual(output[output.count - 2], 0.05, accuracy: 0.001)
+    }
+
+    func testGainDeviceVolumeAndMuteAreContinuousAcrossSmallCallbacks() {
+        let box = MixerBox(gain: 1, muted: false)
+        var input = [Float](repeating: 0.5, count: 128)
+        var output = input
+        func block() {
+            withStereoBuffer(&input) { source in
+                withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
+            }
+        }
+        block()
+        var previous: Float = 0.5
+        for (gain, device, mute, expected): (Float, Float, Bool, Float) in [
+            (0.2, 1, false, 0.1), (0.2, 0.5, false, 0.05),
+            (0.2, 0.5, true, 0), (1, 1, false, 0.5)
+        ] {
+            box.gain = gain; box.deviceGain = device; box.muted = mute
+            for _ in 0..<5 {
+                block()
+                for frame in 0..<64 {
+                    XCTAssertLessThan(abs(output[frame * 2] - previous), 0.003)
+                    XCTAssertEqual(output[frame * 2], output[frame * 2 + 1])
+                    previous = output[frame * 2]
+                }
+            }
+            XCTAssertEqual(previous, expected, accuracy: 0.00001)
+        }
+    }
+
+    func testLiveEQChangesCrossfadeWithoutResettingAnActiveTransition() {
+        let box = MixerBox(gain: 1, muted: false)
+        var input = [Float](repeating: 0.3, count: 128), output = input
+        var previous: Float = 0.3
+        for block in 0..<60 {
+            if block == 2 || block == 3 || block == 4 {
+                var bands = AudioEQ.presetFlat
+                bands[5] = block == 3 ? -12 : 12
+                box.setEffects(app: AudioEQ(gains: bands), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+            }
+            if block == 30 {
+                box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+            }
+            withStereoBuffer(&input) { source in
+                withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
+            }
+            for frame in 0..<64 {
+                let value = output[frame * 2]
+                XCTAssertTrue(value.isFinite)
+                XCTAssertLessThan(abs(value - previous), 0.01, "EQ changes must not insert a sample jump")
+                XCTAssertEqual(value, output[frame * 2 + 1])
+                previous = value
+            }
+        }
+        XCTAssertEqual(previous, 0.3, accuracy: 0.0001)
+    }
+
+    func testAirPlayDeviceQueuesIsolateSlowReceiversAndSerializeReplacements() {
+        let slow = AirPlayDeviceQueues.queue(for: 900001)
+        let replacement = AirPlayDeviceQueues.queue(for: 900001)
+        let other = AirPlayDeviceQueues.queue(for: 900002)
+        XCTAssertTrue(slow === replacement)
+        XCTAssertFalse(slow === other)
+        let gate = DispatchSemaphore(value: 0)
+        let entered = expectation(description: "slow teardown entered")
+        let unrelated = expectation(description: "other receiver continues")
+        let replacementDone = expectation(description: "replacement starts after teardown")
+        slow.async {
+            entered.fulfill()
+            _ = gate.wait(timeout: .now() + 5)
+        }
+        wait(for: [entered], timeout: 2)
+        replacement.async { replacementDone.fulfill() }
+        other.async { unrelated.fulfill() }
+        wait(for: [unrelated], timeout: 2)
+        gate.signal()
+        wait(for: [replacementDone], timeout: 2)
     }
 
     func testHotEQAndSummedAppsDoNotFlattenWaveforms() {

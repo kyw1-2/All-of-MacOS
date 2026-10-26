@@ -153,7 +153,12 @@ final class StereoPCMQueue {
             fraction = 0; primed = false; fade = 0; correction = 0
             generation = currentGeneration
         }
-        let target = min(capacity - 2, max(2, targetFrames))
+        // A device may request a larger slice than the usual capture packet.
+        // Priming with less than one complete output slice creates a repeating
+        // partial-block / silence cycle even when both clocks are healthy.
+        let required = ceil(Double(frames) * ratio * (1 + max(0, driftLimit))) + 2
+        guard required.isFinite, required < Double(capacity) else { read.store(r); return 0 }
+        let target = min(capacity - 2, max(2, targetFrames, Int(required)))
         var available = Int(w - r)
         if available > min(capacity - 1, max(target * 3, Int(ceil(Double(frames) * ratio)) * 2)) {
             let keep = min(available, max(target, Int(ceil(Double(frames) * ratio)) + 2))

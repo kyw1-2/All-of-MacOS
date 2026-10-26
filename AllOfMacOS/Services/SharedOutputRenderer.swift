@@ -66,8 +66,9 @@ final class SharedOutputRenderer {
         }
     }
 
-    func resetAirPlayFailures() {
-        for (uid, output) in Array(airPlayOutputs) where output.bus.isEmpty {
+    func resetAirPlayFailures(uid requestedUID: String? = nil) {
+        for (uid, output) in Array(airPlayOutputs)
+            where (requestedUID == nil || requestedUID == uid) && output.bus.isEmpty {
             if case .failed = output.state {
                 output.stop(); airPlayOutputs.removeValue(forKey: uid)
             }

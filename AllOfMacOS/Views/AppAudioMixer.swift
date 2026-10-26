@@ -690,7 +690,10 @@ struct AirPlayProcessingControls: View {
             Toggle("HomePod / AirPlay effects", isOn: $service.airPlayProcessingEnabled)
                 .toggleStyle(.switch).controlSize(.small)
                 .disabled(!service.soundEnabled)
-            if service.airPlayPreparing {
+            if !service.soundEnabled {
+                Text("Audio processing off — settings saved")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if service.airPlayPreparing {
                 Label("Connecting — current audio continues", systemImage: "airplay.audio")
                     .font(.caption).foregroundStyle(.secondary)
             } else if service.airPlayProcessingActive {

@@ -3,6 +3,25 @@ import AudioToolbox
 import CoreAudio
 import Darwin
 
+/// Weak entries retain ordering while a renderer or its queued teardown lives,
+/// without retaining a queue forever for every transient CoreAudio device ID.
+enum AirPlayDeviceQueues {
+    private final class Entry {
+        weak var queue: DispatchQueue?
+        init(_ queue: DispatchQueue) { self.queue = queue }
+    }
+    private static let lock = NSLock()
+    private static var entries: [AudioDeviceID: Entry] = [:]
+    static func queue(for deviceID: AudioDeviceID) -> DispatchQueue {
+        lock.lock(); defer { lock.unlock() }
+        if let queue = entries[deviceID]?.queue { return queue }
+        entries = entries.filter { $0.value.queue != nil }
+        let queue = DispatchQueue(label: "com.kyw.aom.airplay.\(deviceID)", qos: .userInteractive)
+        entries[deviceID] = Entry(queue)
+        return queue
+    }
+}
+
 /// One output-only HAL client per connected AirPlay device. The local 48 kHz
 /// DSP clock is independent of the HAL callback and of the main/UI run loop.
 /// macOS owns discovery, pairing, network transport and HomePod remote control.
@@ -14,10 +33,9 @@ final class AirPlayOutputRenderer {
     }
     let deviceID: AudioDeviceID
     let bus = AppAudioRenderBus()
-    // Serial lifecycle ordering also prevents a manual reconnect from creating
-    // a replacement HAL unit before the old unit has finished disposing.
-    private static let workQueue = DispatchQueue(label: "com.kyw.aom.airplay.mix", qos: .userInteractive)
-    private let queue = AirPlayOutputRenderer.workQueue
+    // Replacements of one device share a disposal/start barrier; unrelated
+    // receivers must never wait behind its potentially blocking HAL lifecycle.
+    private let queue: DispatchQueue
     private let stateLock = NSLock()
     private var phase: State = .preparing
     private let bridge = AirPlayPCMBridge()
@@ -39,6 +57,7 @@ final class AirPlayOutputRenderer {
 
     init(deviceID: AudioDeviceID, changed: @escaping () -> Void) {
         self.deviceID = deviceID
+        self.queue = AirPlayDeviceQueues.queue(for: deviceID)
         self.changed = changed
         scratch.initialize(repeating: 0, count: 960)
         queue.async { [self] in start() }
