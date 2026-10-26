@@ -122,7 +122,7 @@ enum AutomationMCP {
             guard let updated = apps.first(where: { $0.bundleID == bundleID }) else {
                 return ["routed": true, "bundleID": bundleID, "uid": trimmed]
             }
-            return ["routed": true, "updated": audioSnapshot(of: updated)]
+            return ["routed": true, "updated": audioSnapshot(updated)]
         default: throw ClipboardMCPHandler.ToolError("Unknown automation tool.")
         }
     }
