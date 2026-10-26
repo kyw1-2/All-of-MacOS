@@ -1,3 +1,15 @@
+## 3.0.9 — EQ distortion and audio recovery (2026-10-26)
+
+- Reserve headroom from the combined app/master EQ response, avoiding hard clipping on loud material and boosted presets.
+- Sum applications before linked stereo peak limiting; preserve waveform shape instead of flattening each app's peaks.
+- Recover outputs whose device UID survives a changed CoreAudio object ID; restore native audio if recovery fails.
+- Detect stalled capture and render callbacks, and base processing status on recent rendering rather than historical counters.
+- Exclude AOM's raw audio PID before helper ownership resolution to prevent accidental self-capture.
+- Mute All uses a current app snapshot. Automation rejects malformed PIDs, Boolean volume values and disconnected route UIDs, and exposes recent capture/render and EQ state.
+- Reject malformed database ordering and shortcut values without crashing; leave the database intact for recovery.
+- Add production PCM-path and distortion regressions, and replace an obsolete simulated boost test with the actual compressor.
+- See docs/audit-3.0.9.md for measurements, verification and limits.
+
 ## 3.0.8 — Automation, audio and capture follow-up audit (2026-10-26)
 
 - Mouse positioning uses converted Quartz display coordinates, including vertically arranged displays and Dock/menu-bar insets.

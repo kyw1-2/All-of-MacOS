@@ -58,7 +58,7 @@ final class AppAudioEngine {
         var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
         let createdAt = ProcessInfo.processInfo.systemUptime
-        var airPlayCaptureStalledSince: TimeInterval?
+        var watchdog = AudioActivityWatchdog()
 
         init(pid: pid_t, bundleID: String, tapID: AudioObjectID, aggregateID: AudioObjectID,
              procID: AudioDeviceIOProcID?, box: Unmanaged<MixerBox>, gain: Float, muted: Bool) {
@@ -242,22 +242,21 @@ final class AppAudioEngine {
                 failAirPlay(session, message: message)
                 continue
             }
-            if session.sourceToken?.isAirPlay == true, let transport = session.transport {
+            if let transport = session.transport {
                 // A live sender alone does not prove the tap can capture this
                 // app (for example, offloaded playback). Restore direct audio
                 // if an actively playing producer has no capture callbacks.
                 let playing = session.processIDs.contains {
                     Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
                 }
-                if playing && !transport.activity.recent {
-                    let now = ProcessInfo.processInfo.systemUptime
-                    let since = session.airPlayCaptureStalledSince ?? now
-                    session.airPlayCaptureStalledSince = since
-                    if now - since > 5 {
-                        failAirPlay(session, message: "HomePod capture stopped receiving app audio. Native playback restored; use Reconnect to retry.")
-                    }
-                } else {
-                    session.airPlayCaptureStalledSince = nil
+                let activity = transport.activity
+                if let failure = session.watchdog.failure(playing: playing, capturing: activity.recent,
+                    rendering: activity.rendering, now: ProcessInfo.processInfo.systemUptime) {
+                    let message = failure == .capture
+                        ? "Audio capture stopped receiving app audio. Native playback restored; use Reconnect to retry."
+                        : "Audio output stopped consuming app audio. Native playback restored; use Reconnect to retry."
+                    if session.sourceToken?.isAirPlay == true { failAirPlay(session, message: message) }
+                    else { fail(session, message: message) }
                 }
             }
         }
@@ -334,16 +333,25 @@ final class AppAudioEngine {
                 let ready = session.sourceToken.map { token in
                     MainActor.assumeIsolated { SharedOutputRenderer.shared.isReady(token) }
                 } ?? false
-                if session.sourceToken == nil || session.outputUID != uid {
+                if session.sourceToken == nil || session.outputUID != uid || session.sourceToken?.deviceID != device.id {
                     guard moveOutput(session, device: device) else {
+                        errors[app.pid] = "Could not move audio to \(device.name). Previous output retained; use Reconnect to retry."
+                        // If the previous object vanished, retaining its mute
+                        // would strand the producer in silence.
+                        if !ready { fail(session, message: "Audio output disconnected. Native playback restored; use Reconnect to retry.") }
                         continue
                     }
+                    errors.removeValue(forKey: app.pid)
                 } else if !ready {
                     // Overload or a transient format change can stop the
                     // engine. Restart it in place — the tap, aggregate and
                     // transport survive, so no player sees device loss.
                     if let token = session.sourceToken {
-                        MainActor.assumeIsolated { SharedOutputRenderer.shared.ensureRunning(token: token) }
+                        let recovered = MainActor.assumeIsolated { SharedOutputRenderer.shared.ensureRunning(token: token) }
+                        if !recovered {
+                            fail(session, message: "Audio output could not restart. Native playback restored; use Reconnect to retry.")
+                            continue
+                        }
                     }
                 }
                 mixer.deviceGain = AudioOutputService.softwareGain(uid: uid)
@@ -404,7 +412,7 @@ final class AppAudioEngine {
         if activity.captured == 0 || !activity.recent {
             return "Ready — waiting for app playback"
         }
-        if activity.rendered == 0 { return "Waiting for output device…" }
+        if !activity.rendering { return "Waiting for output device…" }
         if session.sourceToken?.isAirPlay == true {
             return session.muted ? "Muted · HomePod" : "Processing locally → HomePod / AirPlay"
         }
@@ -595,7 +603,8 @@ final class AppAudioEngine {
         var map: [pid_t: [AudioObjectID]] = [:]
         var ownerCache: [pid_t: pid_t] = [:]
         for obj in processObjectList() {
-            guard let rawPID = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPID > 0 else { continue }
+            guard let rawPID = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPID > 0,
+                  rawPID != ProcessInfo.processInfo.processIdentifier else { continue }
             let ownerPID: pid_t
             if let cached = ownerCache[rawPID] { ownerPID = cached }
             else {
@@ -640,6 +649,7 @@ final class AppAudioEngine {
             if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr {
                 for object in objects {
                     guard let rawPid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPid > 0,
+                          rawPid != ProcessInfo.processInfo.processIdentifier,
                           Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { continue }
 
                     let app = Self.owner(of: object, pid: rawPid) ?? NSRunningApplication(processIdentifier: rawPid)
@@ -1019,12 +1029,11 @@ final class AppAudioEngine {
     }
 
     private func fail(_ session: Session, message: String) {
-        // Last-resort restore: the original audio returns (the app reverts to
-        // its own output). Recovery is bounded — .infinity permanently blocked
-        // self-healing from transient failures like HAL overload restarts.
+        // Last-resort restore after in-place recovery failed. Suppress repeated
+        // tap creation until explicit recovery or a genuine topology change.
         stop(pid: session.pid)
         errors[session.pid] = message
-        retryAfter[session.pid] = ProcessInfo.processInfo.systemUptime + 5
+        retryAfter[session.pid] = .infinity
         failedProcessIDs[session.pid] = Self.processObjectIDs(for: session.pid).sorted()
         GestureLog.shared.logFromAnyThread(message, level: .error)
     }
@@ -1066,6 +1075,8 @@ final class MixerBox {
     }
     private var desiredAppEQ: AudioEQProcessor
     private var desiredMasterEQ: AudioEQProcessor
+    private var desiredEQHeadroom: Float
+    fileprivate var renderEQHeadroom: Float
     fileprivate var renderGain: Float
     fileprivate var renderMuted: Bool
     fileprivate var renderBoost: Bool
@@ -1106,9 +1117,16 @@ final class MixerBox {
         let app = AudioEQProcessor(eq), master = AudioEQProcessor(AudioEQ(sampleRate: eq.sampleRate))
         desiredAppEQ = app; appEQ = app
         desiredMasterEQ = master; masterEQ = master
+        let headroom = AudioEQ.headroomGain(app: eq, master: master.eq)
+        desiredEQHeadroom = headroom; renderEQHeadroom = headroom
     }
     func setEffects(app: AudioEQ, master: AudioEQ, appBoost: Int, masterBoost: Int) {
+        // Coefficients and headroom are prepared on the control thread. The
+        // audio callback uses its previous configuration on lock contention.
         lock.lock(); defer { lock.unlock() }
+        if desiredAppEQ.eq != app || desiredMasterEQ.eq != master {
+            desiredEQHeadroom = AudioEQ.headroomGain(app: app, master: master)
+        }
         if desiredAppEQ.eq != app { desiredAppEQ = AudioEQProcessor(app) }
         if desiredMasterEQ.eq != master { desiredMasterEQ = AudioEQProcessor(master) }
         desiredAppBoost = min(3, max(0, appBoost))
@@ -1123,6 +1141,7 @@ final class MixerBox {
         renderBoost = desiredBoost && desiredAppBoost == 0
         renderBoostLevel = max(desiredAppBoost, desiredMasterBoost)
         renderDeviceGain = desiredDeviceGain
+        renderEQHeadroom = desiredEQHeadroom
         appEQ = desiredAppEQ; masterEQ = desiredMasterEQ
         lock.unlock()
     }
@@ -1157,15 +1176,16 @@ nonisolated enum Mixer {
         let outputChannels = outputs.reduce(0) { $0 + Int($1.mNumberChannels) }
         guard outputChannels > 0 else { return }
         for frame in 0..<frames {
-            var l = left[planar ? frame : frame * channels]
-            var r = planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]
+            var l = left[planar ? frame : frame * channels] * box.renderEQHeadroom
+            var r = (planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]) * box.renderEQHeadroom
             l = box.masterEQ.process(box.appEQ.process(l, channel: 0), channel: 0)
             r = box.masterEQ.process(box.appEQ.process(r, channel: 1), channel: 1)
             box.boostProcessor.process(left: &l, right: &r, level: box.renderBoostLevel)
             l *= box.renderGain * box.renderDeviceGain; r *= box.renderGain * box.renderDeviceGain
-            // A bounded output prevents overdrive/EQ from wrapping or emitting NaNs.
-            l = l.isFinite ? max(-1, min(1, l)) : 0
-            r = r.isFinite ? max(-1, min(1, r)) : 0
+            // Preserve peaks until the linked limiter on the final summing bus.
+            // Clipping here permanently distorts EQ/boost before apps are mixed.
+            l = l.isFinite ? l : 0
+            r = r.isFinite ? r : 0
             peak = max(peak, max(abs(l), abs(r)))
             var channel = 0
             for buffer in outputs {

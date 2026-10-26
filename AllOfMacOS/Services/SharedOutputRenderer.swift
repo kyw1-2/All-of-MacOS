@@ -12,8 +12,9 @@ final class SharedOutputRenderer {
         let id: UUID
         fileprivate let uid: String
         let isAirPlay: Bool
-        fileprivate init(id: UUID, uid: String, isAirPlay: Bool = false) {
-            self.id = id; self.uid = uid; self.isAirPlay = isAirPlay
+        let deviceID: AudioDeviceID
+        fileprivate init(id: UUID, uid: String, deviceID: AudioDeviceID, isAirPlay: Bool = false) {
+            self.id = id; self.uid = uid; self.deviceID = deviceID; self.isAirPlay = isAirPlay
         }
     }
 
@@ -79,7 +80,7 @@ final class SharedOutputRenderer {
             guard case .ready = prepareAirPlay(device: device), let output = airPlayOutputs[uid] else { return nil }
             let id = UUID()
             output.bus.add(id: id, render: render)
-            return SourceToken(id: id, uid: uid, isAirPlay: true)
+            return SourceToken(id: id, uid: uid, deviceID: device.id, isAirPlay: true)
         }
         if let existing = graphs[uid], existing.deviceID != device.id {
             // A reconnected device may reuse its UID with a different object ID.
@@ -95,7 +96,7 @@ final class SharedOutputRenderer {
         guard let graph = graphs[uid], graph.failure == nil, graph.engine.isRunning else { return nil }
         let id = UUID()
         graph.bus.add(id: id, render: render)
-        return SourceToken(id: id, uid: uid)
+        return SourceToken(id: id, uid: uid, deviceID: device.id)
     }
 
     private func makeGraph(uid: String, device: AudioOutputDevice) -> DeviceGraph? {
@@ -144,26 +145,27 @@ final class SharedOutputRenderer {
 
     func isReady(_ token: SourceToken) -> Bool {
         if token.isAirPlay {
-            guard let output = airPlayOutputs[token.uid], case .ready = output.state else { return false }
+            guard let output = airPlayOutputs[token.uid], output.deviceID == token.deviceID, case .ready = output.state else { return false }
             return true
         }
-        guard let graph = graphs[token.uid] else { return false }
+        guard let graph = graphs[token.uid], graph.deviceID == token.deviceID else { return false }
         return graph.failure == nil && graph.engine.isRunning
     }
 
     /// Restarts a stopped engine in place: overload or a transient format
     /// change stops the HAL cycle, and starting again keeps the tap, the
     /// aggregate and every source node attached — no player sees device loss.
-    func ensureRunning(token: SourceToken) {
+    @discardableResult
+    func ensureRunning(token: SourceToken) -> Bool {
         // AirPlay failures release muting taps; only explicit recovery can
         // reopen the remote session. Never start a reconnect loop here.
-        guard !token.isAirPlay, let graph = graphs[token.uid] else { return }
-        guard !graph.engine.isRunning else { return }
+        guard !token.isAirPlay, let graph = graphs[token.uid], graph.deviceID == token.deviceID else { return false }
+        guard !graph.engine.isRunning else { return graph.failure == nil }
         graph.failure = nil
         do { try graph.engine.start() } catch {
             graph.failure = "Audio output restart failed: \(error.localizedDescription)"
         }
-        graphs[token.uid] = graph
+        return graph.failure == nil && graph.engine.isRunning
     }
 
     func removeSource(_ token: SourceToken) {
@@ -187,7 +189,10 @@ final class SharedOutputRenderer {
         for (uid, graph) in Array(graphs) {
             let present = devices.contains { $0.uid == uid && $0.id == graph.deviceID }
             if !present { graph.failure = "Audio output disconnected" }
-            if graph.bus.isEmpty && (!present || graph.failure != nil || !graph.engine.isRunning) {
+            if !present || (graph.bus.isEmpty && (graph.failure != nil || !graph.engine.isRunning)) {
+                // Retire a vanished object even while tokens still reference it.
+                // A reconnect can preserve the UID while replacing the numeric ID.
+                graph.bus.removeAll()
                 graph.engine.stop()
                 graphs.removeValue(forKey: uid)
             }
@@ -211,11 +216,15 @@ final class AppAudioRenderBus {
     private var sources: [(id: UUID, render: Render)] = []
     private let capacity = 32768
     private let scratch: UnsafeMutablePointer<Float>
+    private let sum: UnsafeMutablePointer<Float>
+    private let limiter = AudioPeakLimiter()
     init() {
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
+        sum = .allocate(capacity: capacity * 2)
+        sum.initialize(repeating: 0, count: capacity * 2)
     }
-    deinit { scratch.deallocate() }
+    deinit { scratch.deallocate(); sum.deallocate() }
     var isEmpty: Bool { lock.lock(); defer { lock.unlock() }; return sources.isEmpty }
     func add(id: UUID, render: @escaping Render) {
         lock.lock(); defer { lock.unlock() }; sources.append((id, render))
@@ -232,34 +241,35 @@ final class AppAudioRenderBus {
         }
         guard frames > 0, frames <= capacity, lock.try() else { return }
         defer { lock.unlock() }
-        let channels = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
+        memset(sum, 0, frames * 2 * MemoryLayout<Float>.size)
         for source in sources {
             memset(scratch, 0, frames * 2 * MemoryLayout<Float>.size)
             var temporary = AudioBufferList(mNumberBuffers: 1, mBuffers:
                 AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
             withUnsafeMutablePointer(to: &temporary) { source.render(frames, $0) }
-            var channel = 0
-            for buffer in buffers {
-                let width = Int(buffer.mNumberChannels)
-                guard width > 0 else { continue }
-                defer { channel += width }
-                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                let count = min(frames, Int(buffer.mDataByteSize) / (4 * width))
-                for frame in 0..<count {
-                    for offset in 0..<width {
-                        let index = channel + offset
-                        let value = channels == 1 ? (scratch[frame * 2] + scratch[frame * 2 + 1]) * 0.5
-                            : (index < 2 ? scratch[frame * 2 + index] : 0)
-                        data[frame * width + offset] += value.isFinite ? value : 0
-                    }
-                }
+            for index in 0..<(frames * 2) {
+                sum[index] += scratch[index].isFinite ? scratch[index] : 0
             }
         }
-        // Bound the sum as well as individual app output.
+        for frame in 0..<frames {
+            var left = sum[frame * 2], right = sum[frame * 2 + 1]
+            limiter.process(left: &left, right: &right)
+            sum[frame * 2] = left; sum[frame * 2 + 1] = right
+        }
+        let channels = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
+        var channel = 0
         for buffer in buffers {
+            let width = Int(buffer.mNumberChannels)
+            guard width > 0 else { continue }
+            defer { channel += width }
             guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            for index in 0..<(Int(buffer.mDataByteSize) / 4) {
-                data[index] = data[index].isFinite ? max(-1, min(1, data[index])) : 0
+            let count = min(frames, Int(buffer.mDataByteSize) / (4 * width))
+            for frame in 0..<count {
+                for offset in 0..<width {
+                    let index = channel + offset
+                    data[frame * width + offset] = channels == 1 ? (sum[frame * 2] + sum[frame * 2 + 1]) * 0.5
+                        : (index < 2 ? sum[frame * 2 + index] : 0)
+                }
             }
         }
     }

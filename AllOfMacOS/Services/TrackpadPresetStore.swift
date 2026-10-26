@@ -165,22 +165,37 @@ final class TrackpadPresetStore {
             guard root.value(forKey: "schemaVersion") as? Int == 1, let metadata = root.value(forKey: "metadata") as? Data else { throw PresetCodec.Failure.unsupportedVersion }
             var preset = try PresetCodec.decode(metadata)
             let decoder = JSONDecoder()
-            let records = (root.value(forKey: "gestures") as? Set<NSManagedObject> ?? []).sorted { ($0.value(forKey: "position") as! Int) < ($1.value(forKey: "position") as! Int) }
-            for record in records {
-                var trigger = try decoder.decode(Trigger.self, from: record.value(forKey: "template") as! Data)
-                let actions = (record.value(forKey: "actions") as? Set<NSManagedObject> ?? []).sorted { ($0.value(forKey: "position") as! Int) < ($1.value(forKey: "position") as! Int) }
-                trigger.actions = try actions.map { row in
-                    guard let type = ActionType(rawValue: row.value(forKey: "kind") as! String) else { throw PresetCodec.Failure.incompleteDecode }
-                    var params = try decoder.decode(ActionParameters.self, from: row.value(forKey: "parameters") as! Data)
+            func ordered(_ values: Set<NSManagedObject>) throws -> [(Int, NSManagedObject)] {
+                try values.map { row in
+                    guard let position = row.value(forKey: "position") as? Int, position >= 0 else {
+                        throw PresetCodec.Failure.incompleteDecode
+                    }
+                    return (position, row)
+                }.sorted { $0.0 < $1.0 }
+            }
+            let records = try ordered(root.value(forKey: "gestures") as? Set<NSManagedObject> ?? [])
+            for (position, record) in records {
+                guard let template = record.value(forKey: "template") as? Data else { throw PresetCodec.Failure.incompleteDecode }
+                var trigger = try decoder.decode(Trigger.self, from: template)
+                let actions = try ordered(record.value(forKey: "actions") as? Set<NSManagedObject> ?? [])
+                trigger.actions = try actions.map { _, row in
+                    guard let kind = row.value(forKey: "kind") as? String, let type = ActionType(rawValue: kind),
+                          let parameters = row.value(forKey: "parameters") as? Data,
+                          let id = row.value(forKey: "id") as? UUID,
+                          let enabled = row.value(forKey: "enabled") as? Bool else { throw PresetCodec.Failure.incompleteDecode }
+                    var params = try decoder.decode(ActionParameters.self, from: parameters)
                     if let key = row.value(forKey: "shortcut") as? NSManagedObject {
-                        params.shortcutKeyCode = UInt16(key.value(forKey: "keyCode") as! Int); params.shortcutModifiers = UInt(key.value(forKey: "modifiers") as! String)
+                        guard let rawCode = key.value(forKey: "keyCode") as? Int, let code = UInt16(exactly: rawCode),
+                              let rawModifiers = key.value(forKey: "modifiers") as? String,
+                              rawModifiers.isEmpty || UInt(rawModifiers) != nil else { throw PresetCodec.Failure.incompleteDecode }
+                        params.shortcutKeyCode = code
+                        params.shortcutModifiers = rawModifiers.isEmpty ? nil : UInt(rawModifiers)
                     }
                     // Decode through the public Codable representation to preserve immutable IDs.
-                    let payload: [String: Any] = ["id": (row.value(forKey: "id") as! UUID).uuidString, "actionType": type.rawValue,
-                        "isEnabled": row.value(forKey: "enabled") as! Bool, "parameters": try JSONSerialization.jsonObject(with: JSONEncoder().encode(params))]
+                    let payload: [String: Any] = ["id": id.uuidString, "actionType": type.rawValue,
+                        "isEnabled": enabled, "parameters": try JSONSerialization.jsonObject(with: JSONEncoder().encode(params))]
                     return try decoder.decode(TriggerAction.self, from: JSONSerialization.data(withJSONObject: payload))
                 }
-                let position = record.value(forKey: "position") as! Int
                 preset.triggers.insert(trigger, at: min(position, preset.triggers.count))
             }
             return try PresetCodec.decode(PresetCodec.encode(preset))

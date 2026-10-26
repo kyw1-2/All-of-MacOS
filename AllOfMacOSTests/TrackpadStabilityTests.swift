@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import AllOfMacOS
 
 final class TrackpadStabilityTests: XCTestCase {
@@ -38,6 +39,27 @@ final class TrackpadStabilityTests: XCTestCase {
         store = nil
         let reopened = try TrackpadPresetStore(url: url)
         XCTAssertEqual(try reopened.load()?.triggers, preset.triggers)
+    }
+    func testMalformedDatabasePositionsAndShortcutCodesThrowInsteadOfCrashing() throws {
+        for statement in ["UPDATE ZGESTUREBINDING SET ZPOSITION = -1",
+                          "UPDATE ZACTIONSHORTCUT SET ZKEYCODE = 65536",
+                          "UPDATE ZACTIONSHORTCUT SET ZMODIFIERS = 'not-a-number'"] {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let url = dir.appendingPathComponent("trackpad.sqlite")
+            var original: TrackpadPresetStore? = try TrackpadPresetStore(url: url)
+            try original?.save(fixture())
+            original = nil
+            var database: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+            XCTAssertEqual(sqlite3_exec(database, statement, nil, nil, nil), SQLITE_OK)
+            XCTAssertGreaterThan(sqlite3_changes(database), 0)
+            sqlite3_close(database)
+            let reopened = try TrackpadPresetStore(url: url)
+            XCTAssertThrowsError(try reopened.load(), statement)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        }
     }
     func testLegacyAndVersionedPresetFormatsRoundTrip() throws {
         let preset = fixture()

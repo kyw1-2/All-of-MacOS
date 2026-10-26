@@ -25,7 +25,8 @@ final class AppAudioTransport {
     private var targetFrames: Int
     private var bufferedForAirPlay: Bool
     private var sampleRate: Double
-    private var lastCaptureTime: TimeInterval = 0
+    private var lastCaptureTime: TimeInterval = -.infinity
+    private var lastRenderTime: TimeInterval = -.infinity
     private let secondsPerTick: Double
 
     init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
@@ -60,11 +61,12 @@ final class AppAudioTransport {
         readIndex = writeIndex; count = 0; fractionalPosition = 0; buffered = false
     }
 
-    var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool) {
+    var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool, rendering: Bool) {
         lock.lock(); defer { lock.unlock() }
         let recentWindow = bufferedForAirPlay ? max(1, Double(targetFrames) / sampleRate * 4) : 0.25
         return (capturedFrames, renderedFrames, inputPeak,
-                Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < recentWindow)
+                Double(mach_absolute_time()) * secondsPerTick - lastCaptureTime < recentWindow,
+                Double(mach_absolute_time()) * secondsPerTick - lastRenderTime < recentWindow)
     }
 
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -155,9 +157,32 @@ final class AppAudioTransport {
             fractionalPosition = 0
         }
         renderedFrames &+= UInt64(filled)
+        if filled > 0 { lastRenderTime = Double(mach_absolute_time()) * secondsPerTick }
         lock.unlock()
         var input = AudioBufferList(mNumberBuffers: 1,
                                     mBuffers: AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
         withUnsafePointer(to: &input) { Mixer.mix(input: $0, output: output, box: mixer) }
+    }
+}
+
+/// A stopped app is idle, not broken. Only sustained missing callbacks from
+/// a playing producer or a live capture require releasing its muting tap.
+struct AudioActivityWatchdog {
+    enum Failure: Equatable { case capture, output }
+    private var missingCaptureSince: TimeInterval?
+    private var missingOutputSince: TimeInterval?
+
+    mutating func failure(playing: Bool, capturing: Bool, rendering: Bool, now: TimeInterval) -> Failure? {
+        if playing && !capturing {
+            let since = missingCaptureSince ?? now
+            missingCaptureSince = since
+            if now - since > 5 { return .capture }
+        } else { missingCaptureSince = nil }
+        if capturing && !rendering {
+            let since = missingOutputSince ?? now
+            missingOutputSince = since
+            if now - since > 5 { return .output }
+        } else { missingOutputSince = nil }
+        return nil
     }
 }

@@ -2,6 +2,12 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.0.9
+
+EQ headroom and a stereo output limiter prevent boosted presets from hard
+clipping. Audio recovery, automation input validation and corrupt preset
+database handling are hardened. See [audit findings and measurements](docs/audit-3.0.9.md).
+
 ## Version 3.0.8
 
 Follow-up fixes for mouse automation, scroll timing, EQ recovery, clipboard

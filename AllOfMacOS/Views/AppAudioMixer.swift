@@ -199,8 +199,8 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
                 for (bundle, muted) in saved { UserDefaults.standard.set(muted, forKey: "AOMAudioMute_\(bundle)") }
                 muteSnapshot = nil
             } else {
-                refresh()
-                muteSnapshot = Dictionary(apps.filter { !$0.bundleID.isEmpty }.map { ($0.bundleID, $0.muted) }, uniquingKeysWith: { first, _ in first })
+                let currentApps = AppAudioEngine.shared.runningAudioApps()
+                muteSnapshot = Dictionary(currentApps.filter { !$0.bundleID.isEmpty }.map { ($0.bundleID, $0.muted) }, uniquingKeysWith: { first, _ in first })
                 for bundle in muteSnapshot?.keys ?? Dictionary<String, Bool>().keys {
                     UserDefaults.standard.set(true, forKey: "AOMAudioMute_\(bundle)")
                 }

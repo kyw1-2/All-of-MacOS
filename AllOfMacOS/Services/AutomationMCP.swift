@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import CoreFoundation
 
 /// Shares the authenticated local transport, but is exposed only to clients
 /// with the independently granted automation scope. Legacy tokens have none.
@@ -94,7 +95,7 @@ enum AutomationMCP {
         case "automation_set_app_volume":
             guard #available(macOS 14.2, *) else { throw ClipboardMCPHandler.ToolError("Per-app audio needs macOS 14.2 or later.") }
             let target = try audioTarget(args)
-            guard let raw = args["volume"] as? NSNumber else { throw ClipboardMCPHandler.ToolError("volume is required.") }
+            guard let raw = args["volume"] as? NSNumber, CFGetTypeID(raw) != CFBooleanGetTypeID() else { throw ClipboardMCPHandler.ToolError("volume is required.") }
             let volume = raw.floatValue
             guard volume.isFinite, volume >= 0, volume <= 2 else {
                 throw ClipboardMCPHandler.ToolError("volume must be between 0 and 2 (1 = unity).")
@@ -117,6 +118,10 @@ enum AutomationMCP {
             guard let uid = args["uid"] as? String else { throw ClipboardMCPHandler.ToolError("uid is required; use an empty string for the system default.") }
             let trimmed = uid.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.count <= 255 else { throw ClipboardMCPHandler.ToolError("uid is too long.") }
+            guard trimmed.isEmpty || AudioOutputService.devices().contains(where: { $0.uid == trimmed }) else {
+                throw ClipboardMCPHandler.ToolError("The requested output is not connected. Refresh the device list first.")
+            }
+            AppAudioEngine.shared.addCustomApp(bundleID: bundleID)
             AppAudioEngine.shared.setRoute(uid: trimmed.isEmpty ? nil : trimmed, bundleID: bundleID)
             let apps = AppAudioEngine.shared.runningAudioApps()
             guard let updated = apps.first(where: { $0.bundleID == bundleID }) else {
@@ -132,10 +137,10 @@ enum AutomationMCP {
     /// processes, which is why the pid form exists at all.
     @available(macOS 14.2, *)
     private static func audioTarget(_ args: [String: Any]) throws -> AppAudioEngine.AppState {
-        let requestedPID = (args["pid"] as? NSNumber)?.int32Value ?? 0
+        let requestedPID = try validatedAudioPID(args["pid"])
         let requestedBundle = (args["bundleID"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let apps = AppAudioEngine.shared.runningAudioApps()
-        if requestedPID > 0 {
+        if let requestedPID {
             guard requestedPID != ProcessInfo.processInfo.processIdentifier else {
                 throw ClipboardMCPHandler.ToolError("AOM does not mix its own audio.")
             }
@@ -151,6 +156,20 @@ enum AutomationMCP {
             throw ClipboardMCPHandler.ToolError("No tappable audio app has that bundle identifier. Run list_audio_apps first.")
         }
         return match
+    }
+
+    /// JSON booleans, fractions and oversized integers must never truncate to
+    /// an unrelated live PID (or silently fall back to a supplied bundle ID).
+    static func validatedAudioPID(_ value: Any?) throws -> pid_t? {
+        guard let value else { return nil }
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+            throw ClipboardMCPHandler.ToolError("pid must be a positive 32-bit integer.")
+        }
+        let raw = number.doubleValue
+        guard raw.isFinite, raw >= 1, raw <= Double(Int32.max), raw.rounded(.towardZero) == raw else {
+            throw ClipboardMCPHandler.ToolError("pid must be a positive 32-bit integer.")
+        }
+        return pid_t(raw)
     }
 
     private static func requiredBundleID(_ args: [String: Any]) throws -> String {
@@ -177,7 +196,12 @@ enum AutomationMCP {
             "muted": state.muted,
             "tapped": state.tapped,
             "outputDeviceUID": state.outputDeviceUID ?? "",
-            "status": state.processingStatus
+            "status": state.processingStatus,
+            "error": state.error ?? "",
+            "appEQGainsDB": AppAudioEngine.appEQ(bundleID: state.bundleID).gains.map(Double.init),
+            "masterEQGainsDB": AppAudioEngine.masterEQ().gains.map(Double.init),
+            "captureRecent": AppAudioEngine.shared.session(pid: pid)?.transport?.activity.recent ?? false,
+            "renderRecent": AppAudioEngine.shared.session(pid: pid)?.transport?.activity.rendering ?? false
         ]
     }
 

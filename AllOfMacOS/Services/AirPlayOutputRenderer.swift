@@ -247,7 +247,7 @@ final class AirPlayOutputRenderer {
 
 /// A bounded, preallocated PCM queue between the local mix clock and AirPlay's
 /// device clock. The HAL callback never runs DSP, dispatches work, or waits.
-private final class AirPlayPCMBridge {
+final class AirPlayPCMBridge {
     private let lock = NSLock()
     private let capacity = 96000
     private let samples = UnsafeMutablePointer<Float>.allocate(capacity: 192000)

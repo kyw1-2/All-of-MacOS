@@ -83,6 +83,37 @@ struct AudioEQ: Equatable {
         (0..<10).map { Self.bandCoefficients(band: $0, gainDb: gains[$0], sampleRate: sampleRate) }
     }
 
+    /// Reserve the actual peak gain of the combined EQ curve before filtering.
+    /// Adding positive slider values overestimates overlapping bands; taking
+    /// only the largest slider underestimates them and still clips hot mixes.
+    /// This calculation runs on the control thread when the curve changes.
+    static func headroomGain(app: AudioEQ, master: AudioEQ) -> Float {
+        guard app.isEnabled || master.isEnabled else { return 1 }
+        let filters = [(app, app.coefficients), (master, master.coefficients)]
+        let nyquist = min(app.sampleRate, master.sampleRate) / 2
+        let low = min(10, nyquist / 100)
+        let frequencies = [0, nyquist] + bandFrequencies.filter { $0 < nyquist } +
+            (0...512).map { low * pow(nyquist / low, Double($0) / 512) }
+        var maximum: Double = 1
+        for frequency in frequencies {
+            var magnitude: Double = 1
+            for (eq, coefficients) in filters {
+                let w = 2 * Double.pi * frequency / eq.sampleRate
+                let c1 = cos(w), c2 = cos(2 * w), s1 = sin(w), s2 = sin(2 * w)
+                for band in 0..<10 where eq.gains[band] != 0 {
+                    let c = coefficients[band]
+                    let numerator = hypot(Double(c.b0) + Double(c.b1) * c1 + Double(c.b2) * c2,
+                                          Double(c.b1) * s1 + Double(c.b2) * s2)
+                    let denominator = hypot(1 + Double(c.a1) * c1 + Double(c.a2) * c2,
+                                            Double(c.a1) * s1 + Double(c.a2) * s2)
+                    if denominator > 0 { magnitude *= numerator / denominator }
+                }
+            }
+            if magnitude.isFinite { maximum = max(maximum, magnitude) }
+        }
+        return maximum > 1.0001 ? Float(1 / (maximum * 1.01)) : 1
+    }
+
     /// One biquad over a deinterleaved run. Pure: state comes in and goes out.
     static func runBiquad(_ c: Coefficients, input: [Float], state: (Float, Float)) -> ([Float], (Float, Float)) {
         var x1 = state.0, x2 = state.1
@@ -212,6 +243,38 @@ final class AudioAdaptiveBoost {
         controlFrame = (controlFrame + 1) & 31
         let smoothing = targetGain < gain ? gainAttack : gainRelease
         gain = smoothing * gain + (1 - smoothing) * targetGain
+        left *= gain; right *= gain
+    }
+}
+
+/// Linked stereo peak protection after summing all apps. Immediate attenuation
+/// catches a transient, a 20 ms hold preserves waveform shape between peaks,
+/// and a slow release avoids hard clipping and rapid gain modulation.
+final class AudioPeakLimiter {
+    private var gain: Float = 1
+    private var holdFrames = 0
+    private let hold: Int
+    private let release: Float
+    private let ceiling: Float = 0.98
+
+    init(sampleRate: Double = 48000) {
+        hold = Int(sampleRate * 0.02)
+        release = Float(exp(-1 / (sampleRate * 0.1)))
+    }
+
+    func process(left: inout Float, right: inout Float) {
+        left = left.isFinite ? left : 0
+        right = right.isFinite ? right : 0
+        let peak = max(abs(left), abs(right))
+        let required = peak > ceiling ? ceiling / peak : 1
+        if required < gain {
+            gain = required
+            holdFrames = hold
+        } else if holdFrames > 0 {
+            holdFrames -= 1
+        } else {
+            gain = release * gain + (1 - release)
+        }
         left *= gain; right *= gain
     }
 }

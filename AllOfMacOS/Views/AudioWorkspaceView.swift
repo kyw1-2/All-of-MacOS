@@ -36,6 +36,9 @@ struct AudioWorkspaceView: View {
                         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
+                    Label(service.eqEnabled ? "Master EQ: \(service.eqPreset)" : "Master EQ: Off",
+                          systemImage: "slider.vertical.3")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 // MARK: - Applications Mixer
@@ -808,7 +811,8 @@ private struct MasterStudioEQCard: View {
             AudioEqualizerControls(gains: service.eqGains, enabled: service.eqEnabled) {
                 service.setBand($0, gain: $1)
             }
-
+            Text("Boosted EQ bands may lower the overall level to keep loud passages clear.")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .padding(16)
         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
