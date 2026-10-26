@@ -22,6 +22,13 @@ enum AutomationMCP {
         tool("save_menu", "Validate and save one native floating menu definition. Saving does not execute its actions.", ["menu": ["type": "object"]], required: ["menu"]),
         tool("show_menu", "Show a saved native floating menu by name or id.", ["name": string], required: ["name"]),
         tool("hide_menus", "Close all floating menus without executing their actions."),
+        tool("list_audio_apps", "List apps the per-app audio engine can control, with gain, mute, tap and routing state. Requires macOS 14.2 or later.", readOnly: true),
+        tool("set_app_volume", "Set one app's mixer gain from 0 to 2 (1 = unity). Pass pid or bundleID. Changing the gain does not change mute.",
+             ["pid": ["type": "integer"], "bundleID": string, "volume": ["type": "number"]], required: ["volume"]),
+        tool("set_app_mute", "Mute or unmute one app without changing its gain. Pass pid or bundleID.",
+             ["pid": ["type": "integer"], "bundleID": string, "muted": ["type": "boolean"]], required: ["muted"]),
+        tool("route_app_audio", "Send one app's audio to a specific output device UID, or back to the system default with an empty uid.",
+             ["bundleID": string, "uid": string], required: ["bundleID", "uid"]),
     ]
 
     static func call(_ name: String, _ args: [String: Any]) throws -> [String: Any] {
@@ -81,8 +88,97 @@ enum AutomationMCP {
             guard FloatingMenuController.shared.show(name) else { throw ClipboardMCPHandler.ToolError("No floating menu matches this name.") }
             return ["shown": true, "name": name]
         case "automation_hide_menus": FloatingMenuController.shared.hideAll(); return ["closed": true]
+        case "automation_list_audio_apps":
+            guard #available(macOS 14.2, *) else { throw ClipboardMCPHandler.ToolError("Per-app audio needs macOS 14.2 or later.") }
+            return ["apps": AppAudioEngine.shared.runningAudioApps().map(audioSnapshot)]
+        case "automation_set_app_volume":
+            guard #available(macOS 14.2, *) else { throw ClipboardMCPHandler.ToolError("Per-app audio needs macOS 14.2 or later.") }
+            let target = try audioTarget(args)
+            guard let raw = args["volume"] as? NSNumber else { throw ClipboardMCPHandler.ToolError("volume is required.") }
+            let volume = raw.floatValue
+            guard volume.isFinite, volume >= 0, volume <= 2 else {
+                throw ClipboardMCPHandler.ToolError("volume must be between 0 and 2 (1 = unity).")
+            }
+            guard AppAudioEngine.shared.setGain(volume, muted: target.muted, pid: target.pid) else {
+                throw ClipboardMCPHandler.ToolError("The audio engine could not retune that app. Check its error in list_audio_apps.")
+            }
+            return ["updated": audioSnapshot(of: target.pid)]
+        case "automation_set_app_mute":
+            guard #available(macOS 14.2, *) else { throw ClipboardMCPHandler.ToolError("Per-app audio needs macOS 14.2 or later.") }
+            let target = try audioTarget(args)
+            guard let muted = args["muted"] as? Bool else { throw ClipboardMCPHandler.ToolError("muted is required.") }
+            guard AppAudioEngine.shared.setGain(target.gain, muted: muted, pid: target.pid) else {
+                throw ClipboardMCPHandler.ToolError("The audio engine could not retune that app. Check its error in list_audio_apps.")
+            }
+            return ["updated": audioSnapshot(of: target.pid)]
+        case "automation_route_app_audio":
+            guard #available(macOS 14.2, *) else { throw ClipboardMCPHandler.ToolError("Per-app audio needs macOS 14.2 or later.") }
+            let bundleID = try requiredBundleID(args)
+            guard let uid = args["uid"] as? String else { throw ClipboardMCPHandler.ToolError("uid is required; use an empty string for the system default.") }
+            let trimmed = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.count <= 255 else { throw ClipboardMCPHandler.ToolError("uid is too long.") }
+            AppAudioEngine.shared.setRoute(uid: trimmed.isEmpty ? nil : trimmed, bundleID: bundleID)
+            let apps = AppAudioEngine.shared.runningAudioApps()
+            guard let updated = apps.first(where: { $0.bundleID == bundleID }) else {
+                return ["routed": true, "bundleID": bundleID, "uid": trimmed]
+            }
+            return ["routed": true, "updated": audioSnapshot(of: updated)]
         default: throw ClipboardMCPHandler.ToolError("Unknown automation tool.")
         }
+    }
+
+    /// Resolves the app named by `pid` or `bundleID`. A pid is exact, so it wins
+    /// when both are supplied; bundle identifiers can repeat across helper
+    /// processes, which is why the pid form exists at all.
+    @available(macOS 14.2, *)
+    private static func audioTarget(_ args: [String: Any]) throws -> AppAudioEngine.AppState {
+        let requestedPID = (args["pid"] as? NSNumber)?.int32Value ?? 0
+        let requestedBundle = (args["bundleID"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let apps = AppAudioEngine.shared.runningAudioApps()
+        if requestedPID > 0 {
+            guard requestedPID != ProcessInfo.processInfo.processIdentifier else {
+                throw ClipboardMCPHandler.ToolError("AOM does not mix its own audio.")
+            }
+            guard let match = apps.first(where: { $0.pid == requestedPID }) else {
+                throw ClipboardMCPHandler.ToolError("No tappable audio app has that pid. Run list_audio_apps first.")
+            }
+            return match
+        }
+        guard !requestedBundle.isEmpty, requestedBundle.count <= 255 else {
+            throw ClipboardMCPHandler.ToolError("Pass pid or bundleID to choose an app.")
+        }
+        guard let match = apps.first(where: { $0.bundleID == requestedBundle }) else {
+            throw ClipboardMCPHandler.ToolError("No tappable audio app has that bundle identifier. Run list_audio_apps first.")
+        }
+        return match
+    }
+
+    private static func requiredBundleID(_ args: [String: Any]) throws -> String {
+        guard let raw = args["bundleID"] as? String else { throw ClipboardMCPHandler.ToolError("bundleID is required.") }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 255 else { throw ClipboardMCPHandler.ToolError("Use a bundle identifier of 1–255 characters.") }
+        return value
+    }
+
+    @available(macOS 14.2, *)
+    private static func audioSnapshot(_ state: AppAudioEngine.AppState) -> [String: Any] {
+        audioSnapshot(of: state.pid, fallback: state)
+    }
+
+    @available(macOS 14.2, *)
+    private static func audioSnapshot(of pid: pid_t, fallback: AppAudioEngine.AppState? = nil) -> [String: Any] {
+        let state = AppAudioEngine.shared.runningAudioApps().first(where: { $0.pid == pid }) ?? fallback
+        guard let state else { return ["pid": Int(pid)] }
+        return [
+            "pid": Int(state.pid),
+            "name": state.name,
+            "bundleID": state.bundleID,
+            "gain": Double(state.gain),
+            "muted": state.muted,
+            "tapped": state.tapped,
+            "outputDeviceUID": state.outputDeviceUID ?? "",
+            "status": state.processingStatus
+        ]
     }
 
     private static func object<T: Encodable>(_ value: T) throws -> Any {
