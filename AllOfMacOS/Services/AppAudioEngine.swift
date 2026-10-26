@@ -851,6 +851,26 @@ final class AppAudioEngine {
 
     // MARK: - Core Audio plumbing
 
+    static func captureDescription(processIDs: [AudioObjectID], bundleID: String) -> CATapDescription {
+        let description = CATapDescription(stereoMixdownOfProcesses: processIDs)
+        description.name = "AOM App Audio \(bundleID)"
+        description.isPrivate = true
+        // The session owns the mute for its complete lifetime. Conditional
+        // mutedWhenTapped can reopen direct audio during read interruptions;
+        // buffered processed audio can still be queued on the remote receiver.
+        // Every setup failure destroys this tap; the watchdog releases a failed
+        // live session, restoring native playback instead of retaining silence.
+        description.muteBehavior = .muted
+        if #available(macOS 26.0, *) {
+            description.bundleIDs = bundleID.isEmpty ? [] : [bundleID]
+            // Rebuild helper membership from verified ownership. Restoring by
+            // a shared helper bundle ID (e.g. WebKit.GPU) can capture another
+            // app and overlap the same producer across multiple taps.
+            description.isProcessRestoreEnabled = false
+        }
+        return description
+    }
+
     private func createSession(pid: pid_t, gain: Float, muted: Bool) -> Session? {
         let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         // Never mute the original producer before the remote callback clock
@@ -866,16 +886,7 @@ final class AppAudioEngine {
         // 1. Resolve all CoreAudio process object IDs for this app (main + audio service helpers)
         let processObjIDs = Self.processObjectIDs(for: pid)
         guard !processObjIDs.isEmpty else { return nil }
-        let description = CATapDescription(stereoMixdownOfProcesses: processObjIDs)
-        description.name = "AOM App Audio \(bundleID)"
-        description.isPrivate = true
-        description.muteBehavior = .mutedWhenTapped
-        if #available(macOS 26.0, *) {
-            // Bundle matching arms capture before the first playback callback.
-            // Explicit process IDs still cover verified browser helper owners.
-            description.bundleIDs = bundleID.isEmpty ? [] : [bundleID]
-            description.isProcessRestoreEnabled = true
-        }
+        let description = Self.captureDescription(processIDs: processObjIDs, bundleID: bundleID)
         var tapID = AudioObjectID(kAudioObjectUnknown)
         let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
         guard tapStatus == noErr, tapID != kAudioObjectUnknown else {

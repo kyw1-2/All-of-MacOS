@@ -179,6 +179,19 @@ final class AudioPipelineTests: XCTestCase {
 
 @MainActor
 final class AudioAutomationInputTests: XCTestCase {
+    @available(macOS 14.2, *)
+    func testTapOwnsNativeMuteUntilTeardownAndCannotRestoreSharedHelpersByBundleID() {
+        let description = AppAudioEngine.captureDescription(processIDs: [11, 22], bundleID: "test.audio.owner")
+        XCTAssertEqual(description.muteBehavior, .muted)
+        XCTAssertTrue(description.isPrivate)
+        XCTAssertFalse(description.isExclusive)
+        XCTAssertEqual(description.processes, [11, 22])
+        if #available(macOS 26.0, *) {
+            XCTAssertEqual(description.bundleIDs, ["test.audio.owner"])
+            XCTAssertFalse(description.isProcessRestoreEnabled)
+        }
+    }
+
     func testPIDCannotWrapTruncateOrUseBooleanAndNeverFallsBackSilently() throws {
         XCTAssertNil(try AutomationMCP.validatedAudioPID(nil))
         XCTAssertEqual(try AutomationMCP.validatedAudioPID(NSNumber(value: 1234)), 1234)

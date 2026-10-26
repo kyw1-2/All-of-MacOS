@@ -30,6 +30,29 @@ helper responsibility relationship cannot make AOM's own renderer a capture
 source. This is a feedback guard, not proof that the reported transient echo
 was caused by self-capture.
 
+## Intermittent echo investigation
+
+The user confirmed that muting only AOM's Chrome output fully stops playback.
+This rules out a continuously audible parallel direct path at that moment; it
+does not establish the cause of intermittent echo during transitions.
+
+Two structural overlap hazards were removed:
+
+- Conditional `mutedWhenTapped` can allow native output while tap reads are
+  interrupted. Processed PCM may still be queued at the remote receiver. Keep
+  `.muted` for the complete processing-session lifetime, with all setup-failure
+  exits destroying the tap and the live watchdog restoring native playback.
+- macOS 26 process restore saves tapped processes by bundle ID. Helpers such as
+  `com.apple.WebKit.GPU` share bundle IDs across unrelated apps. Disable that
+  broad restoration; retain exact main-app bundle matching and reconcile helper
+  object IDs from verified ownership. A factory regression asserts this policy.
+
+Apple documents the distinction between unconditional and read-conditional mute
+in [CATapMuteBehavior](https://developer.apple.com/documentation/coreaudio/catapmutebehavior).
+The SDK's CATapDescription.h documents process restoration by bundle identity.
+A successful mute test and these fixes do not certify that every network,
+receiver-synchronization or application-specific echo has been eliminated.
+
 ## Signal measurements
 
 Production Mixer/MixerBox/AudioEQ code, 48 kHz, 1 kHz sine with 0.8 peak,

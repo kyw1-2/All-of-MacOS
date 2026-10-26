@@ -1,5 +1,6 @@
 ## 3.0.9 — EQ distortion and audio recovery (2026-10-26)
 
+- Hold native audio mute for the full capture session, and resolve returning helpers by verified ownership instead of shared helper bundle IDs to prevent overlapping tap membership.
 - Reserve headroom from the combined app/master EQ response, avoiding hard clipping on loud material and boosted presets.
 - Sum applications before linked stereo peak limiting; preserve waveform shape instead of flattening each app's peaks.
 - Recover outputs whose device UID survives a changed CoreAudio object ID; restore native audio if recovery fails.
