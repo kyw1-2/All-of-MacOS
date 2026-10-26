@@ -106,7 +106,8 @@ final class AppAudioTransport {
         let rate = Double(bitPattern: rateBits.load())
         let filled = queue.render(into: scratch, frames: frames,
                                   ratio: rate / SharedOutputRenderer.sampleRate, targetFrames: targetFrames)
-        if filled > 0 { renderTick.store(mach_absolute_time()) }
+        guard filled > 0 else { mixer.publishPeak(0); return }
+        renderTick.store(mach_absolute_time())
         var input = AudioBufferList(mNumberBuffers: 1, mBuffers:
             AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
         withUnsafePointer(to: &input) { Mixer.mix(input: $0, output: output, box: mixer) }

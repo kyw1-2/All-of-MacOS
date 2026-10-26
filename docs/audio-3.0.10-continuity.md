@@ -41,6 +41,8 @@ that all ten gaps occurred on a physical HomePod.
   Stale receiver backlog is discarded by the consumer and counted separately.
 - The non-realtime AirPlay mixing worker may wait for brief source-list or
   handoff locks. The HAL callback remains non-blocking.
+- Idle/priming sources publish a zero meter and skip unnecessary EQ and compressor
+  processing. Filled buffers retain the same DSP path.
 - AOM requests a larger capture quantum only on its own private AirPlay
   aggregates, within advertised bounds. This is best effort and does not
   rewrite the machine's selected output or hardware volume.

@@ -5,6 +5,7 @@
 - The dedicated AirPlay mixing worker waits for short source-list/handoff operations instead of dropping its mix block. HAL callbacks remain non-blocking.
 - Request a 1,024-frame quantum on AOM's private AirPlay capture aggregates where supported, reducing unnecessary 128-frame wakeups without changing the system output device.
 - Add opt-in local queue/dropout counters without recording audio, plus wraparound, clear and concurrent ordering regressions.
+- Skip EQ and compressor work while an app is idle or its capture queue is still priming, keeping spare CPU for realtime delivery.
 - Retain the 3.0.9 EQ headroom, linked stereo limiter and full-session native mute protections.
 
 ## 3.0.9 — EQ distortion and audio recovery (2026-10-26)
