@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import PDFKit
+import Darwin
 @testable import AllOfMacOS
 
 /// MacMagic tool coverage: the pure parts of the eight new tools.
@@ -73,10 +74,102 @@ final class MacMagicToolTests: XCTestCase {
         XCTAssertEqual(result?.pageCount, 2, "two single-page PDFs merge into two pages")
     }
 
-    func testDiskCacheSkipsAOMOwnCaches() {
-        // The contract: AOM's own cache directories survive clearDiskCache.
-        // We only assert the skip-list logic indirectly — the function must
-        // not throw on a standard user cache directory.
-        XCTAssertNoThrow(try MacMagicSystemToolService.shared.clearDiskCache())
+    private func temporaryFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    func testDiskCacheSkipsAOMOwnCaches() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let own = folder.appendingPathComponent("com.kyw.AllOfMacOS")
+        let other = folder.appendingPathComponent("other-cache")
+        try Data(repeating: 1, count: 8192).write(to: own)
+        try Data(repeating: 2, count: 8192).write(to: other)
+        let freed = try MacMagicSystemToolService.shared.clearDiskCache(in: folder)
+        XCTAssertGreaterThan(freed, 0, "Top-level cache files count toward reclaimed space")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: own.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.path))
+    }
+
+    func testDSStoreCleanupIncludesHiddenSubdirectories() async throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let nested = folder.appendingPathComponent(".hidden")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        for directory in [folder, nested] {
+            try Data().write(to: directory.appendingPathComponent(".DS_Store"))
+            try Data().write(to: directory.appendingPathComponent("keep.txt"))
+        }
+        let count = try await MacMagicSystemToolService.shared.eraseDSStoreFiles(in: folder)
+        XCTAssertEqual(count, 2)
+        for directory in [folder, nested] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".DS_Store").path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("keep.txt").path))
+        }
+    }
+
+    func testUnlockPreservesHiddenAndBackupFlags() throws {
+        let folder = try temporaryFolder()
+        let file = folder.appendingPathComponent("flags")
+        try Data().write(to: file)
+        defer {
+            _ = chflags(file.path, 0)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let unrelated = UInt32(UF_HIDDEN | UF_NODUMP)
+        XCTAssertEqual(chflags(file.path, unrelated), 0)
+        let service = MacMagicSystemToolService.shared
+        try service.setFileLocked(url: file, locked: true)
+        try service.setFileLocked(url: file, locked: false)
+        var metadata = stat()
+        XCTAssertEqual(lstat(file.path, &metadata), 0)
+        XCTAssertEqual(metadata.st_flags, unrelated)
+        try service.setFileHidden(url: file, hidden: false)
+        XCTAssertEqual(lstat(file.path, &metadata), 0)
+        XCTAssertEqual(metadata.st_flags, UInt32(UF_NODUMP))
+    }
+
+    func testRenamePreservesLiteralReplacementAndExtensionlessNames() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("original")
+        try Data([1]).write(to: file)
+        let result = try MacMagicSystemToolService.shared.batchRename(
+            urls: [file], pattern: "original", replacement: "$1-{n}")
+        XCTAssertEqual(result.first?.lastPathComponent, "$1-1")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result[0].path))
+    }
+
+    func testRenameRejectsCollisionAndPathTraversal() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("first.txt")
+        let occupied = folder.appendingPathComponent("second.txt")
+        try Data([1]).write(to: file)
+        try Data([2]).write(to: occupied)
+        let service = MacMagicSystemToolService.shared
+        XCTAssertThrowsError(try service.batchRename(urls: [file], pattern: "first", replacement: "second"))
+        XCTAssertThrowsError(try service.batchRename(urls: [file], pattern: "first", replacement: "../escape"))
+        XCTAssertEqual(try Data(contentsOf: file), Data([1]))
+        XCTAssertEqual(try Data(contentsOf: occupied), Data([2]))
+        XCTAssertEqual(try service.batchRename(urls: [file], pattern: "absent", replacement: "x"), [file])
+    }
+
+    func testWebPConversionWritesRealWebPAndPreservesExistingOutput() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let source = folder.appendingPathComponent("image.png")
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: source)
+        let output = try MacMagicSystemToolService.shared.convertImage(url: source, to: .webp)
+        let bytes = try Data(contentsOf: output)
+        XCTAssertEqual(String(decoding: bytes.prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertEqual(String(decoding: bytes.dropFirst(8).prefix(4), as: UTF8.self), "WEBP")
+        XCTAssertThrowsError(try MacMagicSystemToolService.shared.convertImage(url: source, to: .webp))
+        XCTAssertEqual(try Data(contentsOf: output), bytes)
     }
 }

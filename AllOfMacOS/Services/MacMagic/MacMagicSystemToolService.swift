@@ -107,7 +107,7 @@ final class MacMagicSystemToolService {
         guard let enumerator = fileManager.enumerator(
             at: directory,
             includingPropertiesForKeys: [.nameKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles]
+            options: []
         ) else { return 0 }
 
         for case let fileURL as URL in enumerator {
@@ -158,19 +158,23 @@ final class MacMagicSystemToolService {
 
     /// Sets or clears the Darwin immutable flag (UF_IMMUTABLE / uchg).
     func setFileLocked(url: URL, locked: Bool) throws {
-        let path = url.path
-        let flags: UInt32 = locked ? UInt32(UF_IMMUTABLE) : 0
-        if chflags(path, flags) != 0 {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Failed to update file lock attribute."])
-        }
+        try updateFileFlag(url: url, flag: UInt32(UF_IMMUTABLE), enabled: locked)
     }
 
-    /// Sets or clears the Darwin hidden flag (UF_HIDDEN / hidden).
+    /// Sets or clears only UF_HIDDEN; unrelated Finder/backup flags survive.
     func setFileHidden(url: URL, hidden: Bool) throws {
-        let path = url.path
-        let flags: UInt32 = hidden ? UInt32(UF_HIDDEN) : 0
-        if chflags(path, flags) != 0 {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Failed to update file hidden attribute."])
+        try updateFileFlag(url: url, flag: UInt32(UF_HIDDEN), enabled: hidden)
+    }
+
+    private func updateFileFlag(url: URL, flag: UInt32, enabled: Bool) throws {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        let flags = enabled ? metadata.st_flags | flag : metadata.st_flags & ~flag
+        guard flags != metadata.st_flags else { return }
+        guard lchflags(url.path, flags) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
     }
 
@@ -220,7 +224,24 @@ final class MacMagicSystemToolService {
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw CocoaError(.fileReadUnknown)
         }
-        let type: UTType = format == .png ? .png : format == .jpeg ? .jpeg : format == .heic ? .heic : UTType(filenameExtension: "webp") ?? .png
+        if format == .webp {
+            guard let bytes = WebPEncoder.encode(image: image, quality: quality) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let destination = url.deletingPathExtension().appendingPathExtension("webp")
+            guard destination.standardizedFileURL != url.standardizedFileURL else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+            try bytes.write(to: destination, options: .withoutOverwriting)
+            return destination
+        }
+        let type: UTType
+        switch format {
+        case .png: type = .png
+        case .jpeg: type = .jpeg
+        case .heic: type = .heic
+        case .webp: throw CocoaError(.fileWriteUnknown) // handled by the bundled encoder above
+        }
         let base = url.deletingPathExtension().lastPathComponent
         let destinationURL = url.deletingLastPathComponent().appendingPathComponent("\(base)-\(format.rawValue).\(type.preferredFilenameExtension ?? format.rawValue)")
         guard let destination = CGImageDestinationCreateWithURL(destinationURL as CFURL, type.identifier as CFString, 1, nil) else {
@@ -265,19 +286,28 @@ final class MacMagicSystemToolService {
     }
 
     func clearDiskCache() throws -> Int64 {
-        let caches = diskCacheSize()
+        try clearDiskCache(in: diskCacheSize())
+    }
+
+    /// Explicit root keeps verification isolated from the user's real caches.
+    func clearDiskCache(in caches: URL) throws -> Int64 {
         var freed: Int64 = 0
         let items = try FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: [.isDirectoryKey, .totalFileAllocatedSizeKey])
         for item in items {
             // AOM's own live cache must survive.
-            if item.lastPathComponent.contains("allofmacos") || item.lastPathComponent.contains("AllOfMacOS") { continue }
-            freed += (try? directorySize(item)) ?? 0
-            try? FileManager.default.removeItem(at: item)
+            if item.lastPathComponent.lowercased().contains("allofmacos") { continue }
+            let size = (try? directorySize(item)) ?? 0
+            do {
+                try FileManager.default.removeItem(at: item)
+                freed += size
+            } catch { continue }
         }
         return freed
     }
 
     func directorySize(_ url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .totalFileAllocatedSizeKey])
+        guard values.isDirectory == true else { return Int64(values.totalFileAllocatedSize ?? 0) }
         var total: Int64 = 0
         guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
         for case let file as URL in enumerator {
@@ -297,27 +327,39 @@ final class MacMagicSystemToolService {
 
     // MARK: - File Management
 
-    /// Batch rename: replaces a regex/plain pattern, with an optional
-    /// sequential number token "{n}". Returns the new URLs in order.
+    /// Plain-text batch rename with an optional sequential token "{n}".
+    /// Validate the plan before moving files; surface filesystem failures.
     func batchRename(urls: [URL], pattern: String, replacement: String, startingNumber: Int = 1) throws -> [URL] {
-        let regex = try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: pattern))
         var renamed: [URL] = []
-        var number = startingNumber
-        for url in urls {
+        var targets = Set<URL>()
+        for (index, url) in urls.enumerated() {
+            guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            let (number, overflow) = startingNumber.addingReportingOverflow(index)
+            guard !overflow else { throw CocoaError(.fileWriteInvalidFileName) }
             let name = url.deletingPathExtension().lastPathComponent
             let ext = url.pathExtension
-            var newName: String
-            if let regex {
-                let range = NSRange(name.startIndex..., in: name)
-                newName = regex.stringByReplacingMatches(in: name, range: range, withTemplate: replacement)
-            } else {
-                newName = name.replacingOccurrences(of: pattern, with: replacement)
+            // This is a plain-text replacement: "$1" and backslashes are literal.
+            let newName = name.replacingOccurrences(of: pattern, with: replacement)
+                .replacingOccurrences(of: "{n}", with: String(number))
+            guard !newName.isEmpty, newName != ".", newName != "..",
+                  !newName.contains("/"), !newName.contains("\0") else {
+                throw CocoaError(.fileWriteInvalidFileName)
             }
-            newName = newName.replacingOccurrences(of: "{n}", with: String(number))
-            number += 1
-            let target = url.deletingLastPathComponent().appendingPathComponent("\(newName).\(ext)")
-            try? FileManager.default.moveItem(at: url, to: target)
+            let filename = ext.isEmpty ? newName : "\(newName).\(ext)"
+            let target = url.deletingLastPathComponent().appendingPathComponent(filename)
+            guard targets.insert(target.standardizedFileURL).inserted else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+            if target.standardizedFileURL != url.standardizedFileURL,
+               FileManager.default.fileExists(atPath: target.path) {
+                throw CocoaError(.fileWriteFileExists)
+            }
             renamed.append(target)
+        }
+        for (source, target) in zip(urls, renamed) where source.standardizedFileURL != target.standardizedFileURL {
+            try FileManager.default.moveItem(at: source, to: target)
         }
         return renamed
     }

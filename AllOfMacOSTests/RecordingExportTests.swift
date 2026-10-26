@@ -8,6 +8,25 @@ import XCTest
 
 @MainActor
 final class RecordingExportTests: XCTestCase {
+    func testCancelledGIFDoesNotPublishOutput() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("sample.mp4")
+        try await makeSyntheticVideo(at: source)
+        let task = Task {
+            // Cancel before exporting, deterministically, without a timer race.
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await RecordingExportService.gif(source: source, start: 0, end: 1, fps: 30)
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled export must throw")
+        } catch { /* AVFoundation may also report its own cancellation error. */ }
+        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertEqual(files, ["sample.mp4"], "No completed or temporary GIF may survive cancellation")
+    }
+
     func testTrimAndGIFExportCreateRealMediaWithoutChangingSource() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AOM-video-export-test-\(UUID())", isDirectory: true)

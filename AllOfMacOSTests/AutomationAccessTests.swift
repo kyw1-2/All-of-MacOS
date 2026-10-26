@@ -44,6 +44,7 @@ final class AutomationAccessTests: XCTestCase {
 
     func testAutomationLinksRejectAmbiguityAndKeepNamedAlias() {
         XCTAssertEqual(AOMAutomationLink.parse(URL(string: "aom://trigger_named?trigger_name=Hello")!), .trigger("Hello"))
+        XCTAssertEqual(AOMAutomationLink.parse(URL(string: "AOM://TRIGGER_NAMED?trigger_name=Hello")!), .trigger("Hello"))
         XCTAssertEqual(AOMAutomationLink.parse(URL(string: "aom://show-menu?name=Tools")!), .showMenu("Tools"))
         XCTAssertEqual(AOMAutomationLink.parse(URL(string: "aom://edit-menus")!), .editMenus)
         for value in ["aom://show-menu?name=one&name=two", "aom://user@trigger?name=test",

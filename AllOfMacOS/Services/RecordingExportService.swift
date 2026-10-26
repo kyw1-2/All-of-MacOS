@@ -297,9 +297,16 @@ enum RecordingExportService {
         guard selected.reduce(0, { $0 + $1.duration }) <= 120.5, (1...30).contains(fps) else {
             throw ExportError.failed("GIFs support up to 120 seconds at 1–30 fps.")
         }
-        return try await Task.detached(priority: .userInitiated) {
-            try generateGIF(source: source, clips: selected, fps: fps, studio: studio)
-        }.value
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try generateGIF(source: source, clips: selected, fps: fps, studio: studio)
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
     }
 
     private static func generateGIF(source: URL, clips: [AOMStudioClip], fps: Int,
@@ -348,9 +355,11 @@ enum RecordingExportService {
                 CGImageDestinationAddImage(destination, frame, properties as CFDictionary)
             }
         }
+        try Task.checkCancellation()
         guard CGImageDestinationFinalize(destination) else {
             throw ExportError.failed("Failed to finalize GIF frames.")
         }
+        try Task.checkCancellation()
         try FileManager.default.moveItem(at: temporary, to: target)
         return target
     }

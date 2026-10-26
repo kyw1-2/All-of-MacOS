@@ -2,6 +2,11 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.0.7
+
+File utility fixes, real bundled WebP conversion, cancellable GIF exports, and
+consistent automation URL aliases. See [audit findings and scope](docs/audit-3.0.7.md).
+
 ## Version 3.0.0
 
 A design overhaul across the whole app. AOM now ships with its real build SDK, so macOS 26

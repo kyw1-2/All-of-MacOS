@@ -1,3 +1,14 @@
+## 3.0.7 — File utilities and export reliability (2026-10-26)
+
+- Recursive .DS_Store cleanup now visits hidden files and folders.
+- Lock/unlock and hide/show preserve unrelated file flags and operate on the selected symlink itself.
+- Batch renaming validates names and collisions before moving files, keeps literal replacement text and extensionless names, and reports filesystem failures.
+- System Tools WebP conversion uses the bundled codec and refuses to overwrite an existing output.
+- Cache cleanup counts only successful removals, includes top-level files, and preserves AOM caches regardless of name casing. Tests use disposable cache roots.
+- Cancelling GIF export cancels its background worker and removes temporary output.
+- Automation URL aliases accept mixed-case host names consistently.
+- Adds regressions for these behaviors. See docs/audit-3.0.7.md for scope and verification limits.
+
 # All of MacOS — Changelog
 
 A concise, English-language overview of user-facing changes. Release assets, build identifiers, checksums, signing information and version-specific verification notes remain authoritative in [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases).
