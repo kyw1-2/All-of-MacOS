@@ -98,7 +98,7 @@ final class AudioPipelineTests: XCTestCase {
 
     func testOutputBoostUsesTheCombinedSignalAndCanBeDisabled() {
         let bus = AppAudioRenderBus()
-        bus.setBoostLevel(3)
+        bus.setBoostLevel(1)
         for _ in 0..<2 {
             bus.add(id: UUID()) { frames, output in
                 let buffers = UnsafeMutableAudioBufferListPointer(output)
@@ -106,17 +106,23 @@ final class AudioPipelineTests: XCTestCase {
                 for i in 0..<(frames * 2) { data[i] = 0.15 }
             }
         }
-        let reference = AudioAdaptiveBoost(sampleRate: 48000)
-        var referenceLeft: Float = 0, referenceRight: Float = 0
+        // Reference: the summed 0.3 signal through Magic Boost and the limiter.
+        let boost = AudioMagicBoost(sampleRate: 48000)
+        let limiter = AudioLookaheadLimiter(sampleRate: 48000, ceiling: AppAudioRenderBus.ceiling)
+        var referenceLeft = [Float](repeating: 0.3, count: 480), referenceRight = referenceLeft
         var output = [Float](repeating: 0, count: 960)
         for _ in 0..<100 {
             withStereoBuffer(&output) { bus.render(frames: 480, output: $0) }
-            for _ in 0..<480 {
-                referenceLeft = 0.3; referenceRight = 0.3
-                reference.process(left: &referenceLeft, right: &referenceRight, level: 3)
+            for i in 0..<480 { referenceLeft[i] = 0.3; referenceRight[i] = 0.3 }
+            referenceLeft.withUnsafeMutableBufferPointer { l in
+                referenceRight.withUnsafeMutableBufferPointer { r in
+                    boost.process(left: l.baseAddress!, right: r.baseAddress!, frames: 480, enabled: true)
+                    limiter.process(left: l.baseAddress!, right: r.baseAddress!, frames: 480)
+                }
             }
         }
-        XCTAssertEqual(output.last!, referenceLeft, accuracy: 0.001)
+        XCTAssertEqual(output.last!, referenceLeft.last!, accuracy: 0.001)
+        XCTAssertGreaterThan(output.last!, 0.33, "Magic Boost raises the combined signal")
         bus.setBoostLevel(0)
         for _ in 0..<100 { withStereoBuffer(&output) { bus.render(frames: 480, output: $0) } }
         XCTAssertEqual(output.last!, 0.3, accuracy: 0.001)
@@ -138,9 +144,10 @@ final class AudioPipelineTests: XCTestCase {
         }
         started.signal()
         var samples = [Float](repeating: 0, count: 128)
-        for _ in 0..<1000 {
+        for block in 0..<1000 {
             withStereoBuffer(&samples) { bus.render(frames: 64, output: $0) }
-            XCTAssertTrue(samples.allSatisfy { $0.isFinite && $0 > 0 })
+            // The first block is the limiter's 64-frame lookahead latency.
+            if block > 0 { XCTAssertTrue(samples.allSatisfy { $0.isFinite && $0 > 0 }) }
         }
         XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
     }
@@ -345,14 +352,169 @@ final class AudioPipelineTests: XCTestCase {
     }
 
     func testLimiterKeepsFiniteStereoOutputWithInvalidOrExtremeSamples() {
-        let limiter = AudioPeakLimiter()
+        let limiter = AudioLookaheadLimiter(sampleRate: 48000, ceiling: 0.98)
+        var left: [Float] = [], right: [Float] = []
         for value in [Float.nan, .infinity, -.infinity, .greatestFiniteMagnitude, 2, -2, 0.2] {
-            var left = value, right = value
-            limiter.process(left: &left, right: &right)
-            XCTAssertTrue(left.isFinite && right.isFinite)
-            XCTAssertLessThanOrEqual(abs(left), 0.981)
-            XCTAssertEqual(left, right)
+            left += Array(repeating: value, count: 100); right += Array(repeating: value, count: 100)
         }
+        // 100 ms: the release reaches -20 dB of the remaining distance every 25 ms.
+        left += Array(repeating: 0.2, count: 4800); right += Array(repeating: 0.2, count: 4800)
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                limiter.process(left: l.baseAddress!, right: r.baseAddress!, frames: l.count)
+            }
+        }
+        for (l, r) in zip(left, right) {
+            XCTAssertTrue(l.isFinite && r.isFinite)
+            XCTAssertLessThanOrEqual(abs(l), 0.98)
+            XCTAssertEqual(l, r)
+        }
+        XCTAssertEqual(left.last!, 0.2, accuracy: 0.02, "The limiter releases back to unity")
+    }
+
+    private func sine(_ frequency: Double, amplitude: Float, frames: Int, start: Int = 0) -> [Float] {
+        (0..<frames).map { Float(sin(2 * .pi * frequency * Double(start + $0) / 48000)) * amplitude }
+    }
+
+    private func amplitude(_ signal: ArraySlice<Float>, frequency: Double) -> Double {
+        var real = 0.0, imaginary = 0.0
+        for (index, sample) in signal.enumerated() {
+            let phase = 2 * Double.pi * frequency * Double(index) / 48000
+            real += Double(sample) * cos(phase); imaginary += Double(sample) * sin(phase)
+        }
+        return 2 * hypot(real, imaginary) / Double(signal.count)
+    }
+
+    private func boosted(_ input: [Float], boost: AudioMagicBoost, enabled: Bool = true) -> [Float] {
+        var left = input, right = input
+        var offset = 0
+        while offset < input.count {
+            let count = min(480, input.count - offset)
+            left.withUnsafeMutableBufferPointer { l in
+                right.withUnsafeMutableBufferPointer { r in
+                    boost.process(left: l.baseAddress! + offset, right: r.baseAddress! + offset, frames: count, enabled: enabled)
+                }
+            }
+            offset += count
+        }
+        return left
+    }
+
+    func testMagicBoostLooksAheadSoALoudEntranceIsNeverClipped() {
+        // Two seconds of quiet audio let the gain climb, then a full-scale tone
+        // starts abruptly: lookahead must pull the gain down before it is heard.
+        let quiet = sine(220, amplitude: 0.02, frames: 96000)
+        let loud = sine(1000, amplitude: 1.0, frames: 48000, start: 96000)
+        let output = boosted(quiet + loud, boost: AudioMagicBoost(sampleRate: 48000))
+        let peak = output.map(abs).max()!
+        print("Magic Boost loud entrance peak = \(peak)")
+        XCTAssertLessThan(peak, 0.95, "No overshoot: the detector runs 512 frames ahead of the output")
+        XCTAssertTrue(output.allSatisfy(\.isFinite))
+        let settled = output[(96000 + 24000)...]
+        let harmonic = amplitude(settled, frequency: 3000) / amplitude(settled, frequency: 1000)
+        XCTAssertLessThan(harmonic, 0.01, "Gain riding must not distort a steady tone")
+    }
+
+    func testMagicBoostRaisesQuietAudioWithoutClimbingOverSilence() {
+        let boost = AudioMagicBoost(sampleRate: 48000)
+        let quiet = sine(440, amplitude: 0.05, frames: 96000)
+        let raised = boosted(quiet, boost: boost)
+        func rms(_ x: ArraySlice<Float>) -> Float { sqrt(x.map { $0 * $0 }.reduce(0, +) / Float(x.count)) }
+        XCTAssertGreaterThan(rms(raised[48000...]), rms(quiet[48000...]) * 3, "Quiet passages get tremendous volume")
+        let gainBeforeSilence = boost.gain
+        _ = boosted([Float](repeating: 0, count: 48000), boost: boost)
+        XCTAssertLessThan(boost.gain - gainBeforeSilence, 0.5, "Digital silence must not ramp the gain up")
+        let resumed = boosted(sine(440, amplitude: 0.8, frames: 24000), boost: boost)
+        XCTAssertLessThan(resumed.map(abs).max()!, 0.95, "Sound returning after silence is not blasted")
+    }
+
+    func testMagicBoostEnablesAndDisablesWithoutAJump() {
+        let boost = AudioMagicBoost(sampleRate: 48000)
+        let input = sine(200, amplitude: 0.3, frames: 48000)
+        var output: [Float] = []
+        for block in 0..<100 {
+            let slice = Array(input[(block * 480)..<min(input.count, block * 480 + 480)])
+            output += boosted(slice, boost: boost, enabled: block >= 10 && block < 60)
+        }
+        let maximumStep = zip(output.dropFirst(), output).map { abs($0 - $1) }.max()!
+        let inputStep = zip(input.dropFirst(), input).map { abs($0 - $1) }.max()!
+        XCTAssertLessThan(maximumStep, inputStep * 4, "Crossfades, not clicks")
+        XCTAssertFalse(boost.isActive, "Disabled Magic Boost returns to a zero-latency bypass")
+        XCTAssertEqual(output.last!, input.last!, accuracy: 0.000_01)
+    }
+
+    func testLookaheadLimiterHoldsTheCeilingWithoutFlatteningPeaks() {
+        let limiter = AudioLookaheadLimiter(sampleRate: 48000, ceiling: 0.977)
+        var left = sine(1000, amplitude: 2.0, frames: 48000)
+        var right = left.map { $0 * 0.5 }
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                limiter.process(left: l.baseAddress!, right: r.baseAddress!, frames: l.count)
+            }
+        }
+        XCTAssertLessThanOrEqual(left.map(abs).max()!, 0.977)
+        let settled = left[24000...]
+        let harmonic = amplitude(settled, frequency: 3000) / amplitude(settled, frequency: 1000)
+        print("Lookahead limiter +6 dB sine: third harmonic = \(harmonic * 100)%")
+        XCTAssertLessThan(harmonic, 0.003, "A lookahead gain curve does not clip the waveform")
+        for (l, r) in zip(left[24000...], right[24000...]) { XCTAssertEqual(r, l * 0.5, accuracy: 0.00001) }
+    }
+
+    func testVolumeOverdriveReaches400PercentAndLimitsPeaks() {
+        func overdriven(_ amplitude: Float, multiplier: Float) -> [Float] {
+            let stage = AudioVolumeOverdrive(sampleRate: 48000, chunk: 512)
+            var left = sine(500, amplitude: amplitude, frames: 48000), right = left
+            var offset = 0
+            while offset < left.count {
+                let count = min(512, left.count - offset)
+                left.withUnsafeMutableBufferPointer { l in
+                    right.withUnsafeMutableBufferPointer { r in
+                        stage.process(left: l.baseAddress! + offset, right: r.baseAddress! + offset, frames: count, multiplier: multiplier)
+                    }
+                }
+                offset += count
+            }
+            return left
+        }
+        let quiet = overdriven(0.1, multiplier: 4)
+        XCTAssertEqual(Double(quiet[24000...].map(abs).max()!), 0.4, accuracy: 0.01, "400 % is four times the amplitude")
+        let hot = overdriven(0.5, multiplier: 4)
+        XCTAssertLessThanOrEqual(hot.map(abs).max()!, 0.995, "Overdriven peaks are limited, not clipped")
+        let unity = overdriven(0.5, multiplier: 1)
+        XCTAssertEqual(unity, sine(500, amplitude: 0.5, frames: 48000), "100 % is an exact bypass")
+    }
+
+    func testStoredVolumeAbove100PercentMigratesToVolumeOverdrive() {
+        let defaults = UserDefaults(suiteName: "aom.test.overdrive.\(UUID().uuidString)")!
+        defaults.set(1.5, forKey: "AOMAudioGain_test.app")
+        defaults.set(0.4, forKey: "AOMAudioGain_test.quiet")
+        AppAudioPreferences.migrateToSoundSourceModel(defaults: defaults)
+        XCTAssertEqual(defaults.double(forKey: "AOMAudioGain_test.app"), 1)
+        XCTAssertEqual(AppAudioPreferences.overdrive(bundleID: "test.app", defaults: defaults), 1.5)
+        XCTAssertEqual(defaults.double(forKey: "AOMAudioGain_test.quiet"), 0.4, accuracy: 0.0001)
+        XCTAssertEqual(AppAudioPreferences.overdrive(bundleID: "test.quiet", defaults: defaults), 1)
+        XCTAssertTrue(AppAudioPreferences.setGain(1.8, bundleID: "test.auto", defaults: defaults))
+        XCTAssertEqual(defaults.double(forKey: "AOMAudioGain_test.auto"), 1)
+        XCTAssertEqual(AppAudioPreferences.overdrive(bundleID: "test.auto", defaults: defaults), 1.8, accuracy: 0.0001)
+    }
+
+    func testRealtimeAirPlayMixClockKeepsTheBridgeFed() {
+        let bus = AppAudioRenderBus()
+        bus.add(id: UUID()) { frames, output in
+            let data = UnsafeMutableAudioBufferListPointer(output)[0].mData!.assumingMemoryBound(to: Float.self)
+            for i in 0..<(frames * 2) { data[i] = 0.1 }
+        }
+        let bridge = AirPlayPCMBridge()
+        bridge.configure(outputRate: 48000, deviceFrames: 128)
+        let thread = AirPlayMixThread(bus: bus, bridge: bridge)
+        thread.start()
+        Thread.sleep(forTimeInterval: 0.5)
+        thread.stop()
+        let captured = bridge.statistics["capturedFrames"] as? UInt64 ?? 0
+        print("Realtime mix thread: \(captured) frames in 0.5 s, realtime=\(thread.isRealtime), max delay=\(Double(thread.maximumMixDelay.load()) / 1e6) ms")
+        XCTAssertGreaterThan(captured, 19_200, "At least 0.4 s of audio must be produced in 0.5 s")
+        XCTAssertLessThan(captured, 33_600, "The clock does not run ahead of real time")
+        XCTAssertEqual(thread.delayedMixResets.load(), 0)
     }
 }
 

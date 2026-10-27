@@ -40,14 +40,18 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             applyEQ()
         }
     }
-    @Published var allAppsBoostLevel: Int {
-        didSet {
-            guard allAppsBoostLevel != oldValue else { return }
-            allAppsBoostLevel = min(3, max(1, allAppsBoostLevel))
-            UserDefaults.standard.set(allAppsBoostLevel, forKey: "AOMAudioMasterBoostLevel")
-            applyEQ()
-        }
+    /// Favourites stay at the top of the list in the order they were added
+    /// (SoundSource), even while silent.
+    @Published private(set) var favorites: [String] = UserDefaults.standard.stringArray(forKey: "AOMAudioFavorites") ?? []
+    /// Also list running apps that have not played audio recently.
+    @Published var showAllApps: Bool = UserDefaults.standard.bool(forKey: "AOMAudioShowAllApps") {
+        didSet { UserDefaults.standard.set(showAllApps, forKey: "AOMAudioShowAllApps") }
     }
+    @Published private(set) var airPlayRecovering = false
+    /// Apps that played within the last minute stay listed (SoundSource).
+    private var lastActive: [String: Date] = [:]
+    private var timedMutes: [String: DispatchWorkItem] = [:]
+    @Published private(set) var timedMuteEnds: [String: Date] = [:]
     @Published var eqGains: [Float] = AudioEQ.presets["Flat"]!
     @Published var eqEnabled: Bool {
         didSet {
@@ -87,8 +91,6 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         _airPlayProcessingEnabled = Published(initialValue:
             UserDefaults.standard.object(forKey: "AOMAudioAirPlayProcessingEnabled") as? Bool ?? true)
         _allAppsBoostEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled"))
-        let savedBoostLevel = UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2
-        _allAppsBoostLevel = Published(initialValue: min(3, max(1, savedBoostLevel)))
         _eqEnabled = Published(initialValue: UserDefaults.standard.object(forKey: "AOMAudioEQEnabled") as? Bool ?? false)
         let preset = UserDefaults.standard.string(forKey: "AOMAudioEQPreset")
         _eqPreset = Published(initialValue: preset ?? "Flat")
@@ -139,6 +141,107 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         if airPlayBypassed != engine.airPlayBypassed { airPlayBypassed = engine.airPlayBypassed }
         if airPlayProcessingActive != engine.airPlayProcessingActive { airPlayProcessingActive = engine.airPlayProcessingActive }
         if airPlayPreparing != engine.airPlayPreparing { airPlayPreparing = engine.airPlayPreparing }
+        if airPlayRecovering != engine.airPlayRecovering { airPlayRecovering = engine.airPlayRecovering }
+        let now = Date()
+        for app in updated where app.isPlaying { lastActive[app.bundleID] = now }
+    }
+
+    // MARK: SoundSource-style application list
+
+    func isFavorite(_ bundleID: String) -> Bool { favorites.contains(bundleID) }
+
+    func toggleFavorite(_ bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        if let index = favorites.firstIndex(of: bundleID) { favorites.remove(at: index) }
+        else { favorites.append(bundleID) }
+        UserDefaults.standard.set(favorites, forKey: "AOMAudioFavorites")
+        if #available(macOS 14.2, *), isFavorite(bundleID) { AppAudioEngine.shared.addCustomApp(bundleID: bundleID) }
+        refresh()
+    }
+
+    func moveFavorite(from source: IndexSet, to destination: Int) {
+        favorites.move(fromOffsets: source, toOffset: destination)
+        UserDefaults.standard.set(favorites, forKey: "AOMAudioFavorites")
+    }
+
+    /// Recently played within 60 s, still playing, or carrying settings.
+    func isActive(_ app: AppAudioState, now: Date = Date()) -> Bool {
+        if app.isPlaying || app.tapped && app.peakLevel > 0 { return true }
+        if let last = lastActive[app.bundleID], now.timeIntervalSince(last) < 60 { return true }
+        return false
+    }
+
+    func hasCustomSettings(_ app: AppAudioState) -> Bool {
+        abs(app.gain - 1) > 0.001 || app.muted || app.outputDeviceUID != nil || app.magicBoost ||
+            app.overdrive > 1.0001 || appEQEnabled(app.bundleID)
+    }
+
+    /// Favourites first (in their order), then apps playing or adjusted,
+    /// then — only when asked — everything else that is running.
+    func listedApps(matching query: String = "") -> (favorites: [AppAudioState], active: [AppAudioState], other: [AppAudioState]) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pool = trimmed.isEmpty ? apps : apps.filter {
+            $0.name.localizedCaseInsensitiveContains(trimmed) || $0.bundleID.localizedCaseInsensitiveContains(trimmed)
+        }
+        var seen = Set<String>()
+        var favoriteRows: [AppAudioState] = []
+        for bundleID in favorites {
+            if let app = pool.first(where: { $0.bundleID == bundleID }), seen.insert(app.id).inserted { favoriteRows.append(app) }
+        }
+        let rest = pool.filter { !seen.contains($0.id) }
+        let now = Date()
+        let active = rest.filter { isActive($0, now: now) || hasCustomSettings($0) }
+            .sorted { ($0.isPlaying ? 0 : 1, $0.name) < ($1.isPlaying ? 0 : 1, $1.name) }
+        let activeIDs = Set(active.map(\.id))
+        let other = (showAllApps || !trimmed.isEmpty) ? rest.filter { !activeIDs.contains($0.id) } : []
+        return (favoriteRows, active, other)
+    }
+
+    // MARK: Volume Overdrive and Timed Mute
+
+    func overdrive(_ bundleID: String) -> Float { AppAudioPreferences.overdrive(bundleID: bundleID) }
+
+    func setOverdrive(_ value: Float, bundleID: String) {
+        guard #available(macOS 14.2, *), AppAudioPreferences.setOverdrive(value, bundleID: bundleID) else { return }
+        objectWillChange.send()
+        AppAudioEngine.shared.updateEffects()
+        requestReload()
+    }
+
+    /// SoundSource's Timed Mute: silence an app for a while (ads), then fade
+    /// it back in over about a second.
+    func timedMute(bundleID: String, seconds: TimeInterval) {
+        guard #available(macOS 14.2, *), !bundleID.isEmpty, seconds > 0 else { return }
+        timedMutes[bundleID]?.cancel()
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "AOMAudioMute_\(bundleID)") { _ = toggleMute(bundleID: bundleID) }
+        timedMuteEnds[bundleID] = Date().addingTimeInterval(seconds)
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.endTimedMute(bundleID: bundleID) }
+        }
+        timedMutes[bundleID] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    func cancelTimedMute(bundleID: String) {
+        guard timedMutes[bundleID] != nil else { return }
+        timedMutes.removeValue(forKey: bundleID)?.cancel()
+        endTimedMute(bundleID: bundleID)
+    }
+
+    private func endTimedMute(bundleID: String) {
+        guard #available(macOS 14.2, *) else { return }
+        timedMutes.removeValue(forKey: bundleID)
+        timedMuteEnds.removeValue(forKey: bundleID)
+        let target = AppAudioEngine.storedGain(bundleID: bundleID)
+        // Fade in: start silent, unmute, then step back to the saved volume.
+        _ = AppAudioPreferences.setGain(0, bundleID: bundleID)
+        if UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)") { _ = toggleMute(bundleID: bundleID) }
+        for step in 1...10 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.1) { [weak self] in
+                MainActor.assumeIsolated { self?.setGain(target * Float(step) / 10, bundleID: bundleID) }
+            }
+        }
     }
 
     func refreshMeters() {
@@ -214,12 +317,15 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         let engine = AppAudioEngine.shared
         engine.addCustomApp(bundleID: bundleID)
         let defaults = UserDefaults.standard
-        let gainKey = "AOMAudioGain_\(bundleID)", muteKey = "AOMAudioMute_\(bundleID)"
+        let muteKey = "AOMAudioMute_\(bundleID)"
         switch action.actionType {
         case .setAppVolume:
             let value = action.parameters.levelPercent ?? 100
-            guard value.isFinite, (0...200).contains(value) else { return false }
-            defaults.set(value / 100, forKey: gainKey)
+            guard value.isFinite, (0...400).contains(value) else { return false }
+            // Up to 100 % is volume; above is Volume Overdrive (SoundSource).
+            _ = AppAudioPreferences.setGain(Float(min(value, 100) / 100), bundleID: bundleID)
+            _ = AppAudioPreferences.setOverdrive(Float(max(value, 100) / 100), bundleID: bundleID)
+            engine.updateEffects()
         case .setAppAudioOutput:
             let uid = action.parameters.audioOutputUID ?? ""
             engine.setRoute(uid: uid.isEmpty ? nil : uid, bundleID: bundleID)
@@ -241,20 +347,6 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         guard #available(macOS 14.2, *) else { return }
         AppAudioEngine.shared.updateEffects()
         requestReload()
-    }
-
-    func appBoostLevel(_ bundleID: String) -> Int {
-        let saved = UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(bundleID)") as? Int ?? 2
-        return min(3, max(1, saved))
-    }
-
-    func setAppBoostLevel(_ level: Int, bundleID: String) {
-        guard !bundleID.isEmpty else { return }
-        let value = min(3, max(1, level))
-        guard appBoostLevel(bundleID) != value else { return }
-        objectWillChange.send()
-        UserDefaults.standard.set(value, forKey: "AOMAudioBoostLevel_\(bundleID)")
-        applyEQ()
     }
 
     func appEQGains(_ bundleID: String) -> [Float] {
@@ -482,38 +574,25 @@ private struct AppAudioMixerView: View {
     }
 }
 
-/// Output effects remain independent from each application's boost setting.
+/// Output Magic Boost, as in SoundSource: one switch, no strength levels.
+/// It listens 12 ms ahead to raise quiet passages without overdriving loud
+/// ones; app boosts run first and are independent.
 struct MasterBoostControls: View {
     @ObservedObject var service: AppAudioMixerService
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Button {
-                    service.allAppsBoostEnabled.toggle()
-                } label: {
-                    Label("Boost All Apps", systemImage: service.allAppsBoostEnabled ? "sparkles" : "waveform")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.bordered)
-                .tint(service.allAppsBoostEnabled ? Color.indigo : Color.secondary)
-                .accessibilityValue(service.allAppsBoostEnabled ? "On" : "Off")
-                .help("Enhance quiet audio across all managed applications")
-                Spacer(minLength: 8)
-                Picker("Output boost strength", selection: $service.allAppsBoostLevel) {
-                    Text("Low").tag(1)
-                    Text("Medium").tag(2)
-                    Text("High").tag(3)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: 220)
-                .disabled(!service.allAppsBoostEnabled)
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: $service.allAppsBoostEnabled) {
+                Label("Magic Boost", systemImage: "sparkles")
             }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(.indigo)
+            .accessibilityLabel("Magic Boost for the output")
+            .help("Richer, fuller sound: quiet passages are raised while loud audio is kept from overdriving")
             Text(service.allAppsBoostEnabled
-                 ? "Boosts the mix on each output. App boosts run first; using both can increase loudness."
-                 : "Raise quiet passages on each output. App boosts remain separate.")
+                 ? "Listening ahead on each output to lift quiet passages without distortion."
+                 : "Lifts quiet passages on every output without overdriving loud audio.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -639,12 +718,12 @@ struct AppAudioRow: View {
         self.app = app
         self.onGain = onGain
         self.onMute = onMute
-        _gain = State(initialValue: min(max(app.gain, 0), 2))
+        _gain = State(initialValue: min(max(app.gain, 0), 1))
     }
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(app.name).font(.system(size: 12)).lineLimit(1)
+            Text(app.name).font(.callout).lineLimit(1)
             Spacer(minLength: 8)
             Button { onMute() } label: {
                 Image(systemName: app.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -653,7 +732,7 @@ struct AppAudioRow: View {
             Slider(value: Binding(get: { Double(gain) }, set: { newValue in
                 gain = Float(newValue)
                 onGain(gain)
-            }), in: 0...2, step: 0.05)
+            }), in: 0...1, step: 0.01)
                 .frame(width: 130)
                 .controlSize(.small)
             Text("\(Int((gain * 100).rounded()))%")
@@ -664,7 +743,7 @@ struct AppAudioRow: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onMute() }
         .onChange(of: app.gain) { _, newGain in
-            gain = min(max(newGain, 0), 2)
+            gain = min(max(newGain, 0), 1)
         }
     }
 }

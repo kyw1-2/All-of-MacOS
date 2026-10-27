@@ -95,7 +95,7 @@ struct ClipboardStackView: View {
         }
         .onChange(of: state.stack.count) { _, _ in controller.fitStackPanel() }
         .frame(width: 264)
-        .aomFloatingSurface(.panel, radius: AOMRadius.hud)
+        .aomFloatingSurface(.panel, radius: AOMRadius.panel)
     }
 
     private func stackRow(_ entry: ClipboardEntry, position index: Int, ordinal: Int) -> some View {

@@ -286,7 +286,7 @@ private struct WindowSwitcherView: View {
             }
         }
         .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .aomFloatingSurface(.panel, radius: AOMRadius.panel)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5))
         .shadow(radius: 18, y: 6)

@@ -1590,12 +1590,17 @@ struct ClipboardPanelView: View {
             guard let id, let provider = providers.first(where: {
                 $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.entryType)
             }) else { return false }
+            // Paste: dragging a card from one pinboard onto another moves it;
+            // holding ⌥ copies. Dragging out of History always adds.
+            let sourceBoard = state.board
+            let copies = NSEvent.modifierFlags.contains(.option)
             provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.entryType) {
                 data, _ in
                 guard let data, let raw = String(data: data, encoding: .utf8),
                       let entryID = UUID(uuidString: raw) else { return }
                 Task { @MainActor in
                     store.pin(entryID: entryID, boardID: id)
+                    if let sourceBoard, sourceBoard != id, !copies { store.unpin(entryID: entryID, boardID: sourceBoard) }
                 }
             }
             return true
@@ -2992,22 +2997,11 @@ private enum PasteClipboardPalette {
 
 /// Paste 6.5 on macOS 26 uses a Liquid Glass shelf (radius 26, 8 pt inset);
 /// earlier systems keep the translucent popover material.
+/// The shelf uses the shared floating material, so it gains the same
+/// Reduce Transparency / Increase Contrast fallbacks as every other panel.
 private struct PastePanelBackground: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content
-                .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active)
-                    .opacity(0.55))
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        } else {
-            content
-                .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow, state: .active))
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
-                    .allowsHitTesting(false))
-        }
+        content.aomFloatingSurface(.panel, radius: AOMRadius.panel + 4)
     }
 }
 

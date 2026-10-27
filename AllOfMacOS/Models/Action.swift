@@ -276,6 +276,49 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case disableTriggersForSeconds = "Disable Triggers For X Seconds"
     case resumeTriggers = "Resume Triggers"
 
+    // MARK: Added in 3.1.0 (BetterTouchTool / Paste / CleanShot parity). Raw values are persisted strings.
+
+    // Selected text
+    case saveSelectedText = "Save Selected Text to Variable"
+    case transformSelectedText = "Transform Selected Text"
+    case searchSelectedText = "Search Web for Selected Text"
+    case speakSelectedText = "Speak Selected Text"
+    // Clipboard
+    case pasteClipboardItem = "Paste Clipboard History Item"
+    case transformClipboardText = "Transform Clipboard Text"
+    case saveClipboard = "Save Clipboard Contents"
+    case restoreClipboard = "Restore Clipboard Contents"
+    case clearClipboard = "Clear Clipboard"
+    // Menus and apps
+    case chooseMenuItem = "Choose Menu Bar Item"
+    case showContextMenu = "Show Context Menu"
+    case activatePreviousApp = "Activate Previous App"
+    case quitAppUnderCursor = "Quit App Under Cursor"
+    case hideAppUnderCursor = "Hide App Under Cursor"
+    // Windows
+    case activateWindowByTitle = "Activate Window by Title"
+    case minimizeAppWindows = "Minimize All Windows of Front App"
+    case gatherWindowsToPointerDisplay = "Gather Windows to Pointer Display"
+    case tileFrontWindowsSideBySide = "Tile Two Front Windows Side by Side"
+    // System
+    case switchInputSource = "Switch Keyboard Input Source"
+    case setSoundInput = "Set Sound Input"
+    case toggleDisplayMirroring = "Toggle Display Mirroring"
+    case ejectAllDisks = "Eject All Disks"
+    case toggleDockAutoHide = "Toggle Dock Auto-Hide"
+    case bluetoothDevice = "Connect / Disconnect Bluetooth Device"
+    case setWiFiPower = "Turn Wi-Fi On / Off"
+    case showEmojiPicker = "Show Emoji & Symbols"
+    // Utility
+    case recognizeScreenText = "Find Text on Screen (OCR)"
+    case sendMIDI = "Send MIDI Message"
+    case sendOSC = "Send OSC Message"
+    case pickScreenColor = "Pick Color from Screen"
+    case hapticFeedback = "Haptic Feedback"
+    case postDistributedNotification = "Post Distributed Notification"
+    // Screen capture
+    case restartRecording = "Restart Screen Recording"
+
     var id: String { rawValue }
 
     var category: ActionCategory {
@@ -343,6 +386,20 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
              .askForInput, .debounce, .stopAllSequences, .enableTrigger, .disableTrigger, .waitFor,
              .disableTriggersForSeconds, .resumeTriggers:
             return .controlFlow
+        case .saveSelectedText, .transformSelectedText, .searchSelectedText, .speakSelectedText:
+            return .utilityActions
+        case .pasteClipboardItem, .transformClipboardText, .saveClipboard, .restoreClipboard, .clearClipboard:
+            return .clipboard
+        case .chooseMenuItem, .showContextMenu: return .keyboardActions
+        case .activatePreviousApp, .quitAppUnderCursor, .hideAppUnderCursor: return .applicationControl
+        case .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide:
+            return .windowManagement
+        case .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .ejectAllDisks, .toggleDockAutoHide,
+             .bluetoothDevice, .setWiFiPower, .showEmojiPicker:
+            return .systemActions
+        case .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification:
+            return .utilityActions
+        case .restartRecording: return .screenCapture
         }
     }
 
@@ -515,6 +572,38 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .waitFor: return "hourglass.bottomhalf.filled"
         case .disableTriggersForSeconds: return "pause.circle"
         case .resumeTriggers: return "play.circle"
+        case .saveSelectedText: return "text.badge.plus"
+        case .transformSelectedText, .transformClipboardText: return "textformat"
+        case .searchSelectedText: return "magnifyingglass"
+        case .speakSelectedText: return "text.bubble"
+        case .pasteClipboardItem: return "list.number"
+        case .saveClipboard: return "tray.and.arrow.down"
+        case .restoreClipboard: return "tray.and.arrow.up"
+        case .clearClipboard: return "clear"
+        case .chooseMenuItem: return "filemenu.and.selection"
+        case .showContextMenu: return "contextualmenu.and.cursorarrow"
+        case .activatePreviousApp: return "arrow.uturn.left.circle"
+        case .quitAppUnderCursor: return "xmark.app"
+        case .hideAppUnderCursor: return "eye.slash"
+        case .activateWindowByTitle: return "macwindow.badge.plus"
+        case .minimizeAppWindows: return "dock.arrow.down.rectangle"
+        case .gatherWindowsToPointerDisplay: return "rectangle.2.swap"
+        case .tileFrontWindowsSideBySide: return "rectangle.split.2x1"
+        case .switchInputSource: return "globe"
+        case .setSoundInput: return "mic.badge.plus"
+        case .toggleDisplayMirroring: return "rectangle.on.rectangle"
+        case .ejectAllDisks: return "eject"
+        case .toggleDockAutoHide: return "dock.rectangle"
+        case .bluetoothDevice: return "antenna.radiowaves.left.and.right"
+        case .setWiFiPower: return "wifi"
+        case .showEmojiPicker: return "face.smiling"
+        case .recognizeScreenText: return "text.magnifyingglass"
+        case .sendMIDI: return "pianokeys"
+        case .sendOSC: return "network"
+        case .pickScreenColor: return "eyedropper"
+        case .hapticFeedback: return "hand.tap"
+        case .postDistributedNotification: return "dot.radiowaves.left.and.right"
+        case .restartRecording: return "arrow.counterclockwise.circle"
         }
     }
 
@@ -702,6 +791,39 @@ struct ActionParameters: Codable, Hashable {
     var waitContinueOnTimeout: Bool?
     /// Disable Triggers For X Seconds.
     var pauseSeconds: Double?
+
+    // MARK: Added in 3.1.0 (parity actions). Optional so older presets decode unchanged.
+
+    /// Transform Selected / Clipboard Text: a `TextTransform` raw value.
+    var textTransform: String?
+    /// Choose Menu Bar Item: "File > Export > PDF…".
+    var menuPath: String?
+    /// Paste Clipboard History Item: 1 is the most recent item.
+    var clipboardItemIndex: Int?
+    /// Paste Clipboard History Item: a pinboard name; nil means the whole history.
+    var pinboardName: String?
+    var pastePlainText: Bool?
+    /// Activate Window by Title. Separate from `windowTitleContains`, which is
+    /// a run-only-when filter on the frontmost window.
+    var windowTitleQuery: String?
+    /// Switch Keyboard Input Source: TIS identifier or name; nil selects the next source.
+    var inputSourceID: String?
+    var audioInputUID: String?
+    /// Bluetooth device name or address (xx-xx-xx-xx-xx-xx).
+    var bluetoothDevice: String?
+    /// "toggle" (default), "on" or "off": Wi-Fi, Dock auto-hide, Bluetooth connection.
+    var switchMode: String?
+    /// Send MIDI Message: noteOn, noteOff, controlChange or programChange.
+    var midiMessage: String?
+    var midiChannel: Int?   // 1…16
+    var midiNumber: Int?    // note, controller or program, 0…127
+    var midiValue: Int?     // velocity or controller value, 0…127
+    var oscHost: String?
+    var oscPort: Int?
+    var oscAddress: String?
+    var notificationName: String?
+    /// Haptic Feedback: generic, alignment or levelChange.
+    var hapticPattern: String?
 
     init() {}
 }

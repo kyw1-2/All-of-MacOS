@@ -149,7 +149,7 @@ extension ActionType {
         case .showAudioMixer: return "Opens the per-app audio mixer panel (macOS 14.2+)."
         case .lockScreen: return "Locks the screen."
         case .toggleDarkMode: return "Switches AOM between light and dark appearance."
-        case .toggleDoNotDisturb: return "Not implemented; use a script or shortcut instead."
+        case .toggleDoNotDisturb: return "Runs your Focus Shortcut (default name “Toggle Focus”) that holds a single Set Focus action."
         case .volumeUp: return "Raises the output volume."
         case .volumeDown: return "Lowers the output volume."
         case .brightnessUp: return "Raises the display brightness."
@@ -208,9 +208,43 @@ extension ActionType {
         case .stopAllSequences: return "Cancels every action sequence that is currently running."
         case .enableTrigger: return "Turns a configured trigger on, found by name or UUID."
         case .disableTrigger: return "Turns a configured trigger off, found by name or UUID."
-        case .waitFor: return "Pauses until an app launches or comes forward, a file appears or the clipboard changes."
+        case .waitFor: return "Pauses until an app launches, comes forward or quits, a file appears or goes, the clipboard changes, or the focused window changes."
         case .disableTriggersForSeconds: return "Turns every trigger off for a while, then back on by itself."
         case .resumeTriggers: return "Ends a pause started by Disable Triggers For X Seconds."
+        // 3.1.0 parity actions
+        case .saveSelectedText: return "Stores the text selected in the front app in a variable, for later steps and {{var:name}}."
+        case .transformSelectedText: return "Rewrites the selected text (case, trim, line breaks, naming styles, URL encoding, line sorting) and pastes it back."
+        case .searchSelectedText: return "Opens a web search for the selected text."
+        case .speakSelectedText: return "Reads the selected text aloud; running it again while speaking stops."
+        case .pasteClipboardItem: return "Pastes item N of the clipboard history or of a pinboard, like Paste's ⌘1–9."
+        case .transformClipboardText: return "Rewrites the text on the clipboard in place, for example to plain text or lower case."
+        case .saveClipboard: return "Keeps a copy of everything on the clipboard, in every format, until Restore Clipboard Contents."
+        case .restoreClipboard: return "Puts back the clipboard saved by Save Clipboard Contents."
+        case .clearClipboard: return "Empties the clipboard."
+        case .chooseMenuItem: return "Chooses a menu bar item by its path, such as File > Export > PDF…, in the front or a named app."
+        case .showContextMenu: return "Opens the context menu of the element under the pointer."
+        case .activatePreviousApp: return "Switches back to the app you used before the current one."
+        case .quitAppUnderCursor: return "Quits the app that owns the window under the pointer."
+        case .hideAppUnderCursor: return "Hides the app that owns the window under the pointer."
+        case .activateWindowByTitle: return "Brings forward the first window whose title contains the text, unminimizing it if needed."
+        case .minimizeAppWindows: return "Minimizes every window of the frontmost app."
+        case .gatherWindowsToPointerDisplay: return "Moves every window from other displays onto the display under the pointer."
+        case .tileFrontWindowsSideBySide: return "Puts the two frontmost windows side by side on the front window's display."
+        case .switchInputSource: return "Selects a keyboard input source, or the next enabled one."
+        case .setSoundInput: return "Switches the default sound input device."
+        case .toggleDisplayMirroring: return "Mirrors every display to the main display, or turns mirroring off."
+        case .ejectAllDisks: return "Ejects external drives, disk images and network volumes."
+        case .toggleDockAutoHide: return "Turns Dock hiding on or off."
+        case .bluetoothDevice: return "Connects or disconnects a paired Bluetooth device."
+        case .setWiFiPower: return "Turns Wi-Fi on or off."
+        case .showEmojiPicker: return "Opens the Emoji & Symbols viewer in the front app."
+        case .recognizeScreenText: return "Reads the text on the pointer's display; finds a phrase and can click it, or stores all text in a variable."
+        case .sendMIDI: return "Sends a note, controller or program change from AOM's virtual MIDI source."
+        case .sendOSC: return "Sends an Open Sound Control message over UDP."
+        case .pickScreenColor: return "Shows the system color sampler and copies the chosen color as hex."
+        case .hapticFeedback: return "Plays a Force Touch trackpad haptic while a finger rests on the trackpad."
+        case .postDistributedNotification: return "Posts a distributed notification that other apps and scripts can observe."
+        case .restartRecording: return "Discards the current screen recording and starts again on the same area."
         }
     }
 
@@ -248,6 +282,22 @@ extension ActionType {
         case .wait: return "Milliseconds"
         case .sendKeyStroke: return "Recorded shortcut"
         case .customSnapWindow: return "Area, display"
+        case .saveSelectedText, .pickScreenColor: return "Variable"
+        case .transformSelectedText, .transformClipboardText: return "Transform"
+        case .searchSelectedText: return "Search URL with {query}"
+        case .pasteClipboardItem: return "Item number, pinboard, plain text"
+        case .chooseMenuItem: return "Menu path, app"
+        case .activateWindowByTitle: return "Title text, app"
+        case .switchInputSource: return "Input source (or next)"
+        case .setSoundInput: return "Input device"
+        case .bluetoothDevice: return "Device, connect / disconnect"
+        case .setWiFiPower, .toggleDockAutoHide: return "On, off or toggle"
+        case .recognizeScreenText: return "Text to find, variable, click"
+        case .sendMIDI: return "Message, channel, number, value"
+        case .sendOSC: return "Host, port, address, arguments"
+        case .hapticFeedback: return "Pattern"
+        case .postDistributedNotification: return "Name, object"
+        case .toggleDoNotDisturb: return "Shortcut name (optional)"
         default: return ""
         }
     }
@@ -267,6 +317,9 @@ extension ActionType {
         case .undoWindowPlacement, .saveWindowLayout, .restoreWindowLayout,
              .startMovingWindow, .stopMovingWindow, .toggleMovingWindow,
              .startResizingWindow, .stopResizingWindow, .toggleResizingWindow:
+            return false
+        // These find their own windows by title, app or z-order.
+        case .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide:
             return false
         default: return true
         }
@@ -319,6 +372,17 @@ extension ActionType {
         case .matchScreenImage: p.imageMatchThreshold = 0.98; p.imageMatchClick = false
         case .setVariable: p.variableName = "state"; p.variableValue = "on"
         case .ifElse: p.variableName = "state"; p.conditionValue = "on"
+        case .saveSelectedText: p.variableName = "selection"
+        case .transformSelectedText, .transformClipboardText: p.textTransform = TextTransform.uppercase.rawValue
+        case .searchSelectedText: p.url = TextActionSupport.defaultSearchURL
+        case .pasteClipboardItem: p.clipboardItemIndex = 1
+        case .recognizeScreenText: p.variableName = "screenText"; p.imageMatchClick = false
+        case .pickScreenColor: p.variableName = "color"
+        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice: p.switchMode = "toggle"
+        case .sendMIDI: p.midiMessage = "noteOn"; p.midiChannel = 1; p.midiNumber = 60; p.midiValue = 100
+        case .sendOSC: p.oscHost = "127.0.0.1"; p.oscPort = 8000; p.oscAddress = "/aom"
+        case .hapticFeedback: p.hapticPattern = "generic"
+        case .postDistributedNotification: p.notificationName = "com.kyw.allofmacos.event"
         default: break
         }
         return p
@@ -335,7 +399,8 @@ enum ActionParameterValidation {
     static let directions = ["up", "down", "left", "right"]
     static let modifierNames = ["command", "option", "shift", "control", "fn",
                                 "rightCommand", "rightOption", "rightShift", "rightControl"]
-    static let waitConditions = ["appRunning", "appFrontmost", "fileExists", "clipboardChange"]
+    static let waitConditions = ["appRunning", "appFrontmost", "fileExists", "clipboardChange",
+                                 "appQuit", "fileGone", "windowChange", "windowTitleContains"]
 
     static func problem(for action: TriggerAction) -> String? {
         let p = action.parameters
@@ -414,8 +479,44 @@ enum ActionParameterValidation {
             if let w = p.waitMs, !(0...60_000).contains(w) { return "Debounce must be 0–60,000 ms." }
         case .runJavaScript, .runAppleShortcut, .runSwiftScript, .runShellScript, .runAppleScript:
             if let timeout = p.scriptTimeoutSeconds, !timeout.isFinite || !(0.1...120).contains(timeout) { return "Timeout must be 0.1–120 seconds." }
+        case .saveSelectedText, .recognizeScreenText, .pickScreenColor:
+            if let name = p.variableName, !name.isEmpty, !isVariableName(name, maximum: 58) {
+                return "Variable must use up to 58 ASCII letters, digits, or underscores."
+            }
+            if action.actionType == .recognizeScreenText, let text = p.text, text.count > 200 { return "Search text can be at most 200 characters." }
+        case .transformSelectedText, .transformClipboardText:
+            if let raw = p.textTransform, TextTransform(rawValue: raw) == nil { return "Unknown text transform." }
+        case .searchSelectedText:
+            if let template = p.url, !template.isEmpty, !TextActionSupport.isValidSearchTemplate(template) {
+                return "The search URL needs a web scheme and a {query} placeholder."
+            }
+        case .pasteClipboardItem:
+            if let index = p.clipboardItemIndex, !(1...500).contains(index) { return "Item number must be 1–500." }
+        case .chooseMenuItem:
+            if let path = p.menuPath, !path.isEmpty, MenuPath.components(path).isEmpty || path.count > 300 { return "Write the menu path as Menu > Item." }
+        case .activateWindowByTitle:
+            if let query = p.windowTitleQuery, query.count > 256 { return "Window title text can be at most 256 characters." }
+        case .toggleDockAutoHide, .setWiFiPower, .bluetoothDevice:
+            if let mode = p.switchMode, !["toggle", "on", "off"].contains(mode) { return "Choose on, off or toggle." }
+        case .sendMIDI:
+            if let message = p.midiMessage, MIDIMessage.Kind(rawValue: message) == nil { return "Unknown MIDI message." }
+            if let channel = p.midiChannel, !(1...16).contains(channel) { return "MIDI channel must be 1–16." }
+            if let number = p.midiNumber, !(0...127).contains(number) { return "MIDI note, controller or program must be 0–127." }
+            if let value = p.midiValue, !(0...127).contains(value) { return "MIDI value must be 0–127." }
+        case .sendOSC:
+            if let port = p.oscPort, !(1...65_535).contains(port) { return "OSC port must be 1–65535." }
+            if let address = p.oscAddress, !address.isEmpty, !OSCMessage.isValidAddress(address) { return "OSC addresses start with / and contain no spaces." }
+            if let host = p.oscHost, host.count > 253 || host.contains(where: \.isWhitespace) { return "Enter a host name or IP address." }
+        case .hapticFeedback:
+            if let pattern = p.hapticPattern, !["generic", "alignment", "levelChange"].contains(pattern) { return "Unknown haptic pattern." }
+        case .postDistributedNotification:
+            if let name = p.notificationName, name.count > 200 { return "Notification name can be at most 200 characters." }
         default: break
         }
         return nil
+    }
+
+    static func isVariableName(_ name: String, maximum: Int) -> Bool {
+        name.count <= maximum && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
     }
 }

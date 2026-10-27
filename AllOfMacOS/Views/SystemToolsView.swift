@@ -21,21 +21,19 @@ struct SystemToolsView: View {
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: AOMSpace.l) {
-                HStack(spacing: 12) {
-                    Button("Floating Menus & Widgets…") { FloatingMenuController.shared.edit() }
-                    Button("Conditional Activation Groups…") { showGroups = true }
-                    Button(showActionLibrary ? "Hide All Actions" : "Browse All Actions") { showActionLibrary.toggle() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: AOMSpace.m) {
+                if showActionLibrary {
+                    AOMSectionCard("All Actions", symbol: "square.grid.3x3", accessory: {
+                        Button("Hide") { showActionLibrary = false }.controlSize(.small)
+                    }) {
+                        ActionLibraryView().environmentObject(appState)
+                    }
                 }
-                if showActionLibrary { ActionLibraryView().environmentObject(appState) }
                 ForEach(groups, id: \.name) { group in
-                    VStack(alignment: .leading, spacing: AOMSpace.s) {
-                        Text(group.name.uppercased())
-                            .font(AOMType.caption.weight(.semibold))
-                            .foregroundStyle(AOMTheme.textSecondary)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: AOMSpace.m)],
-                                  spacing: AOMSpace.m) {
+                    AOMSectionCard(group.name, symbol: group.symbol, detail: "\(group.tools.count)") {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 200), spacing: AOMSpace.s)],
+                                  spacing: AOMSpace.s) {
                             ForEach(group.tools) { tool in
                                 ToolCard(title: tool.title, symbol: tool.symbol, tint: tool.tint, run: tool.run)
                             }
@@ -43,9 +41,28 @@ struct SystemToolsView: View {
                     }
                 }
             }
-            .padding(AOMSpace.xl)
+            .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .leading)
+            .padding(.horizontal, AOMSpace.l)
+            .padding(.vertical, AOMSpace.m)
+            .frame(maxWidth: .infinity)
         }
-        .background(AOMTheme.workspace)
+        .aomScrollEdge()
+        .aomPage("System Tools", subtitle: "Finder, network, PDF, media and file utilities")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button { showActionLibrary.toggle() } label: {
+                    Label(showActionLibrary ? "Hide All Actions" : "All Actions", systemImage: "square.grid.3x3")
+                }
+                .help("Browse every action AOM can run")
+            }
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Button("Floating Menus & Widgets…", systemImage: "menubar.dock.rectangle") { FloatingMenuController.shared.edit() }
+                    Button("Conditional Activation Groups…", systemImage: "square.stack.3d.up") { showGroups = true }
+                } label: { Label("Automation Tools", systemImage: "wand.and.stars") }
+                .help("Floating menus and activation groups")
+            }
+        }
         .aomToast(toast)
         .sheet(isPresented: $showGroups) { ActivationGroupsEditor().environmentObject(appState) }
         .onChange(of: toast) { _, message in
@@ -59,9 +76,9 @@ struct SystemToolsView: View {
 
     // MARK: - Tool groups
 
-    private var groups: [(name: String, tools: [Tool])] {
+    private var groups: [(name: String, symbol: String, tools: [Tool])] {
         [
-            ("Finder", [
+            ("Finder", "folder", [
                 Tool(id: "hidden", title: "Hidden Files", symbol: "eye.trianglebadge.exclamationmark", tint: .blue) {
                     Task { let next = await service.toggleHiddenFiles(); toast = next ? "Hidden files shown" : "Hidden files hidden" }
                 },
@@ -72,7 +89,7 @@ struct SystemToolsView: View {
                     Task { await service.restartFinder(); toast = "Finder restarted" }
                 }
             ]),
-            ("Network & System", [
+            ("Network & System", "network", [
                 Tool(id: "dns", title: "Flush DNS", symbol: "network", tint: .indigo) {
                     Task { do { try await service.flushDNSCache(); toast = "DNS cache flushed" } catch { toast = error.localizedDescription } }
                 },
@@ -88,7 +105,7 @@ struct SystemToolsView: View {
                     }
                 }
             ]),
-            ("PDF & Media", [
+            ("PDF & Media", "doc.richtext", [
                 Tool(id: "pdfmerge", title: "Merge PDFs", symbol: "doc.badge.plus", tint: .orange) {
                     mergePDFs()
                 },
@@ -105,7 +122,7 @@ struct SystemToolsView: View {
                     convertVideo()
                 }
             ]),
-            ("Files", [
+            ("Files", "doc.on.doc", [
                 Tool(id: "dsstore", title: "Erase .DS_Store", symbol: "trash.slash", tint: .teal) {
                     eraseDSStore()
                 },
@@ -318,14 +335,11 @@ private struct ToolCard: View {
     var body: some View {
         Button(action: run) {
             VStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(tint.opacity(hovering ? 0.22 : 0.14))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: symbol)
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(tint)
-                }
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(tint.gradient, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 Text(title)
                     .font(AOMType.caption.weight(.medium))
                     .foregroundStyle(AOMTheme.text)
@@ -333,10 +347,9 @@ private struct ToolCard: View {
                     .lineLimit(2)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(hovering ? AOMTheme.pane : AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
+            .padding(.vertical, 12)
+            .background(hovering ? AOMTheme.track : AOMTheme.cardAlt.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: AOMRadius.tile, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

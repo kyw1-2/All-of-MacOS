@@ -95,22 +95,45 @@ struct WaitProbe {
     var fileExists: (String) -> Bool
     var clipboardChangeCount: () -> Int
     var now: () -> TimeInterval
+    /// "bundleID|title" of the focused window, for the window conditions.
+    var focusedWindow: () -> String? = { nil }
 
     static let live = WaitProbe(
         runningBundleIDs: { Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)) },
         frontmostBundleID: { NSWorkspace.shared.frontmostApplication?.bundleIdentifier },
         fileExists: { FileManager.default.fileExists(atPath: ($0 as NSString).expandingTildeInPath) },
         clipboardChangeCount: { NSPasteboard.general.changeCount },
-        now: { ProcessInfo.processInfo.systemUptime })
+        now: { ProcessInfo.processInfo.systemUptime },
+        focusedWindow: {
+            guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+            var window: CFTypeRef?
+            var title: CFTypeRef?
+            if AXUIElementCopyAttributeValue(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedWindowAttribute as CFString, &window) == .success,
+               let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
+                AXUIElementCopyAttributeValue(window as! AXUIElement, kAXTitleAttribute as CFString, &title)
+            }
+            return "\(app.bundleIdentifier ?? "\(app.processIdentifier)")|\(title as? String ?? "")"
+        })
 }
 
 enum WaitFor {
-    static func isSatisfied(condition: String, target: String, baselineClipboard: Int, probe: WaitProbe) -> Bool {
+    /// Conditions that need no target text.
+    static let targetless: Set<String> = ["clipboardChange", "windowChange"]
+
+    static func isSatisfied(condition: String, target: String, baselineClipboard: Int, probe: WaitProbe,
+                            baselineWindow: String? = nil) -> Bool {
         switch condition {
         case "appRunning": return probe.runningBundleIDs().contains(target)
         case "appFrontmost": return probe.frontmostBundleID() == target
+        case "appQuit": return !target.isEmpty && !probe.runningBundleIDs().contains(target)
         case "fileExists": return !target.isEmpty && probe.fileExists(target)
+        case "fileGone": return !target.isEmpty && !probe.fileExists(target)
         case "clipboardChange": return probe.clipboardChangeCount() != baselineClipboard
+        // BTT's "wait for focused window change": another window, or a new title.
+        case "windowChange": return probe.focusedWindow() != baselineWindow
+        case "windowTitleContains":
+            guard let window = probe.focusedWindow(), let bar = window.firstIndex(of: "|") else { return false }
+            return window[window.index(after: bar)...].localizedCaseInsensitiveContains(target)
         default: return false
         }
     }
@@ -122,13 +145,15 @@ enum WaitFor {
         let condition = p.waitCondition ?? "appRunning"
         let target = (p.waitTarget ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard ActionParameterValidation.waitConditions.contains(condition),
-              condition == "clipboardChange" || !target.isEmpty else { completion(false); return }
+              targetless.contains(condition) || !target.isEmpty else { completion(false); return }
         let timeout = Double(p.waitTimeoutMs ?? 30_000) / 1000
         let baseline = probe.clipboardChangeCount()
+        let baselineWindow = condition == "windowChange" ? probe.focusedWindow() : nil
         let started = probe.now()
         func poll() {
             guard !isCancelled() else { completion(false); return }
-            if isSatisfied(condition: condition, target: target, baselineClipboard: baseline, probe: probe) { completion(true); return }
+            if isSatisfied(condition: condition, target: target, baselineClipboard: baseline, probe: probe,
+                           baselineWindow: baselineWindow) { completion(true); return }
             if probe.now() - started >= timeout { completion(p.waitContinueOnTimeout == true); return }
             DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: poll)
         }

@@ -18,6 +18,10 @@ struct AppAudioState: Identifiable, Equatable {
     var tapped: Bool
     var outputDeviceUID: String? = nil
     var magicBoost: Bool = false
+    /// Volume Overdrive multiplier, 1...4 (SoundSource: up to 400 %).
+    var overdrive: Float = 1
+    /// A process of this app is producing output right now.
+    var isPlaying: Bool = false
     var error: String? = nil
     var peakLevel: Float = 0
     var processingStatus: String = "Ready"
@@ -31,17 +35,48 @@ struct AppAudioState: Identifiable, Equatable {
         lhs.muted == rhs.muted &&
         lhs.tapped == rhs.tapped &&
         lhs.outputDeviceUID == rhs.outputDeviceUID &&
-        lhs.magicBoost == rhs.magicBoost && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
+        lhs.magicBoost == rhs.magicBoost && lhs.overdrive == rhs.overdrive && lhs.isPlaying == rhs.isPlaying && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
     }
 }
 
 /// App settings outlive processes. UI rows must never address a closed app by
 /// its temporary list index (or a PID that may be reused after an app quits).
 enum AppAudioPreferences {
+    /// Volume is 0...100 % as in SoundSource; a request above unity (for
+    /// example an automation asking for 150 %) becomes Volume Overdrive.
     static func setGain(_ gain: Float, bundleID: String, defaults: UserDefaults = .standard) -> Bool {
         guard !bundleID.isEmpty, gain.isFinite else { return false }
-        defaults.set(Double(Mixer.clamp(gain)), forKey: "AOMAudioGain_\(bundleID)")
+        let clamped = Mixer.clamp(gain)
+        defaults.set(Double(min(1, clamped)), forKey: "AOMAudioGain_\(bundleID)")
+        if clamped > 1 { defaults.set(Double(AudioVolumeOverdrive.clamp(clamped)), forKey: "AOMAudioOverdrive_\(bundleID)") }
         return true
+    }
+
+    static func overdrive(bundleID: String, defaults: UserDefaults = .standard) -> Float {
+        AudioVolumeOverdrive.clamp(Float(defaults.object(forKey: "AOMAudioOverdrive_\(bundleID)") as? Double ?? 1))
+    }
+
+    static func setOverdrive(_ value: Float, bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        guard !bundleID.isEmpty, value.isFinite else { return false }
+        let clamped = AudioVolumeOverdrive.clamp(value)
+        if clamped <= 1.0001 { defaults.removeObject(forKey: "AOMAudioOverdrive_\(bundleID)") }
+        else { defaults.set(Double(clamped), forKey: "AOMAudioOverdrive_\(bundleID)") }
+        return true
+    }
+
+    /// 3.0.x stored app volume up to 200 % and boost strengths 1–3. Volume
+    /// above 100 % moves to Volume Overdrive once; Magic Boost is a switch.
+    static func migrateToSoundSourceModel(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: "AOMAudioSoundSourceModelMigrated") else { return }
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix("AOMAudioGain_") {
+            guard let gain = (value as? NSNumber)?.floatValue, gain.isFinite, gain > 1 else { continue }
+            let bundleID = String(key.dropFirst("AOMAudioGain_".count))
+            defaults.set(1.0, forKey: key)
+            if defaults.object(forKey: "AOMAudioOverdrive_\(bundleID)") == nil {
+                defaults.set(Double(AudioVolumeOverdrive.clamp(gain)), forKey: "AOMAudioOverdrive_\(bundleID)")
+            }
+        }
+        defaults.set(true, forKey: "AOMAudioSoundSourceModelMigrated")
     }
 
     static func toggleMute(bundleID: String, defaults: UserDefaults = .standard) -> Bool? {
@@ -130,6 +165,12 @@ final class AppAudioEngine {
     // A capture failure on a live remote sender must not retry merely because
     // creating / destroying the failed tap changed CoreAudio's process list.
     private var airPlayCaptureFailures: [String: String] = [:]
+    /// Bounded automatic recovery after a remote output fails: 3 s, 10 s and
+    /// 30 s, then the explicit Reconnect. The budget refills after 5 minutes.
+    private static let airPlayRetryDelays: [TimeInterval] = [3, 10, 30]
+    private var airPlayAutoRetries: [String: (count: Int, lastAttempt: TimeInterval)] = [:]
+    private var recoveringAirPlayUIDs = Set<String>()
+    var airPlayRecovering: Bool { !recoveringAirPlayUIDs.isEmpty }
     private var bypassedPIDs = Set<pid_t>()
     private var appIdentitySnapshot: [AppState] = []
     private var appIdentitySnapshotAt: TimeInterval = -.infinity
@@ -145,6 +186,7 @@ final class AppAudioEngine {
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
     private init() {
+        AppAudioPreferences.migrateToSoundSourceModel()
         // Process objects can exist before playback starts; the process-list
         // notification alone does not tell us when those streams become usable.
         for selector in [kAudioHardwarePropertyProcessObjectList,
@@ -288,7 +330,7 @@ final class AppAudioEngine {
                     let message = failure == .capture
                         ? "Audio capture stopped receiving app audio. Native playback restored; use Reconnect to retry."
                         : "Audio output stopped consuming app audio. Native playback restored; use Reconnect to retry."
-                    if session.sourceToken?.isAirPlay == true { failAirPlay(session, message: message) }
+                    if session.sourceToken?.isAirPlay == true { failAirPlay(session, message: message, recover: failure == .output) }
                     else { fail(session, message: message) }
                 }
             }
@@ -348,6 +390,7 @@ final class AppAudioEngine {
                 session.muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")
                 mixer.gain = session.gain; mixer.muted = session.muted
                 mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
+                mixer.overdrive = AppAudioPreferences.overdrive(bundleID: app.bundleID)
                 guard updateProcesses(session, ids: ids) else {
                     continue
                 }
@@ -437,6 +480,10 @@ final class AppAudioEngine {
             return "AirPlay direct — volume, EQ and boost saved for local output"
         }
         if pendingAirPlayPIDs.contains(pid) { return "Preparing HomePod output — current playback continues" }
+        if !recoveringAirPlayUIDs.isEmpty, let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+           let uid = Self.targetOutputUID(for: bundleID), recoveringAirPlayUIDs.contains(uid) {
+            return "Reconnecting HomePod — native playback continues meanwhile"
+        }
         if let error = errors[pid] { return error }
         guard let session = sessions[pid], let transport = session.transport else {
             if pid <= 0 { return "App closed — settings saved" }
@@ -520,6 +567,7 @@ final class AppAudioEngine {
         return Self.storedGain(bundleID: bundleID) != 1 || d.bool(forKey: "AOMAudioMute_\(bundleID)") ||
             d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
             d.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ||
+            AppAudioPreferences.overdrive(bundleID: bundleID) > 1 ||
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
@@ -568,18 +616,15 @@ final class AppAudioEngine {
     }
 
     func updateEffects() {
-        let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled")
-            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2))
-            : 0
+        let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled") ? 1 : 0
         MainActor.assumeIsolated { SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost) }
         for session in sessions.values {
-            let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)")
-                ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(session.bundleID)") as? Int ?? 2))
-                : 0
-            session.box.takeUnretainedValue().setEffects(
+            let mixer = session.box.takeUnretainedValue()
+            mixer.setEffects(
                 app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
                 master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
-                appBoost: appBoost)
+                appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
+            mixer.overdrive = AppAudioPreferences.overdrive(bundleID: session.bundleID)
         }
         scheduleSync()
     }
@@ -716,7 +761,13 @@ final class AppAudioEngine {
                     let app = Self.owner(of: object, pid: rawPid) ?? NSRunningApplication(processIdentifier: rawPid)
                     guard let app, app.activationPolicy == .regular else { continue }
                     let pid = app.processIdentifier
-                    guard pid != ProcessInfo.processInfo.processIdentifier, !seenPIDs.contains(pid) else { continue }
+                    let outputting = Self.property(object, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
+                    guard pid != ProcessInfo.processInfo.processIdentifier else { continue }
+                    if seenPIDs.contains(pid) {
+                        // Helpers (WebKit, Chrome audio service) decide "playing".
+                        if outputting, let index = results.firstIndex(where: { $0.pid == pid }) { results[index].isPlaying = true }
+                        continue
+                    }
                     seenPIDs.insert(pid)
 
                     let bundleID = app.bundleIdentifier ?? "pid-\(pid)"
@@ -730,6 +781,7 @@ final class AppAudioEngine {
                         tapped: sessions[pid] != nil,
                         outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
                         magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
+                        isPlaying: outputting,
                         error: errors[pid], peakLevel: level(pid: pid), processingStatus: status(pid: pid)
                     ))
                 }
@@ -795,7 +847,10 @@ final class AppAudioEngine {
             state.tapped = sessions[state.pid] != nil
             state.outputDeviceUID = d.string(forKey: "AOMAudioRoute_\(state.bundleID)")
             state.magicBoost = d.bool(forKey: "AOMAudioMagicBoost_\(state.bundleID)")
-            state.error = airPlayBypassed || !isEnabled ? nil : errors[state.pid]
+            state.overdrive = AppAudioPreferences.overdrive(bundleID: state.bundleID, defaults: d)
+            let recovering = !recoveringAirPlayUIDs.isEmpty &&
+                Self.targetOutputUID(for: state.bundleID).map { recoveringAirPlayUIDs.contains($0) } == true
+            state.error = airPlayBypassed || !isEnabled || recovering ? nil : errors[state.pid]
             state.processingStatus = status(pid: state.pid)
             // Meters have their own observable model. Do not invalidate an
             // entire application list for a changing sample peak.
@@ -1017,11 +1072,11 @@ final class AppAudioEngine {
         let mixer = MixerBox(gain: gain, muted: muted,
                              magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
-        let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
-            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(bundleID)") as? Int ?? 2)) : 0
+        let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ? 1 : 0
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate),
                          master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                          appBoost: appBoost)
+        mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
         let transport = AppAudioTransport(sampleRate: sampleRate, bufferedForAirPlay: isAirPlay)
@@ -1116,7 +1171,9 @@ final class AppAudioEngine {
         return true
     }
 
-    private func failAirPlay(_ session: Session, message: String) {
+    /// `recover` is false for capture failures: an app whose audio cannot be
+    /// tapped (for example offloaded playback) must not be re-muted in a loop.
+    private func failAirPlay(_ session: Session, message: String, recover: Bool = true) {
         let key = "\(session.outputUID)|\(session.bundleID)"
         stop(pid: session.pid)
         errors[session.pid] = message
@@ -1124,6 +1181,30 @@ final class AppAudioEngine {
         retryAfter[session.pid] = .infinity
         failedProcessIDs[session.pid] = session.processIDs
         GestureLog.shared.logFromAnyThread(message, level: .error)
+        if recover { scheduleAirPlayRecovery(uid: session.outputUID) }
+    }
+
+    /// Native playback is already restored when this runs; the retry only
+    /// re-attaches capture once the receiver is reachable again.
+    private func scheduleAirPlayRecovery(uid: String) {
+        guard !uid.isEmpty, isEnabled, Self.airPlayProcessingEnabled,
+              !recoveringAirPlayUIDs.contains(uid) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        var entry = airPlayAutoRetries[uid] ?? (0, 0)
+        if now - entry.lastAttempt > 300 { entry.count = 0 }
+        guard entry.count < Self.airPlayRetryDelays.count else { return }
+        let delay = Self.airPlayRetryDelays[entry.count]
+        entry.count += 1
+        entry.lastAttempt = now
+        airPlayAutoRetries[uid] = entry
+        recoveringAirPlayUIDs.insert(uid)
+        GestureLog.shared.logFromAnyThread("AirPlay output will reconnect in \(Int(delay)) s", level: .noMatch)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.recoveringAirPlayUIDs.remove(uid)
+            guard self.isEnabled, Self.airPlayProcessingEnabled else { return }
+            self.retryAirPlay(uid: uid, requestedPID: 0)
+        }
     }
 
     private func fail(_ session: Session, message: String) {
@@ -1176,11 +1257,15 @@ struct AudioGainRamp {
 
 /// Control writes are short and synchronized. The audio callback never waits
 /// for the UI; it retains the previous render configuration on contention.
+/// Rendering is block based: EQ, Magic Boost, volume and Volume Overdrive run
+/// over preallocated deinterleaved chunks.
 final class MixerBox {
+    static let chunk = 512
     private let lock = NSLock()
     private var desiredGain: Float
     private var desiredMuted: Bool
     private var desiredBoost: Bool
+    private var desiredOverdrive: Float = 1
     private var desiredDeviceGain: Float = 1
     private var peak: Float = 0
     var peakLevel: Float {
@@ -1197,19 +1282,24 @@ final class MixerBox {
     fileprivate var renderEQHeadroom: Float
     fileprivate var gainRamp: AudioGainRamp
     private var hasRendered = false
-    private var previousAppEQ: AudioEQProcessor?
-    private var previousMasterEQ: AudioEQProcessor?
-    private var previousEQHeadroom: Float = 1
-    private var eqTransitionRemaining = 0
+    fileprivate var previousAppEQ: AudioEQProcessor?
+    fileprivate var previousMasterEQ: AudioEQProcessor?
+    fileprivate var previousEQHeadroom: Float = 1
+    fileprivate var eqTransitionRemaining = 0
     fileprivate var renderGain: Float
     fileprivate var renderMuted: Bool
-    /// App compression is separate from the mixed output bus compressor.
-    fileprivate var renderBoostLevel: Int = 0
-    fileprivate let boostProcessor = AudioAdaptiveBoost(sampleRate: 48000)
-    private var desiredAppBoost: Int = 0
+    /// SoundSource-style Magic Boost: on or off, no strength levels.
+    fileprivate var renderBoost = false
+    fileprivate var renderOverdrive: Float = 1
     fileprivate var renderDeviceGain: Float = 1
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
+    fileprivate let boostProcessor = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    fileprivate let overdriveProcessor = AudioVolumeOverdrive(sampleRate: SharedOutputRenderer.sampleRate, chunk: MixerBox.chunk)
+    fileprivate let left: UnsafeMutablePointer<Float>
+    fileprivate let right: UnsafeMutablePointer<Float>
+    fileprivate let previousLeft: UnsafeMutablePointer<Float>
+    fileprivate let previousRight: UnsafeMutablePointer<Float>
     var inputBufferOffset = 0 // immutable once the IOProc starts
     var leftOutputChannel = 0
     var rightOutputChannel = 1
@@ -1230,18 +1320,30 @@ final class MixerBox {
         get { lock.lock(); defer { lock.unlock() }; return desiredBoost }
         set { lock.lock(); desiredBoost = newValue; lock.unlock() }
     }
+    /// Volume Overdrive multiplier, 1...4 (100–400 %), limited after gain.
+    var overdrive: Float {
+        get { lock.lock(); defer { lock.unlock() }; return desiredOverdrive }
+        set { lock.lock(); desiredOverdrive = AudioVolumeOverdrive.clamp(newValue); lock.unlock() }
+    }
     init(gain: Float, muted: Bool, magicBoost: Bool = false, eq: AudioEQ = AudioEQ()) {
         desiredGain = Mixer.clamp(gain); renderGain = Mixer.clamp(gain)
         gainRamp = AudioGainRamp(muted ? 0 : Mixer.clamp(gain))
         desiredMuted = muted; renderMuted = muted
         desiredBoost = magicBoost
-        desiredAppBoost = magicBoost ? 2 : 0
         let app = AudioEQProcessor(eq), master = AudioEQProcessor(AudioEQ(sampleRate: eq.sampleRate))
         desiredAppEQ = app; appEQ = app
         desiredMasterEQ = master; masterEQ = master
         let headroom = AudioEQ.headroomGain(app: eq, master: master.eq)
         desiredEQHeadroom = headroom; renderEQHeadroom = headroom
+        left = .allocate(capacity: Self.chunk); left.initialize(repeating: 0, count: Self.chunk)
+        right = .allocate(capacity: Self.chunk); right.initialize(repeating: 0, count: Self.chunk)
+        previousLeft = .allocate(capacity: Self.chunk); previousLeft.initialize(repeating: 0, count: Self.chunk)
+        previousRight = .allocate(capacity: Self.chunk); previousRight.initialize(repeating: 0, count: Self.chunk)
     }
+    deinit {
+        left.deallocate(); right.deallocate(); previousLeft.deallocate(); previousRight.deallocate()
+    }
+    /// `appBoost` is the Magic Boost switch (any value above zero is on).
     func setEffects(app: AudioEQ, master: AudioEQ, appBoost: Int) {
         // Coefficients and headroom are prepared on the control thread. The
         // audio callback uses its previous configuration on lock contention.
@@ -1253,14 +1355,13 @@ final class MixerBox {
             desiredAppEQ = AudioEQProcessor(app)
             desiredMasterEQ = AudioEQProcessor(master)
         }
-        desiredAppBoost = min(3, max(0, appBoost))
-        desiredBoost = desiredAppBoost > 0
+        desiredBoost = appBoost > 0
     }
     fileprivate func beginRender() {
         guard lock.try() else { return }
         renderGain = desiredGain; renderMuted = desiredMuted
-        // Retain the legacy boolean path for callers that have not supplied a level.
-        renderBoostLevel = desiredBoost ? (desiredAppBoost == 0 ? 2 : desiredAppBoost) : 0
+        renderBoost = desiredBoost
+        renderOverdrive = desiredOverdrive
         renderDeviceGain = desiredDeviceGain
         if !hasRendered || (eqTransitionRemaining == 0 && appEQ !== desiredAppEQ) {
             if hasRendered {
@@ -1277,16 +1378,32 @@ final class MixerBox {
         lock.unlock()
     }
 
-    fileprivate func filter(left: inout Float, right: inout Float) {
-        let inputLeft = left, inputRight = right
-        left = masterEQ.process(appEQ.process(inputLeft * renderEQHeadroom, channel: 0), channel: 0)
-        right = masterEQ.process(appEQ.process(inputRight * renderEQHeadroom, channel: 1), channel: 1)
-        if eqTransitionRemaining > 0, let previousAppEQ, let previousMasterEQ {
-            let oldLeft = previousMasterEQ.process(previousAppEQ.process(inputLeft * previousEQHeadroom, channel: 0), channel: 0)
-            let oldRight = previousMasterEQ.process(previousAppEQ.process(inputRight * previousEQHeadroom, channel: 1), channel: 1)
+    /// Headroom + app EQ + master EQ over the current chunk, crossfading a
+    /// replaced curve for 10 ms.
+    fileprivate func filter(frames: Int) {
+        let transition = eqTransitionRemaining > 0 && previousAppEQ != nil && previousMasterEQ != nil
+        if transition, let previousAppEQ, let previousMasterEQ {
+            for frame in 0..<frames {
+                previousLeft[frame] = left[frame] * previousEQHeadroom
+                previousRight[frame] = right[frame] * previousEQHeadroom
+            }
+            previousAppEQ.process(previousLeft, frames: frames, channel: 0)
+            previousAppEQ.process(previousRight, frames: frames, channel: 1)
+            previousMasterEQ.process(previousLeft, frames: frames, channel: 0)
+            previousMasterEQ.process(previousRight, frames: frames, channel: 1)
+        }
+        if renderEQHeadroom != 1 {
+            for frame in 0..<frames { left[frame] *= renderEQHeadroom; right[frame] *= renderEQHeadroom }
+        }
+        appEQ.process(left, frames: frames, channel: 0)
+        appEQ.process(right, frames: frames, channel: 1)
+        masterEQ.process(left, frames: frames, channel: 0)
+        masterEQ.process(right, frames: frames, channel: 1)
+        guard transition else { return }
+        for frame in 0..<frames where eqTransitionRemaining > 0 {
             let blend = Float(481 - eqTransitionRemaining) / 480
-            left = oldLeft + (left - oldLeft) * blend
-            right = oldRight + (right - oldRight) * blend
+            left[frame] = previousLeft[frame] + (left[frame] - previousLeft[frame]) * blend
+            right[frame] = previousRight[frame] + (right[frame] - previousRight[frame]) * blend
             eqTransitionRemaining -= 1
         }
     }
@@ -1312,37 +1429,52 @@ nonisolated enum Mixer {
         let first = inputs[box.inputBufferOffset]
         let planar = first.mNumberChannels == 1 && inputs.count > box.inputBufferOffset + 1
         let channels = planar ? 2 : Int(first.mNumberChannels)
-        guard channels > 0, let left = first.mData?.assumingMemoryBound(to: Float.self) else { return }
+        guard channels > 0, let leftInput = first.mData?.assumingMemoryBound(to: Float.self) else { return }
         let second = planar ? inputs[box.inputBufferOffset + 1] : first
-        let right = planar ? second.mData?.assumingMemoryBound(to: Float.self) : left
+        let rightInput = planar ? second.mData?.assumingMemoryBound(to: Float.self) : leftInput
         var frames = Int(first.mDataByteSize) / (MemoryLayout<Float>.size * Int(first.mNumberChannels))
         if planar { frames = min(frames, Int(second.mDataByteSize) / MemoryLayout<Float>.size) }
         let outputChannels = outputs.reduce(0) { $0 + Int($1.mNumberChannels) }
         guard outputChannels > 0 else { return }
-        for frame in 0..<frames {
-            var l = left[planar ? frame : frame * channels]
-            var r = planar ? (right?[frame] ?? 0) : left[frame * channels + min(1, channels - 1)]
-            box.filter(left: &l, right: &r)
-            box.boostProcessor.process(left: &l, right: &r, level: box.renderBoostLevel)
-            let gain = box.gainRamp.next()
-            l *= gain; r *= gain
-            // Preserve peaks until the linked limiter on the final summing bus.
-            // Clipping here permanently distorts EQ/boost before apps are mixed.
-            l = l.isFinite ? l : 0
-            r = r.isFinite ? r : 0
-            peak = max(peak, max(abs(l), abs(r)))
-            var channel = 0
-            for buffer in outputs {
-                let count = Int(buffer.mNumberChannels)
-                if count > 0, let data = buffer.mData?.assumingMemoryBound(to: Float.self),
-                   frame < Int(buffer.mDataByteSize) / (MemoryLayout<Float>.size * count) {
-                    for offset in 0..<count {
-                        let index = channel + offset
-                        data[frame * count + offset] = outputChannels == 1 ? (l + r) * 0.5 : (index == box.leftOutputChannel ? l : (index == box.rightOutputChannel ? r : 0))
-                    }
-                }
-                channel += count
+        var offset = 0
+        while offset < frames {
+            let count = min(MixerBox.chunk, frames - offset)
+            for index in 0..<count {
+                let frame = offset + index
+                let l = leftInput[planar ? frame : frame * channels]
+                let r = planar ? (rightInput?[frame] ?? 0) : leftInput[frame * channels + min(1, channels - 1)]
+                box.left[index] = l.isFinite ? l : 0
+                box.right[index] = r.isFinite ? r : 0
             }
+            box.filter(frames: count)
+            box.boostProcessor.process(left: box.left, right: box.right, frames: count, enabled: box.renderBoost)
+            for index in 0..<count {
+                let gain = box.gainRamp.next()
+                box.left[index] *= gain; box.right[index] *= gain
+            }
+            box.overdriveProcessor.process(left: box.left, right: box.right, frames: count,
+                                           multiplier: box.renderOverdrive)
+            for index in 0..<count {
+                let frame = offset + index
+                // Preserve peaks until the linked limiter on the final summing bus.
+                let l = box.left[index].isFinite ? box.left[index] : 0
+                let r = box.right[index].isFinite ? box.right[index] : 0
+                peak = max(peak, max(abs(l), abs(r)))
+                var channel = 0
+                for buffer in outputs {
+                    let width = Int(buffer.mNumberChannels)
+                    if width > 0, let data = buffer.mData?.assumingMemoryBound(to: Float.self),
+                       frame < Int(buffer.mDataByteSize) / (MemoryLayout<Float>.size * width) {
+                        for slot in 0..<width {
+                            let target = channel + slot
+                            data[frame * width + slot] = outputChannels == 1 ? (l + r) * 0.5
+                                : (target == box.leftOutputChannel ? l : (target == box.rightOutputChannel ? r : 0))
+                        }
+                    }
+                    channel += width
+                }
+            }
+            offset += count
         }
     }
 }

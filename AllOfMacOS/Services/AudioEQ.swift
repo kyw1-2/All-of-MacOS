@@ -170,111 +170,70 @@ struct AudioEQ: Equatable {
 
 /// Each session owns two channel histories which survive IO callbacks.
 /// Coefficients are prepared on the control thread, never per audio sample.
+/// Realtime code uses the block method: coefficients and Direct Form II
+/// transposed histories live in preallocated memory, so the render thread
+/// performs no allocation, reference counting or exclusivity checks.
 final class AudioEQProcessor {
     let eq: AudioEQ
-    private let coefficients: [AudioEQ.Coefficients]
-    private var z1 = [Float](repeating: 0, count: 20)
-    private var z2 = [Float](repeating: 0, count: 20)
-    init(_ eq: AudioEQ) { self.eq = eq; coefficients = eq.coefficients }
+    /// Only bands with a nonzero gain are processed; 0 dB is an identity.
+    let sectionCount: Int
+    private let coefficients: UnsafeMutablePointer<Float> // b0 b1 b2 a1 a2 per section
+    private let state: UnsafeMutablePointer<Float>        // z1 z2 per section per channel
 
+    init(_ eq: AudioEQ) {
+        self.eq = eq
+        let active = (0..<10).filter { eq.gains[$0] != 0 }
+        sectionCount = active.count
+        coefficients = .allocate(capacity: max(1, active.count) * 5)
+        coefficients.initialize(repeating: 0, count: max(1, active.count) * 5)
+        state = .allocate(capacity: max(1, active.count) * 4)
+        state.initialize(repeating: 0, count: max(1, active.count) * 4)
+        let all = eq.coefficients
+        for (section, band) in active.enumerated() {
+            let c = all[band]
+            coefficients[section * 5] = c.b0; coefficients[section * 5 + 1] = c.b1
+            coefficients[section * 5 + 2] = c.b2; coefficients[section * 5 + 3] = c.a1
+            coefficients[section * 5 + 4] = c.a2
+        }
+    }
+
+    deinit { coefficients.deallocate(); state.deallocate() }
+
+    var isIdentity: Bool { sectionCount == 0 }
+
+    func reset() { for i in 0..<(max(1, sectionCount) * 4) { state[i] = 0 } }
+
+    /// Per-sample entry point (tests and non-realtime callers).
     func process(_ sample: Float, channel: Int) -> Float {
         guard (0..<2).contains(channel) else { return 0 }
         var value = sample.isFinite ? sample : 0
-        for band in 0..<10 where eq.gains[band] != 0 {
-            let index = channel * 10 + band
-            let c = coefficients[band]
-            let output = c.b0 * value + z1[index]
-            let nextZ1 = c.b1 * value - c.a1 * output + z2[index]
-            let nextZ2 = c.b2 * value - c.a2 * output
-            guard output.isFinite, nextZ1.isFinite, nextZ2.isFinite else {
-                // One malformed/overflowing sample must not poison the band's
-                // persistent history and silence this channel until reconnect.
-                z1[index] = 0; z2[index] = 0; value = 0
-                continue
-            }
-            z1[index] = nextZ1
-            z2[index] = nextZ2
-            value = output
-        }
+        withUnsafeMutablePointer(to: &value) { process($0, frames: 1, channel: channel) }
         return value
     }
-}
 
-/// AOM's linked stereo compressor with makeup gain. This is not a copy of
-/// SoundSource's proprietary algorithm. State persists between buffers;
-/// attack/release smooth changes instead of distorting every sample with tanh.
-final class AudioAdaptiveBoost {
-    private let envelopeAttack: Float
-    private let envelopeRelease: Float
-    private let gainAttack: Float
-    private let gainRelease: Float
-    private var envelope: Float = 0
-    private var gain: Float = 1
-    private var targetGain: Float = 1
-    private var controlFrame = 0
-    private var previousLevel = 0
-
-    init(sampleRate: Double) {
-        let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
-        envelopeAttack = Float(exp(-1 / (0.003 * rate)))
-        envelopeRelease = Float(exp(-1 / (0.150 * rate)))
-        gainAttack = Float(exp(-1 / (0.005 * rate)))
-        gainRelease = Float(exp(-1 / (0.100 * rate)))
-    }
-
-    func process(left: inout Float, right: inout Float, level: Int) {
-        left = left.isFinite ? left : 0
-        right = right.isFinite ? right : 0
-        let peak = max(abs(left), abs(right))
-        let coefficient = peak > envelope ? envelopeAttack : envelopeRelease
-        envelope = coefficient * envelope + (1 - coefficient) * peak
-        let strength = min(3, max(0, level))
-        if strength == 0 {
-            targetGain = 1
-        } else if controlFrame == 0 || strength != previousLevel {
-            let threshold: Float = strength == 1 ? 0.28 : (strength == 2 ? 0.22 : 0.18)
-            let ratio: Float = Float(strength + 1)
-            let makeup: Float = strength == 1 ? 1.5 : (strength == 2 ? 2 : 2.5)
-            let reduction = envelope > threshold ? pow(threshold / envelope, 1 - 1 / ratio) : 1
-            // Do not raise a silent/noise-only input toward the makeup level.
-            targetGain = envelope < 0.001 ? 1 : min(makeup, makeup * reduction)
+    /// In place over one deinterleaved channel.
+    func process(_ buffer: UnsafeMutablePointer<Float>, frames: Int, channel: Int) {
+        guard sectionCount > 0, frames > 0, (0..<2).contains(channel) else { return }
+        for section in 0..<sectionCount {
+            let c = coefficients + section * 5
+            let b0 = c[0], b1 = c[1], b2 = c[2], a1 = c[3], a2 = c[4]
+            let z = state + (section * 2 + channel * sectionCount * 2)
+            var z1 = z[0], z2 = z[1]
+            for frame in 0..<frames {
+                let x = buffer[frame]
+                let y = b0 * x + z1
+                z1 = b1 * x - a1 * y + z2
+                z2 = b2 * x - a2 * y
+                buffer[frame] = y
+            }
+            guard z1.isFinite, z2.isFinite, buffer[frames - 1].isFinite else {
+                // One malformed/overflowing block must not poison the band's
+                // persistent history and silence this channel until reconnect.
+                z[0] = 0; z[1] = 0
+                for frame in 0..<frames { buffer[frame] = 0 }
+                continue
+            }
+            z[0] = z1; z[1] = z2
         }
-        previousLevel = strength
-        controlFrame = (controlFrame + 1) & 31
-        let smoothing = targetGain < gain ? gainAttack : gainRelease
-        gain = smoothing * gain + (1 - smoothing) * targetGain
-        left *= gain; right *= gain
-    }
-}
-
-/// Linked stereo peak protection after summing all apps. Immediate attenuation
-/// catches a transient, a 20 ms hold preserves waveform shape between peaks,
-/// and a slow release avoids hard clipping and rapid gain modulation.
-final class AudioPeakLimiter {
-    private var gain: Float = 1
-    private var holdFrames = 0
-    private let hold: Int
-    private let release: Float
-    private let ceiling: Float = 0.98
-
-    init(sampleRate: Double = 48000) {
-        hold = Int(sampleRate * 0.02)
-        release = Float(exp(-1 / (sampleRate * 0.1)))
-    }
-
-    func process(left: inout Float, right: inout Float) {
-        left = left.isFinite ? left : 0
-        right = right.isFinite ? right : 0
-        let peak = max(abs(left), abs(right))
-        let required = peak > ceiling ? ceiling / peak : 1
-        if required < gain {
-            gain = required
-            holdFrames = hold
-        } else if holdFrames > 0 {
-            holdFrames -= 1
-        } else {
-            gain = release * gain + (1 - release)
-        }
-        left *= gain; right *= gain
     }
 }

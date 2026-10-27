@@ -160,6 +160,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             requestAccessibilityPermissions()
             Task { @MainActor in WindowPinRestoration.recover() }
             GestureHUD.shared.start()
+            AppActivationHistory.shared.start()
+            if !PresetManager.isRunningTests {
+                InputRemapService.shared.apply()
+                // After the menu bar and audio settle, so an update never opens on a busy launch.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { MainActor.assumeIsolated { WhatsNew.presentIfUpdated() } }
+            }
             NSApp.servicesProvider = self
             NSUpdateDynamicServices()
             Task { @MainActor in ScreenRecordingService.shared.offerInterruptedRecordingRecovery() }
@@ -330,6 +336,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
         ActionExecutor.cancelAllSequences()
+        // Key remaps live only while AOM runs; give back exactly AOM's pairs.
+        if !PresetManager.isRunningTests && !PresetManager.isUIPreview { InputRemapService.shared.removeOwnedMappingsNow() }
         MainActor.assumeIsolated {
             if #available(macOS 14.2, *) { AppAudioEngine.shared.stopAll() }
             _ = AudioOutputRestore.restoreIfNeeded(reason: "quit")
@@ -429,7 +437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "hand.point.up.braille", accessibilityDescription: "All of MacOS")
+            button.image = AOMMenuBarIcon.image(.active)
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -749,8 +757,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let button = statusItem?.button else { return }
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
         let paused = TriggerSuppression.shared.isPaused
-        let symbolName = !enabled ? "hand.raised.slash" : (paused ? "pause.circle" : "hand.point.up.braille")
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "All of MacOS")
+        button.image = AOMMenuBarIcon.image(!enabled ? .disabled : (paused ? .paused : .active))
     }
 
     @objc private func showClipboard() { MainActor.assumeIsolated { ClipboardPanelController.shared.show() } }

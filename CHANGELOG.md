@@ -1,3 +1,15 @@
+## 3.1.0 (2026-10-27)
+
+- Interface: adopt the macOS 26 design system. System window chrome and sidebar, Liquid Glass only on floating chrome, one content width and radius set, System Settings–style Settings with sidebar search, and a SoundSource-style Audio page. See docs/ui-liquid-glass-3.1.0.md.
+- Audio: fix HomePod/AirPlay crackle with a realtime mix thread, a transparent lookahead limiter (ceiling 0.977), block EQ (2.95 % → 0.62 % of a core) and bounded reconnects. No core audio services are touched. See docs/audio-3.1.0-soundsource-boost.md.
+- Audio: Magic Boost now follows SoundSource 6 behaviour (512-frame lookahead, one switch for the output and per app); Volume Overdrive raises an app to 400 % through its own limiter. Stored gains above 100 % migrate to Overdrive.
+- Automation: 33 new actions — selected text, clipboard items and transforms, menu paths, context menus, previous app, window title and bulk window actions, input source, sound input, mirroring, eject, Dock, Bluetooth, Wi-Fi, emoji viewer, on-screen text (OCR) with click, MIDI, OSC, color picker, haptics, distributed notifications and Restart Recording. Wait For gains app quit, file gone and focused-window conditions; Toggle Do Not Disturb runs a named Shortcut.
+- Keyboard and mouse: key remapping and a Hyper key (⌃⌥⇧⌘, tap for Escape) through hidutil, applied only while AOM runs; reverse a wheel mouse without changing the trackpad.
+- Capture: restart a recording, Do Not Disturb while recording, a live mirrored camera bubble that stays out of the video, and a word-level Smart Highlighter.
+- Clipboard: dragging between pinboards moves an item (⌥ copies); merged pastes keep HTML and RTFD formatting.
+- App: a new menu bar mark with paused and off states, What's New once after an update, and app/file search in the command palette.
+- Still open: continuous and pressure trackpad gestures, video backgrounds, link cards. See docs/parity-3.1.0.md.
+
 ## 3.0.11 — AirPlay playback continuity (2026-10-27)
 
 ## 3.0.14 (2026-10-27)

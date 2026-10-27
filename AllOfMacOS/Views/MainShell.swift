@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The main window in the macOS arrangement: a system sidebar for the six
+/// The main window in the macOS arrangement: a system sidebar for the eight
 /// places, the selected page in the detail column with its own contextual
 /// toolbar (title, view switch, search, create), and the optional diagnostics
 /// drawer. Global navigation and page tools no longer share one row.
@@ -120,20 +120,14 @@ struct AOMSidebar: View {
         }
     }
 
+    /// System sidebar rows: the platform's font, row height and selection,
+    /// so the floating Liquid Glass sidebar matches Finder, Mail and Notes.
     private func navigationItem(_ tab: AOMMainTab) -> some View {
         HStack(spacing: 0) {
-            Label {
-                Text(tab.title).font(.system(size: 13, weight: .medium))
-                    .padding(.leading, 2)
-            } icon: {
-                Image(systemName: tab.sidebarSymbol)
-                    .font(.system(size: 14, weight: .regular))
-                    .symbolRenderingMode(.hierarchical)
-            }
+            Label(tab.title, systemImage: tab.sidebarSymbol)
             Spacer(minLength: 4)
             statusBadge(for: tab)
         }
-        .frame(minHeight: 26)
         .tag(tab)
         .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
     }
@@ -147,14 +141,10 @@ struct AOMSidebar: View {
                 AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
             .foregroundStyle(AOMTheme.textSecondary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-            }
-            .contentShape(Rectangle())
+            .background(.quaternary.opacity(0.6), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 10)
@@ -180,7 +170,7 @@ struct AOMSidebar: View {
                                                set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
+                .controlSize(.small)
                 .accessibilityLabel("Automation engine")
                 .help(on ? "Pause every gesture and shortcut" : "Resume automation")
             Menu {
@@ -255,8 +245,8 @@ private struct AOMSidebarStatusBadge: View {
     let text: String
     let tint: Color
     var body: some View {
-        Text(text).font(AOMType.micro.weight(.semibold)).foregroundStyle(tint)
-            .padding(.horizontal, 6).frame(height: 17)
+        Text(text).font(.caption2.weight(.semibold)).foregroundStyle(tint)
+            .padding(.horizontal, 6).frame(height: 16)
             .background(tint.opacity(0.14), in: Capsule()).accessibilityLabel(text)
     }
 }

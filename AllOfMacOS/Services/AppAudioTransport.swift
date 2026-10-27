@@ -7,7 +7,7 @@ import Accelerate
 /// queue. Capture and sample transport never acquire a mutex. DSP rendering is
 /// serialized only for the brief interval when two output routes overlap.
 final class AppAudioTransport {
-    private let renderLock = NSLock()
+    private let renderLock = AudioUnfairLock()
     private let capacity = 32768
     private let queue = StereoPCMQueue(capacity: 32768)
     private let scratch: UnsafeMutablePointer<Float>
@@ -105,7 +105,7 @@ final class AppAudioTransport {
         }
         guard frames > 0, frames <= capacity else { return }
         if allowWaiting { renderLock.lock() }
-        else if !renderLock.try() { renderContentions.add(); return }
+        else if !renderLock.tryLock() { renderContentions.add(); return }
         defer { renderLock.unlock() }
         let rate = Double(bitPattern: rateBits.load())
         let filled = queue.render(into: scratch, frames: frames,

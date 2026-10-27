@@ -624,6 +624,9 @@ struct AllOfMacOSApp: App {
                 .accentColor(appState.accentColorChoice.color)
                 .tint(appState.accentColorChoice.color)
         }
+        // One toolbar row: the pane title sits at the leading edge as in
+        // System Settings, instead of a centred title over an empty bar.
+        .windowToolbarStyle(.unified)
     }
 }
 

@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.1.0
+
+A Liquid Glass redesign with System Settings–style settings, clean HomePod/AirPlay audio with SoundSource-style Magic Boost and Volume Overdrive, 33 new automation actions, a Hyper key and key remapping, a live camera bubble while recording, and a new menu bar mark. See [the interface review (66 references)](docs/ui-liquid-glass-3.1.0.md), [the audio report](docs/audio-3.1.0-soundsource-boost.md) and [the parity report](docs/parity-3.1.0.md).
+
 ## Version 3.0.14
 
 A compact audio mixer with separate Devices and Effects sections, an aligned window canvas, and a shorter capture launcher. See the [reference and UX review](docs/ux-reference-review-20261027.md).

@@ -16,10 +16,11 @@ struct ActionParameterForm: View {
         case moveResize, windowTarget, windowDrag, desktop, spaceShortcut, customClick, scroll, relativeMouse
         case textPayload, functionKey, modifier, arrow, level, filePath, speak, notification, shortcut, javascript, floatingMenu, accessibility, imageTemplate
         case repeatLoop, cycle, toggle, variableStep, askInput, debounce, triggerSelector, waitFor, pause, info
-        case keepAwake, appAudio
+        case keepAwake, appAudio, parity
     }
 
     private static func formKind(_ type: ActionType) -> Kind? {
+        if ParityActions.handles(type) || type == .toggleDoNotDisturb { return .parity }
         switch type {
         case .moveResizeWindow: return .moveResize
         case .zoomWindow, .closeWindow, .toggleFullscreenWindow: return .windowTarget
@@ -85,6 +86,7 @@ struct ActionParameterForm: View {
         let p = action.parameters
         switch kind {
         case .info: footnote(Self.infoNote(action.actionType))
+        case .parity: ParityActionForm(action: action, save: save).id(action.id)
         case .moveResize: moveResize
         case .windowTarget: windowPicker
         case .windowDrag:
@@ -404,10 +406,16 @@ struct ActionParameterForm: View {
         return VStack(alignment: .leading, spacing: 8) {
             Picker("Wait until", selection: stringBinding(\.waitCondition, default: "appRunning")) {
                 Text("An app is running").tag("appRunning"); Text("An app is frontmost").tag("appFrontmost")
-                Text("A file or folder exists").tag("fileExists"); Text("The clipboard changes").tag("clipboardChange")
+                Text("An app quits").tag("appQuit")
+                Text("A file or folder exists").tag("fileExists"); Text("A file or folder is gone").tag("fileGone")
+                Text("The clipboard changes").tag("clipboardChange")
+                Text("The focused window changes").tag("windowChange")
+                Text("The focused window's title contains").tag("windowTitleContains")
             }
-            if condition != "clipboardChange" {
-                TextField(condition == "fileExists" ? "Path" : "App bundle ID", text: stringBinding(\.waitTarget, default: "")).textFieldStyle(.roundedBorder)
+            if !WaitFor.targetless.contains(condition) {
+                TextField(["fileExists", "fileGone"].contains(condition) ? "Path"
+                          : condition == "windowTitleContains" ? "Title text" : "App bundle ID",
+                          text: stringBinding(\.waitTarget, default: "")).textFieldStyle(.roundedBorder)
             }
             Stepper(value: intBinding(\.waitTimeoutMs, default: 30_000), in: 0...600_000, step: 1000) {
                 Text("Time out after \((p.waitTimeoutMs ?? 30_000) / 1000) s")

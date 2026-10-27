@@ -75,23 +75,22 @@ final class PortedFeatureTests: XCTestCase {
 
     // MARK: Audio mixer — pure math and state
 
-    func testAdaptiveBoostLevelsDriveCompression() {
-        let input = (0..<24000).map { Float(sin(2 * .pi * 220 * Double($0) / 48000)) * 0.15 }
-        func rms(_ signal: [Float]) -> Float {
+    func testMagicBoostRaisesQuietPassagesAndStaysFinite() {
+        let input = (0..<48000).map { Float(sin(2 * .pi * 220 * Double($0) / 48000)) * 0.15 }
+        func rms(_ signal: ArraySlice<Float>) -> Float {
             sqrt(signal.map { $0 * $0 }.reduce(0, +) / Float(max(1, signal.count)))
         }
-        func boosted(_ level: Int) -> [Float] {
-            let processor = AudioAdaptiveBoost(sampleRate: 48000)
-            return input.map { sample in
-                var left = sample, right = sample
-                processor.process(left: &left, right: &right, level: level)
-                return left
+        let processor = AudioMagicBoost(sampleRate: 48000)
+        var left = input, right = input
+        left.withUnsafeMutableBufferPointer { l in
+            right.withUnsafeMutableBufferPointer { r in
+                processor.process(left: l.baseAddress!, right: r.baseAddress!, frames: l.count, enabled: true)
             }
         }
-        let low = boosted(1), high = boosted(3)
-        XCTAssertGreaterThan(rms(Array(low.suffix(12000))), rms(input) * 1.1)
-        XCTAssertGreaterThan(rms(Array(high.suffix(12000))), rms(Array(low.suffix(12000))))
-        XCTAssertTrue(high.allSatisfy(\.isFinite))
+        XCTAssertGreaterThan(rms(left[24000...]), rms(input[24000...]) * 1.5)
+        XCTAssertLessThan(left.map(abs).max()!, 0.95)
+        XCTAssertTrue(left.allSatisfy(\.isFinite))
+        XCTAssertEqual(left, right, "Stereo-linked gain")
     }
 
     func testMixerGainClamp() {

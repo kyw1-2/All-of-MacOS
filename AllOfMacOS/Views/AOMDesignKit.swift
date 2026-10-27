@@ -19,11 +19,13 @@ import SwiftUI
 
 /// Corner radii by role. Nested shapes step down so corners stay concentric.
 enum AOMRadius {
-    /// Floating panels: shelf, history overlay, palette.
-    static let panel: CGFloat = 18
-    /// HUDs, toasts and floating capture bars.
+    /// Floating panels: shelf, history overlay, palette, welcome.
+    static let panel: CGFloat = 20
+    /// HUDs, toasts and the recording bar.
     static let hud: CGFloat = 16
-    /// Content cards on the canvas.
+    /// Control strips floating over the screen (capture toolbars).
+    static let bar: CGFloat = 14
+    /// Content cards on the canvas (grouped boxes).
     static let card: CGFloat = 12
     /// Tiles and thumbnails inside a card.
     static let tile: CGFloat = 9
@@ -78,11 +80,18 @@ struct AOMFloatingSurface: ViewModifier {
                 .overlay(shape.strokeBorder(Color(nsColor: .separatorColor), lineWidth: contrast == .increased ? 1 : 0.5)
                     .allowsHitTesting(false))
         } else if #available(macOS 26.0, *) {
+            // Liquid Glass alone draws edge, depth and adaptive tint. Large
+            // panels people read in keep a faint wash for legibility over busy
+            // wallpapers; small chrome is pure glass (WWDC25 "Meet Liquid Glass").
             content
-                .background(VisualEffectBackground(material: role.fallbackMaterial, blendingMode: blending, state: .active)
-                    .opacity(role == .hud ? 0.7 : 0.55))
+                .background {
+                    if role == .panel {
+                        VisualEffectBackground(material: role.fallbackMaterial, blendingMode: blending, state: .active)
+                            .opacity(0.3)
+                            .clipShape(shape)
+                    }
+                }
                 .glassEffect(.regular, in: shape)
-                .clipShape(shape)
         } else {
             content
                 .background(VisualEffectBackground(material: role.fallbackMaterial, blendingMode: blending, state: .active))
@@ -93,10 +102,63 @@ struct AOMFloatingSurface: ViewModifier {
 }
 
 extension View {
+    /// Primary action: the system prominent style (Liquid Glass tinted on
+    /// macOS 26). Use for the one action a page or sheet exists for.
+    @ViewBuilder func aomPrimaryButton() -> some View {
+        buttonStyle(.borderedProminent)
+    }
+
+    /// A control floating over content (HUDs, Quick Access, pins). macOS 26
+    /// renders real glass; earlier systems the bordered style.
+    @ViewBuilder func aomGlassButton(prominent: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
+        } else {
+            if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
+        }
+    }
+
+    /// Groups nearby custom glass so it samples and morphs as one surface.
+    @ViewBuilder func aomGlassGroup(spacing: CGFloat = 8) -> some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { self }
+        } else {
+            self
+        }
+    }
+
+    /// Soft scroll-edge effect under the floating toolbar (macOS 26).
+    @ViewBuilder func aomScrollEdge() -> some View {
+        if #available(macOS 26.0, *) {
+            scrollEdgeEffectStyle(.soft, for: .top)
+        } else {
+            self
+        }
+    }
+
+    /// One page grammar for every main-window destination: the system canvas,
+    /// title and subtitle in the window toolbar, no in-content duplicate.
+    func aomPage(_ title: String, subtitle: String? = nil) -> some View {
+        modifier(AOMPageChrome(title: title, subtitle: subtitle))
+    }
+
     /// Floating chrome (panels, HUDs, bars) in the shared AOM material.
     func aomFloatingSurface(_ role: AOMFloatingRole = .panel, radius: CGFloat = AOMRadius.panel,
                             inWindow: Bool = false) -> some View {
         modifier(AOMFloatingSurface(role: role, radius: radius, inWindow: inWindow))
+    }
+}
+
+/// Title, subtitle and canvas for a main-window page.
+struct AOMPageChrome: ViewModifier {
+    let title: String
+    let subtitle: String?
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AOMTheme.workspace)
+            .navigationTitle(title)
+            .navigationSubtitle(subtitle ?? "")
     }
 }
 

@@ -80,23 +80,26 @@ struct ConfigSection<Content: View>: View {
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isAdvanced ? Color.secondary : Color.accentColor)
-                    .frame(width: 15)
-                Text(title)
                     .font(.system(size: 12, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(isAdvanced ? AOMTheme.textSecondary : Color.accentColor)
+                    .frame(width: 16)
+                Text(title)
+                    .font(AOMType.headline)
                 if isAdvanced {
-                    Text("advanced")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(.quaternary.opacity(0.5), in: Capsule())
+                    Text("Advanced")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(AOMTheme.textSecondary)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(AOMTheme.track, in: Capsule())
                 }
             }
         }
-        .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5),
-                    in: RoundedRectangle(cornerRadius: 8))
+        // An inset well inside the editor card, not a second card: one
+        // surface level, as in System Settings' grouped rows.
+        .padding(.horizontal, AOMSpace.s)
+        .padding(.vertical, 10)
+        .background(AOMTheme.cardAlt.opacity(0.6), in: RoundedRectangle(cornerRadius: AOMRadius.tile, style: .continuous))
     }
 }
 

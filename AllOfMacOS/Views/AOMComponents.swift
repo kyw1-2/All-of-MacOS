@@ -149,9 +149,9 @@ struct AOMNotice<Actions: View>: View {
         }
         .padding(.horizontal, AOMSpace.s)
         .padding(.vertical, 10)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.5)
         }
         .accessibilityElement(children: .contain)
     }

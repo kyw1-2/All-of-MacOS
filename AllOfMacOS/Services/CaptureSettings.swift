@@ -424,6 +424,11 @@ enum CaptureSettings {
         get { d.bool(forKey: "AOMCaptureRecordingCameraOverlay") }
         set { d.set(newValue, forKey: "AOMCaptureRecordingCameraOverlay") }
     }
+    /// CleanShot's live webcam bubble while recording (with Camera Overlay on).
+    static var recordingCameraBubble: Bool {
+        get { d.object(forKey: "AOMCaptureRecordingCameraBubble") as? Bool ?? true }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingCameraBubble") }
+    }
     /// CleanShot's keystroke-overlay options for recordings.
     static var recordingKeystrokePosition: KeystrokeOverlayPosition {
         get { KeystrokeOverlayPosition(rawValue: d.string(forKey: "AOMCaptureRecordingKeystrokePosition") ?? "") ?? .bottom }
@@ -447,6 +452,24 @@ enum CaptureSettings {
     static var recordingKeystrokeOverlay: Bool {
         get { d.bool(forKey: "AOMCaptureRecordingKeystrokeOverlay") }
         set { d.set(newValue, forKey: "AOMCaptureRecordingKeystrokeOverlay") }
+    }
+
+    /// CleanShot's "Do Not Disturb while recording". macOS has no public Focus
+    /// API, so AOM runs two user-owned Shortcuts (each a single "Set Focus"
+    /// action) when a recording starts and when it ends.
+    static var recordingFocus: Bool {
+        get { d.bool(forKey: "AOMCaptureRecordingFocus") }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingFocus") }
+    }
+    static let defaultRecordingFocusOnShortcut = "AOM Focus On"
+    static let defaultRecordingFocusOffShortcut = "AOM Focus Off"
+    static var recordingFocusOnShortcut: String {
+        get { d.string(forKey: "AOMCaptureRecordingFocusOn").flatMap { $0.isEmpty ? nil : $0 } ?? defaultRecordingFocusOnShortcut }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingFocusOn") }
+    }
+    static var recordingFocusOffShortcut: String {
+        get { d.string(forKey: "AOMCaptureRecordingFocusOff").flatMap { $0.isEmpty ? nil : $0 } ?? defaultRecordingFocusOffShortcut }
+        set { d.set(newValue, forKey: "AOMCaptureRecordingFocusOff") }
     }
 
     static var recordingFPS: Int {

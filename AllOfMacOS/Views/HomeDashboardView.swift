@@ -28,7 +28,7 @@ struct AOMHomeView: View {
 
     /// Two card columns from this width.
     static let wideWidth: CGFloat = 760
-    static let maximumContentWidth: CGFloat = 1180
+    static let maximumContentWidth: CGFloat = AOMSize.contentMaxWidth
     static let rowsPerSection = 4
 
     private var triggers: [Trigger] { appState.currentPreset.triggers }

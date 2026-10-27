@@ -488,6 +488,7 @@ enum SettingsCatalog {
         "clipboardQuickModifier": "Pasting", "clipboardPlainModifier": "Pasting",
         "clipboardStorage": "History",
         "gestures": "Automations", "bttPreset": "Import",
+        "hyperKey": "Keyboard & Mouse", "keyRemaps": "Keyboard & Mouse", "reverseWheel": "Keyboard & Mouse",
         "permissions": "Access", "privacySettings": "Access",
         "backups": "Your Data", "reset": "Your Data", "tutorial": "Help",
     ]
@@ -568,6 +569,9 @@ enum SettingsCatalog {
             item("bttPreset", .automation, "Import BTT Preset", "Import BetterTouchTool JSON presets", ["btt", "프리셋", "Import"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT Preset", subtitle: "Import BetterTouchTool JSON presets") {
                 Button("Import") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }.controlSize(.small)
             })),
+            item("hyperKey", .automation, "Hyper Key", "Hold Caps Lock or another key for ⌃⌥⇧⌘", ["hyper", "caps lock", "캡스락", "하이퍼", "modifier"], AnyView(HyperKeyRow())),
+            item("keyRemaps", .automation, "Remap Keys", "Turn one key into another", ["remap", "리맵", "키 변경", "karabiner", "키보드"], AnyView(KeyRemapRow())),
+            item("reverseWheel", .automation, "Reverse Mouse Wheel", "Flip a wheel mouse, keep the trackpad natural", ["scroll", "스크롤", "휠", "마우스", "reverse", "natural"], AnyView(ReverseWheelRow())),
         ]
     }
 
@@ -707,17 +711,55 @@ struct SettingsHubView: View {
         return result
     }
 
+    private var sidebarSelection: Binding<SettingsCategory?> {
+        Binding(get: { isSearching ? nil : category },
+                set: { if let next = $0 { query = ""; category = next } })
+    }
+
+    /// System Settings arrangement: a system sidebar (Liquid Glass on
+    /// macOS 26) with search at its top, the selected pane titled in the
+    /// window toolbar, grouped boxes on the system canvas.
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            AOMDivider(axis: .vertical)
-            VStack(spacing: 0) {
-                header
-                content
+        NavigationSplitView {
+            List(selection: sidebarSelection) {
+                ForEach(SettingsCategory.allCases) { cat in
+                    HStack(spacing: 8) {
+                        Label { Text(cat.title) } icon: {
+                            Image(systemName: cat.symbol)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 20, height: 20)
+                                .background(cat.tint.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        }
+                        Spacer(minLength: 0)
+                        if cat == .permissions { PermissionSummaryBadge(compact: true, onAccent: false) }
+                    }
+                    .tag(cat)
+                }
             }
-            .background(AOMTheme.workspace)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 260)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(AOMTheme.workspace)
+                .navigationTitle(isSearching ? "Search Results" : category.title)
+                .toolbar {
+                    ToolbarItem(placement: .automatic) {
+                        if savedFlash {
+                            Label("Saved", systemImage: "checkmark.circle.fill")
+                                .labelStyle(.titleAndIcon)
+                                .font(AOMType.caption.weight(.medium))
+                                .foregroundStyle(AOMTheme.positive)
+                                .transition(.opacity)
+                                .accessibilityLabel("Settings saved")
+                        }
+                    }
+                }
         }
-        .frame(minWidth: 780, idealWidth: 900, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
+        .searchable(text: $query, placement: .sidebar, prompt: "Search Settings")
+        .frame(minWidth: 780, idealWidth: 920, maxWidth: .infinity, minHeight: 560, idealHeight: 700, maxHeight: .infinity)
         .preferredColorScheme(appearance == "system" ? nil : (appearance == "dark" ? .dark : .light))
         .onReceive(NotificationCenter.default.publisher(for: .aomSettingChanged)) { _ in flashSaved() }
         .onReceive(NotificationCenter.default.publisher(for: .aomImportBTTPreset)) { _ in importBTTPreset() }
@@ -744,73 +786,6 @@ struct SettingsHubView: View {
                 .environmentObject(appState)
                 .frame(width: 760, height: 620)
         }
-    }
-
-    /// Search on top, then the categories with their coloured glyphs — the
-    /// System Settings sidebar, which macOS users already read without help.
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.s) {
-            SettingsSearchField(text: $query)
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(SettingsCategory.allCases) { cat in categoryChip(cat) }
-                }
-            }
-            .scrollIndicators(.hidden)
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, AOMSpace.s)
-        .frame(width: 210)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: AOMSpace.s) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(isSearching ? "Search Results" : category.title)
-                    .font(AOMType.title2).foregroundStyle(AOMTheme.text)
-                    .accessibilityAddTraits(.isHeader)
-                Text(isSearching ? "Settings matching “\(query.trimmingCharacters(in: .whitespaces))”" : category.blurb)
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            if savedFlash {
-                AOMChip(text: "Saved", tint: AOMTheme.positive, symbol: "checkmark")
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, AOMSpace.l)
-        .padding(.top, AOMSpace.m + 2)
-        .padding(.bottom, AOMSpace.xs)
-    }
-
-    private func categoryChip(_ cat: SettingsCategory) -> some View {
-        let selected = !isSearching && category == cat
-        return Button {
-            query = ""
-            category = cat
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: cat.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
-                    .background(cat.tint.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                Text(cat.title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? AOMTheme.onAccent(.accentColor) : AOMTheme.text)
-                Spacer(minLength: 0)
-                if cat == .permissions { PermissionSummaryBadge(compact: true, onAccent: selected) }
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 30)
-            .background(selected ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     @ViewBuilder

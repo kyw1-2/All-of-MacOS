@@ -1130,7 +1130,7 @@ private struct QuickAccessOverlayView: View {
         .frame(width: width)
         // The shared floating material (glass on macOS 26+), so the card
         // matches the shelf, history and HUDs.
-        .aomFloatingSurface(.hud, radius: 13)
+        .aomFloatingSurface(.hud, radius: AOMRadius.card)
         .help("Double-click to \(isVideo ? "edit" : "annotate") · Drag to export · Right-click for more")
         .onHover { state in
             // Appear instantly on entry (the way the tiling executor does);

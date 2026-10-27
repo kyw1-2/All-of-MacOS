@@ -99,7 +99,7 @@ struct StatisticsView: View {
                 .padding(.horizontal, layout == .stacked ? AOMSpace.m : AOMSpace.l)
                 .padding(.top, AOMSpace.m)
                 .padding(.bottom, AOMSpace.l)
-                .frame(maxWidth: 1180, alignment: .topLeading)
+                .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
             .suppressScrollerReservation()

@@ -1,7 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// AOM visual language (2.0).
+/// AOM visual language (3.1, Liquid Glass alignment).
+///
+/// Two layers, as on macOS 26: content sits on the system window background
+/// in opaque grouped boxes; navigation and floating controls (sidebar,
+/// toolbar, panels, HUDs) are Liquid Glass drawn by the system or by
+/// `aomFloatingSurface`. AOM no longer tints the canvas or paints a light rim
+/// on opaque cards, so the toolbar's scroll-edge effect and the floating
+/// sidebar render exactly as in Apple's own apps. See
+/// docs/ui-liquid-glass-3.1.0.md for the 50+ references behind these rules.
 ///
 /// macOS structure first: a system sidebar for navigation, a contextual
 /// toolbar for the page's tools, and content panes on the system content
@@ -19,12 +27,10 @@ enum AOMTheme {
     static let canvasNSColor = NSColor.windowBackgroundColor
     /// A content pane: lists, editors and libraries (white / dark grey).
     static let pane = Color(nsColor: .controlBackgroundColor)
-    /// The work surface underneath documents and workflow steps. Kept opaque:
-    /// material belongs to the window chrome, never underneath readable content.
-    static let workspace = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.963, green: 0.967, blue: 0.975, alpha: 1),
-        dark: NSColor(srgbRed: 0.085, green: 0.090, blue: 0.105, alpha: 1)
-    )
+    /// The work surface underneath documents and workflow steps: the system
+    /// window background, so system glass and scroll-edge effects sample the
+    /// same canvas as in Apple's apps (no custom tint).
+    static let workspace = Color(nsColor: .windowBackgroundColor)
     /// Raised content inside a pane: cards for discrete items.
     static let paper = Color(nsColor: .controlBackgroundColor)
     static let card = paper
@@ -109,16 +115,18 @@ enum AOMTheme {
 
     static var cardShadow: Color { Color.black.opacity(0.03) }
 
-    /// Light rim used by floating glass chrome.
+    /// Edge for cards and chrome. A neutral hairline that reads the same in
+    /// light and dark (the old white rim vanished on light cards and glowed on
+    /// dark ones).
     static func rim(hovering: Bool = false, contrast: ColorSchemeContrast = .standard) -> LinearGradient {
         if contrast == .increased {
             return LinearGradient(colors: [Color(nsColor: .secondaryLabelColor), Color(nsColor: .tertiaryLabelColor)],
                                   startPoint: .topLeading, endPoint: .bottomTrailing)
         }
-        return LinearGradient(colors: [Color.white.opacity(hovering ? 0.65 : 0.45), Color.white.opacity(0.08)],
-                              startPoint: .topLeading, endPoint: .bottomTrailing)
+        return LinearGradient(colors: [Color.primary.opacity(hovering ? 0.16 : 0.10), Color.primary.opacity(hovering ? 0.10 : 0.05)],
+                              startPoint: .top, endPoint: .bottom)
     }
-    static let rimWidth: CGFloat = 0.75
+    static let rimWidth: CGFloat = 0.5
 
     /// The response shared by pressable surfaces: quick, no bounce.
     static let press = Animation.easeOut(duration: 0.12)
@@ -162,6 +170,9 @@ enum AOMSize {
     static let listRowDouble: CGFloat = 50
     /// Readable line length for editors and forms.
     static let readableWidth: CGFloat = 760
+    /// One maximum content width for every page, so cards line up when you
+    /// move between Workspace, Audio, Window Tiling and Insights.
+    static let contentMaxWidth: CGFloat = 1120
 }
 
 /// Motion tokens. Every value collapses to no animation under Reduce Motion.
@@ -179,37 +190,37 @@ enum AOMMotion {
 /// one step larger only for titles that name what you are editing. Section
 /// pages take their title from the toolbar; content never repeats it.
 enum AOMType {
-    /// Title 1: the name of the thing being edited.
-    static let title1 = Font.system(size: 22, weight: .semibold)
-    /// Title 2: an empty state or a sheet's heading.
-    static let title2 = Font.system(size: 17, weight: .semibold)
-    /// Title 3: a group heading inside a page.
-    static let title3 = Font.system(size: 15, weight: .semibold)
-    /// Headline: card titles and emphasised row titles.
-    static let headline = Font.system(size: 13, weight: .semibold)
+    /// Title 1: the name of the thing being edited (22 pt).
+    static let title1 = Font.title.weight(.semibold)
+    /// Title 2: an empty state or a sheet's heading (17 pt).
+    static let title2 = Font.title2.weight(.semibold)
+    /// Title 3: a group heading inside a page (15 pt).
+    static let title3 = Font.title3.weight(.semibold)
+    /// Headline: card titles and emphasised row titles (13 pt bold).
+    static let headline = Font.headline
     /// Badges, key hints and tertiary metadata (never body text).
-    static let micro = Font.system(size: 10.5, weight: .regular)
+    static let micro = Font.caption
     /// Screen title in content (the name of the thing being edited).
-    static let pageTitle = Font.system(size: 22, weight: .semibold)
+    static let pageTitle = Font.title.weight(.bold)
     static let pageTracking: CGFloat = -0.2
     static let heroTitle = pageTitle
     static let heroTracking = pageTracking
-    static let subtitle = Font.system(size: 13)
+    static let subtitle = Font.body
     /// Upper-case micro labels (sparingly).
-    static let sectionCaps = Font.system(size: 11, weight: .semibold)
-    static let capsTracking: CGFloat = 0.5
+    static let sectionCaps = Font.subheadline.weight(.semibold)
+    static let capsTracking: CGFloat = 0.4
     /// Section headings inside a pane.
-    static let sectionTitle = Font.system(size: 15, weight: .semibold)
-    static let cardTitle = Font.system(size: 14, weight: .semibold)
-    static let tileTitle = Font.system(size: 13, weight: .semibold)
+    static let sectionTitle = Font.title3.weight(.semibold)
+    static let cardTitle = Font.headline
+    static let tileTitle = Font.headline
     /// First line of a list row.
-    static let rowTitle = Font.system(size: 13, weight: .medium)
-    static let body = Font.system(size: 13)
-    static let bodyEmphasis = Font.system(size: 13, weight: .semibold)
-    /// Second line of a row, captions, timestamps.
-    static let caption = Font.system(size: 11.5)
+    static let rowTitle = Font.body.weight(.medium)
+    static let body = Font.body
+    static let bodyEmphasis = Font.body.weight(.semibold)
+    /// Second line of a row, captions, timestamps (11 pt).
+    static let caption = Font.subheadline
     static let meta = caption
-    static func metric(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold) }
+    static func metric(_ size: CGFloat = 22) -> Font { .system(size: size, weight: .semibold, design: .rounded) }
 }
 
 extension Font {
@@ -314,7 +325,7 @@ struct AOMCardSurface: ViewModifier {
         } else {
             switch style {
             case .paper:
-                shape.strokeBorder(hovering ? AOMTheme.text.opacity(0.12) : AOMTheme.hairline, lineWidth: 0.75)
+                shape.strokeBorder(hovering ? AOMTheme.text.opacity(0.14) : AOMTheme.hairline.opacity(0.9), lineWidth: 0.5)
             case .well:
                 EmptyView()
             case .glass:
@@ -551,21 +562,15 @@ private struct AOMFilledBody: View {
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
-        // Vertical accent gradient; press and hover darken it further below.
-        let fill = LinearGradient(colors: [tint, tint.aomDarker(configuration.isPressed ? 0.20 : (hovering ? 0.15 : 0.10))],
-                                  startPoint: .top, endPoint: .bottom)
+        // macOS 26 control geometry: a capsule-ended rounded rectangle with a
+        // flat accent fill; Liquid Glass supplies depth, not a painted rim.
+        let shape = RoundedRectangle(cornerRadius: height / 2, style: .continuous)
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(.body.weight(.semibold))
             .foregroundStyle(AOMTheme.onAccent(tint))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .frame(minHeight: height)
-            .background(fill, in: shape)
-            .overlay {
-                // Lit top edge: the glass rim on filled controls.
-                shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.30), Color.white.opacity(0.05)],
-                                                  startPoint: .top, endPoint: .center), lineWidth: 0.5)
-            }
+            .background(tint.aomDarker(configuration.isPressed ? 0.14 : (hovering ? 0.07 : 0)), in: shape)
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(shape)
             .onHover { hovering = $0 }
@@ -590,11 +595,11 @@ private struct AOMTintedBody: View {
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMTheme.controlRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: height / 2, style: .continuous)
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .font(.body.weight(.semibold))
             .foregroundStyle(tint)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .frame(minHeight: height)
             .background(tint.opacity(configuration.isPressed ? 0.22 : (hovering ? 0.16 : 0.10)), in: shape)
             .opacity(isEnabled ? 1 : 0.45)

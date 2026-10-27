@@ -78,7 +78,7 @@ struct ModernWindowSnappingView: View {
                 .padding(.horizontal, wide ? AOMSpace.l : AOMSpace.m)
                 .padding(.top, AOMSpace.m)
                 .padding(.bottom, AOMSpace.l)
-                .frame(maxWidth: 1180, alignment: .topLeading)
+                .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
         }

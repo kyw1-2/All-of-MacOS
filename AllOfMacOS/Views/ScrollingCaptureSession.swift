@@ -195,6 +195,6 @@ private struct ScrollSessionView: View {
                 Button(session.paused ? "Resume" : "Pause") { session.paused.toggle() }
                 Button("Finish", action: session.finish).buttonStyle(.borderedProminent)
             }.controlSize(.regular)
-        }.padding(16).aomFloatingSurface(.bar, radius: AOMRadius.hud)
+        }.padding(16).aomFloatingSurface(.bar, radius: AOMRadius.bar)
     }
 }

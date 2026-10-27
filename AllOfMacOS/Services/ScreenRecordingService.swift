@@ -107,7 +107,11 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     func startRecording(globalRect: CGRect) async throws {
         guard !isRecording, !isStarting, !isStopping else { return }
         isStarting = true
-        defer { isStarting = false }
+        defer {
+            isStarting = false
+            // Any failed start, wherever it threw, takes the camera bubble down.
+            if !isRecording { RecordingCameraBubble.shared.hide() }
+        }
         recordsEditableCursor = CaptureSettings.recordingCursorMotion
         outputGIF = UserDefaults.standard.string(forKey: "AOMCaptureRecordingOutputFormat") == "gif"
         gifFPS = max(1, min(30, UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS") == 0 ? 10 : UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS")))
@@ -130,6 +134,11 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                     throw CaptureError.captureFailed("Enable camera access in Privacy & Security, or disable the camera overlay.")
                 }
             }
+        }
+        // The bubble must exist before ScreenCaptureKit lists AOM's windows,
+        // so the own-window exclusion below keeps it out of the video.
+        if CaptureSettings.recordingCameraOverlay && CaptureSettings.recordingCameraBubble {
+            RecordingCameraBubble.shared.show(recording: globalRect)
         }
         let content = try await SCShareableContent.current
         let displays = content.displays.filter { !$0.frame.intersection(globalRect).isEmpty }
@@ -208,6 +217,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 camera.onFrame = { [weak self] image in self?.cameraImage = image }
                 try await camera.start()
                 self.camera = camera
+                if RecordingCameraBubble.shared.isVisible { RecordingCameraBubble.shared.attach(camera.captureSession) }
             }
             if CaptureSettings.recordingKeystrokeOverlay { startKeyOverlay() }
             for (index, display) in displays.enumerated() {
@@ -242,6 +252,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 try await stream.startCapture()
             }
             isRecording = true
+            RecordingFocus.engage()
             startCursorSampling()
             startClickMonitoring()
             startTimer(); ScreenRecordingBarController.shared.show()
@@ -280,6 +291,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         isStopping = true
         defer { isStopping = false }
         isRecording = false; stopTimer(); stopCursorSampling(); stopOverlays()
+        RecordingFocus.release()
+        let bubblePlacement = RecordingCameraBubble.shared.placement(recording: recordingRect)
+        RecordingCameraBubble.shared.hide()
         ScreenRecordingBarController.shared.hide()
         for stream in streams { try? await stream.stopCapture() }
         streams.removeAll()
@@ -316,6 +330,13 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         defaultStyle.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
         defaultStyle.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
         defaultStyle.keystrokeStyle = CaptureSettings.recordingKeystrokeStyle
+        // The camera layer starts where the live bubble was left, round like it.
+        if let bubblePlacement, cameraWriter != nil {
+            defaultStyle.cameraX = bubblePlacement.x
+            defaultStyle.cameraY = bubblePlacement.y
+            defaultStyle.cameraSize = bubblePlacement.size
+            defaultStyle.cameraRoundness = 0.5
+        }
         var presentation = url
         if !telemetry.points.isEmpty || !(telemetry.keystrokes ?? []).isEmpty || cameraWriter?.status == .completed || (wantsRipples && !(telemetry.clicks ?? []).isEmpty) {
             GestureHUD.shared.show(title: "Finishing Recording", detail: "Rendering editable layers. The original screen and camera tracks are kept.")
@@ -355,9 +376,29 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         return presentation
     }
 
-    func cancelRecording() {
+    /// CleanShot's Restart: throw the take away and record the same area again
+    /// with the same options, without re-selecting it.
+    func restartRecording() {
+        guard isRecording, !isStopping else { return }
+        let rect = recordingRect
+        cancelRecording(announce: false, releasesFocus: false)
+        Task { @MainActor in
+            for _ in 0..<80 where isStopping { try? await Task.sleep(for: .milliseconds(50)) }
+            do {
+                try await startRecording(globalRect: rect)
+                GestureHUD.shared.show(title: "Recording Restarted", detail: "")
+            } catch {
+                RecordingFocus.release()
+                GestureHUD.shared.show(title: "Recording could not restart", detail: error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelRecording(announce: Bool = true, releasesFocus: Bool = true) {
         guard isRecording, !isStopping else { return }
         isStopping = true; isRecording = false
+        if releasesFocus { RecordingFocus.release() }
+        RecordingCameraBubble.shared.hide()
         stopTimer(); stopCursorSampling(); stopOverlays(); ScreenRecordingBarController.shared.hide()
         let activeStreams = streams; let writer = writer; let cameraWriter = cameraWriter; let url = outputURL
         clearSession()
@@ -367,7 +408,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
             writer?.cancelWriting(); cameraWriter?.cancelWriting()
             if let url { try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: AOMStudioCameraFrames.url(for: url)); try? FileManager.default.removeItem(at: AOMCursorTrack.sidecarURL(for: url)); RecordingRecovery.remove(url) }
         }
-        GestureHUD.shared.show(title: "Recording Discarded", detail: "")
+        if announce { GestureHUD.shared.show(title: "Recording Discarded", detail: "") }
     }
 
     private func clearSession() {
@@ -617,6 +658,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
 private final class RecordingCameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "com.kyw.allofmacos.recording-camera")
+    /// For the live preview bubble only; frames still arrive through `onFrame`.
+    var captureSession: AVCaptureSession { session }
     var onFrame: (@MainActor (CIImage) -> Void)?
     func start() async throws {
         guard let device = AVCaptureDevice.default(for: .video) else { throw CaptureError.captureFailed("No camera is available.") }
@@ -675,7 +718,7 @@ final class ScreenRecordingBarController: NSObject {
     func show() {
         if panel == nil {
             let p = NSPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 270, height: 44),
+                contentRect: NSRect(x: 0, y: 0, width: 300, height: 44),
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -692,9 +735,9 @@ final class ScreenRecordingBarController: NSObject {
         guard let panel, let screen = NSScreen.main else { return }
 
         let frame = NSRect(
-            x: screen.visibleFrame.midX - 135,
+            x: screen.visibleFrame.midX - 150,
             y: screen.visibleFrame.maxY - 56,
-            width: 270,
+            width: 300,
             height: 44
         )
         panel.setFrame(frame, display: true)
@@ -749,6 +792,15 @@ private struct ScreenRecordingBarView: View {
 
             Spacer(minLength: 0)
 
+            Button { service.restartRecording() } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Restart — discard this take and record the same area again")
+            .accessibilityLabel("Restart recording")
             Button { service.togglePause() } label: {
                 Image(systemName: service.isPaused ? "play.fill" : "pause.fill")
                     .font(.system(size: 13, weight: .semibold))
@@ -792,5 +844,60 @@ private struct ScreenRecordingBarView: View {
         .padding(.vertical, 8)
         .aomFloatingSurface(.hud, radius: 22)
         .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+    }
+}
+
+/// Runs the user's Focus Shortcuts around a recording (CleanShot's "Do Not
+/// Disturb while recording"). The Shortcuts CLI is launched directly, without a
+/// shell, so a Shortcut name never needs quoting. A failure is reported once and
+/// never blocks or stops the recording.
+@MainActor
+enum RecordingFocus {
+    private static var engaged = false
+
+    static func engage() {
+        guard CaptureSettings.recordingFocus, !engaged else { return }
+        engaged = true
+        run(CaptureSettings.recordingFocusOnShortcut)
+    }
+
+    static func release() {
+        guard engaged else { return }
+        engaged = false
+        run(CaptureSettings.recordingFocusOffShortcut)
+    }
+
+    /// Also used by the settings "Test" buttons.
+    static func run(_ name: String, completion: ((Bool, String) -> Void)? = nil) {
+        let shortcut = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !shortcut.isEmpty else { completion?(false, "No Shortcut name"); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Self.launch(shortcut)
+            DispatchQueue.main.async {
+                if !result.ok {
+                    GestureHUD.shared.show(title: "Focus Shortcut Failed",
+                                           detail: "“\(shortcut)”: \(result.message)")
+                }
+                completion?(result.ok, result.message)
+            }
+        }
+    }
+
+    nonisolated private static func launch(_ shortcut: String) -> (ok: Bool, message: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+        task.arguments = ["run", shortcut]
+        let errors = Pipe()
+        task.standardError = errors
+        task.standardOutput = FileHandle.nullDevice
+        do { try task.run() } catch { return (false, error.localizedDescription) }
+        // A Shortcut that waits on UI must not leave Focus in limbo forever.
+        let deadline = Date().addingTimeInterval(10)
+        while task.isRunning, Date() < deadline { usleep(50_000) }
+        if task.isRunning { task.terminate(); return (false, "Timed out after 10 seconds") }
+        let detail = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if task.terminationStatus == 0 { return (true, "") }
+        return (false, detail.isEmpty ? "Exit status \(task.terminationStatus)" : String(detail.prefix(200)))
     }
 }

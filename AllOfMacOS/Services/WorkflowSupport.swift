@@ -87,6 +87,7 @@ enum WorkflowVariables {
             }
         }
         apply(\.text); apply(\.url); apply(\.hudText); apply(\.notificationTitle); apply(\.variableValue)
+        apply(\.menuPath); apply(\.windowTitleQuery)
         return result
     }
 

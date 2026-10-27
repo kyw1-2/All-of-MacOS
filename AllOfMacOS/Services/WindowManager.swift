@@ -144,6 +144,15 @@ final class WindowManager: ObservableObject {
         guard NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.kyw.allofmacos.gesture-test" else { return [] }
         return visibleWindows().filter { $0.0.pid == pid }.map { $0.0 }
     }
+    /// Accessible, unminimized standard windows of visible apps, for the bulk
+    /// window actions (gather, side by side).
+    func standardWindowTargets() -> [Target] { visibleWindows().map(\.0) }
+    /// Places several windows as one undo step, so Undo Last Window Placement
+    /// puts all of them back. Reports (moved, failed).
+    func applyPlacements(_ placements: [(Target, CGRect)], completion: @escaping (Int, Int) -> Void) {
+        guard !layoutBusy, moving.isEmpty else { completion(0, placements.count); return }
+        applyBatch(placements.map { Saved(target: $0.0, frame: $0.1) }, recordUndo: true, completion: completion)
+    }
     @discardableResult
     func saveLayout(name: String, onlyPID: pid_t? = nil) -> Bool {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)

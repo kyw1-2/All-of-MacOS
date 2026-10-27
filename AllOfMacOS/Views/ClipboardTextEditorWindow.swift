@@ -314,7 +314,7 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = .textBackgroundColor
         let text = EditorTextView(frame: .zero)
         text.model = model
         text.isRichText = true
@@ -332,8 +332,8 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.textContainerInset = NSSize(width: 9, height: 10)
         text.drawsBackground = true
-        text.backgroundColor = .white
-        text.textColor = .black
+        text.backgroundColor = .textBackgroundColor
+        text.textColor = .textColor
         text.insertionPointColor = .black
         text.font = .systemFont(ofSize: 14)
         text.textStorage?.setAttributedString(model.value)
@@ -382,7 +382,7 @@ struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.borderType = .noBorder
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = .textBackgroundColor
         let text = NSTextView(frame: .zero)
         text.isEditable = false
         text.isSelectable = true
@@ -393,8 +393,8 @@ struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = true
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.textContainerInset = NSSize(width: 9, height: 10)
-        text.backgroundColor = .white
-        text.textColor = .black
+        text.backgroundColor = .textBackgroundColor
+        text.textColor = .textColor
         text.font = .systemFont(ofSize: 14)
         scroll.documentView = text
         updateNSView(scroll, context: context)

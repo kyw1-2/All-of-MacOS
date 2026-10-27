@@ -56,6 +56,9 @@ struct QuickCommandPalette: View {
         case clipboard = "Clipboard"
         case captures = "Recent Captures"
         case navigation = "Go To"
+        // Listed only while searching, like Raycast's root search.
+        case applications = "Applications"
+        case files = "Files"
     }
 
     /// Pure search and keyboard decisions, split from the view so they are
@@ -245,6 +248,25 @@ struct QuickCommandPalette: View {
         items.append(PaletteItem(id: "go.settings", title: "Settings", subtitle: "Open All of MacOS Settings",
                                  icon: "gearshape", section: .navigation, shortcut: "⌘,",
                                  primary: PaletteAction(title: "Open") { close(); openSettings() }))
+        // BTT / Raycast launcher: installed apps, then a Spotlight file search.
+        let trimmed = PaletteSearch.trimmedQuery(query)
+        if !trimmed.isEmpty {
+            for app in PaletteApplications.matching(trimmed) {
+                items.append(PaletteItem(id: "app.\(app.url.path)", title: app.name, subtitle: app.url.deletingLastPathComponent().path,
+                                         icon: "app", section: .applications,
+                                         primary: PaletteAction(title: "Open") {
+                                             close(); NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
+                                         },
+                                         secondaries: [PaletteAction(title: "Show in Finder") {
+                                             close(); NSWorkspace.shared.activateFileViewerSelecting([app.url])
+                                         }]))
+            }
+            items.append(PaletteItem(id: "files.search", title: "Search Files for “\(trimmed)”",
+                                     subtitle: "Spotlight results in Finder", icon: "doc.text.magnifyingglass", section: .files,
+                                     primary: PaletteAction(title: "Search") {
+                                         close(); NSWorkspace.shared.showSearchResults(forQueryString: trimmed)
+                                     }))
+        }
         return items
     }
 
@@ -269,7 +291,7 @@ struct QuickCommandPalette: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(AOMTheme.textSecondary)
-                    TextField("Search commands, automations, clipboard and captures", text: $query)
+                    TextField("Search commands, apps, files, clipboard and captures", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 17))
                         .focused($isFieldFocused)
@@ -456,5 +478,68 @@ private extension View {
                 }
             }
         }
+    }
+}
+
+/// Installed applications for the palette's launcher results. The folders are
+/// listed once and cached for five minutes, so typing never touches the disk.
+enum PaletteApplications {
+    struct App: Equatable {
+        let name: String
+        let url: URL
+    }
+
+    private static var cache: (apps: [App], at: Date)?
+    private static let lock = NSLock()
+
+    static var folders: [URL] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) } + [home.appendingPathComponent("Applications", isDirectory: true)]
+    }
+
+    static func all(now: Date = Date()) -> [App] {
+        lock.lock(); defer { lock.unlock() }
+        if let cache, now.timeIntervalSince(cache.at) < 300 { return cache.apps }
+        let apps = scan(folders)
+        cache = (apps, now)
+        return apps
+    }
+
+    static func scan(_ folders: [URL]) -> [App] {
+        var seen = Set<String>()
+        var apps: [App] = []
+        for folder in folders {
+            let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil,
+                                                                     options: [.skipsHiddenFiles])) ?? []
+            for url in urls where url.pathExtension == "app" {
+                let name = url.deletingPathExtension().lastPathComponent
+                guard seen.insert(name.lowercased()).inserted else { continue }
+                apps.append(App(name: name, url: url))
+            }
+        }
+        return apps.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Name prefix first, then any word that starts with the query, then
+    /// anywhere in the name; at most eight, so commands are not crowded out.
+    static func matching(_ query: String, in apps: [App]? = nil) -> [App] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return [] }
+        func rank(_ app: App) -> Int? {
+            let name = app.name
+            if name.range(of: needle, options: [.caseInsensitive, .anchored, .diacriticInsensitive]) != nil { return 0 }
+            if name.split(separator: " ").contains(where: { $0.range(of: needle, options: [.caseInsensitive, .anchored]) != nil }) { return 1 }
+            if name.localizedCaseInsensitiveContains(needle) { return 2 }
+            return nil
+        }
+        let ranked: [(app: App, rank: Int)] = (apps ?? all()).compactMap { app in
+            guard let value = rank(app) else { return nil }
+            return (app, value)
+        }
+        let ordered = ranked.sorted { lhs, rhs in
+            lhs.rank != rhs.rank ? lhs.rank < rhs.rank : lhs.app.name.count < rhs.app.name.count
+        }
+        return ordered.prefix(8).map { $0.app }
     }
 }

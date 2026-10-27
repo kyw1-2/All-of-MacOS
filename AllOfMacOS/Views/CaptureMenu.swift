@@ -113,6 +113,10 @@ enum CaptureMenu {
                                     shortcut: shortcuts.shortcut(for: .pauseRecording)) {
                     ScreenRecordingService.shared.togglePause()
                 })
+                // CleanShot's Restart: same area and options, the take is discarded.
+                menu.addItem(action("Restart Recording", "arrow.counterclockwise.circle", shortcut: nil) {
+                    ScreenRecordingService.shared.restartRecording()
+                })
             }
         }
 

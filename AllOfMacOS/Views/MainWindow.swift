@@ -79,12 +79,10 @@ struct AOMMainWindowChrome: NSViewRepresentable {
             let selected: NSAppearance? = appearanceChoice == "dark" ? NSAppearance(named: .darkAqua)
                 : appearanceChoice == "light" ? NSAppearance(named: .aqua) : nil
             if window.appearance?.name != selected?.name { window.appearance = selected }
-            // Match the titlebar backing to the content canvas and remove the
-            // extra baseline so the toolbar and detail column read as one surface.
-            window.titlebarAppearsTransparent = true
-            window.backgroundColor = NSColor(AOMTheme.workspace)
-            window.toolbar?.showsBaselineSeparator = false
-            DispatchQueue.main.async { [weak window] in window?.toolbar?.showsBaselineSeparator = false }
+            // The titlebar, toolbar and window background stay the system's:
+            // macOS 26 draws the toolbar as Liquid Glass with a scroll-edge
+            // effect over the system canvas. Painting a custom background or
+            // a transparent titlebar here hid both (3.0.x).
             if !sizedForPreview, let size = PresetManager.previewWindowSize {
                 sizedForPreview = true
                 window.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height), display: true)

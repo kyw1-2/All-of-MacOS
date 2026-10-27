@@ -12,6 +12,7 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureShowsCursor") private var showsCursor = false
     @AppStorage("AOMCaptureRecordingAudioSource") private var recordingAudioSourceRaw = RecordingAudioSource.off.rawValue
     @AppStorage("AOMCaptureRecordingCameraOverlay") private var recordingCameraOverlay = false
+    @AppStorage("AOMCaptureRecordingCameraBubble") private var recordingCameraBubble = true
     @AppStorage("AOMCaptureRecordingKeystrokeOverlay") private var recordingKeystrokeOverlay = false
     @AppStorage("AOMCaptureRecordingKeystrokeAllKeys") private var keystrokeAllKeys = false
     @AppStorage("AOMCaptureRecordingKeystrokePosition") private var keystrokePosition = KeystrokeOverlayPosition.bottom.rawValue
@@ -23,6 +24,10 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureRecordingQuality") private var recordingQuality = 2
     @AppStorage("AOMCaptureRecordingClickIndicators") private var recordingClickIndicators = false
     @AppStorage("AOMCaptureRecordingCursorMotion") private var recordingCursorMotion = false
+    @AppStorage("AOMCaptureRecordingFocus") private var recordingFocus = false
+    @AppStorage("AOMCaptureRecordingFocusOn") private var recordingFocusOn = CaptureSettings.defaultRecordingFocusOnShortcut
+    @AppStorage("AOMCaptureRecordingFocusOff") private var recordingFocusOff = CaptureSettings.defaultRecordingFocusOffShortcut
+    @State private var focusTestResult: String?
     @AppStorage("AOMCaptureWindowShadow") private var windowShadow = true
     @AppStorage("AOMCaptureHidesDesktopIcons") private var hidesDesktopIcons = false
     @AppStorage("AOMCapturePlaysSound") private var playsSound = true
@@ -261,6 +266,14 @@ struct CaptureSettingsView: View {
                              title: "Camera Overlay", subtitle: "Editable camera layer; original and standalone video are saved", showDivider: true) {
                 Toggle("", isOn: $recordingCameraOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }
+            if recordingCameraOverlay {
+                AppleSettingsRow(icon: "person.crop.circle", iconColor: .green,
+                                 title: "Camera Bubble While Recording",
+                                 subtitle: "A round preview you can drag; it is not baked into the video, and the camera layer starts where you leave it",
+                                 showDivider: true) {
+                    Toggle("", isOn: $recordingCameraBubble).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+            }
             AppleSettingsRow(icon: "keyboard", iconColor: .purple,
                              title: "Show Keystrokes",
                              subtitle: keystrokeAllKeys ? "Every key except in password fields; editable afterwards"
@@ -293,7 +306,7 @@ struct CaptureSettingsView: View {
             AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,
                              title: "Audio Source",
                              subtitle: recordingOutputFormat == "gif" ? "GIF has no audio" : "Record computer sound, microphone, or both",
-                             showDivider: false) {
+                             showDivider: true) {
                 Picker("", selection: $recordingAudioSourceRaw) {
                     ForEach(RecordingAudioSource.allCases) { source in
                         Text(source.displayName).tag(source.rawValue)
@@ -303,6 +316,40 @@ struct CaptureSettingsView: View {
                 .pickerStyle(.menu)
                 .frame(width: 200)
                 .disabled(recordingOutputFormat == "gif")
+            }
+            AppleSettingsRow(icon: "moon.fill", iconColor: .indigo,
+                             title: "Do Not Disturb While Recording",
+                             subtitle: "Runs your Focus Shortcuts when recording starts and ends",
+                             showDivider: recordingFocus) {
+                Toggle("", isOn: $recordingFocus).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if recordingFocus {
+                focusShortcutRow(icon: "moon.circle.fill", title: "Start Shortcut", name: $recordingFocusOn, divider: true)
+                focusShortcutRow(icon: "moon.circle", title: "End Shortcut", name: $recordingFocusOff, divider: false)
+                Text(focusTestResult ?? "Create two Shortcuts with a single “Set Focus” action — Do Not Disturb On, and Off — and enter their names here. macOS offers no other supported way to change Focus.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private func focusShortcutRow(icon: String, title: String, name: Binding<String>, divider: Bool) -> some View {
+        AppleSettingsRow(icon: icon, iconColor: .indigo, title: title, subtitle: nil, showDivider: divider) {
+            HStack(spacing: 6) {
+                TextField("Shortcut name", text: name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 170)
+                Button("Test") {
+                    focusTestResult = "Running “\(name.wrappedValue)”…"
+                    RecordingFocus.run(name.wrappedValue) { ok, message in
+                        focusTestResult = ok ? "“\(name.wrappedValue)” ran successfully." : "“\(name.wrappedValue)” failed: \(message)"
+                    }
+                }
+                .controlSize(.small)
+                .disabled(name.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
     }

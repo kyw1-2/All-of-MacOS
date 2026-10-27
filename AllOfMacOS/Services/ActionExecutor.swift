@@ -335,12 +335,21 @@ class ActionExecutor {
             ExtendedActions.perform(action, isCancelled: isCancelled, completion: completion)
             return
         }
+        if ParityActions.handles(action.actionType) {
+            ParityActions.perform(action, isCancelled: isCancelled, completion: completion)
+            return
+        }
 
         if action.actionType == .sendKeyStroke, action.parameters.shortcutKeyCode == nil {
             GestureLog.shared.logFromAnyThread("Record a keyboard shortcut before running this step", level: .error)
             completion(false); return
         }
         if action.actionType == .toggleDoNotDisturb {
+            // A named Shortcut runs without a shell, so the name needs no quoting.
+            if let name = action.parameters.shortcutName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                DispatchQueue.main.async { MainActor.assumeIsolated { RecordingFocus.run(name) { ok, _ in completion(ok) } } }
+                return
+            }
             let script = "/usr/bin/shortcuts run \"Toggle Focus\" 2>/dev/null || /usr/bin/shortcuts run \"방해금지 모드 켜기/끄기\" 2>/dev/null"
             ScriptRunnerClient.shared.run(kind: "shell", source: script, timeout: 5) { code, _, _ in
                 completion(code == 0)

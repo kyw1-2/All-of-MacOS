@@ -357,7 +357,7 @@ struct TriggerRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(isFlashing ? Color.green : (trigger.isEnabled ? Color.green : Color.gray))
+                .fill(isFlashing ? AOMTheme.positive : (trigger.isEnabled ? AOMTheme.positive : AOMTheme.textTertiary))
                 .frame(width: 8, height: 8)
                 .scaleEffect(isFlashing ? 1.8 : 1.0)
 
@@ -420,7 +420,7 @@ struct TriggerRow: View {
         .opacity(trigger.isEnabled ? 1 : 0.5)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color.green.opacity(isFlashing ? 0.15 : 0))
+                .fill(AOMTheme.positive.opacity(isFlashing ? 0.15 : 0))
         )
         .onHover { isHovering = $0 }
         .onReceive(LiveTouchState.shared.$lastFiredTriggerID.removeDuplicates()) { id in
@@ -643,7 +643,7 @@ struct AddTriggerSheet: View {
             .frame(height: 200)
             .background(Color(nsColor: .textBackgroundColor))
             .cornerRadius(6)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
+            .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
             if selectedGesture.isLongTouch {
                 Stepper("Hold for \(String(format: "%.1f", Double(longTouchMs) / 1000)) s", value: $longTouchMs, in: 100...5000, step: 100)
             }
@@ -1152,7 +1152,7 @@ struct EditTriggerSheet: View {
             .frame(height: 180)
             .background(Color(nsColor: .textBackgroundColor))
             .cornerRadius(6)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.3)))
+            .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
         case .normalMouse:
             MouseTriggerEditor(spec: $mouseSpec, modifiers: $mouseModifiers)
         default:

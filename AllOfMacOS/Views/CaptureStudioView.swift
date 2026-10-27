@@ -165,7 +165,7 @@ struct CaptureStudioView: View {
     /// Every capture mode one click away, in CleanShot's order, the way the
     /// system screenshot toolbar lays them out: glyph, name, shortcut.
     private var captureLaunchpad: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 135), spacing: 4)], spacing: 4) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: 4)], spacing: 4) {
             AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne), compact: true) {
                 CaptureCoordinator.shared.captureAllInOne()
             }

@@ -2225,13 +2225,27 @@ enum AnnotationSmartTextMatcher {
         let handler = VNImageRequestHandler(cgImage: image)
         try handler.perform([request])
         let pixelSize = CGSize(width: image.width, height: image.height)
-        return (request.results ?? []).compactMap { observation -> CGRect? in
-            guard let candidate = observation.topCandidates(1).first,
-                  candidate.string.localizedCaseInsensitiveContains(needle) else { return nil }
-            let bounds = annotationRect(from: observation.boundingBox, pixelSize: pixelSize, scale: scale)
-            guard bounds.width > 0, bounds.height > 0 else { return nil }
-            return bounds
+        // CleanShot highlights the matched words, not the whole recognized line.
+        return (request.results ?? []).flatMap { observation -> [CGRect] in
+            guard let candidate = observation.topCandidates(1).first else { return [] }
+            return wordBoxes(of: needle, in: candidate.string) { range in
+                (try? candidate.boundingBox(for: range))?.boundingBox ?? observation.boundingBox
+            }.map { annotationRect(from: $0, pixelSize: pixelSize, scale: scale) }
+             .filter { $0.width > 0 && $0.height > 0 }
         }.prefix(100).map { $0 }
+    }
+
+    /// Every case- and accent-insensitive occurrence of `needle`, boxed by
+    /// `box(range)` (Vision's per-range box, or the whole line as a fallback).
+    static func wordBoxes(of needle: String, in text: String, box: (Range<String.Index>) -> CGRect) -> [CGRect] {
+        var boxes: [CGRect] = []
+        var start = text.startIndex
+        while start < text.endIndex,
+              let range = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive], range: start..<text.endIndex) {
+            boxes.append(box(range))
+            start = range.upperBound
+        }
+        return boxes
     }
 }
 

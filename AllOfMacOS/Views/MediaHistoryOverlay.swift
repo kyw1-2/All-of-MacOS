@@ -316,7 +316,7 @@ struct MediaHistoryOverlayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Same material and corner as the clipboard shelf below it.
-        .aomFloatingSurface(.panel, radius: 24)
+        .aomFloatingSurface(.panel, radius: AOMRadius.panel)
         .sheet(item: $previewEntry) { entry in
             CapturePreviewSheet(entry: entry)
         }

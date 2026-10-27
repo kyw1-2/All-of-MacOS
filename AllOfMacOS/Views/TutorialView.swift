@@ -147,7 +147,7 @@ struct TutorialOverlayView: View {
                 controls
             }
             .frame(width: 560)
-            .aomFloatingSurface(.panel, radius: 22, inWindow: true)
+            .aomFloatingSurface(.panel, radius: AOMRadius.panel, inWindow: true)
             .shadow(color: .black.opacity(0.28), radius: 36, y: 16)
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(.isModal)

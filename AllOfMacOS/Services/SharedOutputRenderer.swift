@@ -32,14 +32,11 @@ final class SharedOutputRenderer {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
     }
-    private var masterBoostLevel: Int = {
-        let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: "AOMAudioMasterBoostEnabled") else { return 0 }
-        return min(3, max(1, defaults.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2))
-    }()
+    /// Output Magic Boost is a switch, as in SoundSource; 0 = off, 1 = on.
+    private var masterBoostLevel: Int = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled") ? 1 : 0
 
     func setMasterBoostLevel(_ level: Int) {
-        masterBoostLevel = min(3, max(0, level))
+        masterBoostLevel = level > 0 ? 1 : 0
         for graph in graphs.values { graph.bus.setBoostLevel(masterBoostLevel) }
         for output in airPlayOutputs.values { output.bus.setBoostLevel(masterBoostLevel) }
     }
@@ -226,28 +223,37 @@ final class SharedOutputRenderer {
 }
 
 /// Preallocated stereo summing bus. Control operations wait for an in-flight
-/// render to finish; the realtime callback never waits, allocates, or edits an
+/// render to finish; the realtime callback never allocates or edits an
 /// AVAudioEngine graph. Removing a source is a barrier for its render closure.
+/// After summing, the output's Magic Boost and a transparent lookahead
+/// limiter process the mix, so boosted or summed apps never hard clip.
 final class AppAudioRenderBus {
     typealias Render = (Int, UnsafeMutablePointer<AudioBufferList>) -> Void
-    private let lock = NSLock()
+    static let ceiling: Float = 0.977 // -0.2 dBFS
+    private let lock = AudioUnfairLock()
     private var sources: [(id: UUID, render: Render)] = []
     private let capacity = 32768
+    private let chunk = 512
     private let scratch: UnsafeMutablePointer<Float>
     private let sum: UnsafeMutablePointer<Float>
-    private let limiter = AudioPeakLimiter()
-    private let boost = AudioAdaptiveBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    private let left: UnsafeMutablePointer<Float>
+    private let right: UnsafeMutablePointer<Float>
+    private let limiter = AudioLookaheadLimiter(sampleRate: SharedOutputRenderer.sampleRate, ceiling: AppAudioRenderBus.ceiling)
+    private let boost = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
     private let boostLevel = AudioAtomicCounter()
+    /// Output Magic Boost switch; any level above zero is on.
     func setBoostLevel(_ level: Int) {
-        boostLevel.store(UInt64(min(3, max(0, level))))
+        boostLevel.store(level > 0 ? 1 : 0)
     }
     init() {
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
         sum = .allocate(capacity: capacity * 2)
         sum.initialize(repeating: 0, count: capacity * 2)
+        left = .allocate(capacity: chunk); left.initialize(repeating: 0, count: chunk)
+        right = .allocate(capacity: chunk); right.initialize(repeating: 0, count: chunk)
     }
-    deinit { scratch.deallocate(); sum.deallocate() }
+    deinit { scratch.deallocate(); sum.deallocate(); left.deallocate(); right.deallocate() }
     var isEmpty: Bool { lock.lock(); defer { lock.unlock() }; return sources.isEmpty }
     func add(id: UUID, render: @escaping Render) {
         lock.lock(); defer { lock.unlock() }; sources.append((id, render))
@@ -263,7 +269,7 @@ final class AppAudioRenderBus {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
         guard frames > 0, frames <= capacity else { return }
-        if allowWaiting { lock.lock() } else if !lock.try() { return }
+        if allowWaiting { lock.lock() } else if !lock.tryLock() { return }
         defer { lock.unlock() }
         memset(sum, 0, frames * 2 * MemoryLayout<Float>.size)
         for source in sources {
@@ -276,12 +282,19 @@ final class AppAudioRenderBus {
             }
         }
         // Snapshot once per buffer; a settings change never takes the render lock.
-        let outputBoostLevel = Int(boostLevel.load())
-        for frame in 0..<frames {
-            var left = sum[frame * 2], right = sum[frame * 2 + 1]
-            boost.process(left: &left, right: &right, level: outputBoostLevel)
-            limiter.process(left: &left, right: &right)
-            sum[frame * 2] = left; sum[frame * 2 + 1] = right
+        let boostEnabled = boostLevel.load() != 0
+        var offset = 0
+        while offset < frames {
+            let count = min(chunk, frames - offset)
+            for index in 0..<count {
+                left[index] = sum[(offset + index) * 2]; right[index] = sum[(offset + index) * 2 + 1]
+            }
+            boost.process(left: left, right: right, frames: count, enabled: boostEnabled)
+            limiter.process(left: left, right: right, frames: count)
+            for index in 0..<count {
+                sum[(offset + index) * 2] = left[index]; sum[(offset + index) * 2 + 1] = right[index]
+            }
+            offset += count
         }
         let channels = buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
         var channel = 0

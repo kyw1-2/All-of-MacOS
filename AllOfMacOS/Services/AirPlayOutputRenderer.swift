@@ -41,29 +41,33 @@ final class AirPlayOutputRenderer {
     private let bridge = AirPlayPCMBridge()
     // Everything below is confined to queue; callback only touches bridge.
     private var unit: AudioUnit?
+    /// Health checks only; mixing runs on a dedicated realtime thread.
     private var timer: DispatchSourceTimer?
+    private var mixerStorage: AirPlayMixThread?
+    /// Read by diagnostics on main while the device queue owns its lifetime.
+    private var mixer: AirPlayMixThread? {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return mixerStorage }
+        set { stateLock.lock(); mixerStorage = newValue; stateLock.unlock() }
+    }
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     private var startedAt: TimeInterval = 0
     private var configuredRate: Double = 0
     private var configuredFrames: UInt32 = 0
     private var configuredChannels: UInt32 = 0
-    private var nextMixTime: UInt64 = 0
-    private let delayedMixResets = AudioAtomicCounter()
-    private let maximumMixDelay = AudioAtomicCounter()
     private var stopped = false
     private var failureDelivered = false
-    private let scratch = UnsafeMutablePointer<Float>.allocate(capacity: 480 * 2)
     private let changed: () -> Void
+    /// Seconds without a HAL render request (or without rendered audio)
+    /// before native playback is restored. HomePods can pause a few seconds
+    /// on Wi-Fi hiccups; the PCM bridge rides those out.
+    static let stallLimit: TimeInterval = 6
 
     init(deviceID: AudioDeviceID, changed: @escaping () -> Void) {
         self.deviceID = deviceID
         self.queue = AirPlayDeviceQueues.queue(for: deviceID)
         self.changed = changed
-        scratch.initialize(repeating: 0, count: 960)
         queue.async { [self] in start() }
     }
-
-    deinit { scratch.deallocate() }
 
     var state: State {
         stateLock.lock(); defer { stateLock.unlock() }
@@ -173,10 +177,12 @@ final class AirPlayOutputRenderer {
                 listeners.append((address, listener))
             }
         }
-        nextMixTime = DispatchTime.now().uptimeNanoseconds
-        let source = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
-        source.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(1))
-        source.setEventHandler { [weak self] in self?.tick() }
+        let thread = AirPlayMixThread(bus: bus, bridge: bridge)
+        thread.start()
+        mixer = thread
+        let source = DispatchSource.makeTimerSource(queue: queue)
+        source.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(250), leeway: .milliseconds(50))
+        source.setEventHandler { [weak self] in self?.checkHealth() }
         timer = source
         source.resume()
     }
@@ -209,41 +215,25 @@ final class AirPlayOutputRenderer {
 
     var statistics: [String: Any] {
         var result = bridge.statistics
-        result["delayedMixResets"] = delayedMixResets.load()
-        result["maximumMixDelayMS"] = Double(maximumMixDelay.load()) / 1_000_000
+        result["delayedMixResets"] = mixer?.delayedMixResets.load() ?? 0
+        result["maximumMixDelayMS"] = Double(mixer?.maximumMixDelay.load() ?? 0) / 1_000_000
+        result["catchUpBlocks"] = mixer?.catchUpBlocks.load() ?? 0
+        result["realtimeMixer"] = mixer?.isRealtime ?? false
         return result
     }
 
-    private func tick() {
+    private func checkHealth() {
         guard !stopped, !failureDelivered else { return }
-        let now = DispatchTime.now().uptimeNanoseconds
-        if now > nextMixTime { maximumMixDelay.raise(to: now - nextMixTime) }
-        // A delayed dispatch timer never renders an unbounded backlog after
-        // sleep or contention. Drop stale PCM and resume with a fade instead.
-        if now > nextMixTime && now - nextMixTime > 100_000_000 {
-            delayedMixResets.add()
-            bridge.discard()
-            nextMixTime = now
-        }
-        var blocks = 0
-        while nextMixTime <= now && blocks < 4 {
-            var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers:
-                AudioBuffer(mNumberChannels: 2, mDataByteSize: 3840, mData: scratch))
-            withUnsafeMutablePointer(to: &buffers) { bus.render(frames: 480, output: $0, allowWaiting: true) }
-            bridge.push(scratch, frames: 480)
-            nextMixTime += 10_000_000
-            blocks += 1
-        }
         let health = bridge.health
         let uptime = ProcessInfo.processInfo.systemUptime
         if health.invalidFormat {
             fail("AirPlay supplied an unsupported render buffer. Native playback restored.")
-        } else if health.lastCallback > 0 && uptime - health.lastCallback > 3 {
-            fail("AirPlay output stopped requesting audio. Native playback restored; use Reconnect to retry.")
+        } else if health.lastCallback > 0 && uptime - health.lastCallback > Self.stallLimit {
+            fail("AirPlay output stopped requesting audio. Native playback restored; AOM will reconnect.")
         } else if health.lastCallback == 0 && uptime - startedAt > 15 {
-            fail("AirPlay output did not start. Native playback restored; use Reconnect to retry.")
-        } else if health.lastAudio > 0 && uptime - health.lastAudio > 3 {
-            fail("AirPlay audio buffer could not recover. Native playback restored; use Reconnect to retry.")
+            fail("AirPlay output did not start. Native playback restored; AOM will reconnect.")
+        } else if health.lastAudio > 0 && uptime - health.lastAudio > Self.stallLimit {
+            fail("AirPlay audio buffer could not recover. Native playback restored; AOM will reconnect.")
         } else if case .preparing = state, health.lastAudio > 0 {
             // AudioOutputUnitStart success alone does not prove a live clock.
             publish(.ready)
@@ -260,6 +250,10 @@ final class AirPlayOutputRenderer {
     }
 
     private func tearDown() {
+        // The mixer thread exits before the bus or bridge can be released.
+        let running = mixer
+        mixer = nil
+        running?.stop()
         timer?.cancel(); timer = nil
         for entry in listeners {
             var address = entry.0
@@ -327,5 +321,126 @@ final class AirPlayPCMBridge {
         let produced = queue.render(into: data, frames: frames, ratio: 48000 / outputRate,
             targetFrames: target, driftLimit: 0.005, smoothing: 0.02, fadeFrames: Int(outputRate * 0.02))
         if produced > 0 { audioTick.store(mach_absolute_time()) }
+    }
+}
+
+/// The local 48 kHz mix clock for one AirPlay output. A GCD timer was delayed
+/// by up to 110 ms under load on a MacBook Air, and the old policy discarded
+/// the whole PCM bridge after 100 ms — an audible gap each time. This thread
+/// uses the Mach time-constraint (realtime) policy, renders 10 ms blocks on a
+/// fixed host-clock schedule and, when it is late, catches up from the
+/// apps' own capture queues in short bursts instead of dropping audio.
+final class AirPlayMixThread {
+    static let blockFrames = 480
+    static let periodNanoseconds: UInt64 = 10_000_000
+    /// Beyond this lateness (sleep, debugger) the schedule is realigned.
+    static let realignNanoseconds: UInt64 = 1_000_000_000
+    /// Blocks rendered per wake while catching up; keeps each burst far
+    /// below the realtime computation budget.
+    static let burstBlocks = 4
+
+    let delayedMixResets = AudioAtomicCounter()
+    let maximumMixDelay = AudioAtomicCounter()
+    let catchUpBlocks = AudioAtomicCounter()
+    private let running = AudioAtomicCounter(1)
+    private let realtime = AudioAtomicCounter()
+    private let finished = DispatchSemaphore(value: 0)
+    private let bus: AppAudioRenderBus
+    private let bridge: AirPlayPCMBridge
+    private let scratch: UnsafeMutablePointer<Float>
+    private var thread: Thread?
+
+    init(bus: AppAudioRenderBus, bridge: AirPlayPCMBridge) {
+        self.bus = bus
+        self.bridge = bridge
+        scratch = .allocate(capacity: Self.blockFrames * 2)
+        scratch.initialize(repeating: 0, count: Self.blockFrames * 2)
+    }
+    deinit { scratch.deallocate() }
+
+    var isRealtime: Bool { realtime.load() == 1 }
+
+    func start() {
+        let thread = Thread { [self] in
+            run()
+            finished.signal()
+        }
+        thread.name = "com.kyw.aom.airplay.mix"
+        thread.qualityOfService = .userInteractive
+        thread.stackSize = 512 * 1024
+        self.thread = thread
+        thread.start()
+    }
+
+    /// Blocks until the thread has left its loop (at most one period).
+    func stop() {
+        guard running.load() == 1 else { return }
+        running.store(0)
+        if thread != nil { _ = finished.wait(timeout: .now() + 2) }
+        thread = nil
+    }
+
+    static func promoteCurrentThreadToRealtime(period: UInt64, computation: UInt64, constraint: UInt64) -> Bool {
+        var timebase = mach_timebase_info_data_t()
+        guard mach_timebase_info(&timebase) == KERN_SUCCESS, timebase.numer > 0 else { return false }
+        func ticks(_ nanoseconds: UInt64) -> UInt32 {
+            UInt32(min(Double(UInt32.max), Double(nanoseconds) * Double(timebase.denom) / Double(timebase.numer)))
+        }
+        var policy = thread_time_constraint_policy_data_t(
+            period: ticks(period), computation: ticks(computation),
+            constraint: ticks(constraint), preemptible: 1)
+        let count = mach_msg_type_number_t(MemoryLayout<thread_time_constraint_policy_data_t>.size / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &policy) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                thread_policy_set(pthread_mach_thread_np(pthread_self()),
+                                  thread_policy_flavor_t(THREAD_TIME_CONSTRAINT_POLICY), $0, count)
+            }
+        }
+        return status == KERN_SUCCESS
+    }
+
+    private func run() {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let numer = UInt64(max(1, timebase.numer)), denom = UInt64(max(1, timebase.denom))
+        func ticks(_ nanoseconds: UInt64) -> UInt64 { nanoseconds * denom / numer }
+        func nanoseconds(_ ticks: UInt64) -> UInt64 { ticks * numer / denom }
+        if Self.promoteCurrentThreadToRealtime(period: Self.periodNanoseconds,
+                                               computation: 2_000_000, constraint: 9_000_000) {
+            realtime.store(1)
+        }
+        let period = ticks(Self.periodNanoseconds)
+        let burstPause = ticks(1_000_000)
+        var next = mach_absolute_time()
+        while running.load() == 1 {
+            var now = mach_absolute_time()
+            if now < next {
+                mach_wait_until(next)
+                continue
+            }
+            let late = nanoseconds(now - next)
+            maximumMixDelay.raise(to: late)
+            if late > Self.realignNanoseconds {
+                // After sleep the backlog is stale; the per-app queues trim
+                // their own excess. Never clear audio the bridge still holds.
+                delayedMixResets.add()
+                next = now
+            }
+            var rendered = 0
+            while next <= now && rendered < Self.burstBlocks && running.load() == 1 {
+                var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers:
+                    AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(Self.blockFrames * 8), mData: scratch))
+                withUnsafeMutablePointer(to: &buffers) { bus.render(frames: Self.blockFrames, output: $0, allowWaiting: true) }
+                bridge.push(scratch, frames: Self.blockFrames)
+                next += period
+                rendered += 1
+                now = mach_absolute_time()
+            }
+            if rendered > 1 { catchUpBlocks.add(UInt64(rendered - 1)) }
+            if next <= now {
+                // Still behind: yield briefly, then continue the catch-up.
+                mach_wait_until(now + burstPause)
+            }
+        }
     }
 }
