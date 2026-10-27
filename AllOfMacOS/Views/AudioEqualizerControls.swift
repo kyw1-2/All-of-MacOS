@@ -63,12 +63,16 @@ struct AudioEqualizerControls: View {
                             .font(.system(size: 13, weight: .semibold).monospacedDigit())
                         HStack(spacing: 10) {
                             Button { onChange(band, max(-12, value(band) - 1)) } label: { Image(systemName: "minus") }
-                                .help("Decrease by 1 dB")
+                                .help("Decrease \(EQSection.label(band)) Hz by 1 dB")
+                                .accessibilityLabel("Decrease \(EQSection.label(band)) hertz by 1 decibel")
                             Button { onChange(band, min(12, value(band) + 1)) } label: { Image(systemName: "plus") }
-                                .help("Increase by 1 dB")
+                                .help("Increase \(EQSection.label(band)) Hz by 1 dB")
+                                .accessibilityLabel("Increase \(EQSection.label(band)) hertz by 1 decibel")
                         }
                         .buttonStyle(.borderless)
-                        Button("Reset") { onChange(band, 0) }.buttonStyle(.link).font(.caption)
+                        Button("Reset") { onChange(band, 0) }
+                            .buttonStyle(.link).font(.caption)
+                            .accessibilityLabel("Reset \(EQSection.label(band)) hertz to zero decibels")
                     }
                     .frame(width: 70)
                     .disabled(!enabled)

@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.0.13
+
+Audio workspace navigation and accessibility improvements, plus independent per-app and mixed-output adaptive boost. See [the UX and audio review](docs/audio-workspace-ux-20261027.md) for scope and limitations.
+
 ## Version 3.0.10
 
 Lock-free capture and AirPlay PCM delivery prevent silence blocks under callback

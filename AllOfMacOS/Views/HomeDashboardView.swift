@@ -20,6 +20,7 @@ struct AOMHomeView: View {
     @ObservedObject private var clipboard = ClipboardStore.shared
     @ObservedObject private var history = CaptureHistory.shared
     @ObservedObject private var recording = ScreenRecordingService.shared
+    @ObservedObject private var audio = AppAudioMixerService.shared
     @StateObject private var toast = AOMToastModel()
     @State private var permissions: [(AOMPermission, AOMPermissionStatus)] = []
     @State private var shortcutConflict: ShortcutConflicts.Conflict?
@@ -71,6 +72,7 @@ struct AOMHomeView: View {
                         automationCard(lastRuns: lastRuns)
                         tilingCard
                     }
+                    audioCard
                     summaryLine
                 }
                 .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
@@ -388,6 +390,28 @@ struct AOMHomeView: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Snap zones: \(shown.map(\.name).joined(separator: ", "))")
                 }
+            }
+        }
+    }
+
+    // MARK: Audio
+
+    private var audioCard: some View {
+        AOMSectionCard("Audio", symbol: "waveform", tint: AOMMainTab.audio.accentColor,
+                       detail: audio.soundEnabled ? "App audio on" : "App audio off") {
+            AOMCardLink("Mixer") { appState.selectedMainTab = .audio }
+        } content: {
+            HStack(alignment: .center, spacing: AOMSpace.m) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(!audio.soundEnabled ? "Effects paused while app audio is off" : (audio.allAppsBoostEnabled ? "Output boost: \(["Low", "Medium", "High"][min(3, max(1, audio.allAppsBoostLevel)) - 1])" : "Output boost off"))
+                        .font(AOMType.rowTitle)
+                    Text(audio.eqEnabled ? "Master EQ: \(audio.eqPreset)" : "Master EQ off")
+                        .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                }
+                Spacer(minLength: AOMSpace.xs)
+                Button("Open Audio") { appState.selectedMainTab = .audio }
+                    .buttonStyle(AOMTintedButtonStyle())
+                    .help("Adjust devices, app volume and effects")
             }
         }
     }

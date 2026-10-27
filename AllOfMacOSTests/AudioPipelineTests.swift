@@ -17,7 +17,7 @@ final class AudioPipelineTests: XCTestCase {
                           gain: Float = 1, muted: Bool = false, outputRate: Double = 48000) -> (Double, Double) {
         let transport = AppAudioTransport(sampleRate: 48000, bufferedForAirPlay: true)
         let mixer = MixerBox(gain: gain, muted: muted)
-        mixer.setEffects(app: app, master: master, appBoost: 0, masterBoost: 0)
+        mixer.setEffects(app: app, master: master, appBoost: 0)
         let bus = AppAudioRenderBus()
         bus.add(id: UUID()) { transport.render(frames: $0, output: $1, mixer: mixer) }
         let bridge = AirPlayPCMBridge()
@@ -67,6 +67,82 @@ final class AudioPipelineTests: XCTestCase {
             let mute = pipeline(muted: true, outputRate: rate)
             XCTAssertEqual(mute.0, 0); XCTAssertEqual(mute.1, 0)
         }
+    }
+
+    func testOutputBoostProcessesSummedAudioAndAppBoostRemainsIndependent() {
+        func render(appBoost: Int, outputBoost: Int, sources: Int) -> Float {
+            let bus = AppAudioRenderBus()
+            bus.setBoostLevel(outputBoost)
+            for _ in 0..<sources {
+                let box = MixerBox(gain: 1, muted: false)
+                box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: appBoost)
+                bus.add(id: UUID()) { frames, output in
+                    var input = [Float](repeating: 0.05, count: frames * 2)
+                    self.withStereoBuffer(&input) { Mixer.mix(input: UnsafePointer($0), output: output, box: box) }
+                }
+            }
+            var output = [Float](repeating: 0, count: 960)
+            for _ in 0..<100 { withStereoBuffer(&output) { bus.render(frames: 480, output: $0) } }
+            return output.last!
+        }
+        let dry = render(appBoost: 0, outputBoost: 0, sources: 2)
+        let app = render(appBoost: 1, outputBoost: 0, sources: 2)
+        let output = render(appBoost: 0, outputBoost: 1, sources: 2)
+        let both = render(appBoost: 1, outputBoost: 1, sources: 2)
+        XCTAssertEqual(dry, 0.1, accuracy: 0.001)
+        XCTAssertGreaterThan(app, dry * 1.2)
+        XCTAssertGreaterThan(output, dry * 1.2)
+        XCTAssertGreaterThan(both, max(app, output) * 1.15)
+        XCTAssertLessThanOrEqual(both, 0.98)
+    }
+
+    func testOutputBoostUsesTheCombinedSignalAndCanBeDisabled() {
+        let bus = AppAudioRenderBus()
+        bus.setBoostLevel(3)
+        for _ in 0..<2 {
+            bus.add(id: UUID()) { frames, output in
+                let buffers = UnsafeMutableAudioBufferListPointer(output)
+                let data = buffers[0].mData!.assumingMemoryBound(to: Float.self)
+                for i in 0..<(frames * 2) { data[i] = 0.15 }
+            }
+        }
+        let reference = AudioAdaptiveBoost(sampleRate: 48000)
+        var referenceLeft: Float = 0, referenceRight: Float = 0
+        var output = [Float](repeating: 0, count: 960)
+        for _ in 0..<100 {
+            withStereoBuffer(&output) { bus.render(frames: 480, output: $0) }
+            for _ in 0..<480 {
+                referenceLeft = 0.3; referenceRight = 0.3
+                reference.process(left: &referenceLeft, right: &referenceRight, level: 3)
+            }
+        }
+        XCTAssertEqual(output.last!, referenceLeft, accuracy: 0.001)
+        bus.setBoostLevel(0)
+        for _ in 0..<100 { withStereoBuffer(&output) { bus.render(frames: 480, output: $0) } }
+        XCTAssertEqual(output.last!, 0.3, accuracy: 0.001)
+    }
+
+    func testChangingOutputBoostDoesNotInterruptTheRenderBus() {
+        let bus = AppAudioRenderBus()
+        bus.add(id: UUID()) { frames, output in
+            let data = UnsafeMutableAudioBufferListPointer(output)[0].mData!.assumingMemoryBound(to: Float.self)
+            for i in 0..<(frames * 2) { data[i] = 0.04 }
+        }
+        let started = DispatchSemaphore(value: 0)
+        let done = DispatchGroup()
+        done.enter()
+        DispatchQueue.global().async {
+            started.wait()
+            for i in 0..<100_000 { bus.setBoostLevel(i % 4) }
+            done.leave()
+        }
+        started.signal()
+        var samples = [Float](repeating: 0, count: 128)
+        for _ in 0..<1000 {
+            withStereoBuffer(&samples) { bus.render(frames: 64, output: $0) }
+            XCTAssertTrue(samples.allSatisfy { $0.isFinite && $0 > 0 })
+        }
+        XCTAssertEqual(done.wait(timeout: .now() + 5), .success)
     }
 
     func testIdleTransportDoesNotClaimCaptureOrOutputAndPrimingNeedsRealFrames() {
@@ -129,7 +205,7 @@ final class AudioPipelineTests: XCTestCase {
             withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
         }
         XCTAssertEqual(output[0], 0.05, accuracy: 0.001)
-        box.setEffects(app: AudioEQ(gains: bands), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+        box.setEffects(app: AudioEQ(gains: bands), master: AudioEQ(), appBoost: 0)
         XCTAssertEqual(box.gain, 0.5)
         box.muted = true
         withStereoBuffer(&input) { source in
@@ -137,7 +213,7 @@ final class AudioPipelineTests: XCTestCase {
         }
         XCTAssertTrue(output.suffix(480).allSatisfy { $0 == 0 }, "Mute settles after a short click-free ramp")
         box.muted = false
-        box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+        box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0)
         withStereoBuffer(&input) { source in
             withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }
         }
@@ -180,10 +256,10 @@ final class AudioPipelineTests: XCTestCase {
             if block == 2 || block == 3 || block == 4 {
                 var bands = AudioEQ.presetFlat
                 bands[5] = block == 3 ? -12 : 12
-                box.setEffects(app: AudioEQ(gains: bands), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+                box.setEffects(app: AudioEQ(gains: bands), master: AudioEQ(), appBoost: 0)
             }
             if block == 30 {
-                box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0, masterBoost: 0)
+                box.setEffects(app: AudioEQ(), master: AudioEQ(), appBoost: 0)
             }
             withStereoBuffer(&input) { source in
                 withStereoBuffer(&output) { Mixer.mix(input: UnsafePointer(source), output: $0, box: box) }

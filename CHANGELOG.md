@@ -1,5 +1,12 @@
 ## 3.0.11 — AirPlay playback continuity (2026-10-27)
 
+## 3.0.13 (2026-10-27)
+
+- Add an Audio entry and effect status to Workspace; improve mixer navigation, app filtering, reset actions, and accessible names.
+- Process app boost per stream and output boost after mixing on each managed output, followed by the output limiter. Both can increase loudness.
+- AOM's compressor has no lookahead and is not claimed to reproduce SoundSource's proprietary processing.
+
+
 - Prevent zero-frame capture callbacks and paused video transitions from being interpreted as active output stalls; preserve the native route while playback switches streams.
 - Keep large AirPlay output slices fully primed before rendering to avoid repeated partial-block silence at 44.1/48 kHz.
 - Isolate remote-output lifecycle queues by device while preserving same-device teardown/start ordering, so one slow receiver cannot block other speakers.

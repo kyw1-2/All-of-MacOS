@@ -567,6 +567,7 @@ final class AppAudioEngine {
         let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled")
             ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2))
             : 0
+        MainActor.assumeIsolated { SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost) }
         for session in sessions.values {
             let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)")
                 ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(session.bundleID)") as? Int ?? 2))
@@ -574,7 +575,7 @@ final class AppAudioEngine {
             session.box.takeUnretainedValue().setEffects(
                 app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
                 master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
-                appBoost: appBoost, masterBoost: masterBoost)
+                appBoost: appBoost)
         }
         scheduleSync()
     }
@@ -1014,11 +1015,9 @@ final class AppAudioEngine {
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
         let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
             ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioBoostLevel_\(bundleID)") as? Int ?? 2)) : 0
-        let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled")
-            ? min(3, max(1, UserDefaults.standard.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2)) : 0
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate),
                          master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
-                         appBoost: appBoost, masterBoost: masterBoost)
+                         appBoost: appBoost)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
         let transport = AppAudioTransport(sampleRate: sampleRate, bufferedForAirPlay: isAirPlay)
@@ -1200,13 +1199,10 @@ final class MixerBox {
     private var eqTransitionRemaining = 0
     fileprivate var renderGain: Float
     fileprivate var renderMuted: Bool
-    fileprivate var renderBoost: Bool
-    /// Adaptive-compression strength: 0 off, 1 low, 2 medium, 3 high. The
-    /// effective strength is the stronger of the app and master settings.
+    /// App compression is separate from the mixed output bus compressor.
     fileprivate var renderBoostLevel: Int = 0
     fileprivate let boostProcessor = AudioAdaptiveBoost(sampleRate: 48000)
     private var desiredAppBoost: Int = 0
-    private var desiredMasterBoost: Int = 0
     fileprivate var renderDeviceGain: Float = 1
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
@@ -1234,7 +1230,7 @@ final class MixerBox {
         desiredGain = Mixer.clamp(gain); renderGain = Mixer.clamp(gain)
         gainRamp = AudioGainRamp(muted ? 0 : Mixer.clamp(gain))
         desiredMuted = muted; renderMuted = muted
-        desiredBoost = magicBoost; renderBoost = magicBoost
+        desiredBoost = magicBoost
         desiredAppBoost = magicBoost ? 2 : 0
         let app = AudioEQProcessor(eq), master = AudioEQProcessor(AudioEQ(sampleRate: eq.sampleRate))
         desiredAppEQ = app; appEQ = app
@@ -1242,7 +1238,7 @@ final class MixerBox {
         let headroom = AudioEQ.headroomGain(app: eq, master: master.eq)
         desiredEQHeadroom = headroom; renderEQHeadroom = headroom
     }
-    func setEffects(app: AudioEQ, master: AudioEQ, appBoost: Int, masterBoost: Int) {
+    func setEffects(app: AudioEQ, master: AudioEQ, appBoost: Int) {
         // Coefficients and headroom are prepared on the control thread. The
         // audio callback uses its previous configuration on lock contention.
         lock.lock(); defer { lock.unlock() }
@@ -1255,15 +1251,12 @@ final class MixerBox {
         }
         desiredAppBoost = min(3, max(0, appBoost))
         desiredBoost = desiredAppBoost > 0
-        desiredMasterBoost = min(3, max(0, masterBoost))
     }
     fileprivate func beginRender() {
         guard lock.try() else { return }
         renderGain = desiredGain; renderMuted = desiredMuted
-        // Legacy single-bool boost upgrades to the level model; the master
-        // boost covers apps whose own toggle is off.
-        renderBoost = desiredBoost && desiredAppBoost == 0
-        renderBoostLevel = max(desiredAppBoost, desiredMasterBoost)
+        // Retain the legacy boolean path for callers that have not supplied a level.
+        renderBoostLevel = desiredBoost ? (desiredAppBoost == 0 ? 2 : desiredAppBoost) : 0
         renderDeviceGain = desiredDeviceGain
         if !hasRendered || (eqTransitionRemaining == 0 && appEQ !== desiredAppEQ) {
             if hasRendered {

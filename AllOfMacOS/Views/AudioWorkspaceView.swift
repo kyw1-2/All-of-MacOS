@@ -7,10 +7,12 @@ import UniformTypeIdentifiers
 struct AudioWorkspaceView: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var searchText: String = ""
-    @State private var expandedEQPID: pid_t? = nil
+    @State private var expandedEQID: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
+        ScrollViewReader { scroll in
+        ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.xl) {
                 // MARK: - Master System Surfaces (Output, Input, System Sounds)
                 VStack(alignment: .leading, spacing: AOMSpace.s) {
@@ -36,14 +38,20 @@ struct AudioWorkspaceView: View {
                         .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
-                    Label(service.eqEnabled ? "Master EQ: \(service.eqPreset)" : "Master EQ: Off",
-                          systemImage: "slider.vertical.3")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        if reduceMotion { scroll.scrollTo("master-eq", anchor: .top) }
+                        else { withAnimation { scroll.scrollTo("master-eq", anchor: .top) } }
+                    } label: {
+                        Label(service.eqEnabled ? "Master EQ: \(service.eqPreset)" : "Master EQ: Off",
+                              systemImage: "slider.vertical.3")
+                    }
+                    .buttonStyle(.link)
+                    .help("Jump to the master equalizer")
                 }
 
                 // MARK: - Applications Mixer
                 VStack(alignment: .leading, spacing: AOMSpace.s) {
-                    HStack {
+                    VStack(alignment: .leading, spacing: AOMSpace.s) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("APPLICATIONS")
                                 .font(AOMType.caption.weight(.semibold))
@@ -52,8 +60,7 @@ struct AudioWorkspaceView: View {
                                 .font(AOMType.caption)
                                 .foregroundStyle(AOMTheme.textTertiary)
                         }
-                        Spacer()
-                        
+                        HStack(spacing: AOMSpace.s) {
                         // Search bar
                         HStack(spacing: 6) {
                             Image(systemName: "magnifyingglass")
@@ -62,18 +69,22 @@ struct AudioWorkspaceView: View {
                             TextField("Filter apps...", text: $searchText)
                                 .textFieldStyle(.plain)
                                 .font(AOMType.caption)
-                                .frame(width: 120)
+                                .frame(minWidth: 80, maxWidth: 180)
+                                .accessibilityLabel("Filter applications")
                             if !searchText.isEmpty {
                                 Button { searchText = "" } label: {
                                     Image(systemName: "xmark.circle.fill").font(.system(size: 10))
                                 }
                                 .buttonStyle(.plain)
+                                .help("Clear application filter")
+                                .accessibilityLabel("Clear application filter")
                             }
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+                        Spacer(minLength: 0)
                         // Add App Button
                         Button {
                             pickAndAddApplication()
@@ -92,7 +103,8 @@ struct AudioWorkspaceView: View {
 
                         // Sound Engine Toggle
                         if service.isSupported {
-                            Toggle("", isOn: $service.soundEnabled)
+                            Toggle("App Audio Engine", isOn: $service.soundEnabled)
+                                .labelsHidden()
                                 .toggleStyle(.switch)
                                 .controlSize(.mini)
                                 .help(service.soundEnabled ? "Disable App Audio Engine" : "Enable App Audio Engine")
@@ -108,6 +120,12 @@ struct AudioWorkspaceView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Refresh applications")
+                        .accessibilityLabel("Refresh applications")
+                        }
+                        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("\(filteredApps.count) of \(service.apps.count) applications")
+                                .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                        }
                     }
 
                     if service.isSupported {
@@ -163,11 +181,14 @@ struct AudioWorkspaceView: View {
                                 .font(.system(size: 32))
                                 .foregroundStyle(AOMTheme.textTertiary)
                             Text(service.isSupported
-                                 ? (searchText.isEmpty ? "No active audio applications found." : "No applications match “\(searchText)”.")
+                                 ? (searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No active audio applications found." : "No applications match “\(searchText)”.")
                                  : "Per-app volume and routing requires macOS 14.2 or newer.")
                                 .font(AOMType.body)
                                 .foregroundStyle(AOMTheme.textSecondary)
-                            if service.isSupported && searchText.isEmpty {
+                            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Button("Clear Filter") { searchText = "" }
+                                    .buttonStyle(.bordered)
+                            } else if service.isSupported {
                                 Button("Add an Application to Mix") { pickAndAddApplication() }
                                     .buttonStyle(.borderedProminent)
                                     .controlSize(.small)
@@ -182,9 +203,9 @@ struct AudioWorkspaceView: View {
                             ForEach(filteredApps) { app in
                                 SoundSourceAppCard(
                                     app: app,
-                                    isEQExpanded: expandedEQPID == app.pid,
+                                    isEQExpanded: expandedEQID == app.id,
                                     onToggleEQ: {
-                                        expandedEQPID = (expandedEQPID == app.pid) ? nil : app.pid
+                                        expandedEQID = (expandedEQID == app.id) ? nil : app.id
                                     },
                                     onGain: { service.setGain($0, bundleID: app.bundleID) },
                                     onMute: { service.toggleMute(bundleID: app.bundleID) },
@@ -212,21 +233,22 @@ struct AudioWorkspaceView: View {
 
                     MasterStudioEQCard(service: service)
                 }
+                .id("master-eq")
             }
             .padding(AOMSpace.xl)
         }
         .background(AOMTheme.workspace)
         .onAppear { service.beginMetering(); service.refresh() }
         .onDisappear { service.endMetering() }
+        }
     }
 
     private var filteredApps: [AppAudioState] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            return service.apps
-        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty { return service.apps }
         return service.apps.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.bundleID.localizedCaseInsensitiveContains(searchText)
+            $0.name.localizedCaseInsensitiveContains(query) ||
+            $0.bundleID.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -269,7 +291,7 @@ private struct MasterOutputCard: View {
                     .foregroundStyle(AOMTheme.text)
                 Spacer()
 
-                Picker("", selection: Binding(
+                Picker("Output device", selection: Binding(
                     get: { currentUID },
                     set: { uid in
                         // SwiftUI re-syncs a picker whenever its items change. A
@@ -305,6 +327,8 @@ private struct MasterOutputCard: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isMuted ? "Unmute output" : "Mute output")
+                .help(isMuted ? "Unmute output" : "Mute output")
 
                 Slider(value: Binding(get: { volume }, set: { newValue in
                     volume = newValue
@@ -313,6 +337,9 @@ private struct MasterOutputCard: View {
                 }), in: 0...100, step: 1)
                 .controlSize(.small)
                 .disabled(!canAdjustVolume)
+                .accessibilityLabel("Output volume")
+                .accessibilityValue("\(Int(volume.rounded())) percent")
+                .help(canAdjustVolume ? "Output volume" : "This output does not support volume control")
 
                 Text(canAdjustVolume ? "\(Int(volume))%" : "—")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
@@ -329,6 +356,9 @@ private struct MasterOutputCard: View {
                 }), in: -1...1, step: 0.05)
                 .controlSize(.mini)
                 .disabled(!canAdjustBalance)
+                .accessibilityLabel("Output balance")
+                .accessibilityValue(balance == 0 ? "Center" : "\(Int(abs(balance) * 100)) percent \(balance < 0 ? "left" : "right")")
+                .help(canAdjustBalance ? "Adjust stereo balance" : "This output does not support balance control")
                 Text("R").font(.system(size: 9, weight: .bold)).foregroundStyle(AOMTheme.textTertiary)
                 
                 Button("Center") {
@@ -389,7 +419,7 @@ private struct MasterInputCard: View {
                     .foregroundStyle(AOMTheme.text)
                 Spacer()
 
-                Picker("", selection: Binding(
+                Picker("Input device", selection: Binding(
                     get: { currentUID },
                     set: { uid in
                         AudioOutputService.selectInput(uid: uid)
@@ -416,6 +446,8 @@ private struct MasterInputCard: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canMute)
+                .accessibilityLabel(isMuted ? "Unmute microphone" : "Mute microphone")
+                .help(canMute ? (isMuted ? "Unmute microphone" : "Mute microphone") : "This input does not support mute")
 
                 Slider(value: Binding(get: { volume }, set: { newValue in
                     volume = newValue
@@ -425,6 +457,9 @@ private struct MasterInputCard: View {
                 }), in: 0...100, step: 1)
                 .controlSize(.small)
                 .disabled(!canAdjustVolume)
+                .accessibilityLabel("Microphone input volume")
+                .accessibilityValue("\(Int(volume.rounded())) percent")
+                .help(canAdjustVolume ? "Microphone input volume" : "This input does not support volume control")
 
                 Text(canAdjustVolume ? "\(Int(volume))%" : "—")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
@@ -499,13 +534,18 @@ private struct MasterAlertCard: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isMuted ? "Unmute system alerts" : "Mute system alerts")
+                .help(isMuted ? "Unmute system alerts" : "Mute system alerts")
 
                 Slider(value: Binding(get: { volume }, set: { newValue in
                     volume = newValue
-                    isMuted = false
+                    isMuted = newValue == 0
+                    if newValue > 0 { previousVolume = newValue }
                     AudioOutputService.setSystemAlertVolume(percent: newValue)
                 }), in: 0...100, step: 1)
                 .controlSize(.small)
+                .accessibilityLabel("System alert volume")
+                .accessibilityValue("\(Int(volume.rounded())) percent")
 
                 Text("\(Int(volume))%")
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
@@ -613,7 +653,7 @@ private struct SoundSourceAppCard: View {
                 Spacer()
 
                 // Output Route Selector
-                Picker("", selection: Binding(
+                Picker("Output for \(app.name)", selection: Binding(
                     get: { app.outputDeviceUID ?? "" },
                     set: { uid in onRouteChange(uid.isEmpty ? nil : uid) }
                 )) {
@@ -649,6 +689,7 @@ private struct SoundSourceAppCard: View {
                     .background(app.magicBoost ? Color.indigo : AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Boost \(app.name)")
                 .accessibilityValue(app.magicBoost ? "On" : "Off")
                 .help("Raise quiet passages with adaptive compression for this app")
 
@@ -678,9 +719,12 @@ private struct SoundSourceAppCard: View {
                         .background(isEQExpanded ? Color.accentColor.opacity(0.12) : AOMTheme.cardAlt, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Equalizer for \(app.name)")
+                .accessibilityValue(isEQExpanded ? "Expanded" : "Collapsed")
                 .help("Toggle 10-Band EQ for this app")
                 Button("Reconnect") { AppAudioMixerService.shared.reconnect(pid: app.pid) }
                     .buttonStyle(.borderless).disabled(app.pid <= 0 || !mixerService.soundEnabled)
+                    .accessibilityLabel("Reconnect \(app.name) audio")
                     .help("Reconnect this app’s audio capture and output")
             }
             .padding(.horizontal, 14)
@@ -705,10 +749,17 @@ private struct SoundSourceAppCard: View {
                     gain = Float(newValue)
                     onGain(gain)
                 }), in: 0...2.0, step: 0.05)
-                .accessibilityLabel("App volume")
+                .accessibilityLabel("Volume for \(app.name)")
                 .accessibilityValue("\(Int((gain * 100).rounded())) percent")
                 .frame(minWidth: 100, maxWidth: .infinity)
                 .controlSize(.small)
+
+                Button("Reset") { gain = 1; onGain(1) }
+                    .buttonStyle(.borderless)
+                    .font(AOMType.caption)
+                    .disabled(abs(gain - 1) < 0.001)
+                    .help("Reset \(app.name) volume to 100%")
+                    .accessibilityLabel("Reset \(app.name) volume to 100 percent")
 
                 // Percent / Overdrive Readout
                 VStack(alignment: .trailing, spacing: 1) {
@@ -761,7 +812,7 @@ private struct InlineAppEQView: View {
                                             set: { service.setAppEQEnabled($0, bundleID: bundleID) }))
                     .toggleStyle(.switch).controlSize(.regular)
                 Text("Equalizer Preset:").font(.system(size: 13, weight: .semibold)).foregroundStyle(AOMTheme.textSecondary)
-                Picker("", selection: Binding(get: { service.appEQPreset(bundleID) }, set: { service.setAppEQPreset($0, bundleID: bundleID) })) {
+                Picker("Application equalizer preset", selection: Binding(get: { service.appEQPreset(bundleID) }, set: { service.setAppEQPreset($0, bundleID: bundleID) })) {
                     ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
                     if service.appEQPreset(bundleID) == "Custom" { Text("Custom").tag("Custom") }
                 }
@@ -795,14 +846,14 @@ private struct MasterStudioEQCard: View {
 
                 HStack(spacing: 8) {
                     Text("Preset:").font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                    Picker("", selection: $service.eqPreset) {
+                    Picker("Master equalizer preset", selection: $service.eqPreset) {
                         ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
                         if service.eqPreset == "Custom" { Text("Custom").tag("Custom") }
                     }
                     .labelsHidden().controlSize(.small).frame(maxWidth: 150)
                     .disabled(!service.eqEnabled)
 
-                    Button("Zero All") {
+                    Button("Reset to Flat") {
                         service.eqPreset = "Flat"
                     }
                     .font(AOMType.caption)

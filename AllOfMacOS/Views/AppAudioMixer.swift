@@ -512,8 +512,8 @@ struct MasterBoostControls: View {
                 .disabled(!service.allAppsBoostEnabled)
             }
             Text(service.allAppsBoostEnabled
-                 ? "Boosts the mixed audio from all managed apps. Individual app effects remain independent."
-                 : "Raise quiet passages with adaptive compression. Keep each app’s own boost settings.")
+                 ? "Boosts the mix on each output. App boosts run first; using both can increase loudness."
+                 : "Raise quiet passages on each output. App boosts remain separate.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

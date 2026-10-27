@@ -32,6 +32,18 @@ final class SharedOutputRenderer {
             if let observer { NotificationCenter.default.removeObserver(observer) }
         }
     }
+    private var masterBoostLevel: Int = {
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "AOMAudioMasterBoostEnabled") else { return 0 }
+        return min(3, max(1, defaults.object(forKey: "AOMAudioMasterBoostLevel") as? Int ?? 2))
+    }()
+
+    func setMasterBoostLevel(_ level: Int) {
+        masterBoostLevel = min(3, max(0, level))
+        for graph in graphs.values { graph.bus.setBoostLevel(masterBoostLevel) }
+        for output in airPlayOutputs.values { output.bus.setBoostLevel(masterBoostLevel) }
+    }
+
     private var graphs: [String: DeviceGraph] = [:]
     private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
     var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
@@ -44,9 +56,11 @@ final class SharedOutputRenderer {
             old.stop(); airPlayOutputs.removeValue(forKey: device.uid)
         }
         if airPlayOutputs[device.uid] == nil {
-            airPlayOutputs[device.uid] = AirPlayOutputRenderer(deviceID: device.id) {
+            let output = AirPlayOutputRenderer(deviceID: device.id) {
                 if #available(macOS 14.2, *) { AppAudioEngine.shared.requestSync() }
             }
+            output.bus.setBoostLevel(masterBoostLevel)
+            airPlayOutputs[device.uid] = output
         }
         return airPlayOutputs[device.uid]!.state
     }
@@ -112,6 +126,7 @@ final class SharedOutputRenderer {
               output.outputFormat(forBus: 0).sampleRate > 0,
               let format = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 2) else { return nil }
         let bus = AppAudioRenderBus()
+        bus.setBoostLevel(masterBoostLevel)
         let node = AVAudioSourceNode(format: format) { _, _, frames, buffers in
             bus.render(frames: Int(frames), output: buffers)
             return noErr
@@ -221,6 +236,11 @@ final class AppAudioRenderBus {
     private let scratch: UnsafeMutablePointer<Float>
     private let sum: UnsafeMutablePointer<Float>
     private let limiter = AudioPeakLimiter()
+    private let boost = AudioAdaptiveBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    private let boostLevel = AudioAtomicCounter()
+    func setBoostLevel(_ level: Int) {
+        boostLevel.store(UInt64(min(3, max(0, level))))
+    }
     init() {
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
@@ -255,8 +275,11 @@ final class AppAudioRenderBus {
                 sum[index] += scratch[index].isFinite ? scratch[index] : 0
             }
         }
+        // Snapshot once per buffer; a settings change never takes the render lock.
+        let outputBoostLevel = Int(boostLevel.load())
         for frame in 0..<frames {
             var left = sum[frame * 2], right = sum[frame * 2 + 1]
+            boost.process(left: &left, right: &right, level: outputBoostLevel)
             limiter.process(left: &left, right: &right)
             sum[frame * 2] = left; sum[frame * 2 + 1] = right
         }
