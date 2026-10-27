@@ -13,6 +13,12 @@ struct ModernWindowSnappingView: View {
     @State private var showingWindowLayouts = false
     @AppStorage(TitleBarWindowSnap.enabledKey) private var trackpadSnapOn = false
     @AppStorage(TitleBarWindowSnap.hapticKey) private var trackpadSnapHaptic = true
+    @AppStorage(TitleBarWindowSnap.activateKey) private var trackpadSnapActivate = true
+    @AppStorage(TitleBarWindowSnap.keepPointerKey) private var trackpadSnapKeepPointer = false
+    @AppStorage(TrackpadUtilityGestures.spacesEnabledKey) private var topBarSpaceSwipe = true
+    @AppStorage(TrackpadUtilityGestures.dockQuitEnabledKey) private var dockPinchQuit = true
+    @State private var showingSnapOptions = false
+    @State private var readiness: [TrackpadReadiness.Item] = []
 
     /// Layouts grouped the way the Window menu groups them, with short labels
     /// (the full name stays in help and VoiceOver).
@@ -58,15 +64,19 @@ struct ModernWindowSnappingView: View {
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
                                 previewCard
                                 galleryCard
+                                // The wide column gives the gesture legend and
+                                // readiness rows room, and balances the page.
+                                trackpadSnapCard
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
                                 WindowPinningCard()
                                 snappingCard
-                                trackpadSnapCard
                                 zonesCard
                             }
-                            .frame(width: 300)
+                            // Grows a little on wide windows so rows wrap less;
+                            // never below 300 pt.
+                            .frame(width: min(360, max(300, geometry.size.width * 0.3)))
                         }
                     } else {
                         VStack(alignment: .leading, spacing: AOMSpace.m) {
@@ -87,7 +97,6 @@ struct ModernWindowSnappingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMWorkspaceBackground())
         .navigationTitle("Window Tiling")
         .navigationSubtitle(appState.snapStatus)
         .toolbar {
@@ -257,39 +266,125 @@ struct ModernWindowSnappingView: View {
         }
     }
 
-    // MARK: - Trackpad snap (Swish-style)
+    // MARK: - Trackpad gestures (Swish-style)
 
+    /// Swish groups its trackpad gestures in one place and explains each
+    /// prerequisite next to it; this card does the same for AOM's title-bar
+    /// snap, top-bar Space swipe and Dock pinch.
     private var trackpadSnapCard: some View {
-        AOMSectionCard("Trackpad Snap", symbol: trackpadSnapOn ? "hand.draw.fill" : "hand.draw",
+        AOMSectionCard("Trackpad Gestures", symbol: trackpadSnapOn ? "hand.draw.fill" : "hand.draw",
                        tint: trackpadSnapOn ? AOMTheme.positive : AOMTheme.textSecondary,
-                       detail: trackpadSnapOn ? "On" : "Off") {
+                       detail: trackpadSnapOn ? "Snap On" : "Snap Off") {
             EmptyView()
         } content: {
             VStack(spacing: 0) {
-                Text("Rest the pointer on a window's title bar and swipe with two fingers — left or right to a half (swipe further for a third), up to maximize, down to center. A preview shows where it lands; lift to snap.")
+                Text("Swipe two fingers on a title bar: left or right for a half (further for a third), up to maximize, down to center. Add a leg along the other axis for a quarter, and swipe down on a snapped window to put it back.")
                     .font(AOMType.caption)
                     .foregroundStyle(AOMTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, AOMSpace.xs)
-                settingRow("Two-finger title-bar snap") {
-                    Toggle("", isOn: Binding(get: { trackpadSnapOn },
-                                             set: { trackpadSnapOn = $0; TitleBarWindowSnap.shared.refreshEnabled() }))
+                settingRow("Title-bar snap") {
+                    Toggle("Title-bar snap", isOn: Binding(get: { trackpadSnapOn },
+                                                           set: { trackpadSnapOn = $0; TitleBarWindowSnap.shared.refreshEnabled() }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
-                settingRow("Haptic tap on snap", showsDivider: false) {
-                    Toggle("", isOn: $trackpadSnapHaptic)
+                settingRow("Haptic feedback") {
+                    Toggle("Haptic feedback", isOn: $trackpadSnapHaptic)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                         .disabled(!trackpadSnapOn)
                 }
-                if trackpadSnapOn && !AXIsProcessTrusted() {
-                    Text("Needs Accessibility permission to move windows.")
-                        .font(AOMType.micro).foregroundStyle(AOMTheme.warning)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 4)
+                DisclosureGroup(isExpanded: $showingSnapOptions) {
+                    VStack(spacing: 0) {
+                        settingRow("Bring window forward") {
+                            Toggle("Bring window forward after snapping", isOn: $trackpadSnapActivate)
+                                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
+                        settingRow("Keep pointer on title bar", showsDivider: false) {
+                            Toggle("Keep pointer on the title bar after snapping", isOn: $trackpadSnapKeepPointer)
+                                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        }
+                    }
+                    .disabled(!trackpadSnapOn)
+                } label: {
+                    Text("Snap Options").font(AOMType.body).foregroundStyle(AOMTheme.text)
+                }
+                .frame(minHeight: 38)
+                AOMDivider()
+                settingRow("Top-bar Space swipe") {
+                    Toggle("Top-bar Space swipe", isOn: $topBarSpaceSwipe)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .help("Two fingers on the menu bar switch Spaces")
+                settingRow("Dock pinch to quit", showsDivider: false) {
+                    Toggle("Dock pinch to quit", isOn: $dockPinchQuit)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .help("Pinch in on a Dock icon to quit that app")
+                readinessList
+                    .padding(.top, AOMSpace.xs)
+            }
+        }
+        .onAppear(perform: refreshReadiness)
+        .onChange(of: trackpadSnapOn) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapHaptic) { _, _ in refreshReadiness() }
+        .onChange(of: topBarSpaceSwipe) { _, _ in gestureSettingChanged() }
+        .onChange(of: dockPinchQuit) { _, _ in gestureSettingChanged() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshReadiness()
+        }
+    }
+
+    /// Status shown passively next to each prerequisite, with a shape as well
+    /// as a colour, and a direct route to the setting that fixes it.
+    private var readinessList: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.xxs) {
+            Text("Readiness")
+                .font(AOMType.sectionCaps)
+                .foregroundStyle(AOMTheme.textSecondary)
+                .accessibilityAddTraits(.isHeader)
+            ForEach(readiness) { item in
+                HStack(alignment: .top, spacing: AOMSpace.xs) {
+                    Image(systemName: item.ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(AOMType.caption)
+                        .foregroundStyle(item.ready ? AOMTheme.positive : AOMTheme.warning)
+                        .frame(width: 16)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title).font(AOMType.caption).foregroundStyle(AOMTheme.text)
+                        Text(item.detail)
+                            .font(AOMType.micro)
+                            .foregroundStyle(AOMTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(item.title), \(item.ready ? "ready" : "needs attention"). \(item.detail)")
+                    Spacer(minLength: AOMSpace.xxs)
+                    if let fix = item.fix {
+                        Button("Open…") { TrackpadReadiness.open(fix) }
+                            .controlSize(.small)
+                            .help("Open the System Settings pane that fixes this")
+                            .accessibilityLabel("Open settings for \(item.title)")
+                    }
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func refreshReadiness() {
+        // Returning from System Settings may have granted Accessibility.
+        TitleBarWindowSnap.shared.refreshEnabled()
+        readiness = TrackpadReadiness.current(hapticsWanted: trackpadSnapOn && trackpadSnapHaptic,
+                                              spaceSwipeOn: topBarSpaceSwipe)
+    }
+
+    /// The same notification Settings rows post: the trackpad stream starts or
+    /// stops when these gestures are its only consumers (AppState), and the
+    /// title-bar snap picks up its switch.
+    private func gestureSettingChanged() {
+        NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
+        refreshReadiness()
     }
 
     private var zonesCard: some View {

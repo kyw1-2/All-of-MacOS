@@ -559,13 +559,14 @@ struct AllOfMacOSApp: App {
                 .environmentObject(appState)
                 .accentColor(appState.accentColorChoice.color)
                 .tint(appState.accentColorChoice.color)
-                .frame(minWidth: 980, minHeight: 600)
+                .frame(minWidth: AOMSize.windowMinWidth, minHeight: AOMSize.windowMinHeight)
                 .task {
                     appDelegate.appState = appState
                 }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+        .windowResizability(.contentMinSize)
         .defaultSize(width: 1280, height: 800)
         // aom:// links and opened files are handled by AppDelegate; without
         // this every link (Raycast, Shortcuts, Alfred) opened another window.
@@ -590,7 +591,7 @@ struct AllOfMacOSApp: App {
                 Divider()
             }
             CommandGroup(replacing: .help) {
-                Button("Show Onboarding Again") {
+                Button("Show Welcome Again") {
                     appDelegate.showMainWindow()
                     appState.showTutorialRequested = true
                 }

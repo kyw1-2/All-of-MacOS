@@ -56,6 +56,14 @@ struct StatisticsView: View {
 
     private var triggers: [Trigger] { appState.currentPreset.triggers }
 
+    /// True when the bounded event log starts after the chosen period began,
+    /// so day or week figures miss the period's earliest inputs.
+    private var periodIsTruncated: Bool {
+        guard let interval = period.interval, stats.events.count >= GestureStatistics.recentEventLimit,
+              let oldest = stats.events.first?.timestamp else { return false }
+        return oldest > Date().addingTimeInterval(-interval)
+    }
+
     /// How the area under the figures is divided at a given page width.
     enum Layout: Equatable {
         /// Most used, inputs and configuration side by side.
@@ -80,6 +88,15 @@ struct StatisticsView: View {
                         .padding(.horizontal, 2)
                         .padding(.vertical, 2)
                         .aomCardStyle(.paper, radius: AOMRadius.card, padding: 4, elevated: false)
+                    if periodIsTruncated {
+                        // Day and week figures come from a bounded event log;
+                        // say so only when it actually cuts the period short.
+                        Label("These figures cover the latest \(GestureStatistics.recentEventLimit.formatted()) inputs, so earlier activity in this period isn't counted. All Time uses the full totals.",
+                              systemImage: "info.circle")
+                            .font(AOMType.caption)
+                            .foregroundStyle(AOMTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     switch layout {
                     case .threeColumns, .twoColumns:
                         HStack(alignment: .top, spacing: AOMSpace.m) {
@@ -105,7 +122,6 @@ struct StatisticsView: View {
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMWorkspaceBackground())
         .navigationTitle("Insights")
         .navigationSubtitle("Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))")
         .toolbar {

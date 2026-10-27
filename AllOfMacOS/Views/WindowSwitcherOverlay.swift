@@ -246,7 +246,7 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     /// One selection step, repeated keys included so holding the trigger key
     /// cycles; the view animates every change.
     private func step(_ offset: Int) {
-        withAnimation(.easeOut(duration: 0.12)) { moveSelection(offset) }
+        withAnimation(AOMDesign.animation(.easeOut(duration: 0.12))) { moveSelection(offset) }
     }
 }
 

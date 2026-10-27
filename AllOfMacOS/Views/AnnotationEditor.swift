@@ -806,7 +806,7 @@ private struct AnnotationEditorView: View {
     private func selectToolbarItem(_ item: AnnotationToolbarItem) {
         switch item {
         case .background:
-            withAnimation(.easeOut(duration: 0.18)) { backgroundPanelOpen.toggle() }
+            withAnimation(AOMDesign.animation(.easeOut(duration: 0.18))) { backgroundPanelOpen.toggle() }
         case .crop:
             selectTool(cropMode ? .move : .crop)
         case .redact:

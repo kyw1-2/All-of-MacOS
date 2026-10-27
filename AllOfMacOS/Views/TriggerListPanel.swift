@@ -427,7 +427,7 @@ struct TriggerRow: View {
             let flashing = id == trigger.id
             if isFlashing != flashing { isFlashing = flashing }
         }
-        .animation(.easeOut(duration: 0.3), value: isFlashing)
+        .animation(AOMDesign.animation(.easeOut(duration: 0.3)), value: isFlashing)
     }
 }
 
@@ -617,17 +617,17 @@ struct AddTriggerSheet: View {
                             .scaleEffect(selected ? 1.02 : 1.0)
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
                                     selectedGesture = gesture
                                 }
                                 addTrigger()
                             }
                             .onTapGesture {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
                                     selectedGesture = gesture
                                 }
                             }
-                            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
+                            .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7)), value: selected)
                             .id(gesture)
                         }
                     }
@@ -636,7 +636,7 @@ struct AddTriggerSheet: View {
                 .onChange(of: gestureSearch) { _ in
                     if let first = filteredGestures.first {
                         selectedGesture = first
-                        withAnimation { proxy.scrollTo(first, anchor: .top) }
+                        withAnimation(AOMDesign.animation(.default)) { proxy.scrollTo(first, anchor: .top) }
                     }
                 }
             }
@@ -1140,11 +1140,11 @@ struct EditTriggerSheet: View {
                         .scaleEffect(selected ? 1.02 : 1.0)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
                                 selectedGesture = gesture
                             }
                         }
-                        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selected)
+                        .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7)), value: selected)
                     }
                 }
                 .padding(4)
@@ -1218,10 +1218,10 @@ struct TriggerEditorCommands: Commands {
     @FocusedValue(\.triggerEditorCommands) private var editor
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Add New Trigger") { editor?.newTrigger() }.keyboardShortcut("n", modifiers: .command).disabled(editor == nil)
+            Button("New Automation") { editor?.newTrigger() }.keyboardShortcut("n", modifiers: .command).disabled(editor == nil)
         }
         CommandGroup(before: .textEditing) {
-            Button("Search Triggers") { editor?.search() }.keyboardShortcut("f", modifiers: .command).disabled(editor == nil)
+            Button("Search Automations") { editor?.search() }.keyboardShortcut("f", modifiers: .command).disabled(editor == nil)
         }
     }
 }

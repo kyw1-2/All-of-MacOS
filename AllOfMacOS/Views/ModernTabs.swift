@@ -31,12 +31,12 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Everything at a glance"
         case .gestures: return "Trackpad, keyboard, mouse & workflow automation"
-        case .snapping: return "Screen split, tile zones & display layouts"
+        case .snapping: return "Tiling, trackpad snap, zones & display layouts"
         case .capture: return "Screenshots, recording, annotation & OCR"
         case .clipboard: return "Encrypted pasteboard history, pinboards & search"
         case .audio: return "Per-app volume, the equalizer & output devices"
-        case .tools: return "Finder tweaks, DNS, file locks & cleanup"
-        case .insights: return "Gesture frequency and automation analytics"
+        case .tools: return "Finder, network, PDF, media & cleanup utilities"
+        case .insights: return "How often each input fires and what it runs"
         }
     }
 
@@ -81,7 +81,7 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// ⌘1…⌘6 in the View menu and sidebar.
+    /// ⌘1…⌘8 in the View menu and sidebar, in sidebar order.
     var shortcutKey: KeyEquivalent {
         KeyEquivalent(Character(String((AOMMainTab.allCases.firstIndex(of: self) ?? 0) + 1)))
     }

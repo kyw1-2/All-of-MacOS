@@ -779,7 +779,7 @@ private struct ScreenRecordingBarView: View {
                     .fill(Color.red)
                     .frame(width: 9, height: 9)
                     .opacity(isPulsing ? 1.0 : 0.3)
-                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isPulsing)
+                    .animation(AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)), value: isPulsing)
                 Text(service.isPaused ? "PAUSED" : "REC")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.red)

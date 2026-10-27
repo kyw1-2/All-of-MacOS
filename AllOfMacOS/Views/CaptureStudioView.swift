@@ -71,7 +71,6 @@ struct CaptureStudioView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(AOMWorkspaceBackground())
         .navigationTitle("Capture")
         .navigationSubtitle(subtitle)
         .toolbar { toolbarContent }

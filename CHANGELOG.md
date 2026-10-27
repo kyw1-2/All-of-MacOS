@@ -1,3 +1,39 @@
+## 3.3.0 (2026-10-28)
+
+- Window snap (Swish port, round 2): applies the DeepSeek Harness Ghidra pass of Swish 1.13.3.
+  - The title-bar snap now commits like Swish: AXEnhancedUserInterface is suspended, and size → position → size is written and read back.
+  - Windows with a fixed or minimum size stay flush with the edge they were snapped to, instead of failing the move. This also applies to the halves, thirds, quarters, sixths, maximize and next-display maximize actions.
+  - The preview settles on the frame the window really took.
+  - A swipe down on a window AOM snapped restores its pre-snap frame (unsnap).
+  - Quarters snap from a swipe along both axes, in either order.
+  - A haptic plays as the preview moves to a new zone.
+  - New option to bring the window forward after snapping (on by default).
+  - New option to keep the pointer on the title bar (off by default).
+  - A readiness checklist covers Accessibility, haptic feedback and the Mission Control shortcuts.
+  - The Trackpad Gestures card now groups the title-bar snap, top-bar Space swipe and Dock pinch to quit.
+  - See docs/window-snap-3.3.0-swish-dsh.md.
+- UI/UX finishing pass, informed by 86 new references (see docs/ux-reference-review-3.3.0.md):
+  - One window minimum. The diagnostics drawer floats over the page when the window is narrow.
+  - One canvas, owned by the shell.
+  - Animations across the app respect Reduce Motion, and the looping gesture previews stop.
+  - Increase Contrast and Differentiate Without Color outline chips, badges, notices, key caps and layout diagrams.
+  - Accessible names for the remaining icon-only buttons.
+  - Compact mode buttons no longer shrink their text below about 10 pt.
+  - Glyph-only icons replace the decorative gradient tiles.
+  - System Tools can be searched from the toolbar.
+  - ⌘N and ⌘F work on Automation and from Workspace.
+  - The engine is called "Automation" everywhere, and the Help menu reads Show Welcome Again.
+  - The developer HUD test now appears only while ⌥ Option is held.
+  - Settings sheets can be resized.
+  - The Tiling side column adapts to the window width.
+  - Insights says when the day or week figures are cut short by the bounded event log.
+  - Removed the dead 1.x tour copy.
+- Fixes:
+  - The title-bar snap now keeps the trackpad stream running on its own, so it keeps working with no trackpad triggers and the Space swipe and Dock pinch both off.
+  - Turning those gestures on or off takes effect without relaunching.
+- What's New is updated for 3.3.0.
+- Tests: 1,144 run, 0 failures, 3 skipped. TitleBarSnapTests grows from 9 to 22.
+
 ## 3.2.0 (2026-10-27)
 
 - UI/UX: push the Liquid Glass redesign through the app. The content canvas is now a behind-window material on macOS 26, so the desktop shows through the gaps between frosted cards (the window stays non-opaque but the system toolbar/sidebar glass is preserved); the spacing scale is one notch tighter; and the Workspace, Capture, Tiling and Insights pages fill the window instead of leaving the lower half empty. Reduce Transparency keeps the opaque surfaces.

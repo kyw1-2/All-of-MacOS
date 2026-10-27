@@ -11,6 +11,7 @@ struct SystemToolsView: View {
     @State private var showActionLibrary = false
     private let service = MacMagicSystemToolService.shared
     @State private var toast: String?
+    @State private var query = ""
 
     private struct Tool: Identifiable {
         let id: String
@@ -18,6 +19,18 @@ struct SystemToolsView: View {
         let symbol: String
         let tint: Color
         let run: () -> Void
+    }
+
+    /// The groups filtered by the toolbar search (title or group name), empty
+    /// groups dropped so a narrow search reads as one short list.
+    private var visibleGroups: [(name: String, symbol: String, tools: [Tool])] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return groups }
+        return groups.compactMap { group -> (name: String, symbol: String, tools: [Tool])? in
+            if group.name.localizedCaseInsensitiveContains(needle) { return group }
+            let tools = group.tools.filter { $0.title.localizedCaseInsensitiveContains(needle) }
+            return tools.isEmpty ? nil : (name: group.name, symbol: group.symbol, tools: tools)
+        }
     }
 
     var body: some View {
@@ -30,7 +43,19 @@ struct SystemToolsView: View {
                         ActionLibraryView().environmentObject(appState)
                     }
                 }
-                ForEach(groups, id: \.name) { group in
+                let shown = visibleGroups
+                if shown.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Tools Match “\(query)”", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("Try another word, or browse every action AOM can run.")
+                    } actions: {
+                        Button("Clear Search") { query = "" }
+                        Button("All Actions") { query = ""; showActionLibrary = true }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 240)
+                }
+                ForEach(shown, id: \.name) { group in
                     AOMSectionCard(group.name, symbol: group.symbol, detail: "\(group.tools.count)") {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 200), spacing: AOMSpace.s)],
                                   spacing: AOMSpace.s) {
@@ -48,6 +73,7 @@ struct SystemToolsView: View {
         }
         .aomScrollEdge()
         .aomPage("System Tools", subtitle: "Finder, network, PDF, media and file utilities")
+        .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button { showActionLibrary.toggle() } label: {
@@ -232,7 +258,8 @@ struct SystemToolsView: View {
     }
 }
 
-/// One MacMagic-style tile: symbol in a tinted squircle, title below.
+/// One tool tile: the glyph carries the group's hue (no decorative gradient
+/// squircle — colour stays for meaning, as with `AOMIconBadge` elsewhere).
 private struct ToolCard: View {
     let title: String
     let symbol: String
@@ -242,12 +269,8 @@ private struct ToolCard: View {
 
     var body: some View {
         Button(action: run) {
-            VStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(tint.gradient, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(spacing: 8) {
+                AOMIconBadge(systemImage: symbol, tint: tint, size: 34, filled: true)
                 Text(title)
                     .font(AOMType.caption.weight(.medium))
                     .foregroundStyle(AOMTheme.text)

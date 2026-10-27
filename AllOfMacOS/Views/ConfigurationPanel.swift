@@ -786,7 +786,7 @@ struct ActionConfigView: View {
                                                 .frame(width: 18, height: 18)
                                                 .scaleEffect(monitoring ? 1.3 : 1.0)
                                                 .opacity(monitoring ? 0 : 1)
-                                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: monitoring)
+                                                .animation(AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)), value: monitoring)
                                         )
                                     Text("RECORDING — press any key...")
                                         .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -816,7 +816,7 @@ struct ActionConfigView: View {
                                     lineWidth: monitoring ? 2 : 1
                                 )
                         )
-                        .animation(.easeInOut(duration: 0.2), value: monitoring)
+                        .animation(AOMDesign.animation(.easeInOut(duration: 0.2)), value: monitoring)
 
                         // Buttons
                         HStack(spacing: 12) {

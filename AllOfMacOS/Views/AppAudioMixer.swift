@@ -510,6 +510,8 @@ private struct AppAudioMixerView: View {
                 }
                 Button { service.hide() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
+                    .help("Close the mixer")
+                    .accessibilityLabel("Close mixer")
             }.padding(12)
             if !service.soundEnabled {
                 VStack(spacing: 12) {
@@ -645,6 +647,8 @@ struct MixerOutputSection: View {
                     AudioOutputService.shared.adjustVolume(percentagePoints: -5, completion: { _ in refresh() })
                 } label: { Image(systemName: "speaker.minus") }
                     .buttonStyle(.plain)
+                    .help("Volume down 5%")
+                    .accessibilityLabel("Volume down")
                 Slider(value: Binding(get: { volume }, set: { newValue in
                     volume = newValue
                     AudioOutputService.shared.setVolume(percent: newValue, completion: { _ in })
@@ -654,6 +658,8 @@ struct MixerOutputSection: View {
                     AudioOutputService.shared.adjustVolume(percentagePoints: 5, completion: { _ in refresh() })
                 } label: { Image(systemName: "speaker.plus") }
                     .buttonStyle(.plain)
+                    .help("Volume up 5%")
+                    .accessibilityLabel("Volume up")
                 Text("\(Int(volume))%")
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)

@@ -176,6 +176,8 @@ struct DrawingPatternComposer: View {
                         .overlay(alignment: .topTrailing) {
                             Button { samples.remove(at: i) } label: { Image(systemName: "xmark.circle.fill") }
                                 .buttonStyle(.plain).foregroundStyle(.secondary)
+                                .help("Remove this sample")
+                                .accessibilityLabel("Remove sample \(i + 1)")
                         }
                 }
                 Spacer()

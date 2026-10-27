@@ -24,6 +24,8 @@ struct LogSidePanel: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Clear the console")
+                .accessibilityLabel("Clear console")
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -47,7 +49,7 @@ struct LogSidePanel: View {
                 }
                 .onChange(of: entries.count) { _, _ in
                     DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.15)) {
+                        withAnimation(AOMDesign.animation(.easeOut(duration: 0.15))) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
@@ -104,7 +106,7 @@ private struct LogEntryRow: View {
         )
         .onAppear {
             if entry.level == .fire {
-                withAnimation(.easeOut(duration: 0.6)) {
+                withAnimation(AOMDesign.animation(.easeOut(duration: 0.6))) {
                     ripple = true
                 }
             }

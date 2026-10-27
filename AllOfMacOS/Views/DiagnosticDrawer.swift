@@ -31,7 +31,7 @@ struct DiagnosticDrawerView: View {
                 .help("Detach into floating window")
 
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.85))) {
                         showLog = false
                         showTouchVisualizer = false
                     }
@@ -89,7 +89,7 @@ struct DiagnosticDrawerView: View {
     }
 
     private func openDetachedWindow() {
-        withAnimation {
+        withAnimation(AOMDesign.animation(.default)) {
             showLog = false
             showTouchVisualizer = false
         }

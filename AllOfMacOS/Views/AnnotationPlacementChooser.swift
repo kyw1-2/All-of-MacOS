@@ -102,7 +102,7 @@ struct AnnotationDropZoneOverlay: View {
                         in: Circle())
             .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
             .scaleEffect(highlighted ? 1.15 : 1)
-            .animation(.easeOut(duration: 0.12), value: highlighted)
+            .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: highlighted)
     }
 
     private func position(for placement: AnnotationCombinePlacement, in size: CGSize) -> CGPoint {

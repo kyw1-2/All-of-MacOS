@@ -16,18 +16,18 @@ enum WhatsNew {
 
     /// Highlights of the current version, bundled so the panel works offline.
     static let items: [Item] = [
-        Item(symbol: "sparkles.rectangle.stack", title: "Liquid Glass design",
-             detail: "One sidebar, System Settings–style settings with search, and glass only on floating controls."),
-        Item(symbol: "hifispeaker.2.fill", title: "Clean HomePod and AirPlay audio",
-             detail: "A lookahead limiter and a realtime mixer remove the crackle. Magic Boost now works like SoundSource."),
-        Item(symbol: "speaker.wave.3.fill", title: "Volume Overdrive",
-             detail: "Push a quiet app up to 400% without clipping, per app."),
-        Item(symbol: "bolt.horizontal.circle", title: "33 new actions",
-             detail: "Selected text, clipboard items, menu paths, text on screen, MIDI and OSC, input sources, Bluetooth and more."),
-        Item(symbol: "command.square.fill", title: "Hyper key and key remapping",
-             detail: "Caps Lock as ⌃⌥⇧⌘, any key remapped, and a reversed mouse wheel that leaves the trackpad natural."),
-        Item(symbol: "record.circle", title: "Recording",
-             detail: "Restart a take in one click, and turn on Do Not Disturb while recording.")
+        Item(symbol: "hand.draw.fill", title: "Swish-style trackpad snap, round two",
+             detail: "Swipe on a title bar for halves, thirds and now quarters in either order; swipe down on a snapped window to put it back."),
+        Item(symbol: "rectangle.and.arrow.up.right.and.arrow.down.left", title: "Windows that keep their size",
+             detail: "Apps with a fixed or minimum size now stay flush with the edge you snapped them to, from gestures and the Window menu alike."),
+        Item(symbol: "checklist", title: "Trackpad readiness",
+             detail: "Window Tiling checks Accessibility, haptic feedback and the Mission Control shortcuts the gestures rely on, with a link to fix each."),
+        Item(symbol: "figure.walk.motion", title: "Reduce Motion and Increase Contrast",
+             detail: "Animations respect Reduce Motion; chips, badges and notices get stronger outlines with Increase Contrast."),
+        Item(symbol: "magnifyingglass", title: "Search System Tools",
+             detail: "Find a tool from the toolbar, with a clear way back when nothing matches."),
+        Item(symbol: "menubar.rectangle", title: "Tidier menus and names",
+             detail: "The engine is called Automation everywhere, ⌘N and ⌘F work on Automation and Workspace, and developer items hide behind ⌥.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.

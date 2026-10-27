@@ -149,12 +149,17 @@ struct AOMNotice<Actions: View>: View {
         }
         .padding(.horizontal, AOMSpace.s)
         .padding(.vertical, 10)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        .background(tint.opacity(contrast == .increased ? 0.16 : 0.08),
+                    in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                .strokeBorder(tint.opacity(contrast == .increased ? 0.85 : 0.25),
+                              lineWidth: contrast == .increased ? 1 : 0.5)
         }
         .accessibilityElement(children: .contain)
     }
+
+    @Environment(\.colorSchemeContrast) private var contrast
 }
 
 // MARK: - Run status

@@ -16,8 +16,8 @@ import ApplicationServices
 final class TrackpadUtilityGestures: ObservableObject {
     static let shared = TrackpadUtilityGestures()
 
-    static let spacesEnabledKey = "AOMTopBarSpaceSwipe"
-    static let dockQuitEnabledKey = "AOMDockPinchQuit"
+    nonisolated static let spacesEnabledKey = "AOMTopBarSpaceSwipe"
+    nonisolated static let dockQuitEnabledKey = "AOMDockPinchQuit"
 
     /// Test seams.
     var switchSpace: (Bool) -> Void = { toLeft in
@@ -53,9 +53,13 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// (a headless or locked session reports locked, which would swallow every
     /// gesture). Defaults to the real screen-lock probe.
     var isScreenLocked: () -> Bool = { ScreenLock.isLocked }
-    /// True when any utility gesture can fire — the trackpad hardware must
-    /// stay up for these even without trackpad triggers.
-    var anyLayerEnabled: Bool { spacesEnabled || dockQuitEnabled }
+    /// True when anything that reads the two-finger stream is on — the utility
+    /// gestures or the title-bar snap — so the trackpad hardware stays up even
+    /// without trackpad triggers.
+    var anyLayerEnabled: Bool {
+        spacesEnabled || dockQuitEnabled
+            || (UserDefaults.standard.object(forKey: TitleBarWindowSnap.enabledKey) as? Bool ?? false)
+    }
 
     /// Entry: every touch frame. Two fingers begin a gesture, any other count
     /// ends it (fires nothing).

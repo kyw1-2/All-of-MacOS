@@ -50,7 +50,7 @@ struct GesturePreviewView: View {
     private func startAnimation() {
         animating = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation { animating = true }
+            withAnimation(AOMDesign.animation(.default)) { animating = true }
         }
     }
 
@@ -58,7 +58,7 @@ struct GesturePreviewView: View {
         animating = false
         animationID = UUID()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation { animating = true }
+            withAnimation(AOMDesign.animation(.default)) { animating = true }
         }
     }
 
@@ -319,7 +319,7 @@ struct SwipeAnimation: View {
                 )
         }
         .animation(
-            .easeInOut(duration: 1.0).repeatForever(autoreverses: true),
+            AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)),
             value: animating
         )
     }
@@ -380,7 +380,7 @@ struct TapAnimation: View {
             }
         }
         .animation(
-            .easeInOut(duration: 0.6).repeatForever(autoreverses: true),
+            AOMDesign.animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)),
             value: animating
         )
     }
@@ -423,7 +423,7 @@ struct DoubleTapAnimation: View {
                     for (delay, next) in [(300, 1), (200, 0), (200, 2), (200, 0), (600, 0)] {
                         try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
                         try Task.checkCancellation()
-                        withAnimation(.easeInOut(duration: 0.15)) { phase = next }
+                        withAnimation(AOMDesign.animation(.easeInOut(duration: 0.15))) { phase = next }
                     }
                 }
             } catch { /* View disappeared or preview changed: stop the loop. */ }
@@ -453,7 +453,7 @@ struct PinchAnimation: View {
             }
         }
         .animation(
-            .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+            AOMDesign.animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)),
             value: animating
         )
     }
@@ -476,7 +476,7 @@ struct RotateAnimation: View {
         }
         .rotationEffect(.degrees(animating ? (clockwise ? 45 : -45) : 0))
         .animation(
-            .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+            AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)),
             value: animating
         )
     }
@@ -522,9 +522,11 @@ struct TipTapAnimation: View {
     }
 
     private func runTipTap() {
-        withAnimation(.easeOut(duration: 0.2)) { tapping = true }
+        // Reduce Motion: show the finger resting on the pad instead of a loop.
+        guard !AOMDesign.reduceMotion else { tapping = true; return }
+        withAnimation(AOMDesign.animation(.easeOut(duration: 0.2))) { tapping = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            withAnimation(.easeIn(duration: 0.2)) { tapping = false }
+            withAnimation(AOMDesign.animation(.easeIn(duration: 0.2))) { tapping = false }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { runTipTap() }
     }
@@ -716,8 +718,10 @@ struct EdgeDragAnimation: View {
     }
 
     private func startLoop() {
-        progress = 0
-        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
+        // Reduce Motion: show the finished stroke instead of looping it.
+        progress = AOMDesign.reduceMotion ? 1 : 0
+        guard let loop = AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) else { return }
+        withAnimation(loop) {
             progress = 1
         }
     }
@@ -757,9 +761,11 @@ struct PositionClickAnimation: View {
     }
 
     private func runPress() {
-        withAnimation(.easeOut(duration: 0.25)) { pressing = true }
+        // Reduce Motion: a single static press instead of a repeating ripple.
+        guard !AOMDesign.reduceMotion else { pressing = true; return }
+        withAnimation(AOMDesign.animation(.easeOut(duration: 0.25))) { pressing = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(.easeIn(duration: 0.25)) { pressing = false }
+            withAnimation(AOMDesign.animation(.easeIn(duration: 0.25))) { pressing = false }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { runPress() }
     }

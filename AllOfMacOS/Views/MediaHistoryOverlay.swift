@@ -410,6 +410,8 @@ struct MediaHistoryOverlayView: View {
                 if !searchQuery.isEmpty {
                     Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Clear search")
+                        .accessibilityLabel("Clear search")
                 }
             }
             .font(.system(size: 12)).padding(.horizontal, 10).frame(width: 190, height: 30)

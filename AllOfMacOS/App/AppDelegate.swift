@@ -193,7 +193,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // menu-bar app needs.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
             if let window = NSApp.windows.first(where: { $0.isVisible }) {
-                window.minSize = NSSize(width: 1040, height: 650)
+                // The minimum size comes from the SwiftUI scene alone
+                // (AOMSize.windowMinWidth/Height); a second AppKit minimum
+                // here used to make the window's limit depend on launch timing.
                 mainWindow = window
                 window.delegate = self
             }
@@ -520,11 +522,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.separator())
 
         // Quick toggles people reach for often; everything else moved to More.
+        // "Automation" is the engine's one name across the app (sidebar
+        // footer, Workspace notice, Settings).
         let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
         menu.addItem(awakeMenuItem)
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
-        let engine = entry("Gestures & Shortcuts", "bolt", #selector(toggleEnabled))
+        let engine = entry("Automation", "bolt", #selector(toggleEnabled))
         engine.state = enabled ? .on : .off
+        engine.toolTip = enabled ? "Pause every gesture and shortcut" : "Resume automation"
         menu.addItem(engine)
         menu.addItem(.separator())
 
@@ -559,8 +564,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         moreMenu.addItem(entry("Show Cheat Sheet", "list.bullet.rectangle", #selector(showCheatSheet)))
         let hudItem = entry("Gesture HUD", "rectangle.on.rectangle", #selector(toggleHUD))
         hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
+        hudItem.keyEquivalentModifierMask = []
         moreMenu.addItem(hudItem)
-        moreMenu.addItem(entry("Test HUD Overlay", "sparkles", #selector(testHUD)))
+        // A developer check, not an everyday command: it replaces Gesture HUD
+        // only while ⌥ Option is held (an alternate item).
+        let hudTest = entry("Test HUD Overlay", "sparkles", #selector(testHUD))
+        hudTest.keyEquivalentModifierMask = [.option]
+        hudTest.isAlternate = true
+        moreMenu.addItem(hudTest)
         moreMenu.addItem(.separator())
         moreMenu.addItem(entry("Restart All of MacOS", "arrow.clockwise", #selector(restartApp)))
         more.submenu = moreMenu

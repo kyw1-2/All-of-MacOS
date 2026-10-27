@@ -48,14 +48,33 @@ struct AOMMainShell<Content: View>: View {
                                                 max: AOMSize.sidebarMax)
                 .tutorialAnchor(.sidebar)
         } detail: {
-            HStack(spacing: 0) {
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if showLog || showTouchVisualizer {
-                    AOMDivider(axis: .vertical)
-                    DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
-                        .frame(width: 340)
-                        .background(AOMTheme.pane)
+            GeometryReader { geometry in
+                let drawerOpen = showLog || showTouchVisualizer
+                // Beside the page when there is room; otherwise it floats over
+                // the trailing edge (an inspector-style overlay) instead of
+                // squeezing the page below its usable width.
+                let sideBySide = geometry.size.width >= AOMSize.drawerSideBySideMinimum
+                let drawerWidth = min(AOMSize.drawerWidth.upperBound,
+                                      max(AOMSize.drawerWidth.lowerBound, geometry.size.width * 0.32))
+                HStack(spacing: 0) {
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if drawerOpen && sideBySide {
+                        AOMDivider(axis: .vertical)
+                        DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                            .frame(width: drawerWidth)
+                            .background(AOMTheme.pane)
+                    }
+                }
+                .overlay(alignment: .trailing) {
+                    if drawerOpen && !sideBySide {
+                        DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
+                            .frame(width: drawerWidth)
+                            .frame(maxHeight: .infinity)
+                            .background(AOMTheme.pane)
+                            .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
+                            .shadow(color: .black.opacity(0.16), radius: 14, x: -3)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,6 +100,8 @@ struct AOMSidebar: View {
     @Binding var showLog: Bool
     @Binding var showTouchVisualizer: Bool
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -143,7 +164,10 @@ struct AOMSidebar: View {
             .foregroundStyle(AOMTheme.textSecondary)
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(.quaternary.opacity(0.6), in: Capsule())
+            .background(.quaternary.opacity(contrast == .increased ? 1 : 0.6), in: Capsule())
+            .overlay {
+                if contrast == .increased { Capsule().strokeBorder(AOMTheme.textSecondary, lineWidth: 1) }
+            }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -157,10 +181,20 @@ struct AOMSidebar: View {
     private var footer: some View {
         let on = appState.globalEnabled
         return HStack(spacing: AOMSpace.xs) {
-            Circle()
-                .fill(on ? AOMTheme.positive : AOMTheme.warning)
-                .frame(width: 7, height: 7)
-                .accessibilityHidden(true)
+            // A shape as well as a colour: a paused engine shows a pause glyph
+            // when Differentiate Without Color is on.
+            Group {
+                if differentiateWithoutColor {
+                    Image(systemName: on ? "circle.fill" : "pause.circle.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(on ? AOMTheme.positive : AOMTheme.warning)
+                } else {
+                    Circle()
+                        .fill(on ? AOMTheme.positive : AOMTheme.warning)
+                        .frame(width: 7, height: 7)
+                }
+            }
+            .accessibilityHidden(true)
             Text(on ? "Automation On" : "Automation Paused")
                 .font(AOMType.caption.weight(.medium))
                 .foregroundStyle(AOMTheme.textSecondary)
@@ -244,10 +278,13 @@ enum AOMPaletteShortcut {
 private struct AOMSidebarStatusBadge: View {
     let text: String
     let tint: Color
+    @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         Text(text).font(.caption2.weight(.semibold)).foregroundStyle(tint)
             .padding(.horizontal, 6).frame(height: 16)
-            .background(tint.opacity(0.14), in: Capsule()).accessibilityLabel(text)
+            .background(tint.opacity(contrast == .increased ? 0.26 : 0.14), in: Capsule())
+            .overlay { if contrast == .increased { Capsule().strokeBorder(tint, lineWidth: 1) } }
+            .accessibilityLabel(text)
     }
 }
 private struct AOMRecordingSidebarBadge: View {

@@ -18,6 +18,7 @@ struct ModernGesturesWorkspace: View {
     @State private var showingGroupsEditor = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
+    @State private var searchPresented = false
     @State private var runStates: [UUID: AOMRunState] = [:]
     @State private var expandedActionIDs: Set<UUID> = []
     @State private var showOptions = false
@@ -124,8 +125,13 @@ struct ModernGesturesWorkspace: View {
         .aomPane()
         .navigationTitle("Automation")
         .navigationSubtitle(subtitle)
-        .searchable(text: $searchQuery, placement: .toolbar, prompt: "Search names or actions")
+        .searchable(text: $searchQuery, isPresented: $searchPresented, placement: .toolbar, prompt: "Search names or actions")
         .toolbar { toolbarContent }
+        // File ▸ New Automation (⌘N) and Edit ▸ Search Automations (⌘F) act on
+        // this page; the toolbar help promises ⌘N.
+        .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
+            search: { searchPresented = true },
+            newTrigger: { presentAddTrigger(selectedDeviceCategory) }))
         .sheet(isPresented: $appState.showingAddTrigger) {
             AddTriggerSheet(keyboardMonitor: appState.keyboardMonitor, category: addCategory)
         }
@@ -718,12 +724,8 @@ struct ModernGesturesWorkspace: View {
                     ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
                         Button { presentAddTrigger(choice.0) } label: {
                             HStack(spacing: AOMSpace.s) {
-                                Image(systemName: choice.0.iconName)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 30, height: 30)
-                                    .background(GestureVisual.tint(choice.0).gradient,
-                                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                AOMIconBadge(systemImage: choice.0.iconName, tint: GestureVisual.tint(choice.0),
+                                             size: 30, filled: true)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(choice.1).font(AOMType.headline).foregroundStyle(AOMTheme.text)
                                     Text(choice.2).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)

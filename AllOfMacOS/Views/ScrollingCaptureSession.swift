@@ -171,6 +171,8 @@ private struct ScrollSessionView: View {
                 Label("Scrolling Capture", systemImage: "scroll").font(.headline)
                 Spacer()
                 Button(action: session.cancel) { Image(systemName: "xmark") }.buttonStyle(.plain)
+                    .help("Cancel scrolling capture")
+                    .accessibilityLabel("Cancel scrolling capture")
             }
             HStack {
                 Picker("Direction", selection: $session.direction) {

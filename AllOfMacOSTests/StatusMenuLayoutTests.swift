@@ -29,7 +29,7 @@ final class StatusMenuLayoutTests: XCTestCase {
         for title in ["Capture Area", "Capture Window", "Capture Fullscreen", "Capture Text (OCR)", "Record Screen",
                       "All Capture Tools", "Clipboard Shelf", "Paste Stack",
                       "Left Half", "Right Half", "Maximize", "Center", "Window Switcher",
-                      "Gestures & Shortcuts", "Open All of MacOS", "Settings…", "More"] {
+                      "Automation", "Open All of MacOS", "Settings…", "More"] {
             XCTAssertTrue(items.contains(title), "Missing \(title)")
         }
         XCTAssertFalse(items.contains("Paste Next in Stack"), "Paste Next moved out of the menu bar")
@@ -40,6 +40,10 @@ final class StatusMenuLayoutTests: XCTestCase {
                       "Gesture HUD", "Test HUD Overlay", "Restart All of MacOS"] {
             XCTAssertTrue(more.contains(title), "More is missing \(title)")
         }
+        // The HUD test is a developer check: an ⌥ Option alternate of Gesture HUD.
+        let hudTest = menu.items.first { $0.title == "More" }?.submenu?.items.first { $0.title == "Test HUD Overlay" }
+        XCTAssertEqual(hudTest?.isAlternate, true)
+        XCTAssertEqual(hudTest?.keyEquivalentModifierMask, [.option])
         XCTAssertTrue(more.contains { $0.hasPrefix("Pause AOM") }, "Pause AOM moved into More")
         // The full CleanShot-ordered capture menu is still one level down.
         let capture = menu.items.first { $0.title == "All Capture Tools" }?.submenu.map(titles) ?? []
@@ -48,7 +52,7 @@ final class StatusMenuLayoutTests: XCTestCase {
 
     func testTogglesShowTheirState() {
         let menu = AppDelegate().makeStatusMenu()
-        let engine = menu.items.first { $0.title == "Gestures & Shortcuts" }
+        let engine = menu.items.first { $0.title == "Automation" }
         XCTAssertNotNil(engine?.action)
         XCTAssertEqual(engine?.state, .on, "A fresh AppDelegate has no paused engine")
     }

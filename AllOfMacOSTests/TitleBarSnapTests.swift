@@ -8,6 +8,11 @@ final class TitleBarSnapTests: XCTestCase {
         TouchPoint(id: id, x: x, y: y, size: 1, pressure: 0)
     }
 
+    /// Two fingers whose centroid sits at (x, y).
+    private func pair(_ x: Float, _ y: Float) -> [TouchPoint] {
+        [touch(1, x - 0.01, y), touch(2, x + 0.01, y)]
+    }
+
     // MARK: Direction and tiers
 
     func testDirectionNeedsADominantAxisPastTheEngageDistance() {
@@ -37,6 +42,46 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .bottomHalf)
     }
 
+    /// Swish: "Swipe horizontally and vertically to snap to a quarter. Both orders work."
+    func testAPerpendicularLegMakesAQuarterInEitherOrder() {
+        XCTAssertEqual(SwishSnap.layout(for: .init(.left, cross: .up)), .topLeft)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.up, cross: .left)), .topLeft)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.right, cross: .up)), .topRight)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.up, cross: .right)), .topRight)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.left, cross: .down)), .bottomLeft)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.down, cross: .left)), .bottomLeft)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.right, tier: 2, cross: .down)), .bottomRight)
+        XCTAssertEqual(SwishSnap.layout(for: .init(.down, cross: .right)), .bottomRight)
+        // Without a leg the tiered mapping is unchanged.
+        XCTAssertEqual(SwishSnap.layout(for: .init(.right, tier: 2)), .rightThird)
+    }
+
+    func testRefineNeedsADeliberateLegAndReleasesWithHysteresis() {
+        let engaged = SwishSnap.Stroke(.left)
+        // The natural arc of a long swipe (small share of the distance) is not a leg.
+        XCTAssertEqual(SwishSnap.refine(dx: -0.25, dy: 0.07, axis: .horizontal, previous: engaged,
+                                        engage: 0.05, tier2: 0.16, ratio: 1.3), .init(.left, tier: 2))
+        // An L-shaped move is.
+        let quarter = SwishSnap.refine(dx: -0.12, dy: -0.08, axis: .horizontal, previous: engaged,
+                                       engage: 0.05, tier2: 0.16, ratio: 1.3)
+        XCTAssertEqual(quarter, .init(.left, cross: .up))
+        // Once held, the leg survives a small drift back…
+        XCTAssertEqual(SwishSnap.refine(dx: -0.12, dy: -0.05, axis: .horizontal, previous: quarter,
+                                        engage: 0.05, tier2: 0.16, ratio: 1.3), .init(.left, cross: .up))
+        // …and is released once clearly gone.
+        XCTAssertEqual(SwishSnap.refine(dx: -0.12, dy: -0.01, axis: .horizontal, previous: quarter,
+                                        engage: 0.05, tier2: 0.16, ratio: 1.3), .init(.left))
+    }
+
+    func testRefineRepicksTheAxisWhenTheSwipeTurnsBackThroughTheStart() {
+        let up = SwishSnap.Stroke(.up)
+        XCTAssertEqual(SwishSnap.refine(dx: -0.12, dy: 0.0, axis: .vertical, previous: up,
+                                        engage: 0.05, tier2: 0.16, ratio: 1.3), .init(.left))
+        // Near the start with nothing clear: hold the current preview.
+        XCTAssertNil(SwishSnap.refine(dx: 0.01, dy: 0.01, axis: .vertical, previous: up,
+                                      engage: 0.05, tier2: 0.16, ratio: 1.3))
+    }
+
     // MARK: Title-bar hit test and geometry
 
     func testTitleBarHitOnlyInsideTheTopBand() {
@@ -53,6 +98,8 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(left, CGRect(x: 0, y: 25, width: 720, height: 875))
         let maxed = SwishSnap.targetFrame(layout: .maximize, visible: visible, margin: 8)
         XCTAssertEqual(maxed, CGRect(x: 8, y: 33, width: 1424, height: 859))
+        let quarter = SwishSnap.targetFrame(layout: .bottomRight, visible: visible, margin: 0)
+        XCTAssertEqual(quarter, CGRect(x: 720, y: 462.5, width: 720, height: 437.5))
     }
 
     func testAccessibilityRectToAppKitFlipsTheOrigin() {
@@ -61,27 +108,132 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(appKit, CGRect(x: 100, y: 650, width: 400, height: 300))
     }
 
+    func testPointerRestsInTheMiddleOfTheTitleBarBand() {
+        let point = SwishSnap.titleBarRestPoint(for: CGRect(x: 720, y: 25, width: 720, height: 875))
+        XCTAssertEqual(point, CGPoint(x: 1080, y: 40))
+    }
+
+    // MARK: Swish edge anchoring for size-limited windows
+
+    func testAnchoringKeepsTheSnappedEdgeWhenTheAppRefusesTheSize() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        // A fixed-width window (System Settings style) snapped right stays flush right.
+        let right = CGRect(x: 720, y: 25, width: 720, height: 875)
+        XCTAssertEqual(WindowGeometry.anchoredFrame(desired: right, actualSize: CGSize(width: 680, height: 875), visible: visible),
+                       CGRect(x: 760, y: 25, width: 680, height: 875))
+        // Snapped left it stays flush left.
+        let left = CGRect(x: 0, y: 25, width: 720, height: 875)
+        XCTAssertEqual(WindowGeometry.anchoredFrame(desired: left, actualSize: CGSize(width: 680, height: 600), visible: visible).origin,
+                       CGPoint(x: 0, y: 162.5), "full-height cell centres a shorter window vertically")
+        // A middle third centres a narrower window on the cell.
+        let middle = CGRect(x: 480, y: 25, width: 480, height: 875)
+        XCTAssertEqual(WindowGeometry.anchoredFrame(desired: middle, actualSize: CGSize(width: 400, height: 875), visible: visible).minX, 520)
+        // A bottom quarter keeps the bottom edge.
+        let bottomRight = CGRect(x: 720, y: 462.5, width: 720, height: 437.5)
+        let anchored = WindowGeometry.anchoredFrame(desired: bottomRight, actualSize: CGSize(width: 800, height: 500), visible: visible)
+        XCTAssertEqual(anchored.maxX, visible.maxX)
+        XCTAssertEqual(anchored.maxY, visible.maxY)
+    }
+
+    func testAnchoringStaysOnTheDisplayAndToleratesMargins() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        // Wider than a left half: overflow goes right but never off the display.
+        let left = CGRect(x: 8, y: 33, width: 704, height: 859)          // 8 pt margin
+        let wide = WindowGeometry.anchoredFrame(desired: left, actualSize: CGSize(width: 900, height: 859), visible: visible)
+        XCTAssertEqual(wide.minX, 8, "margin still reads as the left edge")
+        // Larger than the whole display keeps its leading edge visible.
+        let huge = WindowGeometry.anchoredFrame(desired: visible, actualSize: CGSize(width: 2000, height: 1000), visible: visible)
+        XCTAssertEqual(huge.origin, CGPoint(x: 0, y: 25))
+    }
+
+    // MARK: Pre-snap history (unsnap)
+
+    func testHistoryRestoresTheFrameFromBeforeTheFirstSnapOfAChain() {
+        var history = SwishSnapHistory()
+        let original = CGRect(x: 200, y: 150, width: 900, height: 600)
+        let leftHalf = CGRect(x: 0, y: 25, width: 720, height: 875)
+        let maximized = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        history.recordSnap(key: "w", from: original, to: leftHalf)
+        history.recordSnap(key: "w", from: leftHalf, to: maximized)          // chained
+        XCTAssertEqual(history.restoreFrame(key: "w", current: maximized), original)
+        XCTAssertNil(history.restoreFrame(key: "w", current: CGRect(x: 40, y: 60, width: 1440, height: 875)),
+                     "moved by hand since the snap: no restore")
+        history.forget(key: "w")
+        XCTAssertNil(history.restoreFrame(key: "w", current: maximized))
+    }
+
+    func testASnapThatDidNotMoveTheWindowLeavesNothingToRestore() {
+        var history = SwishSnapHistory()
+        let maximized = CGRect(x: 0, y: 25, width: 1440, height: 875)
+        // Already maximized, swiped up: a later swipe down should centre, not "restore" in place.
+        history.recordSnap(key: "w", from: maximized, to: maximized)
+        XCTAssertNil(history.restoreFrame(key: "w", current: maximized))
+    }
+
+    /// The side-by-side diagnostics drawer must leave the Automation page its
+    /// two panes (list minimum + editor minimum).
+    func testDrawerThresholdKeepsTheAutomationSplit() {
+        let left = AOMSize.drawerSideBySideMinimum - AOMSize.drawerWidth.upperBound - 1
+        XCTAssertGreaterThanOrEqual(left, CGFloat(AOMSize.listColumnRange.lowerBound) + AOMSize.editorMinimum)
+    }
+
+    func testHistoryStartsANewChainAfterAManualMoveAndIsBounded() {
+        var history = SwishSnapHistory()
+        history.limit = 2
+        let first = CGRect(x: 10, y: 10, width: 500, height: 400)
+        let snapped = CGRect(x: 0, y: 25, width: 720, height: 875)
+        history.recordSnap(key: "a", from: first, to: snapped)
+        let movedByHand = CGRect(x: 300, y: 300, width: 720, height: 875)
+        history.recordSnap(key: "a", from: movedByHand, to: snapped)
+        XCTAssertEqual(history.restoreFrame(key: "a", current: snapped), movedByHand)
+        history.recordSnap(key: "b", from: first, to: snapped)
+        history.recordSnap(key: "c", from: first, to: snapped)
+        XCTAssertNil(history.entries["a"], "oldest window dropped past the limit")
+        XCTAssertEqual(history.entries.count, 2)
+    }
+
+    // MARK: Readiness (Swish's settings checks)
+
+    func testHapticsReadinessFollowsTrackpadPreferences() {
+        XCTAssertTrue(TrackpadReadiness.hapticsEnabled(actuateDetents: nil, forceSuppressed: nil), "defaults are on")
+        XCTAssertTrue(TrackpadReadiness.hapticsEnabled(actuateDetents: NSNumber(value: 1), forceSuppressed: NSNumber(value: 0)))
+        XCTAssertFalse(TrackpadReadiness.hapticsEnabled(actuateDetents: NSNumber(value: 1), forceSuppressed: NSNumber(value: 1)))
+        XCTAssertFalse(TrackpadReadiness.hapticsEnabled(actuateDetents: NSNumber(value: 0), forceSuppressed: nil))
+    }
+
+    func testSpaceShortcutReadiness() {
+        let control = CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | CGEventFlags.maskSecondaryFn.rawValue)
+        let left = SymbolicHotKey(id: 79, keyCode: 123, flags: control, isEnabled: true, isConfigured: false)
+        let right = SymbolicHotKey(id: 81, keyCode: 124, flags: control, isEnabled: true, isConfigured: false)
+        XCTAssertEqual(TrackpadReadiness.spaceShortcuts(left: left, right: right).ready, true)
+        XCTAssertEqual(TrackpadReadiness.spaceShortcuts(left: left, right: right).detail, "⌃← and ⌃→ are on.")
+        let custom = SymbolicHotKey(id: 81, keyCode: 2, flags: .maskAlternate, isEnabled: true, isConfigured: true)
+        XCTAssertEqual(TrackpadReadiness.spaceShortcuts(left: left, right: custom).detail, "On, set to a custom combination.")
+        let off = SymbolicHotKey(id: 79, keyCode: 123, flags: control, isEnabled: false, isConfigured: true)
+        XCTAssertFalse(TrackpadReadiness.spaceShortcuts(left: off, right: right).ready)
+        XCTAssertFalse(TrackpadReadiness.spaceShortcuts(left: nil, right: right).ready)
+    }
+
     // MARK: Recognizer state machine
 
     func testRecognizerEngagesRefinesAndCommits() {
         let recognizer = TitleBarSnapRecognizer()
-        var begins: [(SwishSnap.Direction, Int)] = []
-        var updates: [(SwishSnap.Direction, Int)] = []
+        var begins: [SwishSnap.Stroke] = []
+        var updates: [SwishSnap.Stroke] = []
         var commits = 0, cancels = 0
-        recognizer.onBegin = { begins.append(($0, $1)) }
-        recognizer.onUpdate = { updates.append(($0, $1)) }
+        recognizer.onBegin = { begins.append($0) }
+        recognizer.onUpdate = { updates.append($0) }
         recognizer.onCommit = { commits += 1 }
         recognizer.onCancel = { cancels += 1 }
 
         // Two fingers land, then slide right past the engage distance.
-        recognizer.feed(contacts: [touch(1, 0.40, 0.50), touch(2, 0.42, 0.50)], timestamp: 0)
-        recognizer.feed(contacts: [touch(1, 0.50, 0.50), touch(2, 0.52, 0.50)], timestamp: 0.02)
-        XCTAssertEqual(begins.count, 1)
-        XCTAssertEqual(begins.first?.0, .right); XCTAssertEqual(begins.first?.1, 1)
+        recognizer.feed(contacts: pair(0.41, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.51, 0.50), timestamp: 0.02)
+        XCTAssertEqual(begins, [.init(.right)])
 
         // Slide further right → tier 2 (right third).
-        recognizer.feed(contacts: [touch(1, 0.62, 0.50), touch(2, 0.64, 0.50)], timestamp: 0.04)
-        XCTAssertEqual(updates.last?.1, 2)
+        recognizer.feed(contacts: pair(0.63, 0.50), timestamp: 0.04)
+        XCTAssertEqual(updates.last, .init(.right, tier: 2))
 
         // Lift both fingers → commit once.
         recognizer.feed(contacts: [], timestamp: 0.06)
@@ -89,10 +241,27 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(cancels, 0)
     }
 
+    func testRecognizerChainsAQuarterThenCommits() {
+        let recognizer = TitleBarSnapRecognizer()
+        var strokes: [SwishSnap.Stroke] = []
+        var commits = 0
+        recognizer.onBegin = { strokes.append($0) }
+        recognizer.onUpdate = { strokes.append($0) }
+        recognizer.onCommit = { commits += 1 }
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0.02)   // left → left half
+        recognizer.feed(contacts: pair(0.38, 0.42), timestamp: 0.04)   // then up → top-left quarter
+        recognizer.feed(contacts: [], timestamp: 0.06)
+        XCTAssertEqual(strokes.first, .init(.left))
+        XCTAssertEqual(strokes.last, .init(.left, cross: .up))
+        XCTAssertEqual(SwishSnap.layout(for: strokes.last!), .topLeft)
+        XCTAssertEqual(commits, 1)
+    }
+
     func testRecognizerCancelsWhenFingersLiftBeforeEngaging() {
         let recognizer = TitleBarSnapRecognizer()
         var begins = 0, commits = 0, cancels = 0
-        recognizer.onBegin = { _, _ in begins += 1 }
+        recognizer.onBegin = { _ in begins += 1 }
         recognizer.onCommit = { commits += 1 }
         recognizer.onCancel = { cancels += 1 }
         recognizer.feed(contacts: [touch(1, 0.50, 0.50), touch(2, 0.52, 0.50)], timestamp: 0)
@@ -106,7 +275,7 @@ final class TitleBarSnapTests: XCTestCase {
     func testThreeFingersNeverEngage() {
         let recognizer = TitleBarSnapRecognizer()
         var begins = 0
-        recognizer.onBegin = { _, _ in begins += 1 }
+        recognizer.onBegin = { _ in begins += 1 }
         recognizer.feed(contacts: [touch(1, 0.4, 0.5), touch(2, 0.5, 0.5), touch(3, 0.6, 0.5)], timestamp: 0)
         recognizer.feed(contacts: [touch(1, 0.6, 0.5), touch(2, 0.7, 0.5), touch(3, 0.8, 0.5)], timestamp: 0.02)
         XCTAssertEqual(begins, 0)

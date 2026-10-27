@@ -86,7 +86,6 @@ struct AOMHomeView: View {
                 .frame(maxWidth: .infinity, minHeight: wide ? geometry.size.height : nil, alignment: .top)
             }
         }
-        .background(AOMWorkspaceBackground())
         .navigationTitle("Workspace")
         .navigationSubtitle(subtitle(lastRuns: lastRuns))
         .toolbar {
@@ -100,6 +99,14 @@ struct AOMHomeView: View {
                 .help("New Automation (⌘N)")
             }
         }
+        // ⌘N and ⌘F work from the Workspace too: they open the Automation page
+        // (the help text above promised ⌘N, but the command was disabled here).
+        .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
+            search: { appState.selectedMainTab = .gestures },
+            newTrigger: {
+                appState.selectedMainTab = .gestures
+                appState.showingAddTrigger = true
+            }))
         .task {
             while !Task.isCancelled {
                 let current = AOMPermission.required.map { ($0, $0.status) }

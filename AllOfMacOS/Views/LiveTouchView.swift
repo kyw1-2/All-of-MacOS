@@ -19,7 +19,7 @@ struct LiveTouchView: View {
                                 lineWidth: touchState.isPressed ? 1.5 : 1
                             )
                     )
-                    .animation(.easeOut(duration: 0.15), value: touchState.isPressed)
+                    .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: touchState.isPressed)
 
                 // Zone grid lines (subtle)
                 Path { path in
@@ -72,7 +72,7 @@ struct LiveTouchView: View {
                                                 : Color.gray.opacity(0.1)
                                         )
                                 )
-                                .animation(.easeOut(duration: 0.15), value: touchState.isPressed)
+                                .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: touchState.isPressed)
                         }
                     }
                     .padding(6)

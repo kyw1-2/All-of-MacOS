@@ -501,8 +501,9 @@ enum SettingsCatalog {
             item("accentColor", .general, "Highlight Color", "Accent for buttons and selections", ["색", "컬러", "accent"], AnyView(AccentColorRow())),
             item("hud", .general, "On-screen HUD", "Show feedback when actions run", ["hud", "오버레이", "알림"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "On-screen HUD", subtitle: "Show feedback when actions run", key: "AOMHUDEnabled", fallback: true))),
             item("hudOpacity", .general, "HUD Background", "Background opacity", ["투명도", "opacity"], AnyView(HubSliderRow(icon: "circle.dashed", tint: .teal, title: "HUD Background", subtitle: "Background opacity", key: "AOMHUDBackgroundOpacity", fallback: 0.06, range: 0...0.3, step: 0.01, percent: true))),
-                        item("mcButtons", .general, "Mission Control Buttons", "✕ buttons on Mission Control tiles", ["mission", "미션컨트롬"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "Mission Control ✕ Buttons", subtitle: "Close windows straight from Mission Control", key: "AOMMissionControlButtons", fallback: true))),
-                                    item("spaceSwipe", .general, "Top-Bar Space Swipe", "Two fingers at the top of the screen switch Spaces", ["space", "스페이스", "화면"], AnyView(HubToggleRow(icon: "rectangle.split.2x1", tint: .blue, title: "Top-Bar Space Swipe", subtitle: "Two fingers at the top of the screen switch Spaces", key: "AOMTopBarSpaceSwipe", fallback: true))),
+            item("mcButtons", .general, "Mission Control Buttons", "✕ buttons on Mission Control tiles", ["mission", "미션컨트롬"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "Mission Control ✕ Buttons", subtitle: "Close windows straight from Mission Control", key: "AOMMissionControlButtons", fallback: true))),
+            item("titleBarSnap", .general, "Trackpad Title-Bar Snap", "Swipe two fingers on a title bar to snap the window", ["snap", "swish", "스냅", "창", "트랙패드", "trackpad"], AnyView(HubToggleRow(icon: "hand.draw", tint: .indigo, title: "Trackpad Title-Bar Snap", subtitle: "Swipe two fingers on a title bar to snap the window", key: TitleBarWindowSnap.enabledKey, fallback: false))),
+            item("spaceSwipe", .general, "Top-Bar Space Swipe", "Two fingers at the top of the screen switch Spaces", ["space", "스페이스", "화면"], AnyView(HubToggleRow(icon: "rectangle.split.2x1", tint: .blue, title: "Top-Bar Space Swipe", subtitle: "Two fingers at the top of the screen switch Spaces", key: "AOMTopBarSpaceSwipe", fallback: true))),
             item("dockPinchQuit", .general, "Dock Pinch to Quit", "Pinch in on a Dock icon to quit that app", ["dock", "독", "핀치"], AnyView(HubToggleRow(icon: "dock.rectangle", tint: .pink, title: "Dock Pinch to Quit", subtitle: "Pinch in on a Dock icon to quit that app", key: "AOMDockPinchQuit", fallback: true))),
             item("groupByFolder", .general, "Group Triggers by Folder", "Organize gestures into folders", ["폴더", "그룹", "정렬"], AnyView(HubToggleRow(icon: "folder", tint: .orange, title: "Group Triggers by Folder", subtitle: "Organize gestures into folders", key: "AOMGroupTriggersByFolder", fallback: false))),
         ]
@@ -738,7 +739,7 @@ struct SettingsHubView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 260)
+            .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal, max: AOMSize.sidebarMax)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             content
@@ -782,9 +783,12 @@ struct SettingsHubView: View {
             }
         }
         .sheet(item: $sheet) { sheet in
+            // Resizable from a sensible minimum, so long lists and editors
+            // (shortcuts, presets) can use a larger Settings window.
             SettingsSheetHost(sheet: sheet)
                 .environmentObject(appState)
-                .frame(width: 760, height: 620)
+                .frame(minWidth: 760, idealWidth: 760, maxWidth: .infinity,
+                       minHeight: 560, idealHeight: 620, maxHeight: .infinity)
         }
     }
 
@@ -860,11 +864,11 @@ struct SettingsHubView: View {
 
     private func flashSaved() {
         flashTask?.cancel()
-        withAnimation(.easeOut(duration: 0.15)) { savedFlash = true }
+        withAnimation(AOMDesign.animation(.easeOut(duration: 0.15))) { savedFlash = true }
         flashTask = Task {
             try? await Task.sleep(nanoseconds: 1_400_000_000)
             guard !Task.isCancelled else { return }
-            await MainActor.run { withAnimation(.easeIn(duration: 0.2)) { savedFlash = false } }
+            await MainActor.run { withAnimation(AOMDesign.animation(.easeIn(duration: 0.2))) { savedFlash = false } }
         }
     }
 

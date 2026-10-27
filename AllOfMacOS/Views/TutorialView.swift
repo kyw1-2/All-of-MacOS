@@ -9,60 +9,9 @@ extension UserDefaults {
     }
 }
 
-enum TutorialStep: Int, CaseIterable {
-    case welcome = 0
-    case sidebar
-    case triggers
-    case actions
-    case config
-    case tips
-    case done
-
-    var title: String {
-        switch self {
-        case .welcome: return "Welcome"
-        case .sidebar: return "Applications"
-        case .triggers: return "Triggers"
-        case .actions: return "Actions"
-        case .config: return "Configuration"
-        case .tips: return "Tips & Tricks"
-        case .done: return "You're set!"
-        }
-    }
-
-    var bodyText: String {
-        switch self {
-        case .welcome:
-            return "All of MacOS turns your trackpad into a programmable input surface.\n\nMap 30+ gesture types — swipes, taps, pinches, circles, edge slides — to keyboard shortcuts, window management, media controls, scripts, and more."
-        case .sidebar:
-            return "Choose which apps your gestures apply to.\n\n\"All Apps\" means global — gestures work everywhere.\n\nAdd specific apps (e.g. Safari, Slack, Cursor) for per-app bindings.\n\nTip: app-specific triggers override global ones."
-        case .triggers:
-            return "Your gesture bindings.\n\nPick from Trackpad, Keyboard, Mouse, or Drawing triggers.\n\nTrackpad offers 2–5 finger swipes, taps, pinches, TipTaps, edge slides, and corner clicks.\n\nClick {{plus}} to add a trigger."
-        case .actions:
-            return "What happens when a trigger fires.\n\nAdd one or more: Maximize Window, Send Keystroke, Volume Up/Down, Launch App, Run Script, Play/Pause, and 20+ more.\n\nClick {{plus}} to add an action."
-        case .config:
-            return "Edit the selected trigger or action here.\n\nRename triggers, enable/disable them, set \"Suppress Click\" for click-based gestures.\n\nConfigure action parameters (e.g. which key to send, which app to launch)."
-        case .tips:
-            return "Live Touch — finger positions for debugging.\n\nConsole — logs every detected gesture.\n\nMenu bar — click to open or toggle ON/OFF.\n\nGrant Accessibility & Automation permissions when prompted.\n\nTry: 3 Finger Swipe → Volume, Left Edge Slide → Brightness."
-        case .done:
-            return "Quick start: Add trigger → add actions → toggle ON.\n\nExport presets from Settings to share configs.\n\nEnjoy! 🖥️"
-        }
-    }
-
-    var highlightRegion: TutorialRegion? {
-        switch self {
-        case .welcome: return nil
-        case .sidebar: return .sidebar
-        case .triggers: return .triggers
-        case .actions: return .actions
-        case .config: return .config
-        case .tips: return nil
-        case .done: return nil
-        }
-    }
-
-    var isLast: Bool { self == .done }
-}
+// The 1.x seven-step `TutorialStep` tour ("Map 30+ gesture types…", "Click {{plus}}")
+// was removed in 3.3: nothing referenced it, and first run is the short
+// skippable welcome below (contextual help over an up-front tour).
 
 enum TutorialRegion: String {
     case sidebar, triggers, actions, config

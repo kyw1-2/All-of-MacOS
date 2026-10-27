@@ -61,6 +61,33 @@ enum WindowGeometry {
         abs(a.minX-b.minX) <= 3 && abs(a.minY-b.minY) <= 3 &&
         abs(a.width-b.width) <= 3 && abs(a.height-b.height) <= 3
     }
+
+    /// Where a window that kept its own size belongs inside a snap cell, the
+    /// way Swish 1.13.3 places it (`FUN_1000329c8`, recovered by the DeepSeek
+    /// Harness Ghidra pass on 2026-10-27): after writing size → position → size
+    /// it reads the size back and, when the app refused the cell's size (a
+    /// minimum or fixed size), keeps the snapped edge. A first column stays
+    /// flush left, a last column flush right, and a full-span or middle cell
+    /// centres the window; rows work the same way. The result stays on the
+    /// display, and a window larger than the display keeps its leading edge
+    /// visible. Accessibility (top-left) coordinates.
+    static func anchoredFrame(desired: CGRect, actualSize: CGSize, visible: CGRect,
+                              tolerance: CGFloat = 24) -> CGRect {
+        func place(_ lower: CGFloat, _ upper: CGFloat, _ areaLower: CGFloat, _ areaUpper: CGFloat,
+                   _ length: CGFloat) -> CGFloat {
+            let leading = abs(lower - areaLower) <= tolerance
+            let trailing = abs(upper - areaUpper) <= tolerance
+            let origin: CGFloat
+            if leading && !trailing { origin = lower }
+            else if trailing && !leading { origin = upper - length }
+            else { origin = (lower + upper - length) / 2 }
+            let highest = areaUpper - length
+            return highest < areaLower ? areaLower : min(max(origin, areaLower), highest)
+        }
+        return CGRect(x: place(desired.minX, desired.maxX, visible.minX, visible.maxX, actualSize.width),
+                      y: place(desired.minY, desired.maxY, visible.minY, visible.maxY, actualSize.height),
+                      width: actualSize.width, height: actualSize.height)
+    }
 }
 
 struct SavedWindowPlacement: Codable, Equatable {
@@ -445,7 +472,7 @@ final class WindowManager: ObservableObject {
             desired = type == .maximizeWindowUnderCursor
                 ? underVisible
                 : WindowGeometry.moved(underFrame, into: underVisible, maximize: false)
-            applyFrame(desired, target: under) { success in
+            applyFrame(desired, target: under, anchorIn: type == .maximizeWindowUnderCursor ? underVisible : nil) { success in
                 completion(success)
             }
             return
@@ -456,7 +483,12 @@ final class WindowManager: ObservableObject {
             if saved.count > 100 { saved.removeFirst() }
         }
         let undoFrame = referenceFrame ?? current
-        applyFrame(desired, target: target) { success in
+        // Grid cells anchor inside the display they were computed for; a
+        // maximize onto the next display anchors inside that display (its
+        // `desired` is exactly that visible area).
+        let anchor: CGRect? = Self.anchoredTypes.contains(type) ? visible
+            : (type == .moveWindowNextMonitorAndMaximize ? desired : nil)
+        applyFrame(desired, target: target, anchorIn: anchor) { success in
             if let actual = self.frame(of: target), !WindowGeometry.close(undoFrame, actual) {
                 self.remember([Saved(target: target, frame: undoFrame)])
             }
@@ -466,7 +498,8 @@ final class WindowManager: ObservableObject {
             completion(success)
         }
     }
-    private func applyFrame(_ desired: CGRect, target: Target, completion: @escaping (Bool) -> Void) {
+    private func applyFrame(_ desired: CGRect, target: Target, anchorIn anchor: CGRect? = nil,
+                            completion: @escaping (Bool) -> Void) {
         let key = "\(target.pid):\(CFHash(target.window))"
         guard moving.insert(key).inserted else { completion(false); return }
         let finished = completion
@@ -494,7 +527,7 @@ final class WindowManager: ObservableObject {
         func write(_ attribute: String, _ value: AXValue) -> Bool {
             AXUIElementSetAttributeValue(target.window, attribute as CFString, value) == .success
         }
-        func settle(_ attribute: String, then next: @escaping () -> Void) {
+        func settle(_ attribute: String, toward goal: CGRect, then next: @escaping () -> Void) {
             var last: CGRect?
             var stable = 0
             func poll(_ count: Int) {
@@ -502,8 +535,8 @@ final class WindowManager: ObservableObject {
                 if let last, WindowGeometry.close(last, actual) { stable += 1 } else { stable = 0 }
                 last = actual
                 let reached = attribute == kAXSizeAttribute
-                    ? abs(actual.width - desired.width) <= 3 && abs(actual.height - desired.height) <= 3
-                    : abs(actual.minX - desired.minX) <= 3 && abs(actual.minY - desired.minY) <= 3
+                    ? abs(actual.width - goal.width) <= 3 && abs(actual.height - goal.height) <= 3
+                    : abs(actual.minX - goal.minX) <= 3 && abs(actual.minY - goal.minY) <= 3
                 if (reached && stable >= 1) || (count >= 7 && stable >= 3) || count >= 24 {
                     next()
                 } else {
@@ -512,21 +545,89 @@ final class WindowManager: ObservableObject {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll(0) }
         }
+        /// Swish's last step for a size-limited app: keep the snapped edge
+        /// (see `WindowGeometry.anchoredFrame`) instead of leaving the window
+        /// wherever the size write put it, then accept the anchored frame.
+        func anchorToSnappedEdge(_ actual: CGRect, in visible: CGRect) {
+            let anchored = WindowGeometry.anchoredFrame(desired: desired, actualSize: actual.size, visible: visible)
+            if abs(anchored.minX - actual.minX) <= 3 && abs(anchored.minY - actual.minY) <= 3 {
+                completion(true); return
+            }
+            var origin = anchored.origin
+            guard let value = AXValueCreate(.cgPoint, &origin), write(kAXPositionAttribute, value) else {
+                self.fail("Window refused its anchored position", completion); return
+            }
+            settle(kAXPositionAttribute, toward: anchored) {
+                guard let settled = self.frame(of: target),
+                      abs(settled.minX - anchored.minX) <= 3, abs(settled.minY - anchored.minY) <= 3 else {
+                    self.fail("Window did not reach its anchored frame", completion); return
+                }
+                completion(true)
+            }
+        }
         let stages: [(String, AXValue)] = [(kAXSizeAttribute, s), (kAXPositionAttribute, p),
                                           (kAXSizeAttribute, s), (kAXPositionAttribute, p)]
         func apply(_ index: Int) {
             if index == stages.count {
-                guard let actual = self.frame(of: target), WindowGeometry.close(actual, desired) else {
-                    self.fail("Window did not reach requested frame (app size limits or fullscreen)", completion); return
+                guard let actual = self.frame(of: target) else {
+                    self.fail("Window closed during move", completion); return
                 }
-                completion(true)
+                if WindowGeometry.close(actual, desired) { completion(true); return }
+                if let anchor, abs(actual.width - desired.width) > 3 || abs(actual.height - desired.height) > 3 {
+                    anchorToSnappedEdge(actual, in: anchor); return
+                }
+                self.fail("Window did not reach requested frame (app size limits or fullscreen)", completion)
                 return
             }
             let (attribute, value) = stages[index]
             guard write(attribute, value) else { self.fail("Window refused size or position", completion); return }
-            settle(attribute) { apply(index + 1) }
+            settle(attribute, toward: desired) { apply(index + 1) }
         }
         apply(0)
+    }
+
+    /// Tiling actions whose destination is a cell of the current display's
+    /// visible area. A size-limited app is anchored to that cell's snapped edge
+    /// (Swish) rather than reported as a failed move.
+    private static let anchoredTypes: Set<ActionType> = [
+        .customSnapWindow, .maximizeWindow, .snapWindowTopHalf, .snapWindowBottomHalf,
+        .snapWindowLeft, .snapWindowRight, .snapWindowTopLeft, .snapWindowTopRight,
+        .snapWindowBottomLeft, .snapWindowBottomRight, .snapWindowLeftThird, .snapWindowCenterThird,
+        .snapWindowRightThird, .snapWindowLeftTwoThirds, .snapWindowRightTwoThirds,
+        .snapWindowTopLeftSixth, .snapWindowTopCenterSixth, .snapWindowTopRightSixth,
+        .snapWindowBottomLeftSixth, .snapWindowBottomCenterSixth, .snapWindowBottomRightSixth
+    ]
+
+    /// Commit for the trackpad title-bar snap. It uses the same staged,
+    /// AXEnhancedUserInterface-safe write as the tiling actions (Swish writes
+    /// size → position → size and suspends that attribute too), anchors a
+    /// size-limited app to the snapped edge when `visible` is given, and
+    /// records the move for Undo Last Window Placement and Restore Window Size.
+    /// The completion receives the frame the window really took, or nil.
+    @MainActor
+    func applySnap(_ desired: CGRect, target: Target, visible: CGRect?, completion: @escaping (CGRect?) -> Void) {
+        guard !layoutBusy, let current = frame(of: target),
+              !moving.contains("\(target.pid):\(CFHash(target.window))") else { completion(nil); return }
+        if visible != nil, !saved.contains(where: { $0.target.pid == target.pid && CFEqual($0.target.window, target.window) }) {
+            saved.append(Saved(target: target, frame: current))
+            if saved.count > 100 { saved.removeFirst() }
+        }
+        applyFrame(desired, target: target, anchorIn: visible) { success in
+            let actual = self.frame(of: target)
+            if let actual, !WindowGeometry.close(current, actual) {
+                self.remember([Saved(target: target, frame: current)])
+            }
+            if visible == nil, success, let actual {
+                // A restore that lands on Restore Window Size's saved frame
+                // leaves it nothing to undo; a saved frame from an earlier,
+                // different placement (Window menu) stays.
+                self.saved.removeAll {
+                    CFEqual($0.target.window, target.window) && $0.target.pid == target.pid
+                        && WindowGeometry.close($0.frame, actual)
+                }
+            }
+            completion(success ? actual : nil)
+        }
     }
 
     private func fail(_ message: String, _ completion: (Bool) -> Void) {

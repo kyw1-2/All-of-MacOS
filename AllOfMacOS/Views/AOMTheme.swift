@@ -182,6 +182,17 @@ enum AOMSize {
     /// One maximum content width for every page, so cards line up when you
     /// move between Workspace, Audio, Window Tiling and Insights.
     static let contentMaxWidth: CGFloat = 1120
+    /// The one main-window minimum (content size). AppKit no longer applies a
+    /// second, larger minimum after launch (it was 1040 × 650 vs 980 × 600).
+    static let windowMinWidth: CGFloat = 980
+    static let windowMinHeight: CGFloat = 600
+    /// The diagnostics drawer sits beside the page only when the detail column
+    /// is wide enough for the Automation page's two panes (list minimum +
+    /// editor minimum) plus the widest drawer; narrower, it floats over the
+    /// page's trailing edge so the editor never drops below `editorMinimum`.
+    static let drawerWidth: ClosedRange<CGFloat> = 280...340
+    static let drawerSideBySideMinimum: CGFloat =
+        CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
 }
 
 /// Motion tokens. Every value collapses to no animation under Reduce Motion.
@@ -646,8 +657,11 @@ struct AOMChip: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .frame(height: 20)
-        .background(background ?? tint.opacity(0.12), in: Capsule())
+        .background(background ?? tint.opacity(contrast == .increased ? 0.22 : 0.12), in: Capsule())
+        .overlay { if contrast == .increased { Capsule().strokeBorder(tint, lineWidth: 1) } }
     }
+
+    @Environment(\.colorSchemeContrast) private var contrast
 }
 
 /// A key cap for shortcut hints.
@@ -669,7 +683,9 @@ struct AOMKeycap: View {
                         in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .strokeBorder(onSelection ? Color.white.opacity(0.35) : AOMTheme.hairline, lineWidth: 0.5)
+                    .strokeBorder(onSelection ? Color.white.opacity(0.35)
+                                              : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.hairline),
+                                  lineWidth: contrast == .increased ? 1 : 0.5)
             }
             .overlay {
                 // Lit top edge: key caps read as tiny glass chips.
@@ -679,4 +695,6 @@ struct AOMKeycap: View {
             }
             .accessibilityLabel(text)
     }
+
+    @Environment(\.colorSchemeContrast) private var contrast
 }

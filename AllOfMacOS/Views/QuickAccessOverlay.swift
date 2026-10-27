@@ -1138,7 +1138,7 @@ private struct QuickAccessOverlayView: View {
             if state || reduceMotion {
                 hovered = state
             } else {
-                withAnimation(.easeOut(duration: 0.12)) { hovered = state }
+                withAnimation(AOMDesign.animation(.easeOut(duration: 0.12))) { hovered = state }
             }
             onHoverChange(state)
         }

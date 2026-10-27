@@ -149,14 +149,14 @@ extension View {
     }
 }
 
-/// Title, subtitle and canvas for a main-window page.
+/// Title and subtitle for a main-window page. The canvas belongs to the shell
+/// (`AOMMainShell`), so pages never stack a second behind-window material.
 struct AOMPageChrome: ViewModifier {
     let title: String
     let subtitle: String?
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AOMWorkspaceBackground())
             .navigationTitle(title)
             .navigationSubtitle(subtitle ?? "")
     }
@@ -341,10 +341,17 @@ struct AOMModeButton: View {
     var body: some View {
         Button(action: action) {
             if compact {
-                HStack(spacing: 5) {
+                // Never shrink the label below the 10 pt floor: when the title
+                // does not fit, show the glyph alone (the title stays in the
+                // tooltip and the VoiceOver label).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 5) {
+                        Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                            .symbolRenderingMode(.hierarchical).foregroundStyle(tint)
+                        Text(title).font(AOMType.caption.weight(.medium)).lineLimit(1)
+                    }
                     Image(systemName: symbol).font(.system(size: 13, weight: .medium))
                         .symbolRenderingMode(.hierarchical).foregroundStyle(tint)
-                    Text(title).font(AOMType.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .contentShape(Rectangle())
@@ -359,7 +366,8 @@ struct AOMModeButton: View {
                     .font(AOMType.caption.weight(.medium))
                     .foregroundStyle(AOMTheme.text)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.92)
+                    .truncationMode(.tail)
                 Text(shortcut ?? " ")
                     .font(AOMType.micro)
                     .foregroundStyle(AOMTheme.textTertiary)
@@ -420,6 +428,12 @@ private struct AOMScopeChip<ID: Hashable>: View {
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+
+    /// Increase Contrast and Differentiate Without Color outline the selected
+    /// chip, so selection is not carried by a 13% tint alone (WCAG 1.4.11).
+    private var outlined: Bool { selected && (contrast == .increased || differentiateWithoutColor) }
 
     var body: some View {
         Button(action: action) {
@@ -441,7 +455,11 @@ private struct AOMScopeChip<ID: Hashable>: View {
             .padding(.horizontal, 10)
             .frame(height: 26)
             .background {
-                Capsule().fill(selected ? Color.accentColor.opacity(0.13) : (hovering ? AOMTheme.track : Color.clear))
+                Capsule().fill(selected ? Color.accentColor.opacity(contrast == .increased ? 0.24 : 0.13)
+                                        : (hovering ? AOMTheme.track : Color.clear))
+            }
+            .overlay {
+                if outlined { Capsule().strokeBorder(Color.accentColor, lineWidth: 1) }
             }
             .contentShape(Capsule())
         }
@@ -544,6 +562,7 @@ struct AOMLayoutDiagram: View {
     /// Moves to the next display (drawn as an arrow over the region).
     var arrow = false
     var highlighted = false
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(layout: CustomSnapZone.Layout, highlighted: Bool = false) {
         region = AOMTilingGeometry.rect(for: layout, in: CGSize(width: 1, height: 1))
@@ -568,9 +587,11 @@ struct AOMLayoutDiagram: View {
                 .insetBy(dx: 1, dy: 1)
             ZStack(alignment: .topLeading) {
                 screen.fill(AOMTheme.cardAlt)
-                screen.strokeBorder(highlighted ? Color.accentColor.opacity(0.6) : AOMTheme.hairline, lineWidth: highlighted ? 1 : 0.5)
+                screen.strokeBorder(highlighted ? Color.accentColor.opacity(0.6)
+                                                : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.hairline),
+                                    lineWidth: highlighted || contrast == .increased ? 1 : 0.5)
                 RoundedRectangle(cornerRadius: max(2, size.height * 0.08), style: .continuous)
-                    .fill(Color.accentColor.opacity(highlighted ? 0.85 : 0.5))
+                    .fill(Color.accentColor.opacity(highlighted || contrast == .increased ? 0.85 : 0.5))
                     .frame(width: max(0, scaled.width), height: max(0, scaled.height))
                     .offset(x: inset + scaled.minX, y: inset + scaled.minY)
                 if arrow {

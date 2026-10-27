@@ -99,8 +99,8 @@ class AppState: ObservableObject {
         if preset.triggers.count > 0 {
             presetManager.save(preset)
         }
-        // Isolated UI previews can open on a given page (`--aom-preview-tab <1-6>`),
-        // so screens are reviewed without driving the window with key events.
+        // Isolated UI previews can open on a given page (`--aom-preview-tab <1-8>`,
+        // sidebar order), so screens are reviewed without driving the window with key events.
         if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-tab"),
            ProcessInfo.processInfo.arguments.indices.contains(index + 1),
            let number = Int(ProcessInfo.processInfo.arguments[index + 1]), AOMMainTab.allCases.indices.contains(number - 1) {
@@ -138,6 +138,13 @@ class AppState: ObservableObject {
                 }
             })
         }
+        // The title-bar snap, top-bar Space swipe and Dock pinch read the
+        // trackpad stream even with no trackpad trigger. When a setting flips
+        // whether anything needs that stream, re-register so the hardware
+        // starts or stops now rather than at the next launch.
+        shortcutObservers.append(NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshTrackpadLayersIfNeeded() }
+        })
         DispatchQueue.main.async {
             self.permissionWatchdog.start()
             self.startMonitoring()
@@ -147,6 +154,19 @@ class AppState: ObservableObject {
     func startMonitoring() {
         NSLog("[AOM] startMonitoring called")
         refreshMonitors()
+    }
+
+    /// Last known answer to "does anything besides trackpad triggers need the
+    /// trackpad stream?", so unrelated setting changes cost nothing.
+    private var trackpadLayersNeeded: Bool?
+
+    func refreshTrackpadLayersIfNeeded() {
+        guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
+        let needed = TrackpadUtilityGestures.shared.anyLayerEnabled
+        guard needed != trackpadLayersNeeded else { return }
+        trackpadLayersNeeded = needed
+        trackpadMonitor.registerTriggers(globalEnabled ? currentPreset.triggers.filter(\.isEnabled) : [],
+                                         groups: currentPreset.activationGroups)
     }
 
     /// Scope remains independent from the selected category. `All` is a view
@@ -420,7 +440,10 @@ class AppState: ObservableObject {
         }
         if changed("actions") { ActionExecutor.registerTriggers(all, groups: groups) }
         if changed("keyboard", .keyboard) { keyboardMonitor.registerTriggers(all, groups: groups) }
-        if changed("trackpad", .trackpad) { trackpadMonitor.registerTriggers(all, groups: groups) }
+        if changed("trackpad", .trackpad) {
+            trackpadMonitor.registerTriggers(all, groups: groups)
+            trackpadLayersNeeded = TrackpadUtilityGestures.shared.anyLayerEnabled
+        }
         if changed("mouse", .normalMouse) { mouseButtonMonitor.registerTriggers(all, groups: groups) }
         if changed("drawing", .drawings) { drawingMonitor.registerTriggers(all, groups: groups) }
         if changed("system", .otherTriggers) { systemTriggerMonitor.registerTriggers(all, groups: groups) }

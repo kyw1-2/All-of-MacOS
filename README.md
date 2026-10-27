@@ -2,6 +2,20 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.0
+
+The Swish-style trackpad snap, round two, built from a DeepSeek Harness Ghidra pass over Swish 1.13.3. It adds:
+
+- Swish's size → position → size commit.
+- Edge anchoring for windows with a fixed or minimum size. This also covers the tiling actions.
+- A preview that settles on the real frame.
+- Unsnap with a swipe down.
+- Quarters in either order.
+- Haptics on each zone change.
+- A readiness checklist.
+
+There is also a UI/UX finishing pass informed by 86 new references: Reduce Motion and Increase Contrast throughout, one window minimum with a floating drawer, System Tools search, accessible names and consistent naming. See [the Swish port report](docs/window-snap-3.3.0-swish-dsh.md) and [the reference review](docs/ux-reference-review-3.3.0.md).
+
 ## Version 3.2.0
 
 A denser Liquid Glass redesign (a behind-window content canvas so the desktop shows through the frosted cards, tighter spacing, and dashboards that fill the window instead of leaving a void), a curated and regrouped System Tools page, a leaner menu bar with a new Windows quick-snap section, and a Swish-style two-finger title-bar window snap with a live preview. See [the window-snap REA report](docs/window-snap-3.2.0-swish.md).
