@@ -156,7 +156,7 @@ struct AOMPageChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AOMTheme.workspace)
+            .background(AOMWorkspaceBackground())
             .navigationTitle(title)
             .navigationSubtitle(subtitle ?? "")
     }

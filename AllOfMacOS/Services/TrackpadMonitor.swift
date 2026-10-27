@@ -206,6 +206,10 @@ class TrackpadMonitor {
             if frame.contacts.count == 4 { self.hardwareFourFingerFrames += 1 }
             self.processTouchFrame(frame.contacts, count: frame.contacts.count, timestamp: timestamp,
                 pressedButtons: NSEvent.pressedMouseButtons, deviceID: device)
+            // Swish-style title-bar snap observes the same frames; it only acts
+            // when enabled and the pointer is over a title bar, and never blocks
+            // or consumes the pipeline above.
+            aomTitleBarSnapFeed?(frame.contacts, timestamp)
         }
         source.start()
         lastRecovery = ProcessInfo.processInfo.systemUptime

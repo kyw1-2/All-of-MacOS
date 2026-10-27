@@ -1,3 +1,11 @@
+## 3.2.0 (2026-10-27)
+
+- UI/UX: push the Liquid Glass redesign through the app. The content canvas is now a behind-window material on macOS 26, so the desktop shows through the gaps between frosted cards (the window stays non-opaque but the system toolbar/sidebar glass is preserved); the spacing scale is one notch tighter; and the Workspace, Capture, Tiling and Insights pages fill the window instead of leaving the lower half empty. Reduce Transparency keeps the opaque surfaces.
+- System Tools: curated to the genuinely useful, regrouped into Finder / Network / PDF & Media / Cleanup. Removed Wi-Fi Off, Lock/Hide Flags, "Who's Using It?", Batch Rename (Finder does it) and Force Delete.
+- Menu bar: leaner. A new Windows section (Left/Right Half, Maximize, Center, Window Switcher); App Audio Engine, Drag to Snap, window pinning, front-app shortcuts, displays and the HUD controls moved into a tidy More submenu; Paste Next in Stack dropped from the menu bar.
+- Window snap: a Swish-style two-finger title-bar snap with a live translucent preview and a haptic on commit (off by default, in Window Tiling › Trackpad Snap). Behaviour recovered by REA/Ghidra of Swish 1.13.3; AOM's own implementation. See docs/window-snap-3.2.0-swish.md.
+- Tests: 1,131 run, 0 failures, 3 skipped. Made the top-bar Space-swipe test independent of the session's screen-lock state.
+
 ## 3.1.0 (2026-10-27)
 
 - Interface: adopt the macOS 26 design system. System window chrome and sidebar, Liquid Glass only on floating chrome, one content width and radius set, System Settings–style Settings with sidebar search, and a SoundSource-style Audio page. See docs/ui-liquid-glass-3.1.0.md.

@@ -11,6 +11,8 @@ struct ModernWindowSnappingView: View {
     @State private var showingSnapZones = false
     @State private var showingProfiles = false
     @State private var showingWindowLayouts = false
+    @AppStorage(TitleBarWindowSnap.enabledKey) private var trackpadSnapOn = false
+    @AppStorage(TitleBarWindowSnap.hapticKey) private var trackpadSnapHaptic = true
 
     /// Layouts grouped the way the Window menu groups them, with short labels
     /// (the full name stays in help and VoiceOver).
@@ -61,6 +63,7 @@ struct ModernWindowSnappingView: View {
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
                                 WindowPinningCard()
                                 snappingCard
+                                trackpadSnapCard
                                 zonesCard
                             }
                             .frame(width: 300)
@@ -71,6 +74,7 @@ struct ModernWindowSnappingView: View {
                             galleryCard
                             WindowPinningCard()
                             snappingCard
+                            trackpadSnapCard
                             zonesCard
                         }
                     }
@@ -83,7 +87,7 @@ struct ModernWindowSnappingView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMTheme.workspace)
+        .background(AOMWorkspaceBackground())
         .navigationTitle("Window Tiling")
         .navigationSubtitle(appState.snapStatus)
         .toolbar {
@@ -250,6 +254,41 @@ struct ModernWindowSnappingView: View {
             }
             .disabled(!on)
             .opacity(on ? 1 : 0.6)
+        }
+    }
+
+    // MARK: - Trackpad snap (Swish-style)
+
+    private var trackpadSnapCard: some View {
+        AOMSectionCard("Trackpad Snap", symbol: trackpadSnapOn ? "hand.draw.fill" : "hand.draw",
+                       tint: trackpadSnapOn ? AOMTheme.positive : AOMTheme.textSecondary,
+                       detail: trackpadSnapOn ? "On" : "Off") {
+            EmptyView()
+        } content: {
+            VStack(spacing: 0) {
+                Text("Rest the pointer on a window's title bar and swipe with two fingers — left or right to a half (swipe further for a third), up to maximize, down to center. A preview shows where it lands; lift to snap.")
+                    .font(AOMType.caption)
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, AOMSpace.xs)
+                settingRow("Two-finger title-bar snap") {
+                    Toggle("", isOn: Binding(get: { trackpadSnapOn },
+                                             set: { trackpadSnapOn = $0; TitleBarWindowSnap.shared.refreshEnabled() }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                settingRow("Haptic tap on snap", showsDivider: false) {
+                    Toggle("", isOn: $trackpadSnapHaptic)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .disabled(!trackpadSnapOn)
+                }
+                if trackpadSnapOn && !AXIsProcessTrusted() {
+                    Text("Needs Accessibility permission to move windows.")
+                        .font(AOMType.micro).foregroundStyle(AOMTheme.warning)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
+            }
         }
     }
 

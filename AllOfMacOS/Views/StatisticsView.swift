@@ -105,7 +105,7 @@ struct StatisticsView: View {
             .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMTheme.workspace)
+        .background(AOMWorkspaceBackground())
         .navigationTitle("Insights")
         .navigationSubtitle("Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))")
         .toolbar {

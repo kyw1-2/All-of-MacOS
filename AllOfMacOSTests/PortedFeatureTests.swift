@@ -179,12 +179,14 @@ final class PortedFeatureTests: XCTestCase {
         service.cursorLocation = { CGPoint(x: 700, y: 895) }
         service.cursorInTopBand = { _ in true }
         service.isOutsideOwnApp = { true }
+        service.isScreenLocked = { false }
         defer {
             service.cursorLocation = { NSEvent.mouseLocation }
             service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
             service.isOutsideOwnApp = {
                 NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
             }
+            service.isScreenLocked = { ScreenLock.isLocked }
         }
 
         var t: Double = 10

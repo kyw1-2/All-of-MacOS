@@ -161,6 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in WindowPinRestoration.recover() }
             GestureHUD.shared.start()
             AppActivationHistory.shared.start()
+            TitleBarWindowSnap.shared.refreshEnabled()
             if !PresetManager.isRunningTests {
                 InputRemapService.shared.apply()
                 // After the menu bar and audio settle, so an update never opens on a busy launch.
@@ -503,53 +504,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.sectionHeader(title: "Clipboard"))
         menu.addItem(entry("Clipboard Shelf", "rectangle.bottomthird.inset.filled", #selector(showClipboard)))
         menu.addItem(entry("Paste Stack", "square.stack.3d.down.right", #selector(showClipboardStack)))
-        menu.addItem(entry("Paste Next in Stack", "arrow.down.doc", #selector(pasteNextClipboard)))
         let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
         menu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
                            paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
         menu.addItem(.separator())
 
-        // System — Keep Awake ▸ durations, mirroring the Pause AOM grammar.
-        menu.addItem(.sectionHeader(title: "System"))
-        let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
-        menu.addItem(awakeMenuItem)
+        // Windows — the four everyday snaps plus the switcher, so the window
+        // manager has a one-click home in the menu bar (3.2).
+        menu.addItem(.sectionHeader(title: "Windows"))
+        menu.addItem(entry("Left Half", "rectangle.lefthalf.filled", #selector(menuSnapLeft)))
+        menu.addItem(entry("Right Half", "rectangle.righthalf.filled", #selector(menuSnapRight)))
+        menu.addItem(entry("Maximize", "arrow.up.left.and.arrow.down.right", #selector(menuMaximize)))
+        menu.addItem(entry("Center", "rectangle.center.inset.filled", #selector(menuCenter)))
+        menu.addItem(entry("Window Switcher", "rectangle.stack", #selector(menuWindowSwitcher)))
         menu.addItem(.separator())
 
-        // Automation — the engine, snapping, pausing and what the app in front
-        // of you has bound.
-        menu.addItem(.sectionHeader(title: "Automation"))
+        // Quick toggles people reach for often; everything else moved to More.
+        let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
+        menu.addItem(awakeMenuItem)
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
         let engine = entry("Gestures & Shortcuts", "bolt", #selector(toggleEnabled))
         engine.state = enabled ? .on : .off
         menu.addItem(engine)
-        if #available(macOS 14.2, *) {
-            let soundOn = AppAudioEngine.shared.isEnabled
-            let soundItem = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
-            soundItem.state = soundOn ? .on : .off
-            menu.addItem(soundItem)
-        }
-        let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
-        let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
-        snapItem.state = snapping ? .on : .off
-        menu.addItem(snapItem)
-        menu.addItem(MainActor.assumeIsolated { WindowPinningService.shared.statusMenuItem() })
-        menu.addItem(pauseMenuItem())
-        if let appState = MainActor.assumeIsolated({ self.appState }),
-           let triggers = MainActor.assumeIsolated({ TriggerMenu.build(from: appState) }) {
-            menu.addItem(triggers)
-        }
-        // Displays are settings you adjust directly rather than gestures you
-        // bind, so they live here permanently instead of in the action list.
-        if let displays = MainActor.assumeIsolated({ DisplayMenu.build() }) {
-            menu.addItem(displays)
-        }
         menu.addItem(.separator())
 
         menu.addItem(entry("Open All of MacOS", "macwindow", #selector(showMainWindow)))
         menu.addItem(entry("Settings…", "gearshape", #selector(openSettings), key: ","))
+
+        // More — the controls you set once in a while, kept out of the way.
         let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
         more.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
         let moreMenu = NSMenu(title: "More")
+        if #available(macOS 14.2, *) {
+            let soundItem = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
+            soundItem.state = AppAudioEngine.shared.isEnabled ? .on : .off
+            moreMenu.addItem(soundItem)
+        }
+        let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
+        let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
+        snapItem.state = snapping ? .on : .off
+        moreMenu.addItem(snapItem)
+        moreMenu.addItem(MainActor.assumeIsolated { WindowPinningService.shared.statusMenuItem() })
+        moreMenu.addItem(pauseMenuItem())
+        if let appState = MainActor.assumeIsolated({ self.appState }),
+           let triggers = MainActor.assumeIsolated({ TriggerMenu.build(from: appState) }) {
+            triggers.title = "Front-App Shortcuts"
+            moreMenu.addItem(triggers)
+        }
+        if let displays = MainActor.assumeIsolated({ DisplayMenu.build() }) {
+            moreMenu.addItem(displays)
+        }
+        moreMenu.addItem(.separator())
         moreMenu.addItem(entry("Floating Menus & Widgets…", "square.grid.2x2", #selector(editFloatingMenus)))
         moreMenu.addItem(entry("Show Cheat Sheet", "list.bullet.rectangle", #selector(showCheatSheet)))
         let hudItem = entry("Gesture HUD", "rectangle.on.rectangle", #selector(toggleHUD))
@@ -582,6 +587,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AppAudioEngine.shared.isEnabled.toggle()
         }
     }
+
+    // MARK: - Menu-bar window snaps
+
+    @objc private func menuSnapLeft() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.leftHalf) } }
+    @objc private func menuSnapRight() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.rightHalf) } }
+    @objc private func menuMaximize() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.maximize) } }
+    @objc private func menuCenter() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.center) } }
+    @objc private func menuWindowSwitcher() { MainActor.assumeIsolated { WindowSwitcherController.shared.show() } }
 
     @objc private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)

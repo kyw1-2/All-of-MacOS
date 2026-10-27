@@ -67,6 +67,7 @@ struct AOMHomeView: View {
                                 tilingCard
                             }
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         captureCard
                         clipboardCard
@@ -79,10 +80,13 @@ struct AOMHomeView: View {
                 .padding(.horizontal, wide ? AOMSpace.l : AOMSpace.m)
                 .padding(.top, AOMSpace.m)
                 .padding(.bottom, AOMSpace.l)
-                .frame(maxWidth: .infinity)
+                // Fill the window: on a wide layout the 2×2 grid stretches to
+                // the viewport so the cards use the space instead of leaving a
+                // large void below (the "wasted space" fix).
+                .frame(maxWidth: .infinity, minHeight: wide ? geometry.size.height : nil, alignment: .top)
             }
         }
-        .background(AOMTheme.workspace)
+        .background(AOMWorkspaceBackground())
         .navigationTitle("Workspace")
         .navigationSubtitle(subtitle(lastRuns: lastRuns))
         .toolbar {

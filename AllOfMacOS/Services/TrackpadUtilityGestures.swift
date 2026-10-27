@@ -49,6 +49,10 @@ final class TrackpadUtilityGestures: ObservableObject {
     var dockQuitEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.dockQuitEnabledKey) as? Bool ?? true
     }
+    /// Injectable so tests are not at the mercy of the session's lock state
+    /// (a headless or locked session reports locked, which would swallow every
+    /// gesture). Defaults to the real screen-lock probe.
+    var isScreenLocked: () -> Bool = { ScreenLock.isLocked }
     /// True when any utility gesture can fire — the trackpad hardware must
     /// stay up for these even without trackpad triggers.
     var anyLayerEnabled: Bool { spacesEnabled || dockQuitEnabled }
@@ -57,7 +61,7 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// ends it (fires nothing).
     func observe(points: [TouchPoint], timestamp: Double) {
         // Spatial gestures (top band, Dock) are global — no frontmost guard.
-        guard !ScreenLock.isLocked else {
+        guard !isScreenLocked() else {
             reset(); return
         }
         guard points.count == 2 else {

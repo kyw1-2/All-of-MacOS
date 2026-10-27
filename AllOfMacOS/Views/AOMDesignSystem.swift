@@ -23,9 +23,41 @@ enum AOMDesign {
 }
 
 /// Pages draw no canvas of their own: the main shell owns one canvas, so every
-/// page sits on the same calm surface.
+/// page sits on the same surface. On macOS 26 that canvas is a behind-window
+/// material, so the desktop softly shows through the gaps between the frosted
+/// content cards — the Liquid Glass depth people expect on Tahoe. Reduce
+/// Transparency and older systems get the flat system window background.
 struct AOMWorkspaceBackground: View {
-    var body: some View { Color.clear }
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        if reduceTransparency {
+            AOMTheme.workspace
+        } else if #available(macOS 26.0, *) {
+            VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow, state: .active)
+                .ignoresSafeArea()
+                .background(AOMContentWindowTranslucency().frame(width: 0, height: 0))
+        } else {
+            AOMTheme.workspace
+        }
+    }
+}
+
+/// Makes the hosting window non-opaque (with a clear background) so the
+/// behind-window content material shows the desktop — but leaves the titlebar
+/// system-managed, so macOS keeps drawing the toolbar's Liquid Glass and
+/// scroll-edge effect (a transparent titlebar had flattened both in 3.0.x).
+private struct AOMContentWindowTranslucency: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); configure() }
+        func configure() {
+            guard let window else { return }
+            if window.isOpaque { window.isOpaque = false }
+            if window.backgroundColor != .clear { window.backgroundColor = .clear }
+        }
+    }
+    func makeNSView(context: Context) -> NSView { Probe(frame: .zero) }
+    func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.configure() }
 }
 
 private struct AOMHeightPreferenceKey: PreferenceKey {

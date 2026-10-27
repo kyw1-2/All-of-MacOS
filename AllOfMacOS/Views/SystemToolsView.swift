@@ -89,58 +89,29 @@ struct SystemToolsView: View {
                     Task { await service.restartFinder(); toast = "Finder restarted" }
                 }
             ]),
-            ("Network & System", "network", [
+            ("Network", "network", [
                 Tool(id: "dns", title: "Flush DNS", symbol: "network", tint: .indigo) {
                     Task { do { try await service.flushDNSCache(); toast = "DNS cache flushed" } catch { toast = error.localizedDescription } }
-                },
-                Tool(id: "wifi", title: "Wi-Fi Off", symbol: "wifi.slash", tint: .indigo) {
-                    Task { do { try await service.disconnectWiFi(); toast = "Wi-Fi turned off" } catch { toast = error.localizedDescription } }
-                },
-                Tool(id: "cache", title: "Clear Caches", symbol: "paintbrush", tint: .indigo) {
+                }
+            ]),
+            ("PDF & Media", "doc.richtext", [
+                Tool(id: "pdfmerge", title: "Merge PDFs", symbol: "doc.badge.plus", tint: .orange) { mergePDFs() },
+                Tool(id: "pdfcompress", title: "Compress PDF", symbol: "doc.badge.gearshape", tint: .orange) { compressPDF() },
+                Tool(id: "imageconvert", title: "Convert Image", symbol: "photo.badge.arrow.down", tint: .orange) { convertImage() },
+                Tool(id: "videoconvert", title: "Convert Video", symbol: "film", tint: .orange) { convertVideo() },
+                Tool(id: "qr", title: "QR Code", symbol: "qrcode", tint: .orange) { makeQR() }
+            ]),
+            ("Cleanup", "sparkles", [
+                Tool(id: "cache", title: "Clear Caches", symbol: "paintbrush", tint: .teal) {
                     Task {
                         do {
                             let freed = try await Task.detached { try MacMagicSystemToolService.shared.clearDiskCache() }.value
                             toast = "Freed \(ByteCountFormatter.string(fromByteCount: freed, countStyle: .file))"
                         } catch { toast = error.localizedDescription }
                     }
-                }
-            ]),
-            ("PDF & Media", "doc.richtext", [
-                Tool(id: "pdfmerge", title: "Merge PDFs", symbol: "doc.badge.plus", tint: .orange) {
-                    mergePDFs()
                 },
-                Tool(id: "pdfcompress", title: "Compress PDF", symbol: "doc.badge.gearshape", tint: .orange) {
-                    compressPDF()
-                },
-                Tool(id: "imageconvert", title: "Convert Image", symbol: "photo.badge.arrow.down", tint: .orange) {
-                    convertImage()
-                },
-                Tool(id: "qr", title: "QR Code", symbol: "qrcode", tint: .orange) {
-                    makeQR()
-                },
-                Tool(id: "videoconvert", title: "Convert Video", symbol: "film", tint: .orange) {
-                    convertVideo()
-                }
-            ]),
-            ("Files", "doc.on.doc", [
-                Tool(id: "dsstore", title: "Erase .DS_Store", symbol: "trash.slash", tint: .teal) {
-                    eraseDSStore()
-                },
-                Tool(id: "lock", title: "Lock / Hide Flags", symbol: "lock.doc", tint: .teal) {
-                    fileAttributes()
-                },
-                Tool(id: "lsof", title: "Who's Using It?", symbol: "person.2", tint: .teal) {
-                    whoIsUsing()
-                },
-                Tool(id: "rename", title: "Batch Rename", symbol: "textformat.abc", tint: .teal) {
-                    batchRename()
-                },
-                Tool(id: "forcedelete", title: "Force Delete", symbol: "xmark.bin", tint: .red) {
-                    forceDelete()
-                },
-                Tool(id: "trash", title: "Empty Trash", symbol: "trash.fill", tint: .red) {
-                    confirmEmptyTrash()
-                }
+                Tool(id: "dsstore", title: "Erase .DS_Store", symbol: "trash.slash", tint: .teal) { eraseDSStore() },
+                Tool(id: "trash", title: "Empty Trash", symbol: "trash.fill", tint: .red) { confirmEmptyTrash() }
             ])
         ]
     }
@@ -231,55 +202,6 @@ struct SystemToolsView: View {
         }
     }
 
-    private func fileAttributes() {
-        guard let url = pickFiles(types: [UTType.data], multiple: false)?.first else { return }
-        let menu = NSMenu()
-        menu.addItem(ClosureMenuItem(title: "Lock") {
-            do { try service.setFileLocked(url: url, locked: true); toast = "Locked" } catch { toast = error.localizedDescription }
-        })
-        menu.addItem(ClosureMenuItem(title: "Unlock") {
-            do { try service.setFileLocked(url: url, locked: false); toast = "Unlocked" } catch { toast = error.localizedDescription }
-        })
-        menu.addItem(ClosureMenuItem(title: "Hide") {
-            do { try service.setFileHidden(url: url, hidden: true); toast = "Hidden" } catch { toast = error.localizedDescription }
-        })
-        menu.addItem(ClosureMenuItem(title: "Unhide") {
-            do { try service.setFileHidden(url: url, hidden: false); toast = "Unhidden" } catch { toast = error.localizedDescription }
-        })
-        _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-    }
-
-    private func whoIsUsing() {
-        guard let url = pickFiles(types: [UTType.data], multiple: false)?.first else { return }
-        Task {
-            do {
-                let lockers = try await service.findProcessesLockingFile(at: url)
-                toast = lockers.isEmpty ? "No process holds this file open" : lockers.map { "\($0.command) (\($0.pid))" }.joined(separator: ", ")
-            } catch { toast = error.localizedDescription }
-        }
-    }
-
-    private func batchRename() {
-        guard let urls = pickFiles(types: [UTType.data], multiple: true), !urls.isEmpty else { return }
-        let alert = NSAlert()
-        alert.messageText = "Batch Rename"
-        alert.informativeText = "Find what:  Replacement may use {n} for numbering."
-        let find = NSTextField(frame: NSRect(x: 0, y: 34, width: 300, height: 24))
-        let replace = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        replace.stringValue = "{n}"
-        let stack = NSStackView(views: [find, replace])
-        stack.orientation = .vertical
-        alert.accessoryView = stack
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn,
-              !find.stringValue.isEmpty else { return }
-        do {
-            let renamed = try service.batchRename(urls: urls, pattern: find.stringValue, replacement: replace.stringValue)
-            toast = "Renamed \(renamed.count) files"
-        } catch { toast = error.localizedDescription }
-    }
-
     private func confirmEmptyTrash() {
         let alert = NSAlert()
         alert.messageText = "Empty Trash?"
@@ -288,20 +210,6 @@ struct SystemToolsView: View {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { do { try await service.forceEmptyTrash(); toast = "Trash emptied" } catch { toast = error.localizedDescription } }
-    }
-
-    private func forceDelete() {
-        guard let url = pickFiles(types: [UTType.data], multiple: false)?.first else { return }
-        let alert = NSAlert()
-        alert.messageText = "Force delete “\(url.lastPathComponent)”?"
-        alert.informativeText = "Clears the lock flag and removes the file immediately."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        do {
-            try service.forceDelete(url: url)
-            toast = "Deleted"
-        } catch { toast = error.localizedDescription }
     }
 
     // MARK: - Pickers

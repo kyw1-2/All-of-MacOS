@@ -50,6 +50,12 @@ enum AOMTheme {
         light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),   // #191F28
         dark: NSColor(srgbRed: 0.188, green: 0.196, blue: 0.220, alpha: 1)     // #303238
     )
+    /// A faint fill laid over the card material so text keeps contrast on a
+    /// busy desktop without hiding the glass (lighter in dark mode).
+    static let cardGlassTint = Color.aomDynamic(
+        light: NSColor.white.withAlphaComponent(0.5),
+        dark: NSColor.white.withAlphaComponent(0.04)
+    )
     /// Edges of cards and controls.
     static let hairline = Color(nsColor: .separatorColor)
 
@@ -108,8 +114,10 @@ enum AOMTheme {
     static let cardRadius: CGFloat = AOMRadius.card
     static let windowContentRadius: CGFloat = 18
     static let controlRadius: CGFloat = AOMRadius.control
-    static let pagePadding: CGFloat = 20
-    static let sectionSpacing: CGFloat = 18
+    /// 3.2: tighter page gutters so content fills the window instead of
+    /// floating in a wide margin (the "too much whitespace" fix).
+    static let pagePadding: CGFloat = 16
+    static let sectionSpacing: CGFloat = 12
 
     // MARK: Depth
 
@@ -134,20 +142,21 @@ enum AOMTheme {
 
 // MARK: - Spacing, sizes and motion
 
-/// Spacing tokens (pt). Use the role, not the number.
+/// Spacing tokens (pt). Use the role, not the number. 3.2 tightened the scale
+/// one notch to raise content density without crowding controls.
 enum AOMSpace {
     /// Icon-to-label gaps, tight stacks.
     static let xxs: CGFloat = 4
     /// Between related controls, row inner gaps.
-    static let xs: CGFloat = 8
+    static let xs: CGFloat = 7
     /// Row horizontal padding, list header padding.
-    static let s: CGFloat = 12
+    static let s: CGFloat = 10
     /// Between groups inside a section; pane padding in dense panes.
-    static let m: CGFloat = 16
+    static let m: CGFloat = 13
     /// Pane padding; between sections.
-    static let l: CGFloat = 24
+    static let l: CGFloat = 18
     /// Above major page blocks.
-    static let xl: CGFloat = 32
+    static let xl: CGFloat = 24
 }
 
 /// Layout sizes shared by the shell and pages (pt).
@@ -286,6 +295,7 @@ struct AOMCardSurface: ViewModifier {
     var elevated = true
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -307,7 +317,18 @@ struct AOMCardSurface: ViewModifier {
     private func background(_ shape: RoundedRectangle) -> some View {
         switch style {
         case .paper:
-            shape.fill(AOMTheme.paper)
+            // 3.2 Liquid Glass: content cards are frosted on macOS 26 so the
+            // translucent canvas (and the desktop behind it) reads through,
+            // giving real depth instead of a flat white panel. Reduce
+            // Transparency and Increase Contrast keep the opaque fill.
+            if #available(macOS 26.0, *), !reduceTransparency, contrast != .increased {
+                ZStack {
+                    shape.fill(.regularMaterial)
+                    shape.fill(AOMTheme.cardGlassTint)
+                }
+            } else {
+                shape.fill(AOMTheme.paper)
+            }
         case .well:
             shape.fill(AOMTheme.cardAlt)
         case .glass:
