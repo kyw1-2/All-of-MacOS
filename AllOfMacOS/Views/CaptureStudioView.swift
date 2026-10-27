@@ -165,36 +165,34 @@ struct CaptureStudioView: View {
     /// Every capture mode one click away, in CleanShot's order, the way the
     /// system screenshot toolbar lays them out: glyph, name, shortcut.
     private var captureLaunchpad: some View {
-        HStack(spacing: 2) {
-            AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne)) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 135), spacing: 4)], spacing: 4) {
+            AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne), compact: true) {
                 CaptureCoordinator.shared.captureAllInOne()
             }
-            AOMModeButton("Area", symbol: "viewfinder", shortcut: shortcut(.captureArea)) {
+            AOMModeButton("Area", symbol: "viewfinder", shortcut: shortcut(.captureArea), compact: true) {
                 CaptureCoordinator.shared.captureArea()
             }
-            AOMModeButton("Window", symbol: "macwindow", shortcut: shortcut(.captureWindow)) {
+            AOMModeButton("Window", symbol: "macwindow", shortcut: shortcut(.captureWindow), compact: true) {
                 CaptureCoordinator.shared.captureWindowInteractive()
             }
-            AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: shortcut(.captureFullscreen)) {
+            AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: shortcut(.captureFullscreen), compact: true) {
                 CaptureCoordinator.shared.captureFullscreen()
             }
-            AOMModeButton("Scrolling", symbol: "arrow.up.and.down.text.horizontal", shortcut: shortcut(.scrollingCapture)) {
+            AOMModeButton("Scrolling", symbol: "arrow.up.and.down.text.horizontal", shortcut: shortcut(.scrollingCapture), compact: true) {
                 CaptureCoordinator.shared.captureScrolling()
             }
-            AOMModeButton("Self-Timer", symbol: "timer") {
+            AOMModeButton("Self-Timer", symbol: "timer", compact: true) {
                 CaptureCoordinator.shared.captureWithSelfTimer()
             }
-            Divider().frame(height: 44).padding(.horizontal, AOMSpace.xxs)
             AOMModeButton(recordingService.isRecording ? "Recording" : "Record", symbol: "record.circle",
-                          tint: AOMTheme.danger, shortcut: shortcut(.recordScreen)) {
+                          tint: AOMTheme.danger, shortcut: shortcut(.recordScreen), compact: true) {
                 recordingService.promptAndStartRecording()
             }
             .disabled(recordingService.isRecording)
-            Divider().frame(height: 44).padding(.horizontal, AOMSpace.xxs)
-            AOMModeButton("Text", symbol: "text.viewfinder", shortcut: shortcut(.ocr)) {
+            AOMModeButton("Text", symbol: "text.viewfinder", shortcut: shortcut(.ocr), compact: true) {
                 CaptureCoordinator.shared.captureText()
             }
-            AOMModeButton("QR Code", symbol: "qrcode.viewfinder") {
+            AOMModeButton("QR Code", symbol: "qrcode.viewfinder", compact: true) {
                 CaptureCoordinator.shared.captureQRCode()
             }
         }

@@ -39,9 +39,9 @@ struct AudioEqualizerControls: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 6) {
                 VStack(spacing: 0) {
-                    Text("dB").font(.caption.weight(.semibold)).frame(height: 34)
+                    Text("dB").font(.caption.weight(.semibold)).frame(height: 28)
                     Text("+12")
                     Spacer()
                     Text("0")
@@ -49,19 +49,19 @@ struct AudioEqualizerControls: View {
                     Text("−12")
                 }
                 .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 30, height: 210)
+                .frame(width: 26, height: 164)
                 ForEach(0..<10, id: \.self) { band in
                     VStack(spacing: 8) {
                         Text(String(format: "%+.0f dB", value(band)))
-                            .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
                             .foregroundStyle(value(band) == 0 ? Color.primary : Color.accentColor)
-                            .frame(height: 26)
+                            .frame(height: 22)
                         AudioBandSlider(gain: Binding(get: { Double(value(band)) }, set: { onChange(band, Float($0)) }),
                                         enabled: enabled, label: EQSection.label(band))
-                            .frame(width: 44, height: 176)
+                            .frame(width: 40, height: 130)
                         Text(EQSection.label(band) + " Hz")
-                            .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                        HStack(spacing: 10) {
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        HStack(spacing: 8) {
                             Button { onChange(band, max(-12, value(band) - 1)) } label: { Image(systemName: "minus") }
                                 .help("Decrease \(EQSection.label(band)) Hz by 1 dB")
                                 .accessibilityLabel("Decrease \(EQSection.label(band)) hertz by 1 decibel")
@@ -74,13 +74,13 @@ struct AudioEqualizerControls: View {
                             .buttonStyle(.link).font(.caption)
                             .accessibilityLabel("Reset \(EQSection.label(band)) hertz to zero decibels")
                     }
-                    .frame(width: 70)
+                    .frame(width: 58)
                     .disabled(!enabled)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 12)
         }
-        .frame(height: 310)
+        .frame(height: 260)
         .opacity(enabled ? 1 : 0.55)
         .accessibilityLabel("10-band equalizer")
     }

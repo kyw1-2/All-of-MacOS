@@ -262,20 +262,31 @@ struct AOMModeButton: View {
     var tint: Color = AOMTheme.text
     var shortcut: String?
     var help: String?
+    var compact: Bool = false
     let action: () -> Void
 
     init(_ title: String, symbol: String, tint: Color = AOMTheme.text, shortcut: String? = nil,
-         help: String? = nil, action: @escaping () -> Void) {
+         help: String? = nil, compact: Bool = false, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
         self.tint = tint
         self.shortcut = shortcut
         self.help = help
+        self.compact = compact
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
+            if compact {
+                HStack(spacing: 5) {
+                    Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                        .symbolRenderingMode(.hierarchical).foregroundStyle(tint)
+                    Text(title).font(AOMType.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .contentShape(Rectangle())
+            } else {
             VStack(spacing: 5) {
                 Image(systemName: symbol)
                     .font(.system(size: 17, weight: .regular))
@@ -297,6 +308,7 @@ struct AOMModeButton: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
+            }
         }
         .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.tile))
         .help(help ?? (shortcut.map { "\(title) (\($0))" } ?? title))

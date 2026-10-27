@@ -1,5 +1,12 @@
 ## 3.0.11 — AirPlay playback continuity (2026-10-27)
 
+## 3.0.14 (2026-10-27)
+
+- Reorganize Audio into a compact mixer, devices, and effects; keep per-app volume and mute visible and reveal routing and EQ in context.
+- Align the window titlebar with the content canvas, bring Audio closer on Workspace, and reduce the height of capture launchers and EQ.
+- Prevent audio capture from starting in isolated UI preview mode.
+
+
 ## 3.0.13 (2026-10-27)
 
 - Add an Audio entry and effect status to Workspace; improve mixer navigation, app filtering, reset actions, and accessible names.

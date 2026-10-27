@@ -93,8 +93,12 @@ final class AppAudioEngine {
     /// Master toggle for App Audio Engine. When disabled, all process taps and
     /// aggregate devices are destroyed, and no background audio capture will run.
     var isEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "AOMSoundEnabled") as? Bool ?? true }
+        get {
+            guard !PresetManager.isUIPreview else { return false }
+            return UserDefaults.standard.object(forKey: "AOMSoundEnabled") as? Bool ?? true
+        }
         set {
+            guard !PresetManager.isUIPreview else { return }
             UserDefaults.standard.set(newValue, forKey: "AOMSoundEnabled")
             UserDefaults.standard.set(newValue, forKey: "AOMAudioEngineEnabled")
             if !newValue {

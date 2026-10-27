@@ -79,6 +79,12 @@ struct AOMMainWindowChrome: NSViewRepresentable {
             let selected: NSAppearance? = appearanceChoice == "dark" ? NSAppearance(named: .darkAqua)
                 : appearanceChoice == "light" ? NSAppearance(named: .aqua) : nil
             if window.appearance?.name != selected?.name { window.appearance = selected }
+            // Match the titlebar backing to the content canvas and remove the
+            // extra baseline so the toolbar and detail column read as one surface.
+            window.titlebarAppearsTransparent = true
+            window.backgroundColor = NSColor(AOMTheme.workspace)
+            window.toolbar?.showsBaselineSeparator = false
+            DispatchQueue.main.async { [weak window] in window?.toolbar?.showsBaselineSeparator = false }
             if !sizedForPreview, let size = PresetManager.previewWindowSize {
                 sizedForPreview = true
                 window.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height), display: true)

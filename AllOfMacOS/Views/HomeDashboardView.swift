@@ -55,6 +55,7 @@ struct AOMHomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.m) {
                     notices
+                    audioQuickBar
                     if wide {
                         Grid(alignment: .topLeading, horizontalSpacing: AOMSpace.m, verticalSpacing: AOMSpace.m) {
                             GridRow {
@@ -72,7 +73,6 @@ struct AOMHomeView: View {
                         automationCard(lastRuns: lastRuns)
                         tilingCard
                     }
-                    audioCard
                     summaryLine
                 }
                 .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
@@ -189,20 +189,20 @@ struct AOMHomeView: View {
         } content: {
             VStack(alignment: .leading, spacing: AOMSpace.s) {
                 HStack(spacing: 2) {
-                    AOMModeButton("Area", symbol: "viewfinder", shortcut: captureKeys(.captureArea)) {
+                    AOMModeButton("Area", symbol: "viewfinder", shortcut: captureKeys(.captureArea), compact: true) {
                         CaptureCoordinator.shared.captureArea()
                     }
-                    AOMModeButton("Window", symbol: "macwindow", shortcut: captureKeys(.captureWindow)) {
+                    AOMModeButton("Window", symbol: "macwindow", shortcut: captureKeys(.captureWindow), compact: true) {
                         CaptureCoordinator.shared.captureWindowInteractive()
                     }
-                    AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: captureKeys(.captureFullscreen)) {
+                    AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: captureKeys(.captureFullscreen), compact: true) {
                         CaptureCoordinator.shared.captureFullscreen()
                     }
-                    AOMModeButton("Text", symbol: "text.viewfinder", shortcut: captureKeys(.ocr)) {
+                    AOMModeButton("Text", symbol: "text.viewfinder", shortcut: captureKeys(.ocr), compact: true) {
                         CaptureCoordinator.shared.captureText()
                     }
                     AOMModeButton(recording.isRecording ? "Recording" : "Record", symbol: "record.circle",
-                                  tint: AOMTheme.danger, shortcut: captureKeys(.recordScreen)) {
+                                  tint: AOMTheme.danger, shortcut: captureKeys(.recordScreen), compact: true) {
                         recording.promptAndStartRecording()
                     }
                     .disabled(recording.isRecording)
@@ -396,24 +396,26 @@ struct AOMHomeView: View {
 
     // MARK: Audio
 
-    private var audioCard: some View {
-        AOMSectionCard("Audio", symbol: "waveform", tint: AOMMainTab.audio.accentColor,
-                       detail: audio.soundEnabled ? "App audio on" : "App audio off") {
-            AOMCardLink("Mixer") { appState.selectedMainTab = .audio }
-        } content: {
-            HStack(alignment: .center, spacing: AOMSpace.m) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(!audio.soundEnabled ? "Effects paused while app audio is off" : (audio.allAppsBoostEnabled ? "Output boost: \(["Low", "Medium", "High"][min(3, max(1, audio.allAppsBoostLevel)) - 1])" : "Output boost off"))
-                        .font(AOMType.rowTitle)
-                    Text(audio.eqEnabled ? "Master EQ: \(audio.eqPreset)" : "Master EQ off")
-                        .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                }
-                Spacer(minLength: AOMSpace.xs)
-                Button("Open Audio") { appState.selectedMainTab = .audio }
-                    .buttonStyle(AOMTintedButtonStyle())
-                    .help("Adjust devices, app volume and effects")
+    private var audioQuickBar: some View {
+        HStack(spacing: AOMSpace.s) {
+            Image(systemName: "waveform").foregroundStyle(AOMMainTab.audio.accentColor)
+                .accessibilityHidden(true)
+            Text("Audio").font(AOMType.headline)
+            Text(!audio.soundEnabled ? "Off" : (audio.allAppsBoostEnabled ? "Boost on" : "Boost off"))
+                .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+            if audio.eqEnabled {
+                Text("EQ: \(audio.eqPreset)").font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: AOMSpace.xs)
+            AOMCardLink("Open Mixer") {
+                UserDefaults.standard.set("Mixer", forKey: "AOMAudioWorkspaceSection")
+                appState.selectedMainTab = .audio
             }
         }
+        .padding(.horizontal, AOMSpace.m).padding(.vertical, AOMSpace.s)
+        .background(AOMTheme.card, in: RoundedRectangle(cornerRadius: AOMRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: AOMRadius.card).strokeBorder(AOMTheme.rim(), lineWidth: AOMTheme.rimWidth))
     }
 
     // MARK: Summary
