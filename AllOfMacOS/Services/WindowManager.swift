@@ -467,12 +467,15 @@ final class WindowManager: ObservableObject {
                 completion(AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success)
                 return
             }
+            if type == .minimizeWindowUnderCursor {
+                // Minimize, as the action says — it used to centre the window instead.
+                completion(AXUIElementSetAttributeValue(under.window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success)
+                return
+            }
             guard let underFrame = frame(of: under) else { fail("No frame for the window under the cursor", completion); return }
             let underVisible = displays[WindowGeometry.screenIndex(for: underFrame, screens: displays.map(\.frame)) ?? chosenIndex].visible
-            desired = type == .maximizeWindowUnderCursor
-                ? underVisible
-                : WindowGeometry.moved(underFrame, into: underVisible, maximize: false)
-            applyFrame(desired, target: under, anchorIn: type == .maximizeWindowUnderCursor ? underVisible : nil) { success in
+            desired = underVisible
+            applyFrame(desired, target: under, anchorIn: underVisible) { success in
                 completion(success)
             }
             return
