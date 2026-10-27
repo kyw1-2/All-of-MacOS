@@ -21,7 +21,7 @@ struct AppAudioState: Identifiable, Equatable {
     var error: String? = nil
     var peakLevel: Float = 0
     var processingStatus: String = "Ready"
-    var id: Int32 { pid }
+    var id: String { pid > 0 ? "pid:\(pid)" : "app:\(bundleID)" }
 
     static func == (lhs: AppAudioState, rhs: AppAudioState) -> Bool {
         lhs.pid == rhs.pid &&
@@ -32,6 +32,24 @@ struct AppAudioState: Identifiable, Equatable {
         lhs.tapped == rhs.tapped &&
         lhs.outputDeviceUID == rhs.outputDeviceUID &&
         lhs.magicBoost == rhs.magicBoost && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
+    }
+}
+
+/// App settings outlive processes. UI rows must never address a closed app by
+/// its temporary list index (or a PID that may be reused after an app quits).
+enum AppAudioPreferences {
+    static func setGain(_ gain: Float, bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        guard !bundleID.isEmpty, gain.isFinite else { return false }
+        defaults.set(Double(Mixer.clamp(gain)), forKey: "AOMAudioGain_\(bundleID)")
+        return true
+    }
+
+    static func toggleMute(bundleID: String, defaults: UserDefaults = .standard) -> Bool? {
+        guard !bundleID.isEmpty else { return nil }
+        let key = "AOMAudioMute_\(bundleID)"
+        let muted = !defaults.bool(forKey: key)
+        defaults.set(muted, forKey: key)
+        return muted
     }
 }
 
@@ -836,6 +854,20 @@ final class AppAudioEngine {
     }
 
     // MARK: - Gain / mute / lifecycle
+
+    /// Retune existing sessions by durable app identity. Inactive apps keep the
+    /// saved settings; the normal sync path attaches only when audio is ready.
+    func refreshGainAndMute(bundleID: String) {
+        let gain = Self.storedGain(bundleID: bundleID)
+        let muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)")
+        for session in sessions.values where session.bundleID == bundleID {
+            session.gain = gain
+            session.muted = muted
+            session.box.takeUnretainedValue().gain = gain
+            session.box.takeUnretainedValue().muted = muted
+        }
+        scheduleSync()
+    }
 
     /// Starts (or retunes) the tap session for a pid.
     func setGain(_ gain: Float, muted: Bool = false, pid: pid_t) -> Bool {

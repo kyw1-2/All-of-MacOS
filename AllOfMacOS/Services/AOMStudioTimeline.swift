@@ -31,34 +31,53 @@ enum AOMStudioTimeline {
                              keyframes: [AOMStudioZoomKeyframe]) -> Focus {
         let origin = Focus(magnification: 1, x: 0.5, y: 0.5)
         guard time.isFinite else { return origin }
-        // Last edit at a given time wins; duplicate timestamps never create a
-        // zero-length interpolation interval or a nondeterministic jump.
-        var unique: [Double: AOMStudioZoomKeyframe] = [:]
+        // Find the two neighbors directly, without allocating a dictionary or
+        // sorting on every video frame. Equal timestamps replace the previous
+        // candidate, preserving the editor's last-edit-wins policy.
+        var before: AOMStudioZoomKeyframe?
+        var after: AOMStudioZoomKeyframe?
         for frame in keyframes where frame.time.isFinite && frame.time >= 0 &&
             frame.time < 86_400 && frame.magnification.isFinite &&
             frame.focusX.isFinite && frame.focusY.isFinite {
-            unique[frame.time] = frame
+            if frame.time < time {
+                if before == nil || frame.time >= before!.time { before = frame }
+            } else if after == nil || frame.time <= after!.time { after = frame }
         }
-        var previousTime = 0.0
-        var previous = origin
-        for frame in unique.values.sorted(by: { $0.time < $1.time }) {
-            let focus = Focus(magnification: min(4, max(1, frame.magnification)),
-                              x: min(1, max(0, frame.focusX)),
-                              y: min(1, max(0, frame.focusY)))
-            if time <= frame.time {
-                let span = frame.time - previousTime
-                if span <= 0 { return focus }
-                let position = min(1, max(0, (time - previousTime) / span))
-                let smooth = position * position * (3 - 2 * position)
-                return Focus(magnification: previous.magnification +
-                    (focus.magnification - previous.magnification) * smooth,
-                             x: previous.x + (focus.x - previous.x) * smooth,
-                             y: previous.y + (focus.y - previous.y) * smooth)
-            }
-            previousTime = frame.time
-            previous = focus
+        func focus(_ frame: AOMStudioZoomKeyframe) -> Focus {
+            Focus(magnification: min(4, max(1, frame.magnification)),
+                  x: min(1, max(0, frame.focusX)), y: min(1, max(0, frame.focusY)))
         }
-        return previous
+        let previous = before.map(focus) ?? origin
+        guard let after else { return previous }
+        let next = focus(after)
+        let previousTime = before?.time ?? 0
+        let span = after.time - previousTime
+        if span <= 0 { return next }
+        let position = min(1, max(0, (time - previousTime) / span))
+        let smooth = position * position * (3 - 2 * position)
+        return Focus(magnification: previous.magnification + (next.magnification - previous.magnification) * smooth,
+                     x: previous.x + (next.x - previous.x) * smooth,
+                     y: previous.y + (next.y - previous.y) * smooth)
+    }
+
+    /// Validated event tracks are sorted and key badges last at most ten
+    /// seconds. A newer short badge can expire before an older long one.
+    static func activeKeystroke(at time: Double, events: [AOMKeystrokeEvent]) -> AOMKeystrokeEvent? {
+        guard time.isFinite else { return nil }
+        var lower = 0, upper = events.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if events[middle].time <= time { lower = middle + 1 }
+            else { upper = middle }
+        }
+        var index = lower
+        while index > 0 {
+            index -= 1
+            let event = events[index]
+            guard event.time > time - 10 else { break }
+            if time < event.time + event.duration { return event }
+        }
+        return nil
     }
 
     /// Clamp the viewport rather than exposing empty pixels near screen edges.

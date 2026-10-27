@@ -159,7 +159,7 @@ enum AOMStudioRenderer {
             }
         }
         if settings.showKeystrokes,
-           let key = settings.keystrokes.last(where: { time >= $0.time && time < $0.time + $0.duration }),
+           let key = AOMStudioTimeline.activeKeystroke(at: time, events: settings.keystrokes),
            let glyph = keyGlyph(key.label, style: settings.keystrokeStyle ?? .dark) {
             let scale = min(2, max(0.5, settings.keystrokeScale))
             let scaled = glyph.transformed(by: CGAffineTransform(scaleX: scale, y: scale))

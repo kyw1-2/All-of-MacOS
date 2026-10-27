@@ -340,40 +340,27 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         isShowing = false
     }
 
-    /// Per-app gain: starts the tap session lazily on first adjustment.
-    func setGain(_ gain: Float, pid: pid_t) {
-        guard #available(macOS 14.2, *) else { return }
-        if let app = apps.first(where: { $0.pid == pid }), pid <= 0 {
-            UserDefaults.standard.set(Double(Mixer.clamp(gain)), forKey: "AOMAudioGain_\(app.bundleID)")
-        } else {
-            let muted = AppAudioEngine.shared.session(pid: pid)?.muted ?? apps.first(where: { $0.pid == pid })?.muted ?? false
-            _ = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
-        }
+    /// Keep the intended app identity even when rows refresh during a drag.
+    func setGain(_ gain: Float, bundleID: String) {
+        guard #available(macOS 14.2, *), bundleID != Bundle.main.bundleIdentifier,
+              AppAudioPreferences.setGain(gain, bundleID: bundleID) else { return }
+        AppAudioEngine.shared.refreshGainAndMute(bundleID: bundleID)
         requestReload()
     }
 
-    /// Toggle per-app mute; the tap session persists so unmuting restores gain.
-    func toggleMute(pid: pid_t) -> Bool {
-        guard #available(macOS 14.2, *) else { return false }
-        let current = AppAudioEngine.shared.session(pid: pid)
-        let app = AppAudioEngine.shared.runningAudioApps().first(where: { $0.pid == pid })
-        let isCurrentlyMuted = current?.muted ?? app?.muted ?? false
-        let muted = !isCurrentlyMuted
-        let gain = current?.gain ?? app?.gain ?? 1.0
-        if pid <= 0, let app {
-            UserDefaults.standard.set(muted, forKey: "AOMAudioMute_\(app.bundleID)")
-            reloadApps()
-            return true
-        }
-        let ok = AppAudioEngine.shared.setGain(gain, muted: muted, pid: pid)
+    @discardableResult
+    func toggleMute(bundleID: String) -> Bool {
+        guard #available(macOS 14.2, *), bundleID != Bundle.main.bundleIdentifier,
+              AppAudioPreferences.toggleMute(bundleID: bundleID) != nil else { return false }
+        AppAudioEngine.shared.refreshGainAndMute(bundleID: bundleID)
         reloadApps()
-        return ok
+        return true
     }
 
     /// Audit action: toggle the frontmost app's audio mute.
     func toggleMuteFront() {
-        guard isSupported, let front = NSWorkspace.shared.frontmostApplication else { return }
-        _ = toggleMute(pid: front.processIdentifier)
+        guard isSupported, let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return }
+        _ = toggleMute(bundleID: bundleID)
     }
 
     func setOutputRoute(uid: String?, bundleID: String) {
@@ -482,8 +469,8 @@ private struct AppAudioMixerView: View {
                         VStack(spacing: 0) {
                             ForEach(service.apps) { app in
                                 AppAudioRow(app: app,
-                                            onGain: { service.setGain($0, pid: app.pid) },
-                                            onMute: { service.toggleMute(pid: app.pid) })
+                                            onGain: { service.setGain($0, bundleID: app.bundleID) },
+                                            onMute: { service.toggleMute(bundleID: app.bundleID) })
                                 Divider().padding(.leading, 12)
                             }
                         }

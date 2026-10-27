@@ -124,24 +124,28 @@ enum WorkflowBranchCondition {
         ("beginsWith", "begins with"), ("endsWith", "ends with"), ("like", "is like (* ?)"),
         ("greaterOrEqual", "is at least"), ("lessOrEqual", "is at most")]
 
-    private static func regexMatches(_ pattern: String, in source: String, whole: Bool = false) -> Bool {
-        guard pattern.count <= 256,
-              let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return false }
-        let safeSource = String(source.prefix(1024))
-        let range = NSRange(safeSource.startIndex..., in: safeSource)
-        guard let match = expression.firstMatch(in: safeSource, range: range) else { return false }
-        return !whole || match.range == range
-    }
     static func wildcardMatches(_ pattern: String, _ source: String) -> Bool {
-        guard pattern.count <= 256 else { return false }
-        let translated = pattern.map { character -> String in
-            switch character {
-            case "*": return ".*"
-            case "?": return "."
-            default: return NSRegularExpression.escapedPattern(for: String(character))
+        // Bounded dynamic programming avoids regex backtracking for patterns
+        // such as *a*a*...b. Never accept a truncated prefix as a whole match.
+        let patternCharacters = Array(pattern.prefix(257))
+        let characters = Array(source.prefix(1025))
+        guard patternCharacters.count <= 256, characters.count <= 1024 else { return false }
+        let literals = characters.map(String.init)
+        var previous = [Bool](repeating: false, count: characters.count + 1)
+        previous[0] = true
+        for token in patternCharacters {
+            let literal = String(token)
+            var current = [Bool](repeating: false, count: characters.count + 1)
+            current[0] = token == "*" && previous[0]
+            for index in characters.indices {
+                if token == "*" { current[index + 1] = previous[index + 1] || current[index] }
+                else if previous[index] && (token == "?" || literal.caseInsensitiveCompare(literals[index]) == .orderedSame) {
+                    current[index + 1] = true
+                }
             }
-        }.joined()
-        return regexMatches(translated, in: source, whole: true)
+            previous = current
+        }
+        return previous[characters.count]
     }
     static func compare(_ source: String, with value: String, operation: String) -> Bool {
         func numbers() -> (Double, Double)? {

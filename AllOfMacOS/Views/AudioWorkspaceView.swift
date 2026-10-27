@@ -186,8 +186,8 @@ struct AudioWorkspaceView: View {
                                     onToggleEQ: {
                                         expandedEQPID = (expandedEQPID == app.pid) ? nil : app.pid
                                     },
-                                    onGain: { service.setGain($0, pid: app.pid) },
-                                    onMute: { service.toggleMute(pid: app.pid) },
+                                    onGain: { service.setGain($0, bundleID: app.bundleID) },
+                                    onMute: { service.toggleMute(bundleID: app.bundleID) },
                                     onRouteChange: { uid in service.setOutputRoute(uid: uid, bundleID: app.bundleID) },
                                     onMagicBoostToggle: { service.toggleMagicBoost(bundleID: app.bundleID) }
                                 )

@@ -9,12 +9,13 @@ struct ClipboardSearchQuery {
         var value: String
         var excluded: Bool
         var date: Date?
+        var boardIDs: Set<UUID>?
     }
     private var terms: [Term] = []
 
     private static let tokenExpression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*")+"#)
 
-    init(_ query: String) {
+    init(_ query: String, boards: [ClipboardPinboard]? = nil) {
         guard !query.isEmpty else { return }
         let expression = Self.tokenExpression
         let range = NSRange(query.startIndex..., in: query)
@@ -28,8 +29,13 @@ struct ClipboardSearchQuery {
                 ? split[0].lowercased() : nil
             let value = field == nil ? text : split[1]
             let date = (field == "before" || field == "after") ? Self.dayFormatter.date(from: value) : nil
-            terms.append(Term(field: field, value: value, excluded: excluded, date: date))
+            let boardIDs = field == "board" ? boards.map { boards in
+                Set(boards.filter { $0.name.localizedStandardContains(value) }.map(\.id))
+            } : nil
+            terms.append(Term(field: field, value: value, excluded: excluded, date: date, boardIDs: boardIDs))
         }
+        // Reject metadata mismatches before scanning potentially large bodies.
+        terms = terms.filter { $0.field != nil } + terms.filter { $0.field == nil }
     }
 
     private static let dayFormatter: DateFormatter = {
@@ -65,7 +71,11 @@ struct ClipboardSearchQuery {
             case "from", "app":
                 matched = [entry.sourceName ?? "", entry.sourceBundleID ?? ""].contains { $0.localizedStandardContains(term.value) }
             case "board":
-                matched = boards.contains { entry.pinboardIDs.contains($0.id) && $0.name.localizedStandardContains(term.value) }
+                if let ids = term.boardIDs {
+                    matched = entry.pinboardIDs.contains { ids.contains($0) }
+                } else {
+                    matched = boards.contains { entry.pinboardIDs.contains($0.id) && $0.name.localizedStandardContains(term.value) }
+                }
             case "before", "after":
                 if let date = term.date {
                     matched = term.field == "before" ? entry.lastCopiedAt < date : entry.lastCopiedAt >= date
@@ -86,7 +96,8 @@ extension ClipboardSearchQuery {
     }
     static func filterTokens(in query: String) -> [String] {
         var seen = Set<String>()
-        return tokens(in: query).filter { token in
+        let parsed = tokens(in: query)
+        return parsed.enumerated().filter { index, token in
             let candidate = token.hasPrefix("-") ? String(token.dropFirst()) : token
             let pieces = candidate.split(separator: ":", maxSplits: 1).map(String.init)
             guard pieces.count == 2, !pieces[1].isEmpty else { return false }
@@ -95,11 +106,11 @@ extension ClipboardSearchQuery {
             switch field {
             case "type": complete = ClipboardEntry.Kind(rawValue: value.lowercased()) != nil
             case "before", "after": complete = dayFormatter.date(from: value) != nil
-            case "from", "app", "board": complete = pieces[1].contains("\"") ? (pieces[1].filter { $0 == "\"" }.count >= 2 && pieces[1].hasSuffix("\"")) : (query.last?.isWhitespace == true || token != tokens(in: query).last)
+            case "from", "app", "board": complete = pieces[1].contains("\"") ? (pieces[1].filter { $0 == "\"" }.count >= 2 && pieces[1].hasSuffix("\"")) : (query.last?.isWhitespace == true || index < parsed.count - 1)
             default: complete = false
             }
             return complete && seen.insert(token).inserted
-        }
+        }.map(\.element)
     }
     static func editableText(in query: String) -> String {
         let filters = Set(filterTokens(in: query))

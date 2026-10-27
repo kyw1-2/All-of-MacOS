@@ -164,7 +164,7 @@ final class ClipboardPanelState: ObservableObject {
             let snapshot = store.entries, boards = store.boards
             let range = Self.dateRange(for: recentDays)
             searchTask = Task.detached(priority: .userInitiated) { [weak self, weak store] in
-                let search = ClipboardSearchQuery(key.query)
+                let search = ClipboardSearchQuery(key.query, boards: boards)
                 var matches: [ClipboardEntry] = []
                 for entry in snapshot {
                     guard !Task.isCancelled else { return }

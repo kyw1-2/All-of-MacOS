@@ -20,10 +20,15 @@ final class CaptureDragFiles {
     private var ready: [Key: URL] = [:]
     private var pending: Set<Key> = []
     let directory: URL
+    private let writeFile: (CaptureResult, URL) async throws -> URL
 
     init(directory: URL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AOMCaptureDrag", isDirectory: true)) {
+            .appendingPathComponent("AOMCaptureDrag", isDirectory: true),
+         writeFile: @escaping (CaptureResult, URL) async throws -> URL = { result, folder in
+             try await ScreenCaptureService.shared.writeToDiskAsync(result, directory: folder)
+         }) {
         self.directory = directory
+        self.writeFile = writeFile
         // Leftovers from an earlier run are never referenced again.
         try? FileManager.default.removeItem(at: directory)
     }
@@ -49,6 +54,7 @@ final class CaptureDragFiles {
         guard readyFile(for: entry) == nil, !pending.contains(key) else { return }
         pending.insert(key)
         let folder = directory.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+            .appendingPathComponent(String(key.revision), isDirectory: true)
         Task { @MainActor in
             defer { pending.remove(key) }
             let image = await entry.loadImage()
@@ -58,7 +64,13 @@ final class CaptureDragFiles {
                                        windowTitle: entry.windowTitle, capturedAt: entry.capturedAt)
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                let url = try await ScreenCaptureService.shared.writeToDiskAsync(result, directory: folder)
+                let url = try await writeFile(result, folder)
+                // Encoding suspends this actor. A newer revision may already
+                // be ready when an older write completes; never evict it.
+                guard entry.imageRevision == key.revision else {
+                    try? FileManager.default.removeItem(at: url)
+                    return
+                }
                 // Drop files written for an older revision of the same capture.
                 for (old, file) in ready where old.id == key.id && old != key {
                     try? FileManager.default.removeItem(at: file)

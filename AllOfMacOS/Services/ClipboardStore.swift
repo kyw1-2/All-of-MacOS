@@ -393,7 +393,7 @@ final class ClipboardStore: ObservableObject {
     func filtered(query: String = "", kind: ClipboardEntry.Kind? = nil, source: String? = nil,
                   board: UUID? = nil, since: Date? = nil) -> [ClipboardEntry] {
         if query.isEmpty, kind == nil, source == nil, board == nil, since == nil { return entries }
-        let search = ClipboardSearchQuery(query)
+        let search = ClipboardSearchQuery(query, boards: boards)
         let matched = entries.filter { entry in
             (kind == nil || entry.kind == kind) &&
             (source == nil || entry.sourceBundleID == source || entry.sourceName == source) &&
