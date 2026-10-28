@@ -288,81 +288,153 @@ enum TrackpadReadiness {
     }
 }
 
-/// Classifies a two-finger swipe from raw contact frames. Lives on the
-/// multitouch callback thread only; it allocates nothing per frame and reports
-/// state transitions through closures (which the service hops to the main
-/// thread). A frame with other than two contacts ends the gesture.
+/// Classifies a two-finger swipe from raw contact frames. It is fed from one
+/// thread only, allocates nothing per frame and reports state transitions
+/// through closures (which the service hops to the main thread).
+///
+/// Only lifting the fingers commits: going from two contacts to none or one.
+/// Activity is measured in contact frames: while two fingers stay on the
+/// pad the gesture stays alive, however long the preview is held, and the
+/// recognizer tells the service so (`onActive`). Until 3.3.0 only a zone
+/// change refreshed the service's 1.2 s timer, so holding one preview hid it
+/// and the later lift had nothing to apply (audit 2026-10-28 F05).
+///
+/// Everything else that ends a gesture cancels it, and a cancelled gesture
+/// stays spent until the fingers lift, so its remains can never start a new
+/// snap:
+/// - a third finger (the start of Mission Control or a three-finger trigger;
+///   until 3.3.0 this committed the snap);
+/// - a gap of more than `frameGap` between frames (sleep and wake, a device
+///   reset, a lost lift frame), so a stale start position cannot turn the
+///   next touch into an instant swipe;
+/// - the service giving up on its own (`cancelUntilLift`), e.g. when frames
+///   stopped altogether or the Mac went to sleep;
+/// - frames from a second trackpad are ignored while the gesture's own
+///   trackpad is live.
 final class TitleBarSnapRecognizer {
     var engage: Float = 0.05
     var tier2: Float = 0.16
     var ratio: Float = 1.3
     var crossEngage: Float = 0.06
     var crossShare: Float = 0.45
+    /// Frames arrive at 60 Hz or more while fingers rest on the pad; a longer
+    /// silence means the touch sequence was interrupted.
+    var frameGap: Double = 0.25
+    /// How often an engaged gesture reports that it is still held.
+    var activeInterval: Double = 0.25
 
     /// Engaged with a stroke; the service captures the window.
     var onBegin: ((SwishSnap.Stroke) -> Void)?
     /// The stroke changed while engaged; the service moves the preview.
     var onUpdate: ((SwishSnap.Stroke) -> Void)?
-    /// Two fingers lifted after engaging; commit the current preview.
+    /// Still engaged, fingers on the pad (at most every `activeInterval`).
+    var onActive: (() -> Void)?
+    /// The fingers lifted after engaging; commit the current preview.
     var onCommit: (() -> Void)?
     /// The gesture fell apart before committing; hide the preview.
     var onCancel: (() -> Void)?
 
+    private enum Phase { case idle, tracking, engaged, spent }
+    private var phase: Phase = .idle
     private var startX: Float = 0
     private var startY: Float = 0
-    private var hasStart = false
-    private var engaged = false
     private var axis: SwishSnap.Axis = .horizontal
     private var last: SwishSnap.Stroke?
+    /// The trackpad that owns the current gesture; nil while idle.
+    private var device: UInt64?
+    private var lastFrameAt: Double = 0
+    private var lastActiveAt: Double = 0
 
-    func feed(contacts: [TouchPoint], timestamp: Double) {
-        guard contacts.count == 2 else {
-            // Any count other than two ends (or never starts) the gesture.
-            if engaged { engaged = false; onCommit?() }
-            else if hasStart { onCancel?() }
-            hasStart = false
-            last = nil
-            return
+    func feed(contacts: [TouchPoint], timestamp: Double, device: UInt64 = 0) {
+        if let owner = self.device {
+            if owner != device {
+                // Another trackpad: ignore it while the gesture's own is live.
+                guard timestamp - lastFrameAt > frameGap else { return }
+                abandon()
+            } else if timestamp - lastFrameAt > frameGap {
+                abandon()
+            }
         }
-        let cx = (contacts[0].x + contacts[1].x) / 2
-        let cy = (contacts[0].y + contacts[1].y) / 2
-        if !hasStart {
-            hasStart = true
-            startX = cx; startY = cy
-            return
-        }
-        let dx = cx - startX
-        let dy = cy - startY
-        if !engaged {
+        lastFrameAt = timestamp
+        let count = contacts.count
+        switch phase {
+        case .idle:
+            if count >= 3 { phase = .spent; self.device = device; return }
+            guard count == 2 else { return }
+            phase = .tracking
+            self.device = device
+            (startX, startY) = Self.centroid(contacts)
+        case .tracking:
+            guard count == 2 else {
+                onCancel?()
+                if count >= 3 { phase = .spent } else { clear() }
+                return
+            }
+            let (cx, cy) = Self.centroid(contacts)
+            let dx = cx - startX, dy = cy - startY
             guard let direction = SwishSnap.direction(dx: dx, dy: dy, engage: engage, ratio: ratio) else { return }
-            engaged = true
+            phase = .engaged
             axis = direction.axis
             let stroke = SwishSnap.Stroke(direction, tier: SwishSnap.tier(dx: dx, dy: dy, tier2: tier2))
             last = stroke
+            lastActiveAt = timestamp
             onBegin?(stroke)
-            return
-        }
-        guard let stroke = SwishSnap.refine(dx: dx, dy: dy, axis: axis, previous: last,
-                                            engage: engage, tier2: tier2, ratio: ratio,
-                                            crossEngage: crossEngage, crossShare: crossShare) else { return }
-        axis = stroke.direction.axis
-        if stroke != last {
-            last = stroke
-            onUpdate?(stroke)
+        case .engaged:
+            if count <= 1 { clear(); onCommit?(); return }
+            if count >= 3 { phase = .spent; onCancel?(); return }
+            // Two fingers are still down: this frame is activity, whether or
+            // not the stroke changed.
+            if timestamp - lastActiveAt >= activeInterval {
+                lastActiveAt = timestamp
+                onActive?()
+            }
+            let (cx, cy) = Self.centroid(contacts)
+            guard let stroke = SwishSnap.refine(dx: cx - startX, dy: cy - startY, axis: axis, previous: last,
+                                                engage: engage, tier2: tier2, ratio: ratio,
+                                                crossEngage: crossEngage, crossShare: crossShare) else { return }
+            axis = stroke.direction.axis
+            if stroke != last {
+                last = stroke
+                onUpdate?(stroke)
+            }
+        case .spent:
+            if count <= 1 { clear() }
         }
     }
 
-    func reset() {
-        hasStart = false; engaged = false; last = nil; axis = .horizontal
+    /// Silently forgets any gesture in progress (the service is already
+    /// hiding its preview, e.g. because the feature or AOM was turned off).
+    func reset() { clear() }
+
+    /// The service has already cancelled (its watchdog fired, or the Mac is
+    /// going to sleep): end the gesture without callbacks and ignore the
+    /// fingers until they lift, so the remains cannot start a new snap.
+    func cancelUntilLift() {
+        if phase == .tracking || phase == .engaged { phase = .spent }
+    }
+
+    /// Ends an interrupted gesture, telling the service if it had begun.
+    private func abandon() {
+        if phase == .tracking || phase == .engaged { onCancel?() }
+        clear()
+    }
+
+    private func clear() {
+        phase = .idle; device = nil; last = nil; axis = .horizontal
+    }
+
+    private static func centroid(_ contacts: [TouchPoint]) -> (Float, Float) {
+        ((contacts[0].x + contacts[1].x) / 2, (contacts[0].y + contacts[1].y) / 2)
     }
 }
 
 // MARK: - Service
 
-/// Set once on the main actor; read from the multitouch callback thread, so the
-/// frame handler never has to reach the main-actor singleton. A nil handler
-/// (feature never initialised) simply does nothing.
-nonisolated(unsafe) var aomTitleBarSnapFeed: (([TouchPoint], Double) -> Void)?
+/// Set once on the main actor; read from the multitouch frame handler, so the
+/// handler never has to reach the main-actor singleton. A nil handler
+/// (feature never initialised) simply does nothing. Arguments: the contacts,
+/// the frame timestamp and the trackpad's device ID.
+nonisolated(unsafe) var aomTitleBarSnapFeed: (([TouchPoint], Double, UInt64) -> Void)?
 
 /// Owns the recognizer, the preview overlay, the pre-snap history and the
 /// commit. The `handle` entry point is called from `TrackpadMonitor`'s
@@ -408,14 +480,28 @@ final class TitleBarWindowSnap {
         recognizer.onUpdate = { stroke in
             DispatchQueue.main.async { TitleBarWindowSnap.shared.update(stroke) }
         }
+        recognizer.onActive = { DispatchQueue.main.async { TitleBarWindowSnap.shared.stillHeld() } }
         recognizer.onCommit = { DispatchQueue.main.async { TitleBarWindowSnap.shared.commit() } }
         recognizer.onCancel = { DispatchQueue.main.async { TitleBarWindowSnap.shared.cancel() } }
-        aomTitleBarSnapFeed = { [weak self] contacts, timestamp in
-            self?.handle(contacts: contacts, timestamp: timestamp)
+        aomTitleBarSnapFeed = { [weak self] contacts, timestamp, device in
+            self?.handle(contacts: contacts, timestamp: timestamp, device: device)
         }
-        // Settings › General can flip the feature too; pick that up live.
-        NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { TitleBarWindowSnap.shared.refreshEnabled() }
+        // Settings › General can flip the feature too; pick that up live. The
+        // permission watchdog reports Accessibility being granted after launch
+        // (or revoked), which used to leave the snap off until the next
+        // settings change or relaunch.
+        for name in [Notification.Name.aomSettingChanged, PermissionWatchdog.accessibilityLost,
+                     PermissionWatchdog.accessibilityRecovered] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { TitleBarWindowSnap.shared.refreshEnabled() }
+            }
+        }
+        // A gesture never survives sleep: the trackpad stream stops without a
+        // lift, and the window may be elsewhere on wake.
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { TitleBarWindowSnap.shared.abandonGesture() }
+            }
         }
         refreshEnabled()
     }
@@ -423,16 +509,40 @@ final class TitleBarWindowSnap {
     @MainActor
     func refreshEnabled() {
         let on = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? false
-        active = on && AXIsProcessTrusted()
-        if !on { cancel() }
+        active = on && AXIsProcessTrusted() && AutomationGate.isOn
+        if !active { cancel() }
     }
 
-    /// From `TrackpadMonitor.source.onFrame` (multitouch thread). Cheap and
-    /// non-blocking: it forwards to the recognizer only when enabled.
-    nonisolated func handle(contacts: [TouchPoint], timestamp: Double) {
-        guard active else { return }
-        recognizer.feed(contacts: contacts, timestamp: timestamp)
+    /// From `TrackpadMonitor.source.onFrame`. Cheap and non-blocking: it
+    /// forwards to the recognizer only while the snap is on and AOM is not
+    /// switched off; otherwise any half-seen gesture is forgotten so it
+    /// cannot resume with a stale start when the snap comes back.
+    nonisolated func handle(contacts: [TouchPoint], timestamp: Double, device: UInt64 = 0) {
+        guard Self.feedsRecognizer(active: active, automationOn: AutomationGate.isOn) else { recognizer.reset(); return }
+        // The service cancelled on its own since the last frame: the
+        // recognizer drops the gesture too, so both reset together.
+        if cancelRequests != handledCancelRequests {
+            handledCancelRequests = cancelRequests
+            recognizer.cancelUntilLift()
+        }
+        recognizer.feed(contacts: contacts, timestamp: timestamp, device: device)
     }
+
+    /// Bumped on main by `abandonGesture`, read on the multitouch thread
+    /// (like `active`, a stale value for one frame is harmless).
+    private nonisolated(unsafe) var cancelRequests = 0
+    /// Multitouch-thread only.
+    private nonisolated(unsafe) var handledCancelRequests = 0
+
+    /// The pause rules of the snap (audit 2026-10-28 F04), shared by the
+    /// frame handler and the two places that act on a window, so the gate
+    /// cannot drift out of one of them. The test host cannot run the AX part.
+    nonisolated static func feedsRecognizer(active: Bool, automationOn: Bool) -> Bool { active && automationOn }
+    nonisolated static func mayMoveWindow(active: Bool, gateAllows: Bool) -> Bool { active && gateAllows }
+
+    /// The common pause check, consulted where the snap would act: when it
+    /// captures a window and again when it moves it.
+    @MainActor private var allowedNow: Bool { Self.mayMoveWindow(active: active, gateAllows: AutomationGate.allows(.trackpad)) }
 
     // MARK: Transitions (main actor)
 
@@ -441,7 +551,8 @@ final class TitleBarWindowSnap {
         // Only engage over a window's title bar, so the gesture never competes
         // with AOM's other two-finger gestures elsewhere on screen. A swipe that
         // starts while the previous snap is still settling is ignored.
-        guard active, !committing else { return }
+        guard !committing else { return }
+        guard allowedNow else { hideOwnPreview(); reset(); return }
         let mouse = NSEvent.mouseLocation
         let pointerTopLeft = CGPoint(x: mouse.x, y: primaryTop - mouse.y)
         guard let window = WindowManager.shared.captureTarget(atMousePoint: mouse),
@@ -465,6 +576,21 @@ final class TitleBarWindowSnap {
         guard target != nil, !committing else { return }
         scheduleTimeout()
         showPreview(for: stroke, zoneHaptic: true)
+    }
+
+    /// Fingers still on the pad with the preview up: keep it.
+    @MainActor
+    private func stillHeld() {
+        guard target != nil, !committing else { return }
+        scheduleTimeout()
+    }
+
+    /// The service gives up on its own (no frames, sleep): hide the preview
+    /// and make the recognizer drop the gesture as well.
+    @MainActor
+    private func abandonGesture() {
+        cancel()
+        cancelRequests &+= 1
     }
 
     @MainActor
@@ -496,7 +622,8 @@ final class TitleBarWindowSnap {
         // A lift that arrives while the previous snap is still landing belongs
         // to a gesture that never engaged; leave the in-flight commit alone.
         guard !committing else { return }
-        guard active, let target, let visible = targetVisible,
+        // Paused (or switched off) while the fingers were down: never move the window.
+        guard allowedNow, let target, let visible = targetVisible,
               let plan, let start = startFrame else {
             hideOwnPreview(); reset(); return
         }
@@ -558,10 +685,13 @@ final class TitleBarWindowSnap {
         let item = DispatchWorkItem {
             // A commit in flight owns the overlay until it lands.
             guard !TitleBarWindowSnap.shared.committing else { return }
-            TitleBarWindowSnap.shared.cancel()
+            TitleBarWindowSnap.shared.abandonGesture()
         }
         timeout = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
+        // A held stroke reports itself every 0.25 s (`stillHeld`), so this
+        // watchdog only fires when contact frames stop arriving altogether
+        // (a trackpad that vanished mid-gesture).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: item)
     }
 
     /// Swish raises and activates the window it snapped; a background window

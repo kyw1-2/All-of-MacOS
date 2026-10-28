@@ -54,7 +54,7 @@ class AppState: ObservableObject {
         }
     }
     @Published var showTutorialRequested: Bool = false
-    @Published var globalEnabled: Bool = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
+    @Published var globalEnabled: Bool = AutomationGate.isOn
     @Published var accentColorChoice: AccentColorChoice = {
         if let raw = UserDefaults.standard.string(forKey: "AOMAccentColor"),
            let choice = AccentColorChoice(rawValue: raw) {
@@ -423,8 +423,12 @@ class AppState: ObservableObject {
     func toggleGlobalEnabled() {
         globalEnabled.toggle()
         if !globalEnabled { ActionExecutor.cancelAllSequences() }
-        UserDefaults.standard.set(globalEnabled, forKey: "AOMGlobalEnabled")
+        UserDefaults.standard.set(globalEnabled, forKey: AutomationGate.masterSwitchKey)
         refreshMonitors()
+        // With no trackpad triggers the bindings above do not change, but the
+        // gesture layers must still release (or re-acquire) the hardware.
+        refreshTrackpadLayersIfNeeded()
+        TitleBarWindowSnap.shared.refreshEnabled()
     }
 
     func refreshMonitors(force: Bool = false) {
@@ -461,6 +465,10 @@ class AppState: ObservableObject {
         for observer in shortcutObservers { NotificationCenter.default.removeObserver(observer) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenRefresh?.cancel()
+        // A debounced save must not outlive its state: it would land later
+        // and overwrite whatever another owner wrote since (seen between test
+        // cases sharing the isolated preset file).
+        presetManager.flushPendingWrites()
     }
 
     // MARK: - Persistence

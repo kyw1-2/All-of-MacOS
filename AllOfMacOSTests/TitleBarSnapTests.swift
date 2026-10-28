@@ -280,4 +280,186 @@ final class TitleBarSnapTests: XCTestCase {
         recognizer.feed(contacts: [touch(1, 0.6, 0.5), touch(2, 0.7, 0.5), touch(3, 0.8, 0.5)], timestamp: 0.02)
         XCTAssertEqual(begins, 0)
     }
+
+    // MARK: Stability (audit 2026-10-28 F05; multi-trackpad R02)
+
+    private final class Events {
+        var begins: [SwishSnap.Stroke] = []
+        var updates: [SwishSnap.Stroke] = []
+        var actives = 0
+        var commits = 0
+        var cancels = 0
+    }
+
+    private func observe(_ recognizer: TitleBarSnapRecognizer) -> Events {
+        let events = Events()
+        recognizer.onBegin = { events.begins.append($0) }
+        recognizer.onUpdate = { events.updates.append($0) }
+        recognizer.onActive = { events.actives += 1 }
+        recognizer.onCommit = { events.commits += 1 }
+        recognizer.onCancel = { events.cancels += 1 }
+        return events
+    }
+
+    /// The audit's SnapProbe ADD_THIRD_FINGER: 3.3.0 committed the snap.
+    func testAThirdFingerCancelsInsteadOfCommitting() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        XCTAssertEqual(events.begins, [.init(.right)])
+        recognizer.feed(contacts: pair(0.50, 0.50) + [touch(3, 0.70, 0.50)], timestamp: 0.04)
+        XCTAssertEqual(events.commits, 0, "a third finger (Mission Control, a 3-finger trigger) is not a lift")
+        XCTAssertEqual(events.cancels, 1)
+        // Lifting one of three leaves two fingers: the spent gesture must not restart.
+        recognizer.feed(contacts: pair(0.62, 0.50), timestamp: 0.06)
+        recognizer.feed(contacts: pair(0.78, 0.50), timestamp: 0.08)
+        recognizer.feed(contacts: [], timestamp: 0.10)
+        XCTAssertEqual(events.begins.count, 1)
+        XCTAssertEqual(events.commits, 0)
+        XCTAssertEqual(events.cancels, 1)
+        // The next deliberate swipe works normally.
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0.20)
+        recognizer.feed(contacts: pair(0.30, 0.50), timestamp: 0.22)
+        recognizer.feed(contacts: [], timestamp: 0.24)
+        XCTAssertEqual(events.begins.last, .init(.left))
+        XCTAssertEqual(events.commits, 1)
+    }
+
+    /// The audit's acceptance case "hold the same zone for 3 s, then lift".
+    /// 3.3.0 sent nothing while a preview was held still (SnapProbe
+    /// HOLD_2_SECONDS: updates 0), so the service's 1.2 s timer hid the
+    /// preview and the lift applied nothing. Contact frames are activity now.
+    func testHoldingOneZoneForThreeSecondsThenLiftingCommits() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        XCTAssertEqual(events.begins, [.init(.right)])
+        // 60 Hz frames, fingers resting in the same zone for 3 seconds.
+        for frame in 1...180 { recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02 + Double(frame) / 60) }
+        XCTAssertEqual(events.cancels, 0, "holding a preview is not abandoning it")
+        XCTAssertEqual(events.updates, [], "the stroke did not change")
+        XCTAssertGreaterThanOrEqual(events.actives, 11, "the service hears about the hold about every 0.25 s")
+        recognizer.feed(contacts: [], timestamp: 3.05)
+        XCTAssertEqual(events.commits, 1, "the lift applies the held preview")
+    }
+
+    /// The service's watchdog or a sleep notification ended the gesture on
+    /// main: the recognizer must drop it too, without callbacks, and wait
+    /// for the lift before a new snap can start.
+    func testAServiceCancelResetsTheRecognizerUntilTheLift() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        recognizer.cancelUntilLift()
+        recognizer.feed(contacts: pair(0.62, 0.50), timestamp: 0.04)
+        recognizer.feed(contacts: pair(0.30, 0.50), timestamp: 0.06)
+        recognizer.feed(contacts: [], timestamp: 0.08)
+        XCTAssertEqual(events.begins.count, 1)
+        XCTAssertEqual(events.updates, [], "the dropped gesture moves no preview")
+        XCTAssertEqual(events.commits + events.cancels, 0, "and neither commits nor reports twice")
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0.20)
+        recognizer.feed(contacts: pair(0.30, 0.50), timestamp: 0.22)
+        recognizer.feed(contacts: [], timestamp: 0.24)
+        XCTAssertEqual(events.begins.last, .init(.left), "after the lift the next swipe works")
+        XCTAssertEqual(events.commits, 1)
+    }
+
+    /// Sleep and wake: the stream stops with the fingers down and resumes
+    /// much later. The engaged preview is cancelled, never committed.
+    func testFramesResumingAfterSleepCancelTheEngagedSnap() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        recognizer.feed(contacts: pair(0.52, 0.50), timestamp: 30.0)    // woke up 30 s later
+        XCTAssertEqual(events.cancels, 1)
+        recognizer.feed(contacts: [], timestamp: 30.02)
+        XCTAssertEqual(events.commits, 0)
+    }
+
+    /// F04 for the snap: the frame handler and the two window-moving steps
+    /// share these rules; the AX part cannot run in the test host.
+    func testTheSnapGateClosesWhenAOMIsOffOrPaused() {
+        XCTAssertTrue(TitleBarWindowSnap.feedsRecognizer(active: true, automationOn: true))
+        XCTAssertFalse(TitleBarWindowSnap.feedsRecognizer(active: true, automationOn: false), "switched off: frames reset the recognizer")
+        XCTAssertFalse(TitleBarWindowSnap.feedsRecognizer(active: false, automationOn: true))
+        XCTAssertTrue(TitleBarWindowSnap.mayMoveWindow(active: true, gateAllows: true))
+        XCTAssertFalse(TitleBarWindowSnap.mayMoveWindow(active: true, gateAllows: false), "paused: no capture and no commit")
+        XCTAssertFalse(TitleBarWindowSnap.mayMoveWindow(active: false, gateAllows: true))
+    }
+
+    func testMovingToANewZoneKeepsTheGestureAlive() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.1)
+        for step in 1...20 { recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.1 + Double(step) * 0.05) }
+        recognizer.feed(contacts: pair(0.62, 0.50), timestamp: 1.15)     // a new zone
+        for step in 1...20 { recognizer.feed(contacts: pair(0.62, 0.50), timestamp: 1.15 + Double(step) * 0.05) }
+        recognizer.feed(contacts: [], timestamp: 2.2)
+        XCTAssertEqual(events.cancels, 0)
+        XCTAssertEqual(events.commits, 1)
+        XCTAssertEqual(events.updates.last, .init(.right, tier: 2))
+    }
+
+    func testLiftingOneFingerFirstStillCommits() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        recognizer.feed(contacts: [touch(1, 0.49, 0.50)], timestamp: 0.04)
+        XCTAssertEqual(events.commits, 1)
+        recognizer.feed(contacts: [], timestamp: 0.06)
+        XCTAssertEqual(events.commits, 1, "one commit per gesture")
+    }
+
+    func testAGapInTheFramesDropsAStaleStart() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        // The trackpad slept without a lift frame; much later fingers land elsewhere.
+        recognizer.feed(contacts: pair(0.60, 0.50), timestamp: 5.0)
+        XCTAssertEqual(events.begins, [], "a jump across a gap is not a swipe (3.3.0 engaged instantly)")
+        recognizer.feed(contacts: pair(0.70, 0.50), timestamp: 5.02)
+        XCTAssertEqual(events.begins, [.init(.right)], "measured from the new start")
+    }
+
+    func testASecondTrackpadIsIgnoredWhileTheFirstIsLive() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0.00, device: 1)
+        recognizer.feed(contacts: [touch(9, 0.9, 0.9)], timestamp: 0.01, device: 2)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02, device: 1)
+        recognizer.feed(contacts: [touch(9, 0.9, 0.9)], timestamp: 0.03, device: 2)
+        XCTAssertEqual(events.begins, [.init(.right)])
+        XCTAssertEqual(events.commits + events.cancels, 0, "the resting thumb on the other pad changes nothing")
+        recognizer.feed(contacts: [], timestamp: 0.04, device: 1)
+        XCTAssertEqual(events.commits, 1)
+    }
+
+    func testASilentTrackpadHandsOverWithoutCommitting() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0.00, device: 1)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02, device: 1)
+        recognizer.feed(contacts: pair(0.30, 0.50), timestamp: 1.00, device: 2)
+        XCTAssertEqual(events.cancels, 1, "the interrupted gesture is cancelled")
+        XCTAssertEqual(events.commits, 0, "and never committed")
+        recognizer.feed(contacts: pair(0.20, 0.50), timestamp: 1.02, device: 2)
+        XCTAssertEqual(events.begins.last, .init(.left))
+    }
+
+    func testResetForgetsAGestureWithoutCallbacks() {
+        let recognizer = TitleBarSnapRecognizer()
+        let events = observe(recognizer)
+        recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
+        recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
+        recognizer.reset()      // the snap or AOM was switched off mid-gesture
+        recognizer.feed(contacts: [], timestamp: 0.04)
+        XCTAssertEqual(events.commits, 0)
+        XCTAssertEqual(events.cancels, 0)
+    }
 }

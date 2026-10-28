@@ -101,7 +101,7 @@ final class DrawingGestureMonitor {
         switch event.type {
         case .leftMouseDown:
             reset()
-            guard active, UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return }
+            guard active, AutomationGate.isOn else { return }
             started = NSEvent.mouseLocation
             startedApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             drawing = true

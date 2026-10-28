@@ -209,7 +209,7 @@ class TrackpadMonitor {
             // Swish-style title-bar snap observes the same frames; it only acts
             // when enabled and the pointer is over a title bar, and never blocks
             // or consumes the pipeline above.
-            aomTitleBarSnapFeed?(frame.contacts, timestamp)
+            aomTitleBarSnapFeed?(frame.contacts, timestamp, device)
         }
         source.start()
         lastRecovery = ProcessInfo.processInfo.systemUptime
@@ -276,7 +276,7 @@ class TrackpadMonitor {
          "rawStates": latestRawStates, "activeContacts": currentFingers,
          "frameAgeSeconds": lastHardwareFrame.map { ProcessInfo.processInfo.systemUptime - $0 } ?? -1,
          "recoveries": recoveries, "registeredTriggers": registeredTriggers.count,
-         "globalEnabled": UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
+         "globalEnabled": AutomationGate.isOn,
          "lastDetections": recentDetections, "suppressedTipTapClicks": suppressedTipTapClicks,
          // Exposed so the force threshold can be calibrated against real
          // hardware instead of guessed: a trackpad that never reports force
@@ -347,7 +347,7 @@ class TrackpadMonitor {
         // other finger counts) before anything below can skip them.
         if systemMonitoringEnabled, !suspended {
             MainActor.assumeIsolated {
-                TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp)
+                TrackpadUtilityGestures.shared.observe(points: points, timestamp: timestamp, device: deviceID)
             }
         }
         tipTapShield.observe(device: deviceID, count: points.count, now: ProcessInfo.processInfo.systemUptime)
@@ -549,7 +549,7 @@ class TrackpadMonitor {
     /// frozen while it is drawn. Suppressing input when no such trigger exists
     /// freezes ordinary drags for no reason at all.
     private var applicableTriggers: [(id: UUID, gesture: TrackpadGesture, actions: [TriggerAction], appBundleID: String?, suppressClick: Bool, hapticFeedback: Bool, requiredModifiers: UInt?, activationGroupID: UUID?)] {
-        guard UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return [] }
+        guard AutomationGate.isOn else { return [] }
         let front = frontmostBundleID()
         return registeredTriggers.filter { binding in
             guard TriggerResolver.modifiersMatch(binding.requiredModifiers, modifierFlagsProvider()) else { return false }
@@ -607,7 +607,7 @@ class TrackpadMonitor {
 
         // Only freeze the pointer when a drawing gesture is actually bound —
         // otherwise a plain drag gets swallowed by a tap nobody asked for.
-        guard suppress, UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
+        guard suppress, AutomationGate.isOn,
               TriggerSuppression.shared.allows(kind: .trackpad), !matchingTriggers(for: gesture).isEmpty else {
             stopSuppressingMouse()
             return
@@ -1306,7 +1306,7 @@ class TrackpadMonitor {
             inFlightNativeButtons.insert(button)
             return false
         }
-        let enabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
+        let enabled = AutomationGate.isOn
         if enabled, type == .leftMouseDown, tipTapShield.contains(now) {
             // Pair every residual click, including a delayed second click,
             // without turning the residual movement into another gesture.
@@ -1337,7 +1337,7 @@ class TrackpadMonitor {
     /// Returns the click gesture to suppress if the current trackpad state matches a registered
     /// click gesture that has suppressClick enabled, or nil if no suppression should happen.
     func clickGestureToSuppress() -> TrackpadGesture? {
-        let globalEnabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
+        let globalEnabled = AutomationGate.isOn
         guard globalEnabled, TriggerSuppression.shared.allows(kind: .trackpad) else { return nil }
 
         // Determine which gesture would fire based on finger count and position
@@ -1395,7 +1395,7 @@ class TrackpadMonitor {
             targets = targets.filter { abs((longTouchDurations[$0.id] ?? 0.5) - longTouchDuration) < 0.001 }
         }
         if [.tipTapLeft, .tipTapRight, .tipTapMiddle].contains(gesture),
-           UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
+           AutomationGate.isOn,
            targets.contains(where: { $0.suppressClick && $0.actions.contains(where: \.isEnabled) }) {
             // Arm synchronously, before the queued navigation action changes
             // the page. App-specific overrides and the suppression switch apply.
@@ -1421,7 +1421,7 @@ class TrackpadMonitor {
         if systemMonitoringEnabled { GestureStatistics.shared.recordDetectionFromAnyThread(gesture.rawValue) }
 
         // Check global toggle — detect but don't fire when disabled
-        let globalEnabled = UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true
+        let globalEnabled = AutomationGate.isOn
         guard globalEnabled, TriggerSuppression.shared.allows(kind: .trackpad) else {
             GestureLog.shared.logFromAnyThread("Gesture \(gesture.rawValue) — paused", level: .noMatch)
             return

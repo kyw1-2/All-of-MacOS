@@ -260,7 +260,7 @@ class KeyboardMonitor: ObservableObject {
         KeyboardMonitor.activeMonitor = self
         secureHotKeys = SecureInputHotKeys(shortcuts: { [weak self] in
             guard let self, !self.isMonitoring, !Self.isRecordingShortcut,
-                  UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true,
+                  AutomationGate.isOn,
                   TriggerSuppression.shared.allows(kind: .keyboard) else { return [] }
             let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             let candidates = Set(self.registeredTriggers.compactMap { trigger -> KeyboardShortcut? in
@@ -352,7 +352,7 @@ class KeyboardMonitor: ObservableObject {
                                  isDown: Bool, isRepeat: Bool) {
         if !isDown { sequenceDetector.release(keyCode); return }
         guard !isRepeat, !isMonitoring, !Self.isRecordingShortcut,
-              (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true),
+              (AutomationGate.isOn),
               registeredTriggers.contains(where: { if case .keySequence = $0.input { return true }; return false }) else { return }
         let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let flags = Self.modifierOnlyKeys.contains(keyCode) ? UInt(0) :
@@ -376,7 +376,7 @@ class KeyboardMonitor: ObservableObject {
                     guard let self, self.registrationGeneration == generation,
                           self.sequenceDetector.isHeld(keyCode),
                           NSWorkspace.shared.frontmostApplication?.bundleIdentifier == front,
-                          (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true) else { return }
+                          (AutomationGate.isOn) else { return }
                     self.fire(winner, keyCode: keyCode)
                 }
             } else { fire(winner, keyCode: keyCode) }
@@ -443,12 +443,12 @@ class KeyboardMonitor: ObservableObject {
                                                  maxHoldMs: trigger.maxHoldMs,
                                                  quickReleaseMaxMs: TriggerTimingSettings.keyboardQuickReleaseMs(timingDefaults)),
                    trigger.appBundleID == nil || trigger.appBundleID == NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-                   UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true { fire(trigger, keyCode: keyCode) }
+                   AutomationGate.isOn { fire(trigger, keyCode: keyCode) }
             }
             return true
         }
         if pressed[keyCode] != nil { return true } // Native autorepeat must not create additional macros.
-        guard !isRepeat, UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return false }
+        guard !isRepeat, AutomationGate.isOn else { return false }
 
         let shortcut = KeyboardShortcut(keyCode: keyCode, modifiers: modifiers.intersection([.command, .option, .control, .shift, .function]))
         // A paused/suppressed keyboard never swallows keys or runs user
@@ -495,7 +495,7 @@ class KeyboardMonitor: ObservableObject {
     /// true when this key was the final character of an abbreviation and was
     /// swallowed; the erasure and expansion then run off the tap callback.
     private func processTypedString(text: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-        guard (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true),
+        guard (AutomationGate.isOn),
               registeredTriggers.contains(where: { if case .typedString = $0.input { return true }; return false }),
               ActionExecutor.activeTextTypingSessions == 0,
               !ScreenLock.isLocked,
@@ -539,7 +539,7 @@ class KeyboardMonitor: ObservableObject {
         let generation = registrationGeneration
         DispatchQueue.main.async { [weak self] in
             guard let self, self.registrationGeneration == generation, self.registeredTriggers.contains(where: { $0.id == trigger.id }),
-                  UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true else { return }
+                  AutomationGate.isOn else { return }
             ActionExecutor.fire(triggerID: trigger.id, fallbackActions: trigger.actions,
                 isHeld: trigger.keyboardPhase == .keyDown ? { [weak self] in
                     self?.pressed[keyCode] != nil && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(keyCode))

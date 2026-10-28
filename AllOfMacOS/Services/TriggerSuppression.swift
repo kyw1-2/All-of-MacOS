@@ -20,6 +20,34 @@ enum TriggerSuppressionKind: Equatable {
     }
 }
 
+/// The single pause check shared by every input layer: the trigger monitors
+/// and the trigger-less gesture layers (top-bar Space swipe, Dock pinch to
+/// quit, title-bar snap). AOM is paused by either of two independent switches:
+/// the persisted master switch (`AOMGlobalEnabled`, the menu bar "off" state
+/// shown as "Automation paused") and the runtime rules in `TriggerSuppression`
+/// (timed or indefinite pause, per-app pause, held modifiers, palm rejection).
+///
+/// Until 3.3.0 each monitor read the master switch inline and the gesture
+/// layers read neither, so a paused AOM still switched Spaces, quit Dock apps
+/// and snapped windows.
+enum AutomationGate {
+    static let masterSwitchKey = "AOMGlobalEnabled"
+
+    /// The persisted master switch. Thread-safe: it only reads UserDefaults.
+    static var isOn: Bool { isOn(.standard) }
+    static func isOn(_ defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: masterSwitchKey) as? Bool ?? true
+    }
+
+    /// Whether input of `kind` may act now: the master switch and every
+    /// runtime suppression rule. Main thread, like `TriggerSuppression`.
+    static func allows(_ kind: TriggerSuppressionKind,
+                       suppression: TriggerSuppression = .shared,
+                       defaults: UserDefaults = .standard) -> Bool {
+        isOn(defaults) && suppression.allows(kind: kind)
+    }
+}
+
 /// Persisted suppression options (AOM counterpart of BTT's General →
 /// "Disable BetterTouchTool while holding …" and Trackpad → "Disable trackpad
 /// gestures after hitting a keyboard key").

@@ -47,7 +47,7 @@ class MouseButtonMonitor {
     var timingDefaults: UserDefaults = TriggerTimingSettings.store
     /// When set, replaces the real fire path (ActionExecutor + HUD).
     var onFire: ((Entry) -> Void)?
-    var globalEnabled: () -> Bool = { UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true }
+    var globalEnabled: () -> Bool = { AutomationGate.isOn }
 
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         registerEntries(triggers, groups: groups)
