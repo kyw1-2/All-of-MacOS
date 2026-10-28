@@ -16,18 +16,20 @@ enum WhatsNew {
 
     /// Highlights of the current version, bundled so the panel works offline.
     static let items: [Item] = [
-        Item(symbol: "hand.draw.fill", title: "Swish-style trackpad snap, round two",
-             detail: "Swipe on a title bar for halves, thirds and now quarters in either order; swipe down on a snapped window to put it back."),
-        Item(symbol: "rectangle.and.arrow.up.right.and.arrow.down.left", title: "Windows that keep their size",
-             detail: "Apps with a fixed or minimum size now stay flush with the edge you snapped them to, from gestures and the Window menu alike."),
-        Item(symbol: "checklist", title: "Trackpad readiness",
-             detail: "Window Tiling checks Accessibility, haptic feedback and the Mission Control shortcuts the gestures rely on, with a link to fix each."),
-        Item(symbol: "figure.walk.motion", title: "Reduce Motion and Increase Contrast",
-             detail: "Animations respect Reduce Motion; chips, badges and notices get stronger outlines with Increase Contrast."),
-        Item(symbol: "magnifyingglass", title: "Search System Tools",
-             detail: "Find a tool from the toolbar, with a clear way back when nothing matches."),
-        Item(symbol: "menubar.rectangle", title: "Tidier menus and names",
-             detail: "The engine is called Automation everywhere, ⌘N and ⌘F work on Automation and Workspace, and developer items hide behind ⌥.")
+        Item(symbol: "pause.circle", title: "Pausing pauses everything",
+             detail: "With Automation paused, the top-bar Space swipe, Dock pinch and title-bar snap stay quiet too."),
+        Item(symbol: "hand.draw.fill", title: "A steadier title-bar snap",
+             detail: "Hold a preview as long as you like and lift to apply it. A third finger cancels instead of moving the window, and a second trackpad cannot interrupt a swipe."),
+        Item(symbol: "dock.rectangle", title: "Dock pinch asks, never forces",
+             detail: "Pinching an app in the Dock asks it to quit like its own Quit command. An app asking to save stays open."),
+        Item(symbol: "point.3.connected.trianglepath.dotted", title: "Dependable AI tool connection",
+             detail: "Large MCP replies arrive whole, and an AI tool that closes its connection can no longer make AOM quit."),
+        Item(symbol: "record.circle", title: "Long recordings",
+             detail: "The editable pointer now covers recordings longer than 50 minutes. A take cut short or saved with problems says so."),
+        Item(symbol: "arrow.counterclockwise", title: "Backups you can restore",
+             detail: "Restore a backup from Settings › Backups after a preview of what changes. Its automations and the settings of that moment come back exactly; what they replace is kept first."),
+        Item(symbol: "checkmark.seal", title: "Results you can trust",
+             detail: "A locked Keychain or damaged clipboard file is shown as such, not as an empty history. Flush DNS, Empty Trash and Desktop Icons report what really happened.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.

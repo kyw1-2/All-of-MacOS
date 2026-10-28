@@ -2,11 +2,15 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.1
+
+Stability fixes from the 2026-10-28 audit: pausing AOM now pauses every gesture layer, Dock pinch never force-quits, MCP replies arrive whole and a closed AI tool can no longer terminate AOM, a steadier title-bar snap, an AirPlay mix clock that measures its own start-up and supply and keeps 48 kHz even when macOS throttles it, recordings longer than 50 minutes keep their pointer track, unreadable archives are kept instead of overwritten, backups that restore the automations and settings of their moment, and actions that report failure when a permission is missing. Real-trackpad, AirPlay-listening and 65-minute recording checks still need a person. See [the remediation report](docs/audit-3.3.1-stability-20261028.md).
+
 ## Version 3.3.0
 
-The Swish-style trackpad snap, round two, built from a DeepSeek Harness Ghidra pass over Swish 1.13.3. It adds:
+The trackpad title-bar snap, round two. It adds:
 
-- Swish's size → position → size commit.
+- A size → position → size commit that the window history records.
 - Edge anchoring for windows with a fixed or minimum size. This also covers the tiling actions.
 - A preview that settles on the real frame.
 - Unsnap with a swipe down.
@@ -14,7 +18,7 @@ The Swish-style trackpad snap, round two, built from a DeepSeek Harness Ghidra p
 - Haptics on each zone change.
 - A readiness checklist.
 
-There is also a UI/UX finishing pass informed by 86 new references: Reduce Motion and Increase Contrast throughout, one window minimum with a floating drawer, System Tools search, accessible names and consistent naming. See [the Swish port report](docs/window-snap-3.3.0-swish-dsh.md) and [the reference review](docs/ux-reference-review-3.3.0.md).
+There is also a UI/UX finishing pass informed by 86 new references: Reduce Motion and Increase Contrast throughout, one window minimum with a floating drawer, System Tools search, accessible names and consistent naming. See [the window-snap report](docs/window-snap-3.3.0-swish-dsh.md) and [the reference review](docs/ux-reference-review-3.3.0.md).
 
 ## Version 3.2.0
 
@@ -206,20 +210,19 @@ Create a local Keychain Access **Self Signed Root / Code Signing** identity name
 
 ## Repository
 
-Private repository: https://github.com/kyw1-2/All-of-MacOS . The independent source tree is tracked on `main`.
+Repository: https://github.com/kyw1-2/All-of-MacOS (public). The independent source tree is tracked on `main`.
 
 ## Distribution
 
-This repository is private. Distribution of any third-party code or bundled assets is subject to the necessary licenses and permissions.
+Releases are DMGs on [GitHub Releases](https://github.com/kyw1-2/All-of-MacOS/releases), signed with the self-signed **AOM Dev** identity. They are not Apple Developer ID signed or notarized, so Gatekeeper may ask for approval on first launch. AOM does not check for or install updates by itself; install a new DMG by hand, or use the owner's signature-pinned `scripts/auto-update-mac.sh`. Distribution of any third-party code or bundled assets is subject to the necessary licenses and permissions.
 
+## Development DMG releases
 
-## Private development DMG releases
+**Headless build option:** the `All of MacOS signed release` workflow tests, signs (AOM Dev) and publishes a DMG as GitHub **Latest** from every trusted `main` push, without leaving the MacBook on. One-time signing setup is required before activation. See [Oracle → GitHub Actions deployment guide](docs/oracle-actions-release.md). The local Mac build-and-sign workflow remains supported.
 
-**Headless build option:** GitHub Actions can now test, sign and publish a DMG from a trusted `main` push or Oracle dispatch, without leaving the MacBook on. One-time signing setup is required before activation. See [Oracle → GitHub Actions deployment guide](docs/oracle-actions-release.md). The existing local Mac build-and-sign workflow remains supported.
+All of MacOS uses the **AOM Dev self-signed signing identity** for development builds. This is not an Apple Developer ID or notarized distribution certificate. A CI run with `ALLOFMACOS_SIGN_ID=-` produces an **ad-hoc signed test artifact** only, which is never published as an AOM Dev release.
 
-All of MacOS uses the **local AOM Dev self-signed signing identity** for private development builds. This is not an Apple Developer ID or notarized distribution certificate. GitHub CI creates an **ad-hoc signed test artifact**; it does not publish that artifact as a stable AOM Dev release.
-
-On the Mac, install and authenticate GitHub CLI (gh) once with access to this private repository, and pull the latest source from main. Every successful local build-and-sign.sh run using AOM Dev then:
+On the Mac, install and authenticate GitHub CLI (gh) once with write access to this repository, and pull the latest source from main. Every successful local build-and-sign.sh run using AOM Dev then:
 
 1. Verifies the app signature and bundle identifier.
 2. Creates a unique DMG under build/releases/.
@@ -230,11 +233,11 @@ To import previously created DMGs without rebuilding: bash scripts/publish-dmg.s
 
 To publish one eligible DMG from elsewhere: bash scripts/publish-dmg.sh --file "/path/to/All-of-MacOS.dmg"
 
-To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. If GitHub authentication or network access is unavailable, the local build stays intact and the upload failure is logged rather than being mistaken for a compilation failure. CI uses ALLOFMACOS_SIGN_ID=- and does not publish this development release channel.
+To build without a release, set ALLOFMACOS_SKIP_AUTO_RELEASE=1. If GitHub authentication or network access is unavailable, the local build stays intact and the upload failure is logged rather than being mistaken for a compilation failure. The signed release workflow imports the AOM Dev identity from repository secrets and publishes `aom-v<version>-b<build>-g<commit>` releases; an ad-hoc (`ALLOFMACOS_SIGN_ID=-`) build is never published.
 
 Standalone `.sha256` assets are not generated; a DMG digest remains in release metadata and GitHub also publishes its own asset digest for independent verification. Version 1.0.1 was intentionally removed from GitHub Releases.
 
-**Important:** GitHub releases remain private while the repository is private. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.
+**Important:** the repository and its releases are public. The self-signed certificate does not remove macOS Gatekeeper warnings or notarize the build. A tag identifies an archived binary by checksum; it does not assert that GitHub's current source reproduces that historical binary.
 
 ### 1.1.0 local workflows
 
