@@ -480,20 +480,132 @@ class AppState: ObservableObject {
 
     func flushPendingWrites() { presetManager.flushPendingWrites() }
 
-    func exportPreset(to url: URL) {
-        presetManager.exportPreset(currentPreset, to: url)
+    /// The last preset save failure, nil once a save succeeds.
+    var lastPresetSaveError: String? { presetManager.lastPersistError }
+
+    /// How an export, import or restore went.
+    enum PresetOperationStyle: Equatable {
+        case success
+        /// It worked, and the user has to do something (relaunch).
+        case actionNeeded
+        case failure
     }
 
-    func importPreset(from url: URL) {
-        if let preset = presetManager.importPreset(from: url) {
-            ActionExecutor.cancelAllSequences()
-            currentPreset = preset
-            presetManager.save(preset)
-            refreshMonitors()
-            selectedAppTarget = preset.appTargets.first ?? .allApps
-            selectedTrigger = nil
-            selectedAction = nil
-            selectedActivationGroupID = nil
+    /// Export, import and restore report their outcome; until 3.3.1 a
+    /// failure only reached the console (audit 2026-10-28 F07). A failure or
+    /// an instruction is an alert; a plain success is a HUD notice long
+    /// enough to read.
+    var presetOperationReporter: (_ title: String, _ detail: String, _ style: PresetOperationStyle) -> Void = { title, detail, style in
+        guard !PresetManager.isRunningTests else { return }
+        guard style != .success else {
+            GestureHUD.shared.show(title: title, detail: detail)
+            return
         }
+        let alert = NSAlert()
+        alert.alertStyle = style == .failure ? .warning : .informational
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.runModal()
+    }
+
+    @discardableResult
+    func exportPreset(to url: URL) -> Bool {
+        do {
+            try presetManager.exportPreset(currentPreset, to: url)
+            presetOperationReporter("Preset Exported", url.lastPathComponent, .success)
+            return true
+        } catch {
+            presetOperationReporter("Could Not Export the Preset", error.localizedDescription, .failure)
+            return false
+        }
+    }
+
+    @discardableResult
+    func importPreset(from url: URL) -> Bool {
+        let failure = "Could Not Import the Preset"
+        let preset: Preset
+        do { preset = try presetManager.importPreset(from: url) }
+        catch {
+            presetOperationReporter(failure, error.localizedDescription, .failure)
+            return false
+        }
+        guard let kept = replaceCurrentPreset(with: preset, reason: "before-import", rollingBackup: true, failure: failure) else {
+            return false
+        }
+        presetOperationReporter("Preset Imported",
+                                "What it replaced is kept in Settings › Backups as \(kept.lastPathComponent).", .success)
+        return true
+    }
+
+    /// Restores a rolling backup or a safety snapshot as the current preset,
+    /// optionally with the settings saved alongside it.
+    ///
+    /// Everything is read before anything changes: until the review of
+    /// 3.3.1 the restored preset was saved first, which wrote a rolling
+    /// backup that pruned the oldest one, so restoring the oldest backup of a
+    /// full set deleted it, and its settings, before they were read. Now the
+    /// preset and settings are read into memory, the current automations and
+    /// settings are kept as a `-before-restore` snapshot (nothing is replaced
+    /// if that fails, and the chosen backup is never pruned to make room),
+    /// and the restored preset is saved without a rolling backup of its own.
+    @discardableResult
+    func restorePresetBackup(_ url: URL, includeSettings: Bool = false, defaults: UserDefaults = .standard) -> Bool {
+        let failure = "Could Not Restore the Backup"
+        let preset: Preset
+        do { preset = try presetManager.importPreset(from: url) }
+        catch {
+            presetOperationReporter(failure, "\(error.localizedDescription) Nothing was changed.", .failure)
+            return false
+        }
+        var settings: PresetManager.SettingsSnapshot?
+        if includeSettings {
+            guard let read = PresetManager.readSettings(fromFile: PresetManager.settingsURL(forBackup: url)) else {
+                presetOperationReporter(failure, "This backup has no readable settings file. Nothing was changed.", .failure)
+                return false
+            }
+            settings = read
+        }
+        guard let kept = replaceCurrentPreset(with: preset, reason: "before-restore", rollingBackup: false,
+                                              failure: failure, settings: defaults, protecting: url) else { return false }
+        guard let settings else {
+            presetOperationReporter("Backup Restored",
+                                    "What it replaced is kept in Settings › Backups as \(kept.lastPathComponent).", .success)
+            return true
+        }
+        let applied = settings.apply(to: defaults)
+        NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
+        let count = applied.set + applied.removed
+        presetOperationReporter("Backup Restored",
+                                "Automations and \(count) setting\(count == 1 ? "" : "s") restored. What they replaced, "
+                                + "automations and settings, is kept in Settings › Backups as \(kept.lastPathComponent).\n\n"
+                                + "Quit and reopen All of MacOS so every part uses the restored settings. "
+                                + "Whether automation is paused is not part of a backup and did not change.", .actionNeeded)
+        return true
+    }
+
+    /// Keeps the current preset and settings as a safety snapshot, then makes
+    /// `preset` current. Returns the snapshot; nothing is replaced, and nil
+    /// is returned, when the snapshot cannot be written.
+    private func replaceCurrentPreset(with preset: Preset, reason: String, rollingBackup: Bool, failure: String,
+                                      settings defaults: UserDefaults = .standard, protecting: URL? = nil) -> URL? {
+        guard let kept = presetManager.snapshotBeforeReplacing(currentPreset, reason: reason, settings: defaults,
+                                                               protecting: protecting) else {
+            presetOperationReporter(failure, "A copy of the current automations could not be kept in the backup folder "
+                                    + "(\(PresetManager.backupDirectory.path)), so nothing was changed.", .failure)
+            return nil
+        }
+        ActionExecutor.cancelAllSequences()
+        currentPreset = preset
+        presetManager.save(preset, createBackup: rollingBackup && PresetManager.backupsEnabled)
+        refreshMonitors()
+        selectedAppTarget = preset.appTargets.first ?? .allApps
+        selectedTrigger = nil
+        selectedAction = nil
+        selectedActivationGroupID = nil
+        if let error = presetManager.lastPersistError {
+            presetOperationReporter(failure, "The preset is active but could not be saved: \(error)", .failure)
+            return nil
+        }
+        return kept
     }
 }

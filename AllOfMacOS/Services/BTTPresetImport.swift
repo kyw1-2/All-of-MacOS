@@ -226,9 +226,18 @@ extension AppState {
     func reviewCompatiblePresetImport(from url: URL) {
         do {
             let data = try BTTPresetImport.read(url)
-            if (try? PresetCodec.decode(data)) != nil {
+            do {
+                _ = try PresetCodec.decode(data)
                 importPreset(from: url)
                 return
+            } catch PresetCodec.Failure.unsupportedVersion {
+                // A newer AOM preset is not a BTT file; say so instead of
+                // showing a BTT parse error.
+                presetOperationReporter("Could Not Import the Preset",
+                                        PresetCodec.Failure.unsupportedVersion.localizedDescription, .failure)
+                return
+            } catch {
+                // Not a native preset: try the BTT subset below.
             }
             let report = try BTTPresetImport.parse(data)
             let alert = NSAlert()

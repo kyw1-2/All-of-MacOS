@@ -125,10 +125,10 @@ final class SerializationTests: XCTestCase {
         let tmpURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_preset_\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: tmpURL) }
 
-        manager.exportPreset(preset, to: tmpURL)
+        try manager.exportPreset(preset, to: tmpURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: tmpURL.path))
 
-        let imported = manager.importPreset(from: tmpURL)
+        let imported = try? manager.importPreset(from: tmpURL)
         XCTAssertNotNil(imported)
         XCTAssertEqual(imported?.name, "Export Test")
         XCTAssertEqual(imported?.triggers.count, 2)
@@ -148,14 +148,13 @@ final class SerializationTests: XCTestCase {
         try? "not json".data(using: .utf8)?.write(to: tmpURL)
         defer { try? FileManager.default.removeItem(at: tmpURL) }
 
-        let result = manager.importPreset(from: tmpURL)
-        XCTAssertNil(result)
+        // 3.3.1: the failure is reported (thrown), never silently swallowed.
+        XCTAssertThrowsError(try manager.importPreset(from: tmpURL))
     }
 
     func testImportFromNonexistentFileReturnsNil() {
         let manager = PresetManager()
-        let result = manager.importPreset(from: URL(fileURLWithPath: "/tmp/nonexistent_\(UUID().uuidString).json"))
-        XCTAssertNil(result)
+        XCTAssertThrowsError(try manager.importPreset(from: URL(fileURLWithPath: "/tmp/nonexistent_\(UUID().uuidString).json")))
     }
 
     /// Verifies that importing a preset and saving it persists to disk,
@@ -175,8 +174,8 @@ final class SerializationTests: XCTestCase {
         let exportURL = tmpDir.appendingPathComponent("exported.json")
 
         // Export, then import (simulating what a friend receives)
-        manager.exportPreset(preset, to: exportURL)
-        let imported = manager.importPreset(from: exportURL)
+        try manager.exportPreset(preset, to: exportURL)
+        let imported = try? manager.importPreset(from: exportURL)
         XCTAssertNotNil(imported)
 
         // Save the imported preset (this is the fix — import now persists)

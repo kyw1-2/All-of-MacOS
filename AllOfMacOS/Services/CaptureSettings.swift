@@ -226,6 +226,32 @@ enum CaptureSettings {
         static let selfTimerInterval = "AOMCaptureSelfTimerInterval"
     }
 
+    /// The capture and recording preferences a profile backup carries
+    /// (audit 2026-10-28 F07: "여러 캡처 설정" were missing). What describes
+    /// this machine stays out: the save folder and the last selected area.
+    static var backedUpKeys: [String] {
+        [Key.format, Key.jpegQuality, Key.showsCursor, Key.windowShadow, Key.hidesDesktopIcons, Key.playsSound,
+         Key.selfTimerSeconds, Key.selfTimerInterval, Key.pixelSnap, Key.snapsSelection, Key.freezeScreen,
+         Key.afterCapture, Key.overlayEnabled, Key.overlayCorner, Key.overlaySize, Key.overlayAutoClose,
+         Key.overlayAutoCloseSave, Key.overlayInterval, Key.overlayOnActiveDisplay, Key.overlayCloseAfterDrag,
+         Key.overlayAfterCopyOrSave, Key.overlayAsksForName, Key.historyCapacity, Key.recordSystemAudio,
+         Key.recordingAudioSource, Key.recordingFPS, Key.recordingQuality, Key.recordingClickIndicators,
+         Key.recordingCursorMotion, Key.pinnedShadow, Key.pinnedCorners, Key.pinnedBorder,
+         Key.recognizeKeepsLineBreaks, Key.crosshairMode, Key.showsMagnifier,
+         // Kept next to the views that own them.
+         "AOMCaptureHistoryRetentionDays", "AOMCaptureColorProfile", "AOMCaptureFilenameTemplate",
+         "AOMCaptureFilenameUTC", "AOMCaptureGridDensity", "AOMCaptureRecordingOutputFormat",
+         "AOMCaptureRecordingGIFFPS", "AOMCaptureRecordingCameraOverlay", "AOMCaptureRecordingCameraBubble",
+         "AOMCaptureRecordingKeystrokeOverlay", "AOMCaptureRecordingKeystrokeStyle",
+         "AOMCaptureRecordingKeystrokeSize", "AOMCaptureRecordingKeystrokePosition",
+         "AOMCaptureRecordingKeystrokeAllKeys", "AOMCaptureRecordingFocus", "AOMCaptureRecordingFocusOn",
+         "AOMCaptureRecordingFocusOff", "AOMAnnotationStylePresets", "AOMAnnotationMyColors",
+         "AOMAnnotationBackgroundPresets", "AOMAnnotationBackgroundAutoPresetID"]
+    }
+
+    /// Never in a backup: they describe this Mac, not the user's choices.
+    static let machineSpecificKeys = [Key.saveDirectory, Key.lastArea, Key.lastAreaDisplayID]
+
     static var format: CaptureFormat {
         get { CaptureFormat(rawValue: d.string(forKey: Key.format) ?? "") ?? .png }
         set { d.set(newValue.rawValue, forKey: Key.format) }

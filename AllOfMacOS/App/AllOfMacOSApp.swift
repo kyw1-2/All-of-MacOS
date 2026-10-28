@@ -944,6 +944,7 @@ struct GeneralSettingsView: View {
 }
 
 struct BackupSettingsView: View {
+    @EnvironmentObject var appState: AppState
     @State private var backupsEnabled = PresetManager.backupsEnabled
     @State private var customPath = UserDefaults.standard.string(forKey: "AOMBackupPath") ?? ""
     @State private var maxBackups = Double(PresetManager.maxBackups)
@@ -964,7 +965,7 @@ struct BackupSettingsView: View {
                         icon: "clock.arrow.circlepath",
                         iconColor: .orange,
                         title: "Enable Automatic Backups",
-                        subtitle: "Saves periodic snapshots of your gestures and profiles",
+                        subtitle: "Keeps a copy of your automations, profiles and settings each time they change. Restore one below.",
                         showDivider: true
                     ) {
                         Toggle("", isOn: $backupsEnabled)
@@ -1028,6 +1029,15 @@ struct BackupSettingsView: View {
                     }
                 }
 
+                // What a backup holds, stated where backups are restored
+                // (audit 2026-10-28 F07).
+                Text("Each backup holds your automations, app-specific sets, activation groups and snap layouts, plus the settings of the same moment: gestures and their timing, title-bar snap, key remapping, pausing rules, shortcuts, capture, text capture and recording, clipboard preferences, audio and appearance. Restoring them puts back exactly those settings, including the ones that were still at their defaults. Not included: clipboard history, captures and recordings, the backup and capture folders, the backup options, whether automation is paused, and AI tool or screen-reading access.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+
                 AppleSettingsGroup("Existing Backups") {
                     if backups.isEmpty {
                         HStack {
@@ -1044,17 +1054,24 @@ struct BackupSettingsView: View {
                                 icon: "doc.badge.clock",
                                 iconColor: .blue,
                                 title: dateFormatter.string(from: backup.date),
-                                subtitle: ByteCountFormatter.string(fromByteCount: backup.size, countStyle: .file),
+                                subtitle: backupSubtitle(backup),
                                 showDivider: index < backups.count - 1
                             ) {
-                                Button("Reveal") {
-                                    NSWorkspace.shared.selectFile(backup.url.path, inFileViewerRootedAtPath: "")
+                                HStack(spacing: 6) {
+                                    Button("Restore…") { confirmRestore(backup.url, date: backup.date) }
+                                        .controlSize(.small)
+                                        .accessibilityLabel("Restore the backup from \(dateFormatter.string(from: backup.date))")
+                                    Button("Reveal") {
+                                        NSWorkspace.shared.selectFile(backup.url.path, inFileViewerRootedAtPath: "")
+                                    }
+                                    .controlSize(.small)
                                 }
-                                .controlSize(.small)
                             }
                         }
                     }
                 }
+
+
 
                 HStack {
                     Spacer()
@@ -1070,6 +1087,43 @@ struct BackupSettingsView: View {
             .padding(20)
         }
         .onAppear { backups = PresetManager.listBackups() }
+    }
+
+    private func backupSubtitle(_ backup: (date: Date, size: Int64, url: URL)) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: backup.size, countStyle: .file)
+        let name = backup.url.deletingPathExtension().lastPathComponent
+        if name.contains("-before-import") { return "\(size) · kept before an import" }
+        if name.contains("-before-restore") { return "\(size) · kept before a restore" }
+        return size
+    }
+
+    /// One backup restores the automations, and — when it was saved with
+    /// them — the settings of the same moment (e.g. on a new Mac).
+    private func confirmRestore(_ url: URL, date: Date) {
+        // What would change, before anything does.
+        guard let preview = PresetManager.restorePreview(of: url, current: appState.currentPreset) else {
+            appState.presetOperationReporter("Could Not Read the Backup",
+                                             "\(url.lastPathComponent) is not a readable AOM backup. Nothing was changed.", .failure)
+            return
+        }
+        // Offered only when the settings file was actually read.
+        let hasSettings = preview.hasSettings
+        let alert = NSAlert()
+        alert.messageText = "Restore the backup from \(dateFormatter.string(from: date))?"
+        alert.informativeText = preview.summary + "\n\n"
+            + "It replaces your current automations, app profiles and snap layouts"
+            + (hasSettings ? ", and optionally your settings" : "")
+            + ". What it replaces is kept as a backup first."
+        alert.addButton(withTitle: "Restore Automations")
+        if hasSettings { alert.addButton(withTitle: "Restore Automations and Settings") }
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn: appState.restorePresetBackup(url)
+        case .alertSecondButtonReturn where hasSettings: appState.restorePresetBackup(url, includeSettings: true)
+        default: return
+        }
+        backups = PresetManager.listBackups()
     }
 }
 
