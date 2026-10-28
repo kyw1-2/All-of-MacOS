@@ -39,8 +39,12 @@ every gain stage, splice and restart on that path is AOM's.
   fades on start, underrun, clear and full queue; crossfaded trims; the app chain
   runs its delay lines empty; AirPlay app queues start at their 80 ms target.
 - 1024-frame IO, re-requested only while the device runs AOM smaller (30 s, then
-  backing off to 10 min); in-place reconfigure; no restart for a format notice
-  that keeps the rate; a new rate is confirmed 250 ms later.
+  backing off to 10 min). Measured after installing 3.3.2: the HomePod used here
+  accepts the request (status 0) and keeps 128 frames. That is true for AOM and
+  for a separate test process, through the device property and through the audio
+  unit, so on this device the larger buffer does not apply.
+- In-place reconfigure; no restart for a format notice that keeps the rate; a new
+  rate is confirmed 250 ms later.
 - The output survives one device list without the HomePod (released when the
   device reports dead or is missing for 1.5 s); an output is not released while
   a source fades; `add` allocates before taking the mix lock.
@@ -70,7 +74,8 @@ every gain stage, splice and restart on that path is AOM's.
    B Boost off, current EQ; C Boost on, flat EQ; D Boost off, flat EQ.
 3. Copy `audio-health.json` at the end of each state and compare:
    - `outputs.<uid>.deviceCycleGaps` and `deviceGapFrames` (HAL overloads),
-     `deviceBufferFrames` (should be 1024), `reconfigurations`, `ignoredFormatNotices`;
+     `deviceBufferFrames` (1024 where the device allows it; the HomePod tested
+     here stays at 128), `reconfigurations`, `ignoredFormatNotices`;
    - `trims`, `underruns`, `discardedFrames`, `droppedFrames` (bridge and app queues);
    - `captures.<pid>.tapRewrites`, `underruns`, `driftCorrectionPPM`;
    - `mixLateWakes`, `maximumMixDelayMS`, `mixRealtimeEffective`.
