@@ -498,7 +498,9 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertEqual(AppAudioPreferences.overdrive(bundleID: "test.auto", defaults: defaults), 1.8, accuracy: 0.0001)
     }
 
-    func testRealtimeAirPlayMixClockKeepsTheBridgeFed() {
+    /// The production mix path (bus → AirPlayMixThread → bridge) with one
+    /// constant source; nothing is played.
+    private static func startMixClock() -> (AirPlayMixThread, AirPlayPCMBridge) {
         let bus = AppAudioRenderBus()
         bus.add(id: UUID()) { frames, output in
             let data = UnsafeMutableAudioBufferListPointer(output)[0].mData!.assumingMemoryBound(to: Float.self)
@@ -508,13 +510,107 @@ final class AudioPipelineTests: XCTestCase {
         bridge.configure(outputRate: 48000, deviceFrames: 128)
         let thread = AirPlayMixThread(bus: bus, bridge: bridge)
         thread.start()
+        return (thread, bridge)
+    }
+
+    private static func describe(_ report: AirPlayMixTimeline.Report, _ thread: AirPlayMixThread) -> String {
+        func ms(_ value: UInt64?) -> String { value.map { String(format: "%.2f ms", Double($0) / 1e6) } ?? "n/a" }
+        let scheduling = report.scheduling.map {
+            "\($0.realtime ? "realtime" : "timeshare") priority \($0.priority) (host maximum \($0.maximumPriority))"
+        } ?? "unknown"
+        let origin = Double(report.startRequestedAt ?? 0)
+        let wakes = report.wakes.prefix(12).map {
+            String(format: "+%.1f late %.1f rendered %d burst %.2f lag %.1f", (Double($0.at) - origin) / 1e6,
+                   Double($0.late) / 1e6, $0.rendered, Double($0.burst) / 1e6, Double($0.lagAfter) / 1e6)
+        }
+        return "start→thread \(ms(report.threadStart)), start→first block \(ms(report.firstMix)); promotion " +
+            "\(thread.isRealtime ? "accepted" : "refused"), scheduler: \(scheduling); \(report.wakes.count) wake-ups, " +
+            "\(report.lateWakes) > 20 ms late, \(report.budgetLimitedWakes) budget-limited, max delay " +
+            "\(ms(thread.maximumMixDelay.load())), realigns \(thread.delayedMixResets.load()). First wake-ups, ms after start(): " +
+            wakes.joined(separator: "; ")
+    }
+
+    /// The original check, thresholds unchanged: in 0.5 s a realtime mix
+    /// clock delivers more than 0.4 s and less than 0.7 s of audio without
+    /// realigning.
+    ///
+    /// Audit F12: it failed 4/4 in the audit (13,920–15,840 frames). The
+    /// mix thread's own scheduler reading showed why: the test process ran
+    /// under a background clamp, the promotion was accepted but the thread
+    /// ran timeshare at priority 4, and every wake-up came ~120–200 ms late
+    /// (work/audit-20261028/s3). With wake-ups that coarse no clock can be
+    /// sampled at an arbitrary 0.5 s instant — the thread is simply not
+    /// allowed to run in between — so this check applies only while the
+    /// scheduler really runs the thread realtime, as it does in the app (its
+    /// mix thread shows 97R). Otherwise it is skipped with that reading, never
+    /// passed; `testAirPlayMixClockSustains48kHzAfterWarmUp` then still
+    /// checks the supply.
+    func testRealtimeAirPlayMixClockKeepsTheBridgeFed() throws {
+        // Whether the host clamps this process at all, read on this ordinary
+        // thread, so the decision does not depend on the mix code: a refused
+        // or broken promotion fails below instead of being skipped.
+        let host = AirPlayMixScheduling.current()
+        let (thread, bridge) = Self.startMixClock()
         Thread.sleep(forTimeInterval: 0.5)
         thread.stop()
+        let report = thread.timeline.report()
         let captured = bridge.statistics["capturedFrames"] as? UInt64 ?? 0
-        print("Realtime mix thread: \(captured) frames in 0.5 s, realtime=\(thread.isRealtime), max delay=\(Double(thread.maximumMixDelay.load()) / 1e6) ms")
+        print("Realtime mix thread: \(captured) frames in 0.5 s; \(Self.describe(report, thread))")
+        if let host, host.hostClamped {
+            throw XCTSkip("The host clamps this test process: an ordinary thread may run at most at priority " +
+                          "\(host.maximumPriority), and the mix thread ran " +
+                          "\(report.scheduling.map { "\($0.realtime ? "realtime" : "timeshare") at priority \($0.priority)" } ?? "unread") " +
+                          "with \(report.lateWakes) of \(report.wakes.count) wake-ups > 20 ms late. A 0.5 s instant says nothing " +
+                          "about the clock there, and a 150 ms bridge would run dry between such wake-ups. Run under the " +
+                          "application policy (`taskpolicy -a swift test`) for this check; " +
+                          "testAirPlayMixClockSustains48kHzAfterWarmUp still checks the clock's long-run rate here.")
+        }
+        XCTAssertTrue(thread.isRealtime, "The realtime promotion is accepted")
+        XCTAssertEqual(report.scheduling?.realtime, true, "The scheduler runs the mix thread realtime")
+        XCTAssertFalse(report.wakes.contains { !$0.realtime }, "At every wake-up")
         XCTAssertGreaterThan(captured, 19_200, "At least 0.4 s of audio must be produced in 0.5 s")
         XCTAssertLessThan(captured, 33_600, "The clock does not run ahead of real time")
         XCTAssertEqual(thread.delayedMixResets.load(), 0)
+        XCTAssertLessThan(thread.maximumMixDelay.load(), 20_000_000,
+                          "No wake-up is more than 20 ms late, far inside the bridge's 150 ms")
+    }
+
+    /// Audit F12, start-up and sustained supply told apart from the mix
+    /// thread's own timeline, in any environment. Start-up: the first block
+    /// within 250 ms of `start()`. Steady state (after a 250 ms warm-up, at
+    /// least 1 s): 48,000 frames/s ±5 %, every wake-up leaves the clock caught
+    /// up (≤ 20 ms behind), never ahead of real time, no realign. Where the
+    /// host demotes the thread and delays its wake-ups this holds only
+    /// because a demoted thread is not time-budgeted (AirPlayMixSchedule).
+    func testAirPlayMixClockSustains48kHzAfterWarmUp() {
+        let hostClamped = AirPlayMixScheduling.current()?.hostClamped ?? false
+        let (thread, _) = Self.startMixClock()
+        let deadline = AirPlayMixTimeline.now() + 8_000_000_000
+        while AirPlayMixTimeline.now() < deadline {
+            let report = thread.timeline.report()
+            if let first = report.firstMixAt, let last = report.wakes.last, last.end >= first + 2_000_000_000 { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        thread.stop()
+        let report = thread.timeline.report()
+        let rate = report.sustainedRate(warmUp: 250_000_000)
+        print("Mix clock supply: \(rate.map { String(format: "%.0f frames/s over %.2f s (%d wake-ups), worst lag after a wake-up %.1f ms", $0.framesPerSecond, Double($0.span) / 1e9, $0.wakes, Double($0.worstLagAfterWake) / 1e6) } ?? "n/a"); \(Self.describe(report, thread))")
+        XCTAssertLessThan(report.firstMix ?? .max, 250_000_000, "Start-up: the first block is mixed within 250 ms")
+        guard let rate, let origin = report.firstMixAt else { return XCTFail("No steady-state interval was recorded") }
+        XCTAssertGreaterThanOrEqual(rate.span, 1_000_000_000, "At least 1 s of steady state is measured")
+        XCTAssertEqual(rate.framesPerSecond, 48_000, accuracy: 2_400, "Steady-state supply is 48,000 frames/s ±5 %")
+        XCTAssertLessThanOrEqual(rate.worstLagAfterWake, 20_000_000, "Every wake-up catches the clock up")
+        for wake in report.wakes {
+            let allowed = (wake.end &- origin) / AirPlayMixThread.periodNanoseconds + 2
+            XCTAssertLessThanOrEqual(wake.totalBlocks, allowed, "Never ahead of real time")
+        }
+        XCTAssertEqual(thread.delayedMixResets.load(), 0)
+        // The rate is judged at burst ends. Between wake-ups the bridge only
+        // stays fed if they are well inside its 150 ms; that holds wherever
+        // the host does not clamp the process (the app's case).
+        if !hostClamped {
+            XCTAssertLessThan(thread.maximumMixDelay.load(), 20_000_000, "No wake-up is more than 20 ms late")
+        }
     }
 }
 
