@@ -546,24 +546,29 @@ final class AudioPipelineTests: XCTestCase {
     /// passed; `testAirPlayMixClockSustains48kHzAfterWarmUp` then still
     /// checks the supply.
     func testRealtimeAirPlayMixClockKeepsTheBridgeFed() throws {
-        // Whether the host clamps this process at all, read on this ordinary
-        // thread, so the decision does not depend on the mix code: a refused
-        // or broken promotion fails below instead of being skipped.
-        let host = AirPlayMixScheduling.current()
+        // What the host allows this process, measured on this ordinary thread
+        // from several signals and kept apart from the mix code (audit N01):
+        // a refused or broken promotion on a host that allows realtime fails
+        // below; only a host that throttles the whole process is skipped.
+        let host = AirPlayHostDiagnosis.measure()
         let (thread, bridge) = Self.startMixClock()
         Thread.sleep(forTimeInterval: 0.5)
         thread.stop()
         let report = thread.timeline.report()
         let captured = bridge.statistics["capturedFrames"] as? UInt64 ?? 0
-        print("Realtime mix thread: \(captured) frames in 0.5 s; \(Self.describe(report, thread))")
-        if let host, host.hostClamped {
-            throw XCTSkip("The host clamps this test process: an ordinary thread may run at most at priority " +
-                          "\(host.maximumPriority), and the mix thread ran " +
-                          "\(report.scheduling.map { "\($0.realtime ? "realtime" : "timeshare") at priority \($0.priority)" } ?? "unread") " +
-                          "with \(report.lateWakes) of \(report.wakes.count) wake-ups > 20 ms late. A 0.5 s instant says nothing " +
-                          "about the clock there, and a 150 ms bridge would run dry between such wake-ups. Run under the " +
-                          "application policy (`taskpolicy -a swift test`) for this check; " +
-                          "testAirPlayMixClockSustains48kHzAfterWarmUp still checks the clock's long-run rate here.")
+        print("Realtime mix thread: \(captured) frames in 0.5 s; \(Self.describe(report, thread)); host: \(Self.describe(host))")
+        switch AirPlayMixVerdict.judge(host: host, mix: report.scheduling, promotionAccepted: thread.isRealtime) {
+        case .hostThrottled(let reasons):
+            throw XCTSkip("The host keeps this test process out of realtime scheduling (\(reasons.joined(separator: "; "))). " +
+                          "The mix thread ran \(report.scheduling.map { "\($0.realtime ? "realtime" : "timeshare") at priority \($0.priority)" } ?? "unread") " +
+                          "with \(report.lateWakes) of \(report.wakes.count) wake-ups > 20 ms late, so a 0.5 s instant says nothing " +
+                          "about the clock. Run the suite under the application policy (scripts/run-tests.sh, i.e. " +
+                          "`taskpolicy -a swift test`) for this check; testAirPlayMixClockSustains48kHzAfterWarmUp " +
+                          "still checks the long-run supply here.")
+        case .promotionFailed(let detail):
+            XCTFail("The host allows realtime but \(detail): a real promotion failure, not an environment limit")
+        case .realtime:
+            break
         }
         XCTAssertTrue(thread.isRealtime, "The realtime promotion is accepted")
         XCTAssertEqual(report.scheduling?.realtime, true, "The scheduler runs the mix thread realtime")
@@ -575,6 +580,13 @@ final class AudioPipelineTests: XCTestCase {
                           "No wake-up is more than 20 ms late, far inside the bridge's 150 ms")
     }
 
+    private static func describe(_ host: AirPlayHostDiagnosis) -> String {
+        let thread = host.ordinaryThread.map { "ordinary thread priority \($0.priority) (ceiling \($0.maximumPriority))" } ?? "ordinary thread unread"
+        let timers = host.worstTimerLateness.map { String(format: "2 ms waits ≤ %.2f ms late", Double($0) / 1e6) } ?? "timers not probed"
+        let verdict = host.throttled ? "throttled: \(host.throttleReasons.joined(separator: "; "))" : "not throttled"
+        return "\(thread), darwin background \(host.darwinBackground), \(timers) — \(verdict)"
+    }
+
     /// Audit F12, start-up and sustained supply told apart from the mix
     /// thread's own timeline, in any environment. Start-up: the first block
     /// within 250 ms of `start()`. Steady state (after a 250 ms warm-up, at
@@ -583,7 +595,11 @@ final class AudioPipelineTests: XCTestCase {
     /// host demotes the thread and delays its wake-ups this holds only
     /// because a demoted thread is not time-budgeted (AirPlayMixSchedule).
     func testAirPlayMixClockSustains48kHzAfterWarmUp() {
-        let hostClamped = AirPlayMixScheduling.current()?.hostClamped ?? false
+        // The supply checks hold in every environment; only the per-wake-up
+        // delay bound needs a host that schedules the process normally (N01:
+        // judged from several signals, not the priority ceiling alone).
+        let host = AirPlayHostDiagnosis.measure()
+        let hostThrottled = host.throttled
         let (thread, _) = Self.startMixClock()
         let deadline = AirPlayMixTimeline.now() + 8_000_000_000
         while AirPlayMixTimeline.now() < deadline {
@@ -594,7 +610,7 @@ final class AudioPipelineTests: XCTestCase {
         thread.stop()
         let report = thread.timeline.report()
         let rate = report.sustainedRate(warmUp: 250_000_000)
-        print("Mix clock supply: \(rate.map { String(format: "%.0f frames/s over %.2f s (%d wake-ups), worst lag after a wake-up %.1f ms", $0.framesPerSecond, Double($0.span) / 1e9, $0.wakes, Double($0.worstLagAfterWake) / 1e6) } ?? "n/a"); \(Self.describe(report, thread))")
+        print("Mix clock supply: \(rate.map { String(format: "%.0f frames/s over %.2f s (%d wake-ups), worst lag after a wake-up %.1f ms", $0.framesPerSecond, Double($0.span) / 1e9, $0.wakes, Double($0.worstLagAfterWake) / 1e6) } ?? "n/a"); \(Self.describe(report, thread)); host: \(Self.describe(host))")
         XCTAssertLessThan(report.firstMix ?? .max, 250_000_000, "Start-up: the first block is mixed within 250 ms")
         guard let rate, let origin = report.firstMixAt else { return XCTFail("No steady-state interval was recorded") }
         XCTAssertGreaterThanOrEqual(rate.span, 1_000_000_000, "At least 1 s of steady state is measured")
@@ -607,8 +623,8 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertEqual(thread.delayedMixResets.load(), 0)
         // The rate is judged at burst ends. Between wake-ups the bridge only
         // stays fed if they are well inside its 150 ms; that holds wherever
-        // the host does not clamp the process (the app's case).
-        if !hostClamped {
+        // the host does not throttle the process (the app's case).
+        if !hostThrottled {
             XCTAssertLessThan(thread.maximumMixDelay.load(), 20_000_000, "No wake-up is more than 20 ms late")
         }
     }

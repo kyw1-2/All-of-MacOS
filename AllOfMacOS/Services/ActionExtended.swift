@@ -245,10 +245,19 @@ enum ExtendedActions {
     /// Grabs the window by its title bar, switches Space with the system shortcut,
     /// then lets go; macOS carries a held window along.
     private static func moveWindowToSpace(next: Bool, _ completion: @escaping (Bool) -> Void) {
+        moveWindowToSpace(next: next, target: nil, grab: nil, completion)
+    }
+
+    /// The same move for a given window (the title-bar gesture's), grabbed at
+    /// `grab` in global top-left coordinates (the middle of its title bar when
+    /// nil). Without a target it moves the front window. The pointer goes
+    /// back to where it was.
+    static func moveWindowToSpace(next: Bool, target: WindowManager.Target?, grab: CGPoint?,
+                                  _ completion: @escaping (Bool) -> Void) {
         // The move is a synthetic title-bar drag plus a Space shortcut; both
         // are dropped silently without the post-event permission.
         guard ActionPermissions.canPostEvents else { log(ActionPermissions.postEventsDenied); completion(false); return }
-        guard let target = WindowManager.shared.captureTarget(), let frame = WindowManager.shared.frame(of: target),
+        guard let target = target ?? WindowManager.shared.captureTarget(), let frame = WindowManager.shared.frame(of: target),
               frame.width > 120 else { log("No accessible window to move"); completion(false); return }
         let table = SymbolicHotKeys.load()
         let id = next ? SymbolicHotKeys.spaceRight : SymbolicHotKeys.spaceLeft
@@ -256,7 +265,7 @@ enum ExtendedActions {
             postHotKey(id, table: table, completion); return
         }
         let origin = CGEvent(source: nil)?.location ?? .zero
-        let grab = CGPoint(x: frame.midX, y: frame.minY + 10)
+        let grab = grab ?? CGPoint(x: frame.midX, y: frame.minY + 10)
         let source = CGEventSource(stateID: .hidSystemState)
         SyntheticInput.post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: grab, mouseButton: .left), tap: .cghidEventTap)
         SyntheticInput.post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: grab, mouseButton: .left), tap: .cghidEventTap)

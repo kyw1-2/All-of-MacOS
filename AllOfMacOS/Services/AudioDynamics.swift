@@ -137,7 +137,30 @@ final class AudioLookaheadLimiter {
     let ceiling: Float
     private let firstWidth: Int
     private let secondWidth: Int
-    private let releaseCoefficient: Float
+    /// Set at init; `setRelease` swaps it in place (render thread, no
+    /// allocation) so the delay line and gain state carry on.
+    private var releaseCoefficient: Float
+    /// The per-sample release step for a release time: reaches −20 dB of the
+    /// remaining distance after `seconds` (clamped to 5 ms…2 s).
+    static func releaseCoefficient(sampleRate: Double, seconds: Double) -> Float {
+        let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
+        let release = seconds.isFinite ? min(2, max(0.005, seconds)) : 0.025
+        return Float(1 - pow(0.1, 1 / (rate * release)))
+    }
+    /// Changes the release without touching the delay line or the envelope
+    /// (3.3.2 review: Volume Overdrive used to switch to a second limiter
+    /// when an app moved to or from AirPlay, with whatever that one's delay
+    /// line last held). Precompute the coefficient off the render thread.
+    func setReleaseCoefficient(_ coefficient: Float) {
+        guard coefficient.isFinite, coefficient > 0, coefficient <= 1 else { return }
+        releaseCoefficient = coefficient
+    }
+    /// Network outputs detect inter-sample (true) peaks; the delay line is
+    /// then longer by the detector's latency so the lookahead is unchanged.
+    let truePeak: Bool
+    private let detector: AudioTruePeakDetector?
+    private let detectionCeiling: Float
+    private let delayLength: Int
     private let delay: UnsafeMutablePointer<Float>
     private var delayIndex = 0
     // Monotonic deque (minimum) of required gain over lookahead + 1 frames.
@@ -154,20 +177,35 @@ final class AudioLookaheadLimiter {
     private var envelope: Float = 1
     private(set) var reduction: Float = 1
 
-    init(sampleRate: Double, ceiling: Float = 0.995) {
+    /// Total delay from input to output, frames.
+    var latencyFrames: Int { delayLength }
+
+    /// `releaseSeconds`: the time to recover to −20 dB of the remaining
+    /// reduction (25 ms, the reference's). The network bus uses a slower one:
+    /// a release that short follows the cycles of a bass note on loud masters
+    /// and modulates them, which is heard as grit.
+    init(sampleRate: Double, ceiling: Float = 0.995, truePeak: Bool = false, releaseSeconds: Double = 0.025) {
         let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
         var frames = 64
         if rate > 64000 { frames *= 2 }
         if rate > 128000 { frames *= 2 }
         lookahead = frames
         self.ceiling = min(1, max(0.1, ceiling))
+        self.truePeak = truePeak
+        detector = truePeak ? AudioTruePeakDetector() : nil
+        // The 4× estimate reads low on broadband transients near Nyquist
+        // (measured up to 0.15 dB on hard-switched 19 kHz bursts): keep a
+        // 0.22 dB margin so the output's true peak stays under the ceiling.
+        detectionCeiling = truePeak ? self.ceiling * 0.975 : self.ceiling
+        delayLength = frames + (truePeak ? AudioTruePeakDetector.delay : 0)
         firstWidth = frames / 2 + 1
         secondWidth = frames / 2 + 1
-        // 1 - 10^(log10(0.1) / (rate * 0.025)): reaches -20 dB of the
-        // remaining distance after 25 ms.
-        releaseCoefficient = Float(1 - pow(0.1, 1 / (rate * 0.025)))
-        delay = .allocate(capacity: frames * 2)
-        delay.initialize(repeating: 0, count: frames * 2)
+        // 1 - 10^(log10(0.1) / (rate * release)): reaches -20 dB of the
+        // remaining distance after `releaseSeconds`.
+        let release = releaseSeconds.isFinite ? min(2, max(0.005, releaseSeconds)) : 0.025
+        releaseCoefficient = Float(1 - pow(0.1, 1 / (rate * release)))
+        delay = .allocate(capacity: delayLength * 2)
+        delay.initialize(repeating: 0, count: delayLength * 2)
         dequeCapacity = frames + 2
         dequeValues = .allocate(capacity: dequeCapacity)
         dequeValues.initialize(repeating: 1, count: dequeCapacity)
@@ -187,7 +225,8 @@ final class AudioLookaheadLimiter {
     }
 
     func reset() {
-        memset(delay, 0, lookahead * 2 * MemoryLayout<Float>.size)
+        memset(delay, 0, delayLength * 2 * MemoryLayout<Float>.size)
+        detector?.reset()
         delayIndex = 0; dequeHead = 0; dequeCount = 0; frame = 0
         for i in 0..<firstWidth { first[i] = 1 }
         for i in 0..<secondWidth { second[i] = 1 }
@@ -195,14 +234,17 @@ final class AudioLookaheadLimiter {
         firstIndex = 0; secondIndex = 0; envelope = 1; reduction = 1
     }
 
-    /// In place; `left` and `right` may alias for mono. Output lags input by `lookahead`.
+    /// In place; `left` and `right` may alias for mono. Output lags input by `latencyFrames`.
     func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) {
         let window = lookahead + 1
         for index in 0..<frames {
             let inputLeft = left[index].isFinite ? max(-1e6, min(1e6, left[index])) : 0
             let inputRight = right[index].isFinite ? max(-1e6, min(1e6, right[index])) : 0
-            let peak = max(abs(inputLeft), abs(inputRight))
-            let required = peak > ceiling ? ceiling / peak : 1
+            // True-peak mode: the estimate is for the frame `delay` frames
+            // back, which the longer delay line accounts for.
+            let peak = detector?.peak(inputLeft, inputRight, threshold: detectionCeiling)
+                ?? max(abs(inputLeft), abs(inputRight))
+            let required = peak > detectionCeiling ? detectionCeiling / peak : 1
             // Push into the monotonic minimum deque; evict entries that are
             // no longer the minimum or have left the window.
             while dequeCount > 0 {
@@ -247,7 +289,7 @@ final class AudioLookaheadLimiter {
             let outputRight = delay[delaySlot + 1] * envelope
             delay[delaySlot] = inputLeft; delay[delaySlot + 1] = inputRight
             delayIndex += 1
-            if delayIndex == lookahead { delayIndex = 0 }
+            if delayIndex == delayLength { delayIndex = 0 }
             left[index] = max(-ceiling, min(ceiling, outputLeft))
             right[index] = max(-ceiling, min(ceiling, outputRight))
             frame += 1
@@ -260,6 +302,95 @@ final class AudioLookaheadLimiter {
                 frame = window
             }
         }
+    }
+}
+
+/// Inter-sample peak estimate for the limiter's detector, as ITU-R
+/// BS.1770-4 true-peak meters take it: 4× oversampling, i.e. each sample and
+/// three points interpolated between it and the next, from a 64-tap
+/// Kaiser-windowed sinc per phase (flat to about 22 kHz at 48 kHz). The
+/// reported peak is for the frame `delay` frames before the newest input.
+/// Preallocated; no allocation or locking per frame.
+final class AudioTruePeakDetector {
+    static let taps = 64
+    static let delay = taps / 2
+    /// 3 × taps, row-major: one row per interpolated point.
+    private let coefficients: UnsafeMutablePointer<Float>
+    /// Interleaved stereo, `taps` frames written twice (contiguous windows).
+    private let history: UnsafeMutablePointer<Float>
+    private var slot = 0
+    /// The largest L1 norm of the three rows: |point| ≤ norm · max|x|.
+    private let norm: Float
+    /// Frames until the last loud-enough sample leaves the window.
+    private var loudFrames = 0
+
+    init(beta: Double = 8) {
+        let taps = Self.taps
+        coefficients = .allocate(capacity: 3 * taps)
+        history = .allocate(capacity: 4 * taps)
+        history.initialize(repeating: 0, count: 4 * taps)
+        func bessel(_ x: Double) -> Double {
+            var sum = 1.0, term = 1.0, k = 1.0
+            repeat { term *= (x / 2 / k) * (x / 2 / k); sum += term; k += 1 } while term > sum * 1e-17
+            return sum
+        }
+        let half = Double(taps) / 2
+        var largest = 1.0
+        for phase in 1...3 {
+            // Window m is frame n − (taps − 1) + m; the point lies between
+            // frames n − delay and n − delay + 1, i.e. after m = taps/2 − 1.
+            let at = Double(taps / 2 - 1) + Double(phase) / 4
+            var row = [Double](repeating: 0, count: taps)
+            for m in 0..<taps {
+                let d = Double(m) - at
+                let sinc = d == 0 ? 1 : sin(.pi * d) / (.pi * d)
+                let r = d / half
+                row[m] = sinc * bessel(beta * sqrt(max(0, 1 - r * r))) / bessel(beta)
+            }
+            let sum = row.reduce(0, +)
+            for m in 0..<taps { coefficients[(phase - 1) * taps + m] = Float(row[m] / sum) }
+            largest = max(largest, row.reduce(0) { $0 + abs($1) } / abs(sum))
+        }
+        norm = Float(largest) * 1.001
+    }
+    deinit { coefficients.deallocate(); history.deallocate() }
+
+    func reset() {
+        memset(history, 0, 4 * Self.taps * MemoryLayout<Float>.size)
+        slot = 0
+        loudFrames = 0
+    }
+
+    /// Pushes one frame; returns the largest |value| of the frame `delay`
+    /// frames back and the three points after it, over both channels.
+    /// While no sample in the window could reach `threshold` (|x| times the
+    /// kernel's L1 norm bounds any interpolated point) only the centre
+    /// sample is returned, which is exact enough to say "below".
+    func peak(_ left: Float, _ right: Float, threshold: Float = 0) -> Float {
+        let taps = Self.taps
+        slot += 1
+        if slot == taps { slot = 0 }
+        history[slot * 2] = left; history[slot * 2 + 1] = right
+        history[(slot + taps) * 2] = left; history[(slot + taps) * 2 + 1] = right
+        // Oldest first: frames n − (taps − 1) … n, a taps × 2 matrix.
+        let window = history + (slot + 1) * 2
+        let centre = taps / 2 - 1
+        var peak = max(abs(window[centre * 2]), abs(window[centre * 2 + 1]))
+        if max(abs(left), abs(right)) * norm > threshold { loudFrames = taps }
+        guard loudFrames > 0 else { return peak }
+        loudFrames -= 1
+        // All three points of both channels in one pass (a plain loop: for a
+        // 3 × 64 × 2 product it is ten times faster than vDSP_mmul).
+        let c0 = coefficients, c1 = coefficients + taps, c2 = coefficients + 2 * taps
+        var l0: Float = 0, r0: Float = 0, l1: Float = 0, r1: Float = 0, l2: Float = 0, r2: Float = 0
+        for m in 0..<taps {
+            let l = window[m * 2], r = window[m * 2 + 1]
+            l0 += c0[m] * l; r0 += c0[m] * r
+            l1 += c1[m] * l; r1 += c1[m] * r
+            l2 += c2[m] * l; r2 += c2[m] * r
+        }
+        peak = max(peak, max(max(abs(l0), abs(r0)), max(max(abs(l1), abs(r1)), max(abs(l2), abs(r2)))))
+        return peak
     }
 }
 
@@ -279,10 +410,24 @@ final class AudioVolumeOverdrive {
     private let dryLeft: UnsafeMutablePointer<Float>
     private let dryRight: UnsafeMutablePointer<Float>
     private let chunk: Int
+    /// The limiter's two releases (3.3.2 review): the reference's, and the
+    /// network bus's for an app overdriven into an AirPlay output.
+    private let localRelease: Float
+    private let networkRelease: Float
+    /// Render thread only: the network release is in use.
+    private var networkReleaseOn = false
 
-    init(sampleRate: Double, chunk: Int = 512) {
+    /// `releaseSeconds`: the limiter's release. 25 ms is the reference's;
+    /// an app overdriven into an AirPlay output switches to
+    /// `networkReleaseSeconds` (the network bus's 150 ms, `useNetworkRelease`),
+    /// since a 25 ms release follows the cycles of a bass note and modulates
+    /// them (heard as grit).
+    init(sampleRate: Double, chunk: Int = 512, releaseSeconds: Double = 0.025,
+         networkReleaseSeconds: Double = AppAudioRenderBus.networkRelease) {
         let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
-        limiter = AudioLookaheadLimiter(sampleRate: rate, ceiling: 0.995)
+        limiter = AudioLookaheadLimiter(sampleRate: rate, ceiling: 0.995, releaseSeconds: releaseSeconds)
+        localRelease = AudioLookaheadLimiter.releaseCoefficient(sampleRate: rate, seconds: releaseSeconds)
+        networkRelease = AudioLookaheadLimiter.releaseCoefficient(sampleRate: rate, seconds: networkReleaseSeconds)
         fadeStep = Float(1 / (0.02 * rate))
         rampStep = Float(1 / (0.005 * rate))
         self.chunk = chunk
@@ -292,6 +437,18 @@ final class AudioVolumeOverdrive {
     deinit { dryLeft.deallocate(); dryRight.deallocate() }
 
     var isActive: Bool { engagement > 0 || current != 1 }
+
+    /// Switches the limiter's release in place when the app's output becomes
+    /// (or stops being) an AirPlay receiver. 3.3.2 review: MixerBox used to
+    /// switch to a second Overdrive whose delay line still held whatever it
+    /// last played, a jump whenever an overdriven app moved between a local
+    /// output and AirPlay. One limiter, one delay line: nothing jumps.
+    /// Render thread; no allocation.
+    func useNetworkRelease(_ on: Bool) {
+        guard on != networkReleaseOn else { return }
+        networkReleaseOn = on
+        limiter.setReleaseCoefficient(on ? networkRelease : localRelease)
+    }
 
     /// In place, at most `chunk` frames.
     func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,

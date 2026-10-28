@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.2
+
+The title-bar snap now follows Swish: quick flicks snap at once, swipes chain from cell to cell (a window at the top reaches the bottom half and quarters), diagonals pick a quarter, and resting two fingers still for 2 s cancels. It adds pinches, double tap, tap and hold, ⌥/⇧/⌘ variants, a 2 × 2 (default, no thirds), 3 × 2 or 3 × 3 grid, almost maximize, ⌃⌥ keyboard shortcuts, drag to unsnap, re-snapping after display changes and resizing adjacent windows, plus Dock and menu-bar gestures. Swipe down on a free window now minimizes, pinch in closes (twice quits), and hold-then-swipe moves a window to another Space; each can be turned off in Window Tiling › Trackpad Gestures. The top-bar Space swipe switches on lift, so resting 2 s cancels it too. HomePod and AirPlay output gets a true-peak limiter with headroom for the receiver, sinc resampling with a drift loop, shaped discontinuities, larger IO buffers and fewer restarts; apps get a stereo balance. Real-trackpad and HomePod listening checks still need a person. See [the window-snap notes](docs/window-snap-3.3.2.md) and [the AirPlay crackle notes](docs/airplay-crackle-3.3.2.md).
+
 ## Version 3.3.1
 
 Stability fixes from the 2026-10-28 audit: pausing AOM now pauses every gesture layer, Dock pinch never force-quits, MCP replies arrive whole and a closed AI tool can no longer terminate AOM, a steadier title-bar snap, an AirPlay mix clock that measures its own start-up and supply and keeps 48 kHz even when macOS throttles it, recordings longer than 50 minutes keep their pointer track, unreadable archives are kept instead of overwritten, backups that restore the automations and settings of their moment, and actions that report failure when a permission is missing. Real-trackpad, AirPlay-listening and 65-minute recording checks still need a person. See [the remediation report](docs/audit-3.3.1-stability-20261028.md).

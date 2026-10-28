@@ -43,12 +43,18 @@ Stream Deck are excluded by request. The gap list came from a code audit of
 
 ## Still open
 
-| Gap | Why it is not in 3.1.0 |
+Updated for 3.3.2 (checked against the code): two-finger edge swipes and
+Force Click triggers (BTT), per-app balance (SoundSource) and the Swish
+gesture set (title bar, Dock, menu bar; docs/window-snap-3.3.2.md) are done.
+
+| Gap | Why it is still open |
 |---|---|
-| Continuous, pressure-based and 2-finger edge trackpad gestures (BTT) | Needs a new per-frame gesture family in the multitouch pipeline; large and risky to ship untested. |
+| Continuous value bindings and pressure stages for trackpad gestures (BTT) | Needs a per-frame value stream and Force Touch pressure stages in the multitouch pipeline; Force Click exists only as a discrete trigger. |
+| Audio Unit hosting, headphone EQ presets and Magic Boost presets (SoundSource) | No AU host; the EQ has no per-headphone curves, and Magic Boost is a switch without presets. |
+| Link cards and OCR region search in clipboard previews (Paste) | Need opt-in network fetches and stored Vision boxes. |
+| Text background styles, video backgrounds and click display options (CleanShot) | Annotation and Studio renderer changes; recordings only have a show-clicks switch. |
 | Move window to Desktop N | No public API; repeated Space moves are unreliable across display layouts. |
-| Video backgrounds, text background styles, annotation eraser (CleanShot) | Studio and annotation renderer changes, planned separately. |
-| Link cards and OCR match boxes in clipboard previews (Paste) | Need opt-in network fetches and stored Vision boxes. |
+| Annotation eraser (CleanShot) | Annotation renderer change, not started. |
 | Floating menu submenus, searchable lists, focus-follows-mouse, Stage Manager toggle | Lower value; not started. |
 
 ## Verification

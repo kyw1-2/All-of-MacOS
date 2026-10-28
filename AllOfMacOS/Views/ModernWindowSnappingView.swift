@@ -15,9 +15,30 @@ struct ModernWindowSnappingView: View {
     @AppStorage(TitleBarWindowSnap.hapticKey) private var trackpadSnapHaptic = true
     @AppStorage(TitleBarWindowSnap.activateKey) private var trackpadSnapActivate = true
     @AppStorage(TitleBarWindowSnap.keepPointerKey) private var trackpadSnapKeepPointer = false
+    @AppStorage(TitleBarWindowSnap.thirdsKey) private var trackpadSnapThirds = false
+    @AppStorage(TitleBarWindowSnap.previewKey) private var trackpadSnapPreview = true
+    @AppStorage(TitleBarWindowSnap.holdCancelKey) private var holdCancelSeconds = TitleBarWindowSnap.holdCancelDefault
+    @AppStorage(TitleBarWindowSnap.pinchKey) private var trackpadSnapPinch = true
+    @AppStorage(TitleBarWindowSnap.doubleTapKey) private var trackpadSnapDoubleTap = SwishSnap.DoubleTap.restoreOrCenter.rawValue
+    @AppStorage(TitleBarWindowSnap.holdKey) private var trackpadSnapHold = true
+    @AppStorage(TitleBarWindowSnap.downActionKey) private var trackpadSnapDownAction = SwishSnap.DownAction.minimize.rawValue
+    @AppStorage(TitleBarWindowSnap.modifiersKey) private var trackpadSnapModifiers = true
+    @AppStorage(TitleBarWindowSnap.sensitivityKey) private var trackpadSnapSensitivity = TitleBarWindowSnap.sensitivityDefault
+    // 3.3.2 Swish snapping options. The grid is empty until chosen, and then
+    // follows the 3.3.2 Thirds switch (`trackpadSnapGrid`).
+    @AppStorage(TitleBarWindowSnap.gridKey) private var trackpadSnapGridRaw = ""
+    @AppStorage(TitleBarWindowSnap.almostKey) private var trackpadSnapAlmost = false
+    @AppStorage(TitleBarWindowSnap.hotkeysKey) private var trackpadSnapHotkeys = SwishSnap.HotkeyScheme.off.rawValue
+    @AppStorage(TitleBarWindowSnap.dragUnsnapKey) private var trackpadSnapDragUnsnap = true
+    @AppStorage(TitleBarWindowSnap.resizeAdjacentKey) private var trackpadSnapResizeAdjacent = true
+    @AppStorage(TitleBarWindowSnap.resnapKey) private var trackpadSnapResnap = true
+    @AppStorage(TitleBarWindowSnap.animationKey) private var trackpadSnapAnimation = SwishSnap.AnimationSpeed.normal.rawValue
+    @AppStorage(TitleBarWindowSnap.marginKey) private var trackpadSnapMargin = 0.0
+    @AppStorage(TitleBarWindowSnap.stageManagerOffsetKey) private var stageManagerOffset = 0.0
     @AppStorage(TrackpadUtilityGestures.spacesEnabledKey) private var topBarSpaceSwipe = true
     @AppStorage(TrackpadUtilityGestures.dockQuitEnabledKey) private var dockPinchQuit = true
-    @State private var showingSnapOptions = false
+    @AppStorage(TrackpadUtilityGestures.dockGesturesKey) private var dockGestures = true
+    @AppStorage(TrackpadUtilityGestures.menuBarGesturesKey) private var menuBarGestures = true
     @State private var readiness: [TrackpadReadiness.Item] = []
 
     /// Layouts grouped the way the Window menu groups them, with short labels
@@ -279,12 +300,16 @@ struct ModernWindowSnappingView: View {
             EmptyView()
         } content: {
             VStack(spacing: 0) {
-                Text("Swipe two fingers on a title bar: left or right for a half (further for a third), up to maximize, down to center. Add a leg along the other axis for a quarter, and swipe down on a snapped window to put it back. Lift your fingers to apply the preview, however long you hold it; add a third finger to cancel.")
-                    .font(AOMType.caption)
-                    .foregroundStyle(AOMTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, AOMSpace.xs)
+                VStack(alignment: .leading, spacing: AOMSpace.xxs) {
+                    Text("Swipe two fingers on a title bar or toolbar: left or right for a half, up to maximize, down to \(trackpadSnapDownAction == SwishSnap.DownAction.center.rawValue ? "center" : "minimize"), diagonally for that quarter. Swipes chain from where the window is: a half swiped up or down becomes a quarter, a top quarter swiped down moves to the bottom, a diagonal swipe reaches any quarter from anywhere (a maximized or top-half window swiped ↙ goes to the bottom-left), and swiping toward an edge grows the window along it; swipe down on a maximized or bottom-edge window to put it back. Lift to apply. To cancel, add a third finger or rest your fingers without moving (2 s by default).")
+                    Text("Pinch in to close the window, twice to quit the app; pinch out for full screen. Double tap to unsnap or center. Rest your fingers, then swipe: up for full screen, down to minimize, sideways to the next Space. ⌥ Option: swipe sideways for a Space, down to close; ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display that way.")
+                    Text("Grid 3 × 2 adds thirds and their upper and lower halves, 3 × 3 ninths (swipe toward an edge to grow a cell). Drag a snapped window by its title bar to get its old size back; resize one of two snapped windows and the other follows; snapped windows re-snap after a display change. ⌃⌥ with the chosen keys swipes the front window from the keyboard.")
+                }
+                .font(AOMType.caption)
+                .foregroundStyle(AOMTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, AOMSpace.xs)
                 settingRow("Title-bar snap") {
                     Toggle("Title-bar snap", isOn: Binding(get: { trackpadSnapOn },
                                                            set: { trackpadSnapOn = $0; TitleBarWindowSnap.shared.refreshEnabled() }))
@@ -295,33 +320,97 @@ struct ModernWindowSnappingView: View {
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                         .disabled(!trackpadSnapOn)
                 }
-                DisclosureGroup(isExpanded: $showingSnapOptions) {
-                    VStack(spacing: 0) {
-                        settingRow("Bring window forward") {
-                            Toggle("Bring window forward after snapping", isOn: $trackpadSnapActivate)
-                                .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                // Every snap option stays in view (3.3.2): the options used to
+                // sit in a collapsed "Snap Options" group that was easy to miss.
+                VStack(spacing: 0) {
+                    settingRow("Swipe sensitivity") {
+                        Picker("Swipe sensitivity", selection: sensitivitySelection) {
+                            ForEach(Self.sensitivityPresets, id: \.value) { preset in
+                                Text(preset.title).tag(preset.value)
+                            }
+                            // The Settings Hub slider writes any value in 0.5…2;
+                            // one between the presets still shows here.
+                            if Self.preset(trackpadSnapSensitivity, in: Self.sensitivityPresets) == nil {
+                                Text("Custom (\(String(format: "%.2f", trackpadSnapSensitivity))×)")
+                                    .tag(trackpadSnapSensitivity)
+                            }
                         }
-                        settingRow("Keep pointer on title bar", showsDivider: false) {
-                            Toggle("Keep pointer on the title bar after snapping", isOn: $trackpadSnapKeepPointer)
-                                .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        }
+                        .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
                     }
-                    .disabled(!trackpadSnapOn)
-                } label: {
-                    Text("Snap Options").font(AOMType.body).foregroundStyle(AOMTheme.text)
+                    .help("How little travel starts a swipe: Quick (default) engages after about 4 % of the trackpad, Instant after 3 %, Standard after 5 % as in 3.3.1. A quick two-finger tap never snaps at any setting; a quick flick that engaged always does.")
+                    snapLayoutRows
+                    settingRow("Swipe down on a free window") {
+                        Picker("Swipe down on a free window", selection: $trackpadSnapDownAction) {
+                            Text("Minimize (Swish)").tag(SwishSnap.DownAction.minimize.rawValue)
+                            Text("Center").tag(SwishSnap.DownAction.center.rawValue)
+                        }
+                        .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+                    }
+                    .help("A short swipe down on a window that is not snapped. A longer swipe down still snaps it to the bottom half; a snapped window keeps moving between cells.")
+                    settingRow("Double tap") {
+                        Picker("Double tap", selection: $trackpadSnapDoubleTap) {
+                            Text("Unsnap or Center").tag(SwishSnap.DoubleTap.restoreOrCenter.rawValue)
+                            Text("Center").tag(SwishSnap.DoubleTap.center.rawValue)
+                            Text("Off").tag(SwishSnap.DoubleTap.off.rawValue)
+                        }
+                        .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+                    }
+                    .help("Double tap two fingers on a title bar: put a window AOM snapped back where it was, or center it. With ⌥ Option it hides the app, with ⇧ Shift every other app.")
+                    settingRow("Pinch gestures") {
+                        Toggle("Pinch to close, quit or go full screen", isOn: $trackpadSnapPinch)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    }
+                    .help("Pinch in on a title bar to close the window, twice to quit the app (it may ask to save). Pinch out to enter or leave full screen; with two displays, pinch out twice or hold ⌘ for full screen on the other display.")
+                    settingRow("Tap and hold gestures") {
+                        Toggle("Tap and hold, then swipe", isOn: $trackpadSnapHold)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    }
+                    .help("Rest two fingers on a title bar for half a second, then swipe: up for full screen, down to minimize (also in full screen), left or right to move the window to the next Space.")
+                    settingRow("Modifier gestures") {
+                        Toggle("Modifier gestures", isOn: $trackpadSnapModifiers)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    }
+                    .help("⌥ Option: swipe sideways to move the window a Space, down to close it (rest first, or swipe down twice, to quit the app). ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display in that direction.")
+                    snapBehaviourRows
                 }
-                .frame(minHeight: 38)
-                AOMDivider()
+                .disabled(!trackpadSnapOn)
+                .opacity(trackpadSnapOn ? 1 : 0.6)
                 settingRow("Top-bar Space swipe") {
                     Toggle("Top-bar Space swipe", isOn: $topBarSpaceSwipe)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 .help("Two fingers on the menu bar switch Spaces")
-                settingRow("Dock pinch to quit", showsDivider: false) {
+                settingRow("Dock pinch to quit") {
                     Toggle("Dock pinch to quit", isOn: $dockPinchQuit)
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 .help("Pinch in on a Dock icon to quit that app")
+                settingRow("Dock gestures") {
+                    Toggle("Dock gestures", isOn: $dockGestures)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .help("Two fingers on a Dock icon: tap and hold to activate the app, swipe sideways through its windows, down to minimize, up to unminimize (⇧ all), double tap to hide (⇧ the others), pinch out for ⌘N. With Tap to click on, a two-finger tap is also a right-click, so the Dock menu may open.")
+                settingRow("Menu-bar gestures") {
+                    Toggle("Menu-bar gestures", isOn: $menuBarGestures)
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                .help("Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.")
+                // Swish's cancel: rest the fingers without moving. Shared by
+                // the title-bar snap and every menu-bar and Dock gesture.
+                settingRow("Hold still to cancel", showsDivider: false) {
+                    Picker("Hold still to cancel", selection: holdCancelSelection) {
+                        ForEach(Self.holdCancelPresets, id: \.value) { preset in
+                            Text(preset.title).tag(preset.value)
+                        }
+                        // The Settings Hub slider writes 0…3 s in 0.5 s steps
+                        // (all presets here); any other value still shows.
+                        if Self.preset(holdCancelSeconds, in: Self.holdCancelPresets) == nil {
+                            Text("Custom (\(String(format: "%.1f", holdCancelSeconds)) s)").tag(holdCancelSeconds)
+                        }
+                    }
+                    .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+                }
+                .help("Rest two fingers without moving for this long to cancel a title-bar gesture (snap, display or Space move, pinch, tap and hold), a top-bar Space swipe, or a menu-bar or Dock gesture: the touch then does nothing until you lift. The snap preview fades just before it goes.")
                 readinessList
                     .padding(.top, AOMSpace.xs)
             }
@@ -331,8 +420,157 @@ struct ModernWindowSnappingView: View {
         .onChange(of: trackpadSnapHaptic) { _, _ in refreshReadiness() }
         .onChange(of: topBarSpaceSwipe) { _, _ in gestureSettingChanged() }
         .onChange(of: dockPinchQuit) { _, _ in gestureSettingChanged() }
+        .onChange(of: dockGestures) { _, _ in gestureSettingChanged() }
+        .onChange(of: menuBarGestures) { _, _ in gestureSettingChanged() }
+        .onChange(of: holdCancelSeconds) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapHold) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapSensitivity) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapModifiers) { _, _ in refreshReadiness() }
+        // The hotkeys and the mouse handlers start or stop with these.
+        .onChange(of: trackpadSnapHotkeys) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapDragUnsnap) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapResizeAdjacent) { _, _ in gestureSettingChanged() }
+        .onChange(of: trackpadSnapResnap) { _, _ in gestureSettingChanged() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshReadiness()
+        }
+    }
+
+    /// The pickers' named values (3.3.2 review: the Settings Hub sliders
+    /// write values these pickers did not offer, which left them blank).
+    struct PickerPreset { let title: String; let value: Double }
+    static let sensitivityPresets = [PickerPreset(title: "Relaxed", value: 0.8), PickerPreset(title: "Standard", value: 1.0),
+                                     PickerPreset(title: "Quick", value: 1.25), PickerPreset(title: "Instant", value: 1.6)]
+    static let holdCancelPresets = [PickerPreset(title: "Off", value: 0), PickerPreset(title: "0.5 s", value: 0.5),
+                                    PickerPreset(title: "1 s", value: 1), PickerPreset(title: "1.5 s", value: 1.5),
+                                    PickerPreset(title: "2 s", value: 2), PickerPreset(title: "2.5 s", value: 2.5),
+                                    PickerPreset(title: "3 s", value: 3)]
+
+    /// The preset a stored value stands for (a slider's 1.2500000000000002
+    /// is Quick), or nil for a value between them.
+    static func preset(_ value: Double, in presets: [PickerPreset]) -> PickerPreset? {
+        presets.first { abs($0.value - value) < 0.001 }
+    }
+
+    private var sensitivitySelection: Binding<Double> {
+        Binding(get: { Self.preset(trackpadSnapSensitivity, in: Self.sensitivityPresets)?.value ?? trackpadSnapSensitivity },
+                set: { trackpadSnapSensitivity = $0 })
+    }
+
+    private var holdCancelSelection: Binding<Double> {
+        Binding(get: { Self.preset(holdCancelSeconds, in: Self.holdCancelPresets)?.value ?? holdCancelSeconds },
+                set: { holdCancelSeconds = $0 })
+    }
+
+    /// The grid as chosen, or, never chosen, what the 3.3.2 Thirds switch
+    /// meant (3 × 2 when it was on). Choosing keeps that switch in step.
+    private var trackpadSnapGrid: Binding<String> {
+        Binding(get: {
+            SwishSnap.Grid(rawValue: trackpadSnapGridRaw)?.rawValue
+                ?? (trackpadSnapThirds ? SwishSnap.Grid.threeByTwo : .twoByTwo).rawValue
+        }, set: { value in
+            trackpadSnapGridRaw = value
+            trackpadSnapThirds = (SwishSnap.Grid(rawValue: value) ?? .twoByTwo).thirds
+        })
+    }
+
+    /// Where swipes and hotkeys put windows (3.3.2: Swish's grid, almost
+    /// maximize, margin, Stage Manager offset and keyboard hotkeys).
+    private var snapLayoutRows: some View {
+        VStack(spacing: 0) {
+            settingRow("Grid") {
+                Picker("Grid", selection: trackpadSnapGrid) {
+                    Text("2 × 2 · halves, quarters, no thirds").tag(SwishSnap.Grid.twoByTwo.rawValue)
+                    Text("3 × 2 · thirds, sixths").tag(SwishSnap.Grid.threeByTwo.rawValue)
+                    Text("3 × 3 · ninths").tag(SwishSnap.Grid.threeByThree.rawValue)
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+            }
+            .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped up or down takes its upper or lower half. 3 × 3: a third swiped up or down becomes a ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths.")
+            settingRow("Almost maximize") {
+                Toggle("Almost maximize", isOn: $trackpadSnapAlmost)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            .help("Swipe up to fill almost the whole screen, leaving a small gap all round; swipe up again to maximize.")
+            settingRow("Margin") {
+                pointSlider(value: $trackpadSnapMargin, range: TitleBarWindowSnap.marginRange, step: 1, label: "Margin")
+            }
+            .help("The gap kept around every snapped window, in points.")
+            settingRow("Stage Manager offset") {
+                pointSlider(value: $stageManagerOffset, range: TitleBarWindowSnap.stageManagerOffsetRange, step: 10,
+                            label: "Stage Manager offset")
+            }
+            .help("While Stage Manager is on, snapped windows leave this much room on the left for its strip of recent apps.")
+            settingRow("Keyboard shortcuts") {
+                Picker("Keyboard shortcuts", selection: $trackpadSnapHotkeys) {
+                    Text("Off").tag(SwishSnap.HotkeyScheme.off.rawValue)
+                    Text("⌃⌥ Arrows").tag(SwishSnap.HotkeyScheme.arrows.rawValue)
+                    Text("⌃⌥ WASD").tag(SwishSnap.HotkeyScheme.wasd.rawValue)
+                    Text("⌃⌥ IJKL").tag(SwishSnap.HotkeyScheme.ijkl.rawValue)
+                    Text("⌃⌥ HJKL").tag(SwishSnap.HotkeyScheme.hjkl.rawValue)
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+            }
+            .help("⌃⌥ and one of four keys acts like a swipe that way on the front window, chaining from where it is. A shortcut you bound to the same keys wins; paused, the keys go to the app.")
+        }
+    }
+
+    /// What happens around a snap (3.3.2: the preview animation, drag to
+    /// unsnap, resizing neighbours and re-snapping).
+    private var snapBehaviourRows: some View {
+        VStack(spacing: 0) {
+            settingRow("Show preview") {
+                Toggle("Show the snap preview while swiping", isOn: $trackpadSnapPreview)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            .help("The translucent frame for a snap and the name of any other action, while your fingers are down")
+            settingRow("Preview animation") {
+                Picker("Preview animation", selection: $trackpadSnapAnimation) {
+                    Text("Fast").tag(SwishSnap.AnimationSpeed.fast.rawValue)
+                    Text("Normal").tag(SwishSnap.AnimationSpeed.normal.rawValue)
+                    Text("Off").tag(SwishSnap.AnimationSpeed.off.rawValue)
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small).fixedSize()
+            }
+            .help("How quickly the preview appears, moves and fades. Off shows and hides it at once; Reduce Motion always keeps it from sliding.")
+            settingRow("Bring window forward") {
+                Toggle("Bring window forward after snapping", isOn: $trackpadSnapActivate)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            settingRow("Keep pointer on title bar") {
+                Toggle("Keep pointer on the title bar after snapping", isOn: $trackpadSnapKeepPointer)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            settingRow("Drag to unsnap") {
+                Toggle("Drag to unsnap", isOn: $trackpadSnapDragUnsnap)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            .help("Drag a window AOM snapped by its title bar and it gets back its size from before the snap, under the pointer.")
+            settingRow("Resize neighbours together") {
+                Toggle("Resize neighbours together", isOn: $trackpadSnapResizeAdjacent)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            .help("Resize a snapped window along an edge it shares with another snapped window, and when you let go that window follows the edge.")
+            settingRow("Re-snap after display changes") {
+                Toggle("Re-snap after display changes", isOn: $trackpadSnapResnap)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            .help("When a display is connected, disconnected or rearranged, windows still where AOM snapped them take their place again on the display they end up on.")
+        }
+    }
+
+    private func pointSlider(value: Binding<Double>, range: ClosedRange<Double>, step: Double,
+                             label: String) -> some View {
+        HStack(spacing: AOMSpace.xs) {
+            Slider(value: value, in: range, step: step)
+                .frame(width: 120)
+                .controlSize(.small)
+                .accessibilityLabel(label)
+                .accessibilityValue("\(Int(value.wrappedValue.rounded())) points")
+            Text("\(Int(value.wrappedValue.rounded())) pt")
+                .font(AOMType.caption.monospacedDigit())
+                .foregroundStyle(AOMTheme.textSecondary)
+                .frame(width: 44, alignment: .trailing)
         }
     }
 
@@ -376,8 +614,11 @@ struct ModernWindowSnappingView: View {
     private func refreshReadiness() {
         // Returning from System Settings may have granted Accessibility.
         TitleBarWindowSnap.shared.refreshEnabled()
+        // The title-bar Space moves (tap and hold or ⌥, then sideways) post
+        // the same Mission Control shortcuts as the top-bar Space swipe.
+        let titleBarSpaces = trackpadSnapOn && (trackpadSnapHold || trackpadSnapModifiers)
         readiness = TrackpadReadiness.current(hapticsWanted: trackpadSnapOn && trackpadSnapHaptic,
-                                              spaceSwipeOn: topBarSpaceSwipe)
+                                              spaceSwipeOn: topBarSpaceSwipe || titleBarSpaces)
     }
 
     /// The same notification Settings rows post: the trackpad stream starts or

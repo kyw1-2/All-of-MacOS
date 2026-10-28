@@ -8,8 +8,10 @@ import Accelerate
 /// serialized only for the brief interval when two output routes overlap.
 final class AppAudioTransport {
     private let renderLock = AudioUnfairLock()
-    private let capacity = 32768
-    private let queue = StereoPCMQueue(capacity: 32768)
+    /// 65 536 frames (1.4 s at 48 kHz): room for the AirPlay trim floor below
+    /// (until 3.3.2 32 768, half of it).
+    private let capacity = 65536
+    private let queue = StereoPCMQueue(capacity: 65536)
     private let scratch: UnsafeMutablePointer<Float>
     private let rateBits: AudioAtomicCounter
     private let remote: AudioAtomicCounter
@@ -19,6 +21,12 @@ final class AppAudioTransport {
     private let renderTick = AudioAtomicCounter()
     private let renderContentions = AudioAtomicCounter()
     private let secondsPerTick: Double
+    /// Render-thread only: frames of silence still to run through the app's
+    /// DSP after its audio stopped (see `render`).
+    private var flushRemaining = 0
+    /// Longer than the app chain's delay lines: Magic Boost looks 512 frames
+    /// ahead and Volume Overdrive's limiter 64, and an EQ rings down.
+    static let flushFrames = 2048
 
     init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
         var timebase = mach_timebase_info_data_t()
@@ -43,12 +51,46 @@ final class AppAudioTransport {
         remote.store(value)
         queue.requestClear()
     }
-    private var targetFrames: Int {
-        let rate = Double(bitPattern: rateBits.load())
-        if remote.load() == 1 {
-            return min(capacity / 2, max(Int(rate * 0.08), Int(largestPacket.load()) * 2))
+    /// The level the queue steers to.
+    ///
+    /// AirPlay: 80 ms, or two capture packets and a margin when the tap
+    /// delivers larger ones. 3.3.2 had cut it to 40 ms to shorten the gap
+    /// before a newly tapped app is heard; with the 1024-frame capture
+    /// packets AirPlay routes now use, that left about 27 ms of tolerance for
+    /// capture jitter, and every underrun is a fade to silence and back
+    /// (HomePod crackle audit, follow-up). 3.3.1 ran 80 ms with no underrun
+    /// in 5.5 hours of HomePod playback; AirPlay itself adds about 2 s.
+    static func targetFrames(rate: Double, airPlay: Bool, largestPacket: Int, capacity: Int) -> Int {
+        if airPlay {
+            return min(capacity / 4, max(Int(rate * 0.08), largestPacket * 2 + 512))
         }
         return max(256, min(4096, Int(rate * 0.025)))
+    }
+
+    /// Where an AirPlay stream starts: at its target (3.3.2 review). It used
+    /// to start at 40 ms so a newly tapped app was heard sooner, and the
+    /// ±0.2 % drift loop then needed about 20 s to grow it to 80 ms; every
+    /// resume after a pause started again at the margin the follow-up audit
+    /// found too thin. Local outputs start at their target too (nil).
+    static func startFrames(rate: Double, airPlay: Bool, largestPacket: Int, capacity: Int) -> Int? {
+        guard airPlay else { return nil }
+        return targetFrames(rate: rate, airPlay: true, largestPacket: largestPacket, capacity: capacity)
+    }
+
+    /// The backlog an AirPlay queue skips: half a second. The AirPlay mix
+    /// clock renders in bursts after a late wake-up, and before a burst the
+    /// level is the target plus the lateness, which is not a backlog; with
+    /// the floor at three targets a wake-up 110 ms late made the queue skip
+    /// the burst's audio and then run dry in it. The drift controller and the
+    /// capture-gap clear handle everything slower. Local outputs keep three
+    /// targets (their consumer is the device clock itself).
+    static func trimFloorFrames(rate: Double, airPlay: Bool) -> Int {
+        airPlay ? Int(rate * 0.5) : 0
+    }
+
+    private var targetFrames: Int {
+        Self.targetFrames(rate: Double(bitPattern: rateBits.load()), airPlay: remote.load() == 1,
+                          largestPacket: Int(largestPacket.load()), capacity: capacity)
     }
     var activity: (captured: UInt64, rendered: UInt64, peak: Float, recent: Bool, rendering: Bool) {
         let stats = queue.statistics
@@ -65,8 +107,11 @@ final class AppAudioTransport {
         var result = queue.statistics.mapValues { $0 as Any }
         result["sampleRate"] = Double(bitPattern: rateBits.load())
         result["targetFrames"] = targetFrames
+        result["startFrames"] = Self.startFrames(rate: Double(bitPattern: rateBits.load()), airPlay: remote.load() == 1,
+                                                 largestPacket: Int(largestPacket.load()), capacity: capacity) ?? targetFrames
         result["largestPacketFrames"] = largestPacket.load()
         result["renderContentions"] = renderContentions.load()
+        result["driftCorrectionPPM"] = queue.driftCorrectionPPM
         return result
     }
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -108,10 +153,26 @@ final class AppAudioTransport {
         else if !renderLock.tryLock() { renderContentions.add(); return }
         defer { renderLock.unlock() }
         let rate = Double(bitPattern: rateBits.load())
+        let airPlay = remote.load() == 1
         let filled = queue.render(into: scratch, frames: frames,
-                                  ratio: rate / SharedOutputRenderer.sampleRate, targetFrames: targetFrames)
-        guard filled > 0 else { mixer.publishPeak(0); return }
-        renderTick.store(mach_absolute_time())
+                                  ratio: rate / SharedOutputRenderer.sampleRate, targetFrames: targetFrames,
+                                  trimFloorFrames: Self.trimFloorFrames(rate: rate, airPlay: airPlay),
+                                  startFrames: Self.startFrames(rate: rate, airPlay: airPlay,
+                                                                largestPacket: Int(largestPacket.load()), capacity: capacity))
+        if filled > 0 {
+            renderTick.store(mach_absolute_time())
+            flushRemaining = Self.flushFrames
+        } else {
+            // The queue's fade-out reached the app's DSP, but Magic Boost and
+            // Volume Overdrive output it up to 512 frames later. Until 3.3.2
+            // the chain stopped with that audio still in their delay lines:
+            // the output jumped to silence there, and the stale audio started
+            // abruptly when the app played again — two clicks per underrun,
+            // clear or pause. The chain now runs on silence until it is empty.
+            guard flushRemaining > 0 else { mixer.publishPeak(0); return }
+            flushRemaining = max(0, flushRemaining - frames)
+        }
+        // `queue.render` cleared what it did not fill.
         var input = AudioBufferList(mNumberBuffers: 1, mBuffers:
             AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
         withUnsafePointer(to: &input) { Mixer.mix(input: $0, output: output, box: mixer) }

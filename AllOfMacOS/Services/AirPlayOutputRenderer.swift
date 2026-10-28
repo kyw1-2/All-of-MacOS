@@ -32,7 +32,11 @@ final class AirPlayOutputRenderer {
         case failed(String)
     }
     let deviceID: AudioDeviceID
-    let bus = AppAudioRenderBus()
+    /// −1 dBTP: the receiver decodes a lossy stream, whose overshoot would
+    /// clip a mix limited to −0.2 dB sample peak (3.3.2 audit), released
+    /// slowly enough not to modulate bass (`networkRelease`).
+    let bus = AppAudioRenderBus(ceiling: AppAudioRenderBus.networkCeiling, truePeak: true,
+                                releaseSeconds: AppAudioRenderBus.networkRelease)
     // Replacements of one device share a disposal/start barrier; unrelated
     // receivers must never wait behind its potentially blocking HAL lifecycle.
     private let queue: DispatchQueue
@@ -51,9 +55,25 @@ final class AirPlayOutputRenderer {
     }
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     private var startedAt: TimeInterval = 0
+    /// The rate the bridge resamples to and the AUHAL input format uses.
     private var configuredRate: Double = 0
     private var configuredFrames: UInt32 = 0
     private var configuredChannels: UInt32 = 0
+    /// What the device itself reported right after the format was applied
+    /// (crackle audit 3.3.2, follow-up). Notifications compare against these
+    /// readings, like with like: comparing the nominal rate with a rate taken
+    /// from the AUHAL format (or the other way round) classified every later
+    /// notification as a format change, and each one restarted the unit and
+    /// cleared the bridge — at least 150 ms of silence per notification.
+    private var baseline = ConfigurationBaseline(nominalRate: 0, deviceRate: 0, channels: 0)
+    /// Keeps App Nap and timer coalescing away from the mix clock while this
+    /// output exists (start() … tearDown(), device queue only).
+    private let napGuard = AirPlayNapGuard(reason: "AirPlay output mixing (realtime audio)")
+    /// The IO size AOM asks for, clamped to the device's range (device queue).
+    private var ioTargetFrames: UInt32 = AirPlayOutputRenderer.preferredIOFrames
+    /// Periodic IO re-request bookkeeping (device queue).
+    private var lastIORequestAt: TimeInterval = 0
+    private var cycleGapsAtLastRequest: UInt64 = 0
     private var stopped = false
     private var failureDelivered = false
     private let changed: () -> Void
@@ -98,8 +118,117 @@ final class AirPlayOutputRenderer {
         return true
     }
 
+    /// Frames per IO cycle AOM asks for on the AirPlay device. The buffer
+    /// size is a per-process HAL setting, so this changes only AOM's own IO.
+    /// 3.3.2 audit: the device's default client buffer is 128 frames
+    /// (2.7 ms) with no safety offset; coreaudiod logged "Overload possibly
+    /// due to safety violation" and AOM "skipping cycle due to overload"
+    /// several times an hour, each one a click. AirPlay already buffers
+    /// about 2 s, so 21 ms more cycle time is inaudible.
+    static let preferredIOFrames: UInt32 = 1024
+
+    /// Asks for `preferredIOFrames` within the device's range; nil if the
+    /// device refuses (the default then stays in use). A refusal is logged
+    /// at .error once per device with the range the device allows; it used
+    /// to be a .noMatch line, so a HomePod left at 128 frames went unseen.
+    @discardableResult
+    private func requestIOBufferFrames() -> UInt32? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSizeRange,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var range = AudioValueRange()
+        var size = UInt32(MemoryLayout<AudioValueRange>.size)
+        var preferred = Self.preferredIOFrames
+        let rangeKnown = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &range) == noErr
+            && range.mMinimum.isFinite && range.mMaximum.isFinite && range.mMinimum >= 1 && range.mMaximum >= range.mMinimum
+        if rangeKnown {
+            preferred = UInt32(min(range.mMaximum, max(range.mMinimum, Double(preferred))))
+        }
+        ioTargetFrames = preferred
+        address.mSelector = kAudioDevicePropertyBufferFrameSize
+        var settable: DarwinBoolean = false
+        let settableStatus = AudioObjectIsPropertySettable(deviceID, &address, &settable)
+        let setStatus = settableStatus == noErr && settable.boolValue
+            ? AudioObjectSetPropertyData(deviceID, &address, 0, nil, 4, &preferred) : kAudioHardwareIllegalOperationError
+        guard setStatus == noErr else {
+            let allowed = rangeKnown ? "\(Int(range.mMinimum))–\(Int(range.mMaximum)) frames" : "range unknown"
+            logIOBufferProblemOnce("AirPlay device refused AOM's \(preferred)-frame IO buffer (status \(setStatus), "
+                + "settable \(settable.boolValue), allowed \(allowed)); the default size may overload and click")
+            return nil
+        }
+        return preferred
+    }
+
+    /// One .error line per device and launch for IO-size problems (device
+    /// queue; the set is shared by the renderers that replace each other).
+    private static let ioLogLock = NSLock()
+    private static var ioLoggedDevices = Set<AudioDeviceID>()
+    private func logIOBufferProblemOnce(_ message: String) {
+        Self.ioLogLock.lock()
+        let first = Self.ioLoggedDevices.insert(deviceID).inserted
+        Self.ioLogLock.unlock()
+        if first { GestureLog.shared.logFromAnyThread(message, level: .error) }
+    }
+
+    /// How often AOM may ask again for its IO size (crackle audit 3.3.2,
+    /// follow-up). Until then it asked at most `maximumBufferRequests` times
+    /// per output and otherwise accepted whatever size the device fell back
+    /// to (128 frames on a HomePod: HAL overloads, each a click) for the rest
+    /// of the session.
+    static let ioRerequestInterval: TimeInterval = 30
+    /// The longest wait between two re-requests: a device that keeps AOM
+    /// below its size is asked less and less often (each accepted set
+    /// reconfigures AOM's IO, one possible gap).
+    static let ioRerequestMaximumInterval: TimeInterval = 600
+
+    /// The wait before the next re-request after `attempts` that did not
+    /// stick: 30 s, then doubling up to 10 minutes.
+    static func ioRerequestDelay(afterUnheededRequests attempts: Int) -> TimeInterval {
+        let doubled = ioRerequestInterval * pow(2, Double(min(max(0, attempts), 16)))
+        return min(ioRerequestMaximumInterval, doubled)
+    }
+
+    /// Whether the periodic health check asks for the IO size again: only
+    /// while the device runs AOM below the size it wants (3.3.2 review: a
+    /// cycle gap alone asked again every 30 s even at 1024 frames, and a HAL
+    /// that restarts IO on a same-size set turned one gap into a click every
+    /// 30 s). `cycleGapsGrew` is kept for callers and no longer decides.
+    static func shouldRerequestIOBuffer(configured: UInt32, preferred: UInt32, cycleGapsGrew: Bool,
+                                        secondsSinceLastRequest: TimeInterval,
+                                        unheededRequests: Int = 0) -> Bool {
+        guard configured < preferred else { return false }
+        return secondsSinceLastRequest >= ioRerequestDelay(afterUnheededRequests: unheededRequests)
+    }
+
+    /// Re-requests whose size the device did not keep (device queue).
+    private var unheededIORequests = 0
+
+    /// Health check (device queue, never the HAL or mix thread).
+    private func rerequestIOBufferIfNeeded(now: TimeInterval) {
+        let gaps = bridge.deviceCycleGaps
+        if configuredFrames >= ioTargetFrames { unheededIORequests = 0 }
+        guard Self.shouldRerequestIOBuffer(configured: configuredFrames, preferred: ioTargetFrames,
+                                           cycleGapsGrew: gaps > cycleGapsAtLastRequest,
+                                           secondsSinceLastRequest: now - lastIORequestAt,
+                                           unheededRequests: unheededIORequests) else { return }
+        // Asked before and the device still runs AOM smaller: it clamps or
+        // ignores the request. Say so once, with what it allows, and wait
+        // longer before the next one.
+        if lastIORequestAt > 0, configuredFrames < ioTargetFrames {
+            unheededIORequests += 1
+            logIOBufferProblemOnce("AirPlay device keeps AOM at \(configuredFrames)-frame IO although "
+                + "\(ioTargetFrames) frames were requested; HAL overloads (clicks) remain possible")
+        }
+        lastIORequestAt = now
+        cycleGapsAtLastRequest = gaps
+        // The resulting BufferFrameSize notification retargets the bridge.
+        requestIOBufferFrames()
+    }
+
     private func start() {
         guard !stopped else { return }
+        // Held until tearDown (every failure path goes through fail →
+        // tearDown, and stop → tearDown); begin/end run on this queue.
+        napGuard.acquire()
         var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
             componentSubType: kAudioUnitSubType_HALOutput,
             componentManufacturer: kAudioUnitManufacturer_Apple,
@@ -139,6 +268,8 @@ final class AirPlayOutputRenderer {
                     kAudioUnitScope_Input, 0, &format, UInt32(MemoryLayout.size(ofValue: format))), "set format"),
               check(AudioUnitSetProperty(instance, kAudioUnitProperty_MaximumFramesPerSlice,
                     kAudioUnitScope_Global, 0, &maximum, 4), "set buffer limit") else { return }
+        // A refusal is logged once at .error inside the request.
+        requestIOBufferFrames()
         var frameAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var deviceFrames: UInt32 = 0
@@ -151,11 +282,16 @@ final class AirPlayOutputRenderer {
         configuredRate = format.mSampleRate
         configuredFrames = deviceFrames
         configuredChannels = hardware.mChannelsPerFrame
+        baseline = observedBaseline(unit: instance, appliedRate: format.mSampleRate)
         bridge.configure(outputRate: format.mSampleRate, deviceFrames: Int(deviceFrames))
-        var callback = AURenderCallbackStruct(inputProc: { context, _, _, _, frames, buffers in
+        var callback = AURenderCallbackStruct(inputProc: { context, _, timeStamp, _, frames, buffers in
             guard let buffers else { return noErr }
+            // The device's sample time tells cycles the HAL skipped (an
+            // overload is a gap in it), which is what the user hears as a click.
+            let stamp = timeStamp.pointee
+            let sampleTime = stamp.mFlags.contains(.sampleTimeValid) ? stamp.mSampleTime : -1
             Unmanaged<AirPlayPCMBridge>.fromOpaque(context).takeUnretainedValue()
-                .render(frames: Int(frames), output: buffers)
+                .render(frames: Int(frames), output: buffers, sampleTime: sampleTime)
             return noErr
         }, inputProcRefCon: Unmanaged.passUnretained(bridge).toOpaque())
         guard check(AudioUnitSetProperty(instance, kAudioUnitProperty_SetRenderCallback,
@@ -165,6 +301,25 @@ final class AirPlayOutputRenderer {
         bridge.prime()
         startedAt = ProcessInfo.processInfo.systemUptime
         guard check(AudioOutputUnitStart(instance), "start") else { return }
+        // Initializing and starting the unit can put AOM's IO buffer back to
+        // the device default (128 frames on AirPlay, the size coreaudiod
+        // reported overloads at); ask once more and follow what it took.
+        size = 4
+        if AudioObjectGetPropertyData(deviceID, &frameAddress, 0, nil, &size, &deviceFrames) == noErr,
+           deviceFrames > 0, deviceFrames < Self.preferredIOFrames, requestIOBufferFrames() != nil {
+            bufferRequests += 1
+            size = 4
+            if AudioObjectGetPropertyData(deviceID, &frameAddress, 0, nil, &size, &deviceFrames) == noErr,
+               deviceFrames > 0, deviceFrames <= maximum, Double(deviceFrames) * 48000 / format.mSampleRate <= 32000 {
+                configuredFrames = deviceFrames
+                bridge.updateDeviceFrames(Int(deviceFrames))
+            }
+        }
+        GestureLog.shared.logFromAnyThread("AirPlay output: \(Int(format.mSampleRate)) Hz, \(configuredFrames)-frame IO",
+                                           level: .noMatch)
+        // The periodic re-request (checkHealth) counts from here.
+        lastIORequestAt = ProcessInfo.processInfo.systemUptime
+        cycleGapsAtLastRequest = bridge.deviceCycleGaps
         for selector in [kAudioDevicePropertyDeviceIsAlive, kAudioDevicePropertyNominalSampleRate,
                          kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyStreamConfiguration] {
             var address = AudioObjectPropertyAddress(mSelector: selector,
@@ -187,7 +342,88 @@ final class AirPlayOutputRenderer {
         source.resume()
     }
 
-    private func configurationChanged() {
+    /// What a device notification means for the running output (3.3.2).
+    /// Until 3.3.1 any difference failed the output: the taps were released
+    /// and the HomePod reconnected seconds later, a gap of several seconds
+    /// for a change as small as a new IO buffer size.
+    enum ConfigurationChange: Equatable {
+        case none
+        /// The IO buffer size changed: retarget the bridge, keep playing.
+        case bufferSize(UInt32)
+        /// Rate or channel layout changed: reapply the format in place.
+        case format
+        /// The device is gone.
+        case lost
+    }
+
+    /// nil arguments are reads that failed; a failed read on a live device is
+    /// treated as transient (the health check catches a real stall).
+    /// One configured rate for both readings (kept for existing callers).
+    static func classify(alive: UInt32?, frames: UInt32?, nominalRate: Double?, deviceRate: Double?,
+                         channels: UInt32?, configuredRate: Double, configuredFrames: UInt32,
+                         configuredChannels: UInt32) -> ConfigurationChange {
+        classify(alive: alive, frames: frames, nominalRate: nominalRate, deviceRate: deviceRate, channels: channels,
+                 baseline: ConfigurationBaseline(nominalRate: configuredRate, deviceRate: configuredRate,
+                                                 channels: configuredChannels),
+                 configuredFrames: configuredFrames)
+    }
+
+    /// What the device reported once the current format was applied. Each
+    /// reading is compared with the same reading taken then: the device's
+    /// nominal rate and the AUHAL's hardware format can legitimately differ,
+    /// and comparing either with the other's value made every notification
+    /// a "format change" (unit restart and bridge clear, again and again).
+    struct ConfigurationBaseline: Equatable {
+        var nominalRate: Double
+        var deviceRate: Double
+        var channels: UInt32
+    }
+
+    /// The baseline from readings right after the format was applied; a
+    /// failed read falls back to the applied rate.
+    static func baseline(appliedRate: Double, nominalRate: Double?, deviceRate: Double?,
+                         channels: UInt32) -> ConfigurationBaseline {
+        ConfigurationBaseline(nominalRate: nominalRate ?? appliedRate, deviceRate: deviceRate ?? appliedRate,
+                              channels: channels)
+    }
+
+    static func classify(alive: UInt32?, frames: UInt32?, nominalRate: Double?, deviceRate: Double?,
+                         channels: UInt32?, baseline: ConfigurationBaseline,
+                         configuredFrames: UInt32) -> ConfigurationChange {
+        guard let alive, alive != 0 else { return .lost }
+        if let nominalRate, nominalRate != baseline.nominalRate { return .format }
+        if let deviceRate, deviceRate != baseline.deviceRate { return .format }
+        if let channels, channels != baseline.channels { return .format }
+        if let frames, frames > 0, frames != configuredFrames { return .bufferSize(frames) }
+        return .none
+    }
+
+    /// Reads the device's nominal rate and the AUHAL hardware format now
+    /// (device queue, after the unit took its format).
+    private func observedBaseline(unit: AudioUnit, appliedRate: Double) -> ConfigurationBaseline {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var nominal: Double = 0
+        var size: UInt32 = 8
+        let nominalOK = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &nominal) == noErr
+        var hardware = AudioStreamBasicDescription()
+        size = UInt32(MemoryLayout.size(ofValue: hardware))
+        let hardwareOK = AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0,
+                                              &hardware, &size) == noErr
+        return Self.baseline(appliedRate: appliedRate, nominalRate: nominalOK ? nominal : nil,
+                             deviceRate: hardwareOK ? hardware.mSampleRate : nil,
+                             channels: hardwareOK ? hardware.mChannelsPerFrame : configuredChannels)
+    }
+
+    /// In-place format changes survived (diagnostics; written on the device queue).
+    let reconfigurations = AudioAtomicCounter()
+    /// Times AOM asked again for its IO buffer after it came back smaller
+    /// (device queue only; at most a few per output, so two notifiers can
+    /// never ping-pong).
+    private var bufferRequests = 0
+    static let maximumBufferRequests = 4
+
+    private func configurationChanged(confirmed: Bool = false) {
         guard !stopped, !failureDelivered, let unit else { return }
         // HAL sends redundant notifications during route settlement. A
         // notification alone must never tear down a playing connection.
@@ -206,11 +442,132 @@ final class AirPlayOutputRenderer {
         size = UInt32(MemoryLayout.size(ofValue: format))
         let formatStatus = AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
             kAudioUnitScope_Output, 0, &format, &size)
-        if aliveStatus != noErr || alive == 0 || bufferStatus != noErr || rateStatus != noErr ||
-            formatStatus != noErr || frames != configuredFrames || rate != configuredRate ||
-            format.mSampleRate != configuredRate || format.mChannelsPerFrame != configuredChannels {
-            fail("AirPlay device configuration changed. Native playback restored; use Reconnect to retry.")
+        let change = Self.classify(alive: aliveStatus == noErr ? alive : nil,
+                                   frames: bufferStatus == noErr ? frames : nil,
+                                   nominalRate: rateStatus == noErr ? rate : nil,
+                                   deviceRate: formatStatus == noErr ? format.mSampleRate : nil,
+                                   channels: formatStatus == noErr ? format.mChannelsPerFrame : nil,
+                                   baseline: baseline, configuredFrames: configuredFrames)
+        switch change {
+        case .none:
+            break
+        case .lost:
+            fail("AirPlay device disconnected. Native playback restored; use Reconnect to retry.")
+        case .bufferSize(let size):
+            guard size <= 16384, Double(size) * 48000 / configuredRate <= 32000 else {
+                fail("AirPlay buffer size unsupported. Native playback restored."); return
+            }
+            configuredFrames = size
+            bridge.updateDeviceFrames(Int(size))
+            // Back to a small buffer (another client, a route change): ask
+            // for the large one again, a bounded number of times.
+            if size < Self.preferredIOFrames, bufferRequests < Self.maximumBufferRequests,
+               requestIOBufferFrames() != nil {
+                bufferRequests += 1
+            }
+        case .format:
+            // A notice that leaves AOM's stream as it is (the same rate, at
+            // least stereo) refreshes the baseline instead of restarting the
+            // unit, and a new rate is confirmed 250 ms later first (crackle
+            // audit 3.3.2, follow-up): every restart is a gap the receiver
+            // hears, and the HAL sends such notices during route settlement.
+            switch Self.formatResponse(nominalRate: rateStatus == noErr ? rate : nil,
+                                       deviceRate: formatStatus == noErr ? format.mSampleRate : nil,
+                                       channels: formatStatus == noErr ? format.mChannelsPerFrame : nil,
+                                       configuredRate: configuredRate, confirmed: confirmed) {
+            case .refreshBaseline:
+                baseline = observedBaseline(unit: unit, appliedRate: configuredRate)
+                ignoredFormatNotices.add()
+            case .confirmLater:
+                guard !formatRecheckPending else { return }
+                formatRecheckPending = true
+                queue.asyncAfter(deadline: .now() + Self.formatConfirmDelay) { [weak self] in
+                    guard let self else { return }
+                    self.formatRecheckPending = false
+                    self.configurationChanged(confirmed: true)
+                }
+            case .reconfigure:
+                if !reconfigure(unit, nominalRate: rateStatus == noErr ? rate : nil) {
+                    fail("AirPlay device format changed and could not be reapplied. Native playback restored; use Reconnect to retry.")
+                }
+            }
         }
+    }
+
+    /// Format notices that changed nothing AOM depends on (diagnostics).
+    let ignoredFormatNotices = AudioAtomicCounter()
+    /// A rate change waits this long to be confirmed by a second reading.
+    static let formatConfirmDelay: TimeInterval = 0.25
+    /// Device queue only.
+    private var formatRecheckPending = false
+
+    /// What a format notice does.
+    enum FormatResponse: Equatable {
+        /// AOM's stream is unchanged: new baseline readings, no restart.
+        case refreshBaseline
+        /// Read again after `formatConfirmDelay`; act only if it holds.
+        case confirmLater
+        /// Restart the unit with the new format in place.
+        case reconfigure
+    }
+
+    /// The rate AOM's stream would run at is the nominal rate (else the
+    /// AUHAL hardware rate); while it equals the configured rate and the
+    /// device is still at least stereo, `reconfigure` would apply the same
+    /// format again, so nothing restarts.
+    static func formatResponse(nominalRate: Double?, deviceRate: Double?, channels: UInt32?,
+                               configuredRate: Double, confirmed: Bool) -> FormatResponse {
+        let stereo = channels.map { $0 >= 2 } ?? true
+        let rate = nominalRate ?? deviceRate ?? configuredRate
+        if stereo, rate.isFinite, abs(rate - configuredRate) < 0.5 { return .refreshBaseline }
+        return confirmed ? .reconfigure : .confirmLater
+    }
+
+    /// Applies a new device format in place: the unit stops, takes the new
+    /// rate and starts again while the taps, sources and mix clock stay.
+    /// The bridge fades its queued audio out and restarts at the new rate.
+    private func reconfigure(_ unit: AudioUnit, nominalRate: Double?) -> Bool {
+        AudioOutputUnitStop(unit)
+        AudioUnitUninitialize(unit)
+        var hardware = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout.size(ofValue: hardware))
+        guard AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0,
+                                   &hardware, &size) == noErr, hardware.mChannelsPerFrame >= 2 else { return false }
+        let rate = nominalRate ?? hardware.mSampleRate
+        guard rate.isFinite, (8000...192000).contains(rate) else { return false }
+        var format = AudioStreamBasicDescription(mSampleRate: rate,
+            mFormatID: kAudioFormatLinearPCM, mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
+            mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        guard AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
+                                   &format, UInt32(MemoryLayout.size(ofValue: format))) == noErr else { return false }
+        requestIOBufferFrames()
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var frames: UInt32 = 0
+        size = 4
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &frames) == noErr,
+              frames > 0, frames <= 16384, Double(frames) * 48000 / rate <= 32000 else { return false }
+        // Only a new rate makes the queued audio wrong. A notification that
+        // changed nothing the bridge depends on (channel layout, a reading
+        // that only looked different) keeps its audio: clearing it cost at
+        // least 150 ms of silence each time.
+        if rate != configuredRate {
+            bridge.reconfigure(outputRate: rate, deviceFrames: Int(frames))
+        } else {
+            bridge.updateDeviceFrames(Int(frames))
+        }
+        guard AudioUnitInitialize(unit) == noErr, AudioOutputUnitStart(unit) == noErr else { return false }
+        configuredRate = rate
+        configuredFrames = frames
+        configuredChannels = hardware.mChannelsPerFrame
+        // The readings the next notification is compared with, taken now
+        // that the unit runs the new format.
+        baseline = observedBaseline(unit: unit, appliedRate: rate)
+        reconfigurations.add()
+        GestureLog.shared.logFromAnyThread("AirPlay output reconfigured in place: \(Int(rate)) Hz, \(frames)-frame IO",
+                                           level: .noMatch)
+        return true
     }
 
     var statistics: [String: Any] {
@@ -220,6 +577,10 @@ final class AirPlayOutputRenderer {
         result["maximumMixDelayMS"] = Double(mixer?.maximumMixDelay.load() ?? 0) / 1_000_000
         result["catchUpBlocks"] = mixer?.catchUpBlocks.load() ?? 0
         result["realtimeMixer"] = mixer?.isRealtime ?? false
+        result["reconfigurations"] = reconfigurations.load()
+        // Crackle audit 3.3.2, follow-up: format notices that restarted
+        // nothing, and IO-size requests the device did not keep.
+        result["ignoredFormatNotices"] = ignoredFormatNotices.load()
         if let report = mixer?.timeline.report() {
             // Start-up and sustained supply, separately (audit F12).
             result["mixThreadStartMS"] = report.threadStart.map { Double($0) / 1_000_000 } ?? -1
@@ -262,6 +623,7 @@ final class AirPlayOutputRenderer {
         logSchedulingChange()
         let health = bridge.health
         let uptime = ProcessInfo.processInfo.systemUptime
+        rerequestIOBufferIfNeeded(now: uptime)
         if health.invalidFormat {
             fail("AirPlay supplied an unsupported render buffer. Native playback restored.")
         } else if health.lastCallback > 0 && uptime - health.lastCallback > Self.stallLimit {
@@ -290,6 +652,7 @@ final class AirPlayOutputRenderer {
         let running = mixer
         mixer = nil
         running?.stop()
+        napGuard.release()
         timer?.cancel(); timer = nil
         for entry in listeners {
             var address = entry.0
@@ -307,12 +670,27 @@ final class AirPlayOutputRenderer {
 
 /// A bounded, preallocated PCM queue between the local mix clock and AirPlay's
 /// device clock. The HAL callback never runs DSP, dispatches work, or waits.
+///
+/// 3.3.2: the target adapts. 150 ms is the floor; when the mix clock reports
+/// a late wake-up (a demoted or throttled mix thread) the target rises to
+/// twice that lateness plus two blocks and the device slice, up to 400 ms —
+/// AirPlay itself buffers about 2 s — and decays over about half a minute.
+/// The queue's controller moves the level there within ±0.2 %, and an
+/// underrun re-primes to the raised target at once.
 final class AirPlayPCMBridge {
+    static let baseTargetFrames = 7200
+    static let maximumTargetFrames = 19200
+    /// Seconds for a lateness-raised target to decay by about 63 %.
+    static let latenessDecaySeconds = 30.0
     private let queue = StereoPCMQueue(capacity: 96000)
-    private var target = 7200
-    private var outputRate: Double = 48000
     private let outputRateBits = AudioAtomicCounter(Double(48000).bitPattern)
-    private let targetValue = AudioAtomicCounter(7200)
+    private let targetValue = AudioAtomicCounter(UInt64(AirPlayPCMBridge.baseTargetFrames))
+    private let deviceFramesValue = AudioAtomicCounter(128)
+    /// Nanoseconds; raised by the mix thread, taken by the HAL callback.
+    private let producerLateness = AudioAtomicCounter()
+    private let effectiveTarget = AudioAtomicCounter(UInt64(AirPlayPCMBridge.baseTargetFrames))
+    // HAL-callback-owned.
+    private var latenessFrames: Double = 0
     private let callbackTick = AudioAtomicCounter()
     private let audioTick = AudioAtomicCounter()
     private let invalid = AudioAtomicCounter()
@@ -323,28 +701,85 @@ final class AirPlayPCMBridge {
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
     }
-    // Setup only, before the producer and HAL callback start.
-    func configure(outputRate: Double, deviceFrames: Int) {
-        self.outputRate = outputRate
-        outputRateBits.store(outputRate.bitPattern)
-        target = min(48000, max(7200, Int(ceil(Double(deviceFrames) * 48000 / outputRate)) * 3))
-        targetValue.store(UInt64(target))
+
+    static func target(outputRate: Double, deviceFrames: Int) -> Int {
+        let rate = outputRate.isFinite && outputRate > 0 ? outputRate : 48000
+        return min(48000, max(baseTargetFrames, Int(ceil(Double(max(1, deviceFrames)) * 48000 / rate)) * 3))
     }
-    func prime() { queue.prime(frames: target) }
+
+    /// The level the queue is steered to: the floor, or what the observed
+    /// mix-clock lateness needs, capped at 400 ms.
+    static func adaptiveTarget(base: Int, latenessFrames: Double, deviceFrames: Int, outputRate: Double) -> Int {
+        let slice = Double(max(1, deviceFrames)) * 48000 / max(1, outputRate)
+        let needed = 2 * latenessFrames + Double(2 * AirPlayMixThread.blockFrames) + slice
+        return min(maximumTargetFrames, max(base, Int(needed.rounded(.up))))
+    }
+
+    /// Setup, or while the HAL callback is stopped.
+    func configure(outputRate: Double, deviceFrames: Int) {
+        outputRateBits.store(outputRate.bitPattern)
+        deviceFramesValue.store(UInt64(max(1, deviceFrames)))
+        targetValue.store(UInt64(Self.target(outputRate: outputRate, deviceFrames: deviceFrames)))
+    }
+    /// A new device format while the HAL callback is stopped: the queued
+    /// audio fades out and the stream restarts at the new rate.
+    func reconfigure(outputRate: Double, deviceFrames: Int) {
+        configure(outputRate: outputRate, deviceFrames: deviceFrames)
+        queue.requestClear()
+    }
+    /// A buffer-size change only moves the target; safe while running.
+    func updateDeviceFrames(_ frames: Int) {
+        deviceFramesValue.store(UInt64(max(1, frames)))
+        targetValue.store(UInt64(Self.target(outputRate: Double(bitPattern: outputRateBits.load()), deviceFrames: frames)))
+    }
+    /// The mix thread woke this late (nanoseconds).
+    func noteMixLateness(_ nanoseconds: UInt64) { producerLateness.raise(to: nanoseconds) }
+    func prime() { queue.prime(frames: Int(targetValue.load())) }
     var health: (lastCallback: TimeInterval, lastAudio: TimeInterval, invalidFormat: Bool) {
         (Double(callbackTick.load()) * secondsPerTick, Double(audioTick.load()) * secondsPerTick, invalid.load() != 0)
     }
+    /// Device cycles the HAL skipped (each a click on the receiver), and the
+    /// frames they cover, from gaps in the device's sample time. 3.3.1 showed
+    /// "skipping cycle due to overload" in the log and nothing in its own
+    /// diagnostics; these make the overload visible in audio-health.json.
+    private let cycleGaps = AudioAtomicCounter()
+    private let gapFrames = AudioAtomicCounter()
+    // HAL-callback-owned.
+    private var lastSampleTime: Double = -1
+    private var lastCallbackFrames = 0
+    /// Cycles the HAL skipped so far (any thread).
+    var deviceCycleGaps: UInt64 { cycleGaps.load() }
     var statistics: [String: Any] {
         var result = queue.statistics.mapValues { $0 as Any }
         result["outputRate"] = Double(bitPattern: outputRateBits.load()); result["targetFrames"] = targetValue.load()
+        result["adaptiveTargetFrames"] = effectiveTarget.load()
+        result["deviceBufferFrames"] = deviceFramesValue.load()
+        result["driftCorrectionPPM"] = queue.driftCorrectionPPM
+        result["deviceCycleGaps"] = cycleGaps.load()
+        result["deviceGapFrames"] = gapFrames.load()
         return result
     }
     func discard() { queue.requestClear() }
     func push(_ input: UnsafePointer<Float>, frames: Int) {
         queue.write(frames: frames) { (input[$0 * 2], input[$0 * 2 + 1]) }
     }
-    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>) {
+    /// Counts a gap between this cycle's sample time and where the last one
+    /// ended; a jump back is a device restart, not a gap. Negative: unknown.
+    func noteCycle(sampleTime: Double, frames: Int) {
+        guard sampleTime.isFinite, sampleTime >= 0 else { return }
+        if lastSampleTime >= 0 {
+            let gap = sampleTime - (lastSampleTime + Double(lastCallbackFrames))
+            if gap > 0.5 {
+                cycleGaps.add()
+                gapFrames.add(UInt64(min(gap, 1e9).rounded()))
+            }
+        }
+        lastSampleTime = sampleTime
+        lastCallbackFrames = frames
+    }
+    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, sampleTime: Double = -1) {
         callbackTick.store(mach_absolute_time())
+        noteCycle(sampleTime: sampleTime, frames: frames)
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         for buffer in buffers {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
@@ -354,8 +789,15 @@ final class AirPlayPCMBridge {
               let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) else {
             invalid.store(1); return
         }
-        let produced = queue.render(into: data, frames: frames, ratio: 48000 / outputRate,
-            targetFrames: target, driftLimit: 0.005, smoothing: 0.02, fadeFrames: Int(outputRate * 0.02))
+        let rate = Double(bitPattern: outputRateBits.load())
+        let late = Double(producerLateness.take()) * 48000 / 1e9
+        let decay = max(0, 1 - Double(frames) / rate / Self.latenessDecaySeconds)
+        latenessFrames = max(late, latenessFrames * decay)
+        let target = Self.adaptiveTarget(base: Int(targetValue.load()), latenessFrames: latenessFrames,
+                                         deviceFrames: frames, outputRate: rate)
+        effectiveTarget.store(UInt64(target))
+        let produced = queue.render(into: data, frames: frames, ratio: 48000 / rate, targetFrames: target,
+            driftLimit: 0.002, fadeFrames: Int(rate * 0.005), outputRate: rate)
         if produced > 0 { audioTick.store(mach_absolute_time()) }
     }
 }
@@ -456,7 +898,9 @@ enum AirPlayMixScheduling {
         /// the host clamps the process at all, independently of the mix code.
         var maximumPriority: Int32 = -1
 
-        /// The host clamps the process to the throttled band.
+        /// The priority ceiling is the throttled band (darwin background or a
+        /// background QoS clamp). One signal only: a suppressed process keeps
+        /// the ceiling at 63, so `AirPlayHostDiagnosis` judges the host (N01).
         var hostClamped: Bool { maximumPriority >= 0 && maximumPriority <= 4 }
     }
 
@@ -501,6 +945,90 @@ enum AirPlayMixScheduling {
         guard state == 1 || state == 2 else { return nil }
         return Reading(realtime: state == 1, priority: Int32(word >> 8 & 0xFF) - 1,
                        maximumPriority: Int32(word >> 16 & 0xFF) - 1)
+    }
+}
+
+/// Audit N01: what the host lets this process do, read on an ordinary thread
+/// (never the mix thread) from independent signals. The priority ceiling
+/// alone (`Reading.hostClamped`) catches a darwin-background or QoS-clamped
+/// process, whose ceiling drops to 4, but not a suppressed one: the 3.3.1
+/// re-audit's default remote environment kept the ceiling at 63 while the
+/// threads ran timeshare at priority 4 and woke about 200 ms late
+/// (work/reaudit-331-20261028/audio-host-*.log). Under the application
+/// policy (`taskpolicy -a`) the same build runs the mix thread realtime.
+struct AirPlayHostDiagnosis: Equatable {
+    /// An ordinary thread's scheduler reading (nil when the kernel did not answer).
+    var ordinaryThread: AirPlayMixScheduling.Reading?
+    /// `getpriority(PRIO_DARWIN_PROCESS)`: the process runs darwin background.
+    var darwinBackground: Bool
+    /// The worst lateness of short timed waits on an ordinary thread, in
+    /// nanoseconds; nil when not measured.
+    var worstTimerLateness: UInt64?
+
+    /// Why the host keeps this process out of realtime scheduling; empty when
+    /// no signal says so.
+    var throttleReasons: [String] {
+        var reasons: [String] = []
+        if darwinBackground { reasons.append("the process runs darwin background (PRIO_DARWIN_BG)") }
+        if let thread = ordinaryThread {
+            if thread.maximumPriority >= 0 && thread.maximumPriority <= 4 {
+                reasons.append("threads may run at most at priority \(thread.maximumPriority) (background clamp)")
+            }
+            if !thread.realtime && thread.priority >= 0 && thread.priority <= 4 {
+                reasons.append("ordinary threads run at priority \(thread.priority) (throttled or suppressed process)")
+            }
+        }
+        if let late = worstTimerLateness, late > AirPlayMixTimeline.lateWakeNanoseconds {
+            reasons.append(String(format: "2 ms timed waits wake %.0f ms late (timer coalescing)", Double(late) / 1e6))
+        }
+        return reasons
+    }
+
+    var throttled: Bool { !throttleReasons.isEmpty }
+
+    /// Reads the host from the calling thread, which must be an ordinary
+    /// one. `probeTimers` adds ten 2 ms waits (about 20 ms on a healthy
+    /// host, longer on a throttled one), so keep it off hot paths.
+    static func measure(probeTimers: Bool = true) -> AirPlayHostDiagnosis {
+        var worst: UInt64?
+        if probeTimers {
+            var timebase = mach_timebase_info_data_t()
+            mach_timebase_info(&timebase)
+            let numer = UInt64(max(1, timebase.numer)), denom = UInt64(max(1, timebase.denom))
+            var late: UInt64 = 0
+            for _ in 0..<10 {
+                let target = mach_absolute_time() + 2_000_000 * denom / numer
+                mach_wait_until(target)
+                let now = mach_absolute_time()
+                if now > target { late = max(late, (now - target) * numer / denom) }
+            }
+            worst = late
+        }
+        return AirPlayHostDiagnosis(ordinaryThread: AirPlayMixScheduling.current(),
+                                    darwinBackground: getpriority(PRIO_DARWIN_PROCESS, 0) == 1,
+                                    worstTimerLateness: worst)
+    }
+}
+
+/// The mix clock's scheduling verdict, kept apart from the host diagnosis so
+/// a broken promotion is never mistaken for a throttled host (audit N01): a
+/// non-realtime mix thread on a host that allows realtime is a defect.
+enum AirPlayMixVerdict: Equatable {
+    /// The scheduler runs the mix thread in the realtime band.
+    case realtime
+    /// The host keeps the whole process out of realtime; the reasons say how.
+    case hostThrottled(reasons: [String])
+    /// The host allows realtime, yet the mix thread does not get it.
+    case promotionFailed(detail: String)
+
+    static func judge(host: AirPlayHostDiagnosis, mix: AirPlayMixScheduling.Reading?,
+                      promotionAccepted: Bool) -> AirPlayMixVerdict {
+        if let mix, mix.realtime { return .realtime }
+        if host.throttled { return .hostThrottled(reasons: host.throttleReasons) }
+        let observed = mix.map { "timeshare at priority \($0.priority)" } ?? "unread"
+        return .promotionFailed(detail: promotionAccepted
+            ? "the realtime promotion was accepted but the scheduler runs the mix thread \(observed)"
+            : "the realtime promotion was refused (mix thread \(observed))")
     }
 }
 
@@ -774,6 +1302,9 @@ final class AirPlayMixThread {
             }
             let wake = schedule.wake(at: now)
             wakes += 1
+            // The bridge sizes its buffer from how late this clock runs (a
+            // realign after sleep is not scheduling lateness).
+            if wake.late > 0 && !wake.realigned { bridge.noteMixLateness(nanoseconds(wake.late)) }
             let throttled = wake.late > lateWake
             if throttled { timeline.lateWakes.add() }
             // The host can demote or restore the thread at any time (App Nap,
@@ -816,5 +1347,51 @@ final class AirPlayMixThread {
                 mach_wait_until(schedule.resume(after: now, pause: burstPause))
             }
         }
+    }
+}
+
+/// Holds a latency-critical process activity while an AirPlay output runs
+/// (crackle audit 3.3.2, follow-up). Nothing in AOM asked for one, so App Nap
+/// and timer coalescing could demote the mix clock whenever AOM's windows were
+/// hidden: the audit measured wake-ups 120–200 ms late. Idempotent; begin and
+/// end are called from the output's device queue, never from the mix or HAL
+/// thread. The closures are injectable for tests.
+final class AirPlayNapGuard {
+    typealias Begin = (String) -> NSObjectProtocol
+    typealias End = (NSObjectProtocol) -> Void
+    /// 3.3.2 review: `.userInitiated` includes idle-sleep prevention
+    /// (NSActivityIdleSystemSleepDisabled), redundant while coreaudiod and
+    /// AirPlayXPCHelper already hold the Mac awake for the AirPlay IO. The
+    /// variant without it keeps App Nap and timer coalescing away.
+    static let options: ProcessInfo.ActivityOptions = [.userInitiatedAllowingIdleSystemSleep, .latencyCritical]
+    private let reason: String
+    private let begin: Begin
+    private let end: End
+    private let lock = NSLock()
+    private var token: NSObjectProtocol?
+
+    init(reason: String,
+         begin: @escaping Begin = { ProcessInfo.processInfo.beginActivity(options: AirPlayNapGuard.options, reason: $0) },
+         end: @escaping End = { ProcessInfo.processInfo.endActivity($0) }) {
+        self.reason = reason
+        self.begin = begin
+        self.end = end
+    }
+    deinit { release() }
+
+    var isHeld: Bool { lock.lock(); defer { lock.unlock() }; return token != nil }
+
+    func acquire() {
+        lock.lock(); defer { lock.unlock() }
+        guard token == nil else { return }
+        token = begin(reason)
+    }
+
+    func release() {
+        lock.lock()
+        let held = token
+        token = nil
+        lock.unlock()
+        if let held { end(held) }
     }
 }

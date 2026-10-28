@@ -537,6 +537,7 @@ private struct ApplicationAudioRow: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     let app: AppAudioState
     @State private var gain: Float
+    @State private var balance: Float
     @State private var expanded = false
     @State private var showEQ = false
     @State private var availableOutputs: [AudioOutputDevice] = []
@@ -544,6 +545,7 @@ private struct ApplicationAudioRow: View {
     init(app: AppAudioState) {
         self.app = app
         _gain = State(initialValue: min(max(app.gain, 0), 1))
+        _balance = State(initialValue: AudioBalance.clamp(app.balance))
     }
 
     var body: some View {
@@ -614,6 +616,7 @@ private struct ApplicationAudioRow: View {
                            onDone: { showEQ = false })
         }
         .onChange(of: app.gain) { _, value in gain = min(max(value, 0), 1) }
+        .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
         .onChange(of: expanded) { _, shown in if shown { availableOutputs = AudioOutputService.devices() } }
     }
 
@@ -664,6 +667,37 @@ private struct ApplicationAudioRow: View {
                 Spacer()
             }
             HStack(spacing: AOMSpace.s) {
+                Text("Balance").font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                    .frame(width: 112, alignment: .leading)
+                HStack(spacing: AOMSpace.xs) {
+                    Text("L").font(.caption2.weight(.semibold)).foregroundStyle(AOMTheme.textTertiary)
+                        .accessibilityHidden(true)
+                    Slider(value: Binding(get: { Double(balance) }, set: { newValue in
+                        balance = AudioBalance.stepped(Float(newValue))
+                        service.setBalance(balance, bundleID: app.bundleID)
+                    }), in: -1...1, step: 0.01)
+                    .controlSize(.small)
+                    .accessibilityLabel("Balance for \(app.name)")
+                    .accessibilityValue(AudioBalance.spokenValue(balance))
+                    .accessibilityAction(named: "Center") { centerBalance() }
+                    Text("R").font(.caption2.weight(.semibold)).foregroundStyle(AOMTheme.textTertiary)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: 240)
+                Text(AudioBalance.shortLabel(balance))
+                    .font(AOMType.caption.monospacedDigit())
+                    .foregroundStyle(AOMTheme.textSecondary)
+                    .lineLimit(1)
+                    .frame(width: 44, alignment: .trailing)
+                    .accessibilityHidden(true)
+                Button("Center") { centerBalance() }
+                    .controlSize(.small)
+                    .disabled(balance == 0)
+                    .accessibilityLabel("Center balance for \(app.name)")
+                    .help("Equal left and right")
+                Spacer()
+            }
+            HStack(spacing: AOMSpace.s) {
                 Text("Equalizer").font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
                     .frame(width: 112, alignment: .leading)
                 Toggle("Equalizer for \(app.name)", isOn: Binding(get: { service.appEQEnabled(app.bundleID) },
@@ -701,7 +735,7 @@ private struct ApplicationAudioRow: View {
                 }
                 .controlSize(.small)
                 Button("Reset") { resetEffects() }.controlSize(.small)
-                    .help("Volume 100 %, no overdrive, boost or equalizer")
+                    .help("Volume 100 %, balance centred, no overdrive, boost or equalizer")
             }
             if let error = app.error {
                 HStack(spacing: AOMSpace.xs) {
@@ -723,8 +757,14 @@ private struct ApplicationAudioRow: View {
         gain = 1
         service.setGain(1, bundleID: app.bundleID)
         service.setOverdrive(1, bundleID: app.bundleID)
+        centerBalance()
         if app.magicBoost { service.toggleMagicBoost(bundleID: app.bundleID) }
         service.setAppEQEnabled(false, bundleID: app.bundleID)
+    }
+
+    private func centerBalance() {
+        balance = 0
+        service.setBalance(0, bundleID: app.bundleID)
     }
 
     @ViewBuilder private var appIcon: some View {

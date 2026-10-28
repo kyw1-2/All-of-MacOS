@@ -1428,6 +1428,12 @@ class TrackpadMonitor {
         }
 
         let toFire = targets ?? matchingTriggers(for: gesture)
+        // A two-finger gesture on a title bar the snap captured is the snap's
+        // (3.3.2 review: both used to act on the same pinch or double tap).
+        if !toFire.isEmpty, TitleBarWindowSnap.claimsNow(gesture) {
+            GestureLog.shared.logFromAnyThread("Gesture \(gesture.rawValue) — left to the title-bar snap", level: .noMatch)
+            return
+        }
         if systemMonitoringEnabled { GestureHaptics.shared.feedback(enabled: toFire.contains { $0.hapticFeedback && $0.actions.contains(where: \.isEnabled) }) }
 
         if toFire.isEmpty {

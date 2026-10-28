@@ -173,7 +173,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     func hasCustomSettings(_ app: AppAudioState) -> Bool {
         abs(app.gain - 1) > 0.001 || app.muted || app.outputDeviceUID != nil || app.magicBoost ||
-            app.overdrive > 1.0001 || appEQEnabled(app.bundleID)
+            app.overdrive > 1.0001 || app.balance != 0 || appEQEnabled(app.bundleID)
     }
 
     /// Favourites first (in their order), then apps playing or adjusted,
@@ -205,6 +205,15 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         guard #available(macOS 14.2, *), AppAudioPreferences.setOverdrive(value, bundleID: bundleID) else { return }
         objectWillChange.send()
         AppAudioEngine.shared.updateEffects()
+        requestReload()
+    }
+
+    // MARK: Balance
+
+    /// Per-app stereo balance, -1 (left) … +1 (right); 0 removes the setting.
+    func setBalance(_ value: Float, bundleID: String) {
+        guard #available(macOS 14.2, *), AppAudioEngine.shared.setBalance(value, bundleID: bundleID) else { return }
+        objectWillChange.send()
         requestReload()
     }
 

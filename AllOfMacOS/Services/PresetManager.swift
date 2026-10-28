@@ -172,7 +172,21 @@ class PresetManager {
             // saved window layouts and HUD opacity.
             TitleBarWindowSnap.enabledKey, TitleBarWindowSnap.hapticKey, TitleBarWindowSnap.marginKey,
             TitleBarWindowSnap.activateKey, TitleBarWindowSnap.keepPointerKey,
+            // 3.3.2 title-bar snap options and the shared hold-still cancel.
+            TitleBarWindowSnap.thirdsKey, TitleBarWindowSnap.previewKey, TitleBarWindowSnap.holdCancelKey,
+            // 3.3.2 Swish title-bar gestures: pinches, double tap, tap and
+            // hold, a swipe down on a free window, and the modifier variants.
+            TitleBarWindowSnap.pinchKey, TitleBarWindowSnap.doubleTapKey, TitleBarWindowSnap.holdKey,
+            TitleBarWindowSnap.downActionKey, TitleBarWindowSnap.modifiersKey, TitleBarWindowSnap.sensitivityKey,
+            // 3.3.2 Swish snapping options: the grid, almost maximize, the ⌃⌥
+            // hotkeys, drag to unsnap, re-snapping, the preview animation,
+            // the Stage Manager offset and resizing adjacent windows.
+            TitleBarWindowSnap.gridKey, TitleBarWindowSnap.almostKey, TitleBarWindowSnap.hotkeysKey,
+            TitleBarWindowSnap.dragUnsnapKey, TitleBarWindowSnap.resnapKey, TitleBarWindowSnap.animationKey,
+            TitleBarWindowSnap.stageManagerOffsetKey, TitleBarWindowSnap.resizeAdjacentKey,
             TrackpadUtilityGestures.spacesEnabledKey, TrackpadUtilityGestures.dockQuitEnabledKey,
+            // 3.3.2 Swish Dock and menu-bar gestures.
+            TrackpadUtilityGestures.dockGesturesKey, TrackpadUtilityGestures.menuBarGesturesKey,
             TriggerSuppression.settingsKey, "AOMWindowLayoutsV1", "AOMHUDBackgroundOpacity",
             // Settings › Gestures timing, force press, the HUD and the wheel.
             "AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs",
@@ -317,7 +331,7 @@ class PresetManager {
     /// Settings keyed by app or device. A settings file holds each family
     /// completely, so a restore also removes the members it does not list.
     static let backedUpSettingPrefixes = ["AOMAudioGain_", "AOMAudioMute_", "AOMAudioRoute_", "AOMAudioMagicBoost_",
-                                          "AOMAudioBoostLevel_", "AOMAudioOverdrive_",
+                                          "AOMAudioBoostLevel_", "AOMAudioOverdrive_", "AOMAudioBalance_",
                                           "AOMAudioAppEQEnabled_", "AOMAudioAppEQGains_", "AOMAudioAppEQPreset_",
                                           "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_"]
     private static let backedUpKeySet = Set(userDefaultsKeys)
@@ -506,6 +520,7 @@ class PresetManager {
     static func settingArea(_ key: String) -> String {
         if key.hasPrefix("AOMTitleBarSnap") { return "Title-bar snap" }
         if key == TrackpadUtilityGestures.spacesEnabledKey || key == TrackpadUtilityGestures.dockQuitEnabledKey
+            || key == TrackpadUtilityGestures.dockGesturesKey || key == TrackpadUtilityGestures.menuBarGesturesKey
             || key.hasPrefix("AOMSwipeMinVelocity_") || key.hasPrefix("AOMTipTap") || key == "AOMPressDragThreshold"
             || key == "AOMSuppressMouseDuringDrawing" { return "Trackpad gestures" }
         if ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",

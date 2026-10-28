@@ -34,6 +34,8 @@ final class AutomationGateTests: XCTestCase {
         TriggerSuppression.shared.resume()
         service.cursorLocation = { CGPoint(x: 700, y: 895) }
         service.cursorInTopBand = { _ in true }
+        // The real window-server lookup would depend on the host's screen.
+        service.windowUnderPointer = { _ in nil }
         service.isScreenLocked = { false }
         service.isAllowed = { AutomationGate.allows(.trackpad) }
         // Keep the Dock pinch out of the way: its AX lookup is real.
@@ -48,6 +50,7 @@ final class AutomationGateTests: XCTestCase {
         service.dockApp = { TrackpadUtilityGestures.shared.dockAppUnderCursor() }
         service.cursorLocation = { NSEvent.mouseLocation }
         service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+        service.windowUnderPointer = { DockLookup.windowUnder($0) }
         service.isScreenLocked = { ScreenLock.isLocked }
         service.isAllowed = { AutomationGate.allows(.trackpad) }
         UserDefaults.standard.removeObject(forKey: AutomationGate.masterSwitchKey)
@@ -210,6 +213,10 @@ final class AutomationGateTests: XCTestCase {
         service.observe(points: pair(0.4, 0.6), timestamp: 10.02, device: 1)
         service.observe(points: [TouchPoint(id: 9, x: 0.9, y: 0.9, size: 0.1)], timestamp: 10.03, device: 2)
         service.observe(points: pair(0.5, 0.7), timestamp: 10.04, device: 1)
+        XCTAssertEqual(fired, [], "armed: the Space switches when device 1's fingers lift (3.3.2)")
+        service.observe(points: [TouchPoint(id: 9, x: 0.9, y: 0.9, size: 0.1)], timestamp: 10.05, device: 2)
+        XCTAssertEqual(fired, [], "device 2's frame is no lift of this gesture")
+        service.observe(points: [], timestamp: 10.06, device: 1)
         XCTAssertEqual(fired, [true], "the swipe on device 1 fires once despite device 2's frames")
     }
 

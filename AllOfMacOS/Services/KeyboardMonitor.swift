@@ -255,7 +255,11 @@ class KeyboardMonitor: ObservableObject {
             // it here a saved expansion rule never reaches the engine.
             switch $0.input { case .keyboardShortcut, .keySequence, .typedString: return true; default: return false }
         }
-        let hasCaptureShortcuts = MainActor.assumeIsolated { CaptureShortcuts.shared.hasActiveShortcuts || ClipboardShortcuts.shared.hasActiveShortcuts }
+        let hasCaptureShortcuts = MainActor.assumeIsolated {
+            CaptureShortcuts.shared.hasActiveShortcuts || ClipboardShortcuts.shared.hasActiveShortcuts
+                // The title-bar snap's ⌃⌥ hotkeys (Swish's Advanced tab) answer from this tap too.
+                || TitleBarWindowSnap.hotkeysWanted()
+        }
         guard (!registeredTriggers.isEmpty || hasCaptureShortcuts), systemMonitoringEnabled else { return }
         KeyboardMonitor.activeMonitor = self
         secureHotKeys = SecureInputHotKeys(shortcuts: { [weak self] in
@@ -462,7 +466,11 @@ class KeyboardMonitor: ObservableObject {
             // for built-ins too, even when their panel changes focus on key down.
             let handled = builtinHandler?(keyCode, modifiers) ?? (systemMonitoringEnabled && MainActor.assumeIsolated {
                 ClipboardShortcuts.shared.handleKeyEvent(keyCode: keyCode, modifiers: modifiers) ||
-                    CaptureShortcuts.shared.handleKeyEvent(keyCode: keyCode, modifiers: modifiers)
+                    CaptureShortcuts.shared.handleKeyEvent(keyCode: keyCode, modifiers: modifiers) ||
+                    // Swish's ⌃⌥ snap hotkeys; the defaults check keeps the
+                    // service unbuilt while they are off.
+                    (TitleBarWindowSnap.hotkeysWanted()
+                        && TitleBarWindowSnap.shared.handleHotKey(keyCode: keyCode, modifiers: modifiers))
             })
             if handled { pressed[keyCode] = [] }
             return handled

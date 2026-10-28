@@ -280,7 +280,15 @@ final class ProfileBackupRestoreTests: XCTestCase {
     func testEveryNewGestureSettingIsBackedUp() {
         for key in [TitleBarWindowSnap.enabledKey, TitleBarWindowSnap.hapticKey, TitleBarWindowSnap.marginKey,
                     TitleBarWindowSnap.activateKey, TitleBarWindowSnap.keepPointerKey,
+                    TitleBarWindowSnap.thirdsKey, TitleBarWindowSnap.previewKey, TitleBarWindowSnap.holdCancelKey,
+                    TitleBarWindowSnap.pinchKey, TitleBarWindowSnap.doubleTapKey, TitleBarWindowSnap.holdKey,
+                    TitleBarWindowSnap.downActionKey, TitleBarWindowSnap.modifiersKey,
+                    TitleBarWindowSnap.sensitivityKey, TitleBarWindowSnap.gridKey, TitleBarWindowSnap.almostKey,
+                    TitleBarWindowSnap.hotkeysKey, TitleBarWindowSnap.dragUnsnapKey, TitleBarWindowSnap.resnapKey,
+                    TitleBarWindowSnap.animationKey, TitleBarWindowSnap.stageManagerOffsetKey,
+                    TitleBarWindowSnap.resizeAdjacentKey,
                     TrackpadUtilityGestures.spacesEnabledKey, TrackpadUtilityGestures.dockQuitEnabledKey,
+                    TrackpadUtilityGestures.dockGesturesKey, TrackpadUtilityGestures.menuBarGesturesKey,
                     TriggerSuppression.settingsKey, "AOMWindowLayoutsV1"] {
             XCTAssertTrue(PresetManager.isBackedUpSetting(key), key)
         }

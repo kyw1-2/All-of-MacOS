@@ -130,7 +130,8 @@ class AppState: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)
             }
         }
-        for name in [ClipboardShortcuts.didChange, Notification.Name("AOMCaptureShortcutsDidChange")] {
+        for name in [ClipboardShortcuts.didChange, Notification.Name("AOMCaptureShortcutsDidChange"),
+                     TitleBarWindowSnap.hotkeysDidChange] {
             shortcutObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }

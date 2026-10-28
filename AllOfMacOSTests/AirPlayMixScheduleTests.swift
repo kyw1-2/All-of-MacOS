@@ -244,6 +244,66 @@ final class AirPlayMixScheduleTests: XCTestCase {
         XCTAssertEqual(timeline.scheduling, readings[1])
     }
 
+    // MARK: Host diagnosis and verdict (audit N01)
+
+    private let healthyHost = AirPlayHostDiagnosis(
+        ordinaryThread: .init(realtime: false, priority: 31, maximumPriority: 63),
+        darwinBackground: false, worstTimerLateness: 400_000)
+
+    /// The re-audit's default remote environment: the ceiling stayed 63, so
+    /// 3.3.1's `hostClamped` said "not clamped", yet every thread ran
+    /// timeshare at priority 4 and woke about 200 ms late.
+    func testASuppressedHostWithAHighCeilingIsStillThrottled() {
+        let suppressed = AirPlayHostDiagnosis(ordinaryThread: .init(realtime: false, priority: 4, maximumPriority: 63),
+                                              darwinBackground: false, worstTimerLateness: 196_000_000)
+        XCTAssertFalse(suppressed.ordinaryThread!.hostClamped, "the ceiling alone misses it")
+        XCTAssertTrue(suppressed.throttled)
+        XCTAssertEqual(suppressed.throttleReasons.count, 2, "\(suppressed.throttleReasons)")
+        let mix = AirPlayMixScheduling.Reading(realtime: false, priority: 4, maximumPriority: 63)
+        guard case .hostThrottled(let reasons) = AirPlayMixVerdict.judge(host: suppressed, mix: mix, promotionAccepted: true) else {
+            return XCTFail("a throttled host is an environment limit, not a promotion failure")
+        }
+        XCTAssertFalse(reasons.isEmpty)
+    }
+
+    func testEachThrottleSignalIsEnoughOnItsOwn() {
+        var darwin = healthyHost; darwin.darwinBackground = true
+        var clamped = healthyHost; clamped.ordinaryThread = .init(realtime: false, priority: 4, maximumPriority: 4)
+        var coalesced = healthyHost; coalesced.worstTimerLateness = 64_000_000
+        for host in [darwin, clamped, coalesced] { XCTAssertTrue(host.throttled, "\(host)") }
+        XCTAssertFalse(healthyHost.throttled)
+        var unprobed = healthyHost; unprobed.worstTimerLateness = nil
+        XCTAssertFalse(unprobed.throttled, "an unmeasured timer is not evidence of throttling")
+    }
+
+    /// The regression the re-audit asked for: on a host that allows realtime,
+    /// a mix thread that does not get it fails instead of being skipped.
+    func testAPromotionFailureOnAHealthyHostIsNeverExcused() {
+        let timeshare = AirPlayMixScheduling.Reading(realtime: false, priority: 31, maximumPriority: 63)
+        guard case .promotionFailed(let accepted) = AirPlayMixVerdict.judge(host: healthyHost, mix: timeshare, promotionAccepted: true),
+              case .promotionFailed(let refused) = AirPlayMixVerdict.judge(host: healthyHost, mix: timeshare, promotionAccepted: false),
+              case .promotionFailed = AirPlayMixVerdict.judge(host: healthyHost, mix: nil, promotionAccepted: true) else {
+            return XCTFail("a non-realtime mix thread on a healthy host is a defect")
+        }
+        XCTAssertTrue(accepted.contains("accepted"))
+        XCTAssertTrue(refused.contains("refused"))
+        let realtime = AirPlayMixScheduling.Reading(realtime: true, priority: 97, maximumPriority: 63)
+        XCTAssertEqual(AirPlayMixVerdict.judge(host: healthyHost, mix: realtime, promotionAccepted: true), .realtime)
+        var throttled = healthyHost; throttled.darwinBackground = true
+        XCTAssertEqual(AirPlayMixVerdict.judge(host: throttled, mix: realtime, promotionAccepted: true), .realtime,
+                       "a realtime mix thread passes wherever it runs")
+    }
+
+    func testMeasuringTheHostReadsAnOrdinaryThread() throws {
+        let host = AirPlayHostDiagnosis.measure()
+        let thread = try XCTUnwrap(host.ordinaryThread)
+        print("Host diagnosis: priority \(thread.priority), ceiling \(thread.maximumPriority), darwin background \(host.darwinBackground), " +
+              "worst 2 ms wait \(host.worstTimerLateness.map { String(format: "%.2f ms late", Double($0) / 1e6) } ?? "n/a"), " +
+              "throttled \(host.throttled) \(host.throttleReasons)")
+        XCTAssertFalse(thread.realtime)
+        XCTAssertNotNil(host.worstTimerLateness)
+    }
+
     func testALongStallRealignsInsteadOfBurstingASecondOfAudio() {
         let new = simulate(production(), duration: 3_000 * ms, cost: ms / 20, lateness: 0,
                            stall: (at: 500 * ms, length: 2_000 * ms))

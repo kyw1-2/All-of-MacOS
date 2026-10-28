@@ -178,30 +178,155 @@ final class PortedFeatureTests: XCTestCase {
         // Cursor pinned in the top band by the seams.
         service.cursorLocation = { CGPoint(x: 700, y: 895) }
         service.cursorInTopBand = { _ in true }
+        service.windowUnderPointer = { _ in nil }
         service.isOutsideOwnApp = { true }
         service.isScreenLocked = { false }
         defer {
             service.cursorLocation = { NSEvent.mouseLocation }
             service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+            service.windowUnderPointer = { DockLookup.windowUnder($0) }
             service.isOutsideOwnApp = {
                 NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
             }
             service.isScreenLocked = { ScreenLock.isLocked }
         }
 
+        // The Space switches on lift (3.3.2), toward where the fingers went;
+        // nothing switches while they are still down.
         var t: Double = 10
         service.observe(points: frame(0.4, 0.6), timestamp: t) // begin
         t += 0.5
         service.observe(points: frame(0.25, 0.45), timestamp: t) // swipe left 0.15
-        XCTAssertEqual(fired, [false], "fingers left → the Space on the right")
+        XCTAssertEqual(fired, [], "armed, not switched: the fingers are still down")
         t += 0.5
-        service.observe(points: frame(0.25, 0.45), timestamp: t) // same position, no refire
-        XCTAssertEqual(fired.count, 1, "no refire without further movement")
-        t += 0.5
-        service.observe(points: frame(0.40, 0.60), timestamp: t) // chain back right
-        XCTAssertEqual(fired, [false, true], "rebased gesture chains the other way")
-        service.observe(points: [], timestamp: t) // lift
+        service.observe(points: frame(0.25, 0.45), timestamp: t) // same position
+        service.observe(points: [], timestamp: t + 0.02) // lift
+        XCTAssertEqual(fired, [false], "fingers left → the Space on the right, once")
+        // The direction follows the fingers until they lift.
+        t += 1
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.25, 0.45), timestamp: t + 0.1)  // left…
+        service.observe(points: frame(0.56, 0.76), timestamp: t + 0.3)  // …then right of the start
+        service.observe(points: [], timestamp: t + 0.35)
+        XCTAssertEqual(fired, [false, true], "the last direction wins")
+        // Back near where they landed: lifting switches nothing.
+        t += 1
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.25, 0.45), timestamp: t + 0.1)
+        service.observe(points: frame(0.38, 0.58), timestamp: t + 0.3)
+        service.observe(points: [], timestamp: t + 0.35)
+        XCTAssertEqual(fired, [false, true])
         UserDefaults.standard.removeObject(forKey: "AOMTopBarSpaceSwipe")
+    }
+
+    /// Swish's hold-still cancel on the menu bar: two fingers resting for 2 s
+    /// spend the touch, before the swipe or (3.3.2: the Space switches on
+    /// lift) after it; a new touch works, and with the cancel off the same
+    /// rest is harmless.
+    func testSpaceSwipeIsCancelledByResting() {
+        let service = TrackpadUtilityGestures.shared
+        var fired: [Bool] = []
+        var announced: [String] = []
+        service.switchSpace = { fired.append($0) }
+        service.announce = { title, _ in announced.append(title) }
+        service.cursorLocation = { CGPoint(x: 700, y: 895) }
+        service.cursorInTopBand = { _ in true }
+        service.windowUnderPointer = { _ in nil }
+        service.isOutsideOwnApp = { true }
+        service.isScreenLocked = { false }
+        service.isAllowed = { true }
+        service.holdCancelSeconds = { 2 }
+        UserDefaults.standard.removeObject(forKey: "AOMTopBarSpaceSwipe")
+        defer {
+            service.switchSpace = { _ in }
+            service.announce = { title, detail in TrackpadUtilityGestures.showHUD(title, detail) }
+            service.windowUnderPointer = { DockLookup.windowUnder($0) }
+            service.cursorLocation = { NSEvent.mouseLocation }
+            service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+            service.isOutsideOwnApp = {
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            service.isScreenLocked = { ScreenLock.isLocked }
+            service.isAllowed = { AutomationGate.allows(.trackpad) }
+            service.holdCancelSeconds = { TitleBarWindowSnap.holdCancelSeconds() }
+        }
+        func frame(_ x1: Float, _ x2: Float) -> [TouchPoint] {
+            [TouchPoint(id: 0, x: x1, y: 0.5, size: 0.1), TouchPoint(id: 1, x: x2, y: 0.5, size: 0.1)]
+        }
+        // Rest 2.1 s at 60 Hz, then swipe left and lift: nothing.
+        var t: Double = 100
+        for _ in 0...126 { service.observe(points: frame(0.4, 0.6), timestamp: t); t += 1.0 / 60 }
+        service.observe(points: frame(0.22, 0.42), timestamp: t)
+        service.observe(points: [], timestamp: t + 0.02)
+        XCTAssertEqual(fired, [], "a 2 s rest cancels the gesture until the lift")
+        // Swipe, then rest 2.1 s before lifting: cancelled too, and it says so.
+        t += 1
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.22, 0.42), timestamp: t + 0.1)
+        t += 0.1
+        for _ in 0...126 { t += 1.0 / 60; service.observe(points: frame(0.22, 0.42), timestamp: t) }
+        service.observe(points: [], timestamp: t + 0.02)
+        XCTAssertEqual(fired, [], "resting after the swipe cancels the Space switch")
+        XCTAssertEqual(announced, ["Cancelled"])
+        // A fresh touch swipes as usual.
+        t += 1
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.22, 0.42), timestamp: t + 0.1)
+        service.observe(points: [], timestamp: t + 0.2)
+        XCTAssertEqual(fired, [false])
+        // Off: the same rests are harmless.
+        service.holdCancelSeconds = { 0 }
+        t += 1
+        for _ in 0...126 { service.observe(points: frame(0.4, 0.6), timestamp: t); t += 1.0 / 60 }
+        service.observe(points: frame(0.22, 0.42), timestamp: t)
+        for _ in 0...126 { t += 1.0 / 60; service.observe(points: frame(0.22, 0.42), timestamp: t) }
+        service.observe(points: [], timestamp: t + 0.02)
+        XCTAssertEqual(fired, [false, false])
+    }
+
+    /// 3.3.2 review: with the menu bar hidden, in a full-screen app or on a
+    /// display without a menu bar, an ordinary window's title bar sits in the
+    /// top band; a sideways swipe there belongs to the title-bar snap, as
+    /// `resolvePlace` already said, and switches no Space.
+    func testSpaceSwipeLeavesATitleBarInTheTopBandToTheSnap() {
+        let service = TrackpadUtilityGestures.shared
+        var fired: [Bool] = []
+        var asked = 0
+        var layer = 0
+        service.switchSpace = { fired.append($0) }
+        service.windowUnderPointer = { _ in asked += 1; return (layer: layer, pid: 1) }
+        service.dockApp = { nil }
+        service.cursorLocation = { CGPoint(x: 700, y: 895) }
+        service.cursorInTopBand = { _ in true }
+        service.isScreenLocked = { false }
+        service.isAllowed = { true }
+        UserDefaults.standard.removeObject(forKey: "AOMTopBarSpaceSwipe")
+        defer {
+            service.switchSpace = { _ in }
+            service.windowUnderPointer = { DockLookup.windowUnder($0) }
+            service.dockApp = { TrackpadUtilityGestures.shared.dockAppUnderCursor() }
+            service.cursorLocation = { NSEvent.mouseLocation }
+            service.cursorInTopBand = { TrackpadUtilityGestures.cursorInTopBand($0) }
+            service.isScreenLocked = { ScreenLock.isLocked }
+            service.isAllowed = { AutomationGate.allows(.trackpad) }
+        }
+        func frame(_ x1: Float, _ x2: Float) -> [TouchPoint] {
+            [TouchPoint(id: 0, x: x1, y: 0.5, size: 0.1), TouchPoint(id: 1, x: x2, y: 0.5, size: 0.1)]
+        }
+        var t: Double = 300
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.25, 0.45), timestamp: t + 0.1)
+        for step in 1...10 { service.observe(points: frame(0.25 - Float(step) * 0.005, 0.45 - Float(step) * 0.005), timestamp: t + 0.1 + Double(step) / 60) }
+        service.observe(points: [], timestamp: t + 0.4)
+        XCTAssertEqual(fired, [], "a layer-0 window under the band: the title bar's swipe")
+        XCTAssertLessThanOrEqual(asked, 2, "the window server is asked once per touch, not per frame")
+        // The menu bar itself (layer 24) or nothing at all: the Space switches.
+        layer = 24
+        t += 1
+        service.observe(points: frame(0.4, 0.6), timestamp: t)
+        service.observe(points: frame(0.25, 0.45), timestamp: t + 0.1)
+        service.observe(points: [], timestamp: t + 0.2)
+        XCTAssertEqual(fired, [false])
     }
 
     func testDockPinchQuitSettingContract() {

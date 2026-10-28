@@ -15,21 +15,24 @@ enum WhatsNew {
     }
 
     /// Highlights of the current version, bundled so the panel works offline.
+    /// 3.3.2: the title-bar snap now follows Swish, and several of its
+    /// gestures act on windows where 3.3.1 did nothing or centred them; each
+    /// one says where it is turned off.
     static let items: [Item] = [
-        Item(symbol: "pause.circle", title: "Pausing pauses everything",
-             detail: "With Automation paused, the top-bar Space swipe, Dock pinch and title-bar snap stay quiet too."),
-        Item(symbol: "hand.draw.fill", title: "A steadier title-bar snap",
-             detail: "Hold a preview as long as you like and lift to apply it. A third finger cancels instead of moving the window, and a second trackpad cannot interrupt a swipe."),
-        Item(symbol: "dock.rectangle", title: "Dock pinch asks, never forces",
-             detail: "Pinching an app in the Dock asks it to quit like its own Quit command. An app asking to save stays open."),
-        Item(symbol: "point.3.connected.trianglepath.dotted", title: "Dependable AI tool connection",
-             detail: "Large MCP replies arrive whole, and an AI tool that closes its connection can no longer make AOM quit."),
-        Item(symbol: "record.circle", title: "Long recordings",
-             detail: "The editable pointer now covers recordings longer than 50 minutes. A take cut short or saved with problems says so."),
-        Item(symbol: "arrow.counterclockwise", title: "Backups you can restore",
-             detail: "Restore a backup from Settings › Backups after a preview of what changes. Its automations and the settings of that moment come back exactly; what they replace is kept first."),
-        Item(symbol: "checkmark.seal", title: "Results you can trust",
-             detail: "A locked Keychain or damaged clipboard file is shown as such, not as an empty history. Flush DNS, Empty Trash and Desktop Icons report what really happened.")
+        Item(symbol: "hand.draw.fill", title: "Swish-style title-bar snap",
+             detail: "Quick flicks snap at once, a window at the top moves down to the bottom half or a quarter, diagonals pick a quarter, and resting two fingers still for 2 s cancels. The grid is 2 × 2 (halves and quarters, no thirds) unless you pick 3 × 2 or 3 × 3 in Window Tiling › Trackpad Gestures › Grid."),
+        Item(symbol: "arrow.down.to.line", title: "Swipe down now minimizes",
+             detail: "A short swipe down on a window that is not snapped minimizes it (3.3.1 centred it). To keep centring, set Window Tiling › Trackpad Gestures › Swipe down on a free window to Center."),
+        Item(symbol: "arrow.down.right.and.arrow.up.left", title: "Pinch to close or quit",
+             detail: "Pinch in on a title bar to close the window, twice to quit the app (it may ask to save); pinch out for full screen. Turn off: Window Tiling › Trackpad Gestures › Pinch gestures."),
+        Item(symbol: "rectangle.on.rectangle", title: "Hold, then swipe: Spaces and full screen",
+             detail: "Rest two fingers on a title bar for half a second, then swipe sideways to move the window to the next Space, up for full screen, down to minimize. ⌥ swipes do the same for Spaces and close the window. Turn off: Window Tiling › Trackpad Gestures › Tap and hold gestures and Modifier gestures."),
+        Item(symbol: "dock.rectangle", title: "Dock and menu-bar gestures",
+             detail: "Two fingers on a Dock icon or the menu bar minimize, unminimize, hide and switch apps; the top-bar Space swipe now switches on lift, so resting 2 s cancels it. Turn off: Window Tiling › Trackpad Gestures › Dock gestures, Menu-bar gestures."),
+        Item(symbol: "hifispeaker.fill", title: "Cleaner HomePod and AirPlay audio",
+             detail: "A true-peak limiter with headroom for the receiver, smoother resampling and drift control, larger IO buffers and no restart on a repeated format notice remove the crackle sources AOM's diagnostics found."),
+        Item(symbol: "slider.horizontal.below.rectangle", title: "Per-app balance",
+             detail: "In Audio, open an app's effects to pan it left or right, beside Volume Overdrive.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.

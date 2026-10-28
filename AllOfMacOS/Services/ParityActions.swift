@@ -359,6 +359,12 @@ final class AppActivationHistory {
         ring.note(app.processIdentifier)
     }
 
+    /// The apps activated most recently first, still running. Read-only, for
+    /// the menu bar's tap-and-hold app switch (`AppCycle`).
+    func recentPIDs() -> [pid_t] {
+        ring.items.filter { NSRunningApplication(processIdentifier: $0).map { !$0.isTerminated } ?? false }
+    }
+
     func previousApp() -> NSRunningApplication? {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         return ring.previous(excluding: front) { pid in

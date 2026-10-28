@@ -105,6 +105,57 @@ now says if macOS ever demotes its clock. The probes use a constant source; they
 model the HAL device clock, resampling, per-app capture queues or a real receiver, so they
 do not replace listening on AirPlay (R04).
 
+### Follow-up in 3.3.2: N01, the host check missed a throttled environment
+
+The 3.3.1 re-audit ran the same build in two environments. Under the application policy
+(`taskpolicy -a`) both AirPlay clock tests passed 3/3. In its default remote environment
+both failed 3/3 (4 assertions each): the mix thread ran timeshare at priority 4 and woke
+~196 ms late. The process's priority ceiling there was **63**, not 4, so 3.3.1's
+`hostClamped` (`maximumPriority` 0…4) classed the host as normal, and the realtime-only
+checks ran and failed. The "clamped agent" rows above were measured where the ceiling was
+4; they do not show that every remote environment passes. Average supply was fine in both
+(~48,000 frames/s), so the failure said nothing about the installed app's sound.
+
+3.3.2 judges the host from several signals, read on an ordinary thread and never on the
+mix thread (`AirPlayHostDiagnosis`):
+
+- darwin background (`getpriority(PRIO_DARWIN_PROCESS)`);
+- a priority ceiling of 4 or less;
+- ordinary threads running at priority 4 or less;
+- ten 2 ms timed waits, where any wake more than 20 ms late indicates timer coalescing.
+
+A separate verdict (`AirPlayMixVerdict`) keeps the mix code's result apart from that
+diagnosis:
+
+- a realtime mix thread passes in any environment;
+- a throttled host skips the realtime-only checks, and the skip lists its reasons;
+- a non-realtime mix thread on a host that allows realtime is a **promotion failure** and fails.
+
+The sustained-supply checks run in every environment.
+
+Measured on the build Mac (`work/n01-20261028/*.log`, filter
+`AudioPipelineTests/test.*AirPlayMixClock|AirPlayMixScheduleTests`, 18 tests):
+
+| Policy | Host diagnosis | Mix thread | Result |
+|---|---|---|---|
+| shell default | priority 31, ceiling 63, 2 ms waits ≤ 1.06 ms late | realtime 97 | 18 pass |
+| `taskpolicy -a` | the same | realtime 97 | 18 pass |
+| `taskpolicy -b` | darwin background, priority 4, **ceiling 63**, waits 125 ms late | timeshare 4 | 17 pass, realtime check skipped with 3 reasons; supply 47,945 frames/s |
+| `taskpolicy -c background` | priority 4, **ceiling 63**, waits 128–204 ms late | timeshare 4 | 17 pass, realtime check skipped with 2 reasons; supply 48,056 frames/s |
+
+The last two rows reproduce the re-audit's pattern: ceiling 63, priority 4, ~200 ms
+wake-ups. `AirPlayMixScheduleTests` cover the classification without a live host:
+
+- a suppressed host with ceiling 63 is throttled;
+- each signal is enough on its own;
+- an unmeasured timer is no evidence;
+- a promotion failure on a healthy host is never excused.
+
+`scripts/run-tests.sh` runs the suite under the application policy, which is the documented
+way to run the realtime check. In any other environment, a skipped realtime check is an
+environment limit and is not counted as a pass. Still open: listening on a real AirPlay
+receiver (R04).
+
 ## Distribution and update policy (F11)
 
 - Releases are DMGs on GitHub Releases of the public repository `kyw1-2/All-of-MacOS`,

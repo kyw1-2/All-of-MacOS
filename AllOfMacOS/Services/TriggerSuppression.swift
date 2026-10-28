@@ -239,6 +239,15 @@ final class TriggerSuppression: ObservableObject {
 
     var isPaused: Bool { refresh(); return pause.isGloballyPaused }
 
+    /// Whether AOM is paused for this app (rule b). `evaluate` keys that
+    /// pause to the frontmost app; the gestures that act on a background
+    /// app's windows (the title-bar snap, the Dock and menu-bar gestures)
+    /// ask about the app they would act on as well (3.3.2 review).
+    func isPaused(forApp bundleID: String?) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        return pause.appBundleIDs.contains(bundleID)
+    }
+
     /// Menu-bar/UI status line, or nil when nothing is paused.
     var statusDescription: String? {
         refresh()

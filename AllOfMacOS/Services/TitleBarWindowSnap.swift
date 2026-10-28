@@ -46,11 +46,16 @@ enum SwishSnap {
         var direction: Direction
         var tier: Int
         var cross: Direction?
+        /// The fingers rested `TitleBarSnapRecognizer.holdTime` before the
+        /// swipe (Swish's "tap and hold"): up toggles full screen, down
+        /// minimizes, sideways moves the window a Space.
+        var held: Bool
 
-        init(_ direction: Direction, tier: Int = 1, cross: Direction? = nil) {
+        init(_ direction: Direction, tier: Int = 1, cross: Direction? = nil, held: Bool = false) {
             self.direction = direction
             self.tier = tier
             self.cross = cross
+            self.held = held
         }
     }
 
@@ -97,8 +102,10 @@ enum SwishSnap {
             return dx < 0 ? .left : .right
         } else {
             guard ay >= engage, ay >= ax * ratio else { return nil }
-            // Trackpad Y grows downward (top of pad = 0), so dy > 0 is a swipe
-            // down the pad, which the user feels as pulling the window down.
+            // The recognizer hands over pad coordinates with y growing toward
+            // the bottom of the pad (it flips TouchPoint's y, which grows
+            // toward the top), so dy > 0 is a swipe down the pad, which the
+            // user feels as pulling the window down.
             return dy > 0 ? .down : .up
         }
     }
@@ -106,6 +113,32 @@ enum SwishSnap {
     /// Tier from the dominant-axis displacement.
     static func tier(dx: Float, dy: Float, tier2: Float) -> Int {
         max(abs(dx), abs(dy)) >= tier2 ? 2 : 1
+    }
+
+    /// The trackpad's width over its height: MacBook trackpads are about 1.5,
+    /// the Magic Trackpad 1.4. Pad units stretch by it, so a swipe at 45° on
+    /// the glass reads steeper than 45° in pad units.
+    static let padAspect: Float = 1.5
+
+    /// A diagonal swipe (3.3.2): both legs past most of `engage` and, measured
+    /// on the glass, between about 31° and 59° — Swish snaps it straight to
+    /// that quarter, from any cell (top half or maximized ↙ → bottom-left).
+    /// Until now such a swipe was "too diagonal" for `direction` and did
+    /// nothing at all. The longer leg is the primary direction, the shorter
+    /// one the cross, so `refine` keeps following it like an L-shape.
+    static func diagonal(dx: Float, dy: Float, engage: Float, aspect: Float = padAspect,
+                         share: Float = 0.6) -> Stroke? {
+        let ax = abs(dx), ay = abs(dy)
+        // 0.8 × engage keeps the shorter leg above `refine`'s held-cross
+        // threshold (0.6 × crossEngage), so the quarter does not flicker
+        // back to a half on the next frame.
+        guard min(ax, ay) >= engage * 0.8 else { return nil }
+        let glassX = ax * aspect, glassY = ay
+        guard min(glassX, glassY) >= max(glassX, glassY) * share else { return nil }
+        let horizontal: Direction = dx < 0 ? .left : .right
+        // Pad Y grows downward, as in `direction`.
+        let vertical: Direction = dy > 0 ? .down : .up
+        return glassX >= glassY ? Stroke(horizontal, cross: vertical) : Stroke(vertical, cross: horizontal)
     }
 
     /// Follows an engaged swipe. The primary axis was fixed when the gesture
@@ -136,6 +169,11 @@ enum SwishSnap {
         }
         return Stroke(direction, tier: abs(primary) >= tier2 ? 2 : 1, cross: cross)
     }
+
+    /// The tallest title bar plus unified toolbar AOM looks in (Safari,
+    /// Finder and Mail are about 52 pt). Within it, the Accessibility hit-test
+    /// decides whether the pointer is really on the title bar or toolbar.
+    static let toolbarBand: CGFloat = 60
 
     /// Whether a top-left pointer sits in a window's title-bar band.
     static func titleBarHit(pointerTopLeft: CGPoint, windowFrame: CGRect, band: CGFloat = 30) -> Bool {
@@ -171,6 +209,320 @@ enum SwishSnap {
     static func titleBarRestPoint(for frame: CGRect, band: CGFloat = 30) -> CGPoint {
         CGPoint(x: frame.midX, y: frame.minY + min(band, frame.height) / 2)
     }
+
+    // MARK: Moving between cells (3.3.2)
+
+    /// What a swipe does to a window, given the cell it sits in now.
+    enum Move: Equatable {
+        case cell(CustomSnapZone.Layout)
+        /// A place no tiling layout names (3.3.2): a sixth, a ninth, a span
+        /// of them, or almost-maximize. A place that has a layout is always
+        /// reported as `.cell` (`Move.to`), so equal moves compare equal.
+        case place(Place)
+        /// Put the window back where it was before AOM snapped it (centre it
+        /// when AOM has no earlier frame).
+        case restore
+        /// Act on the window instead of moving it to a cell (Swish's other
+        /// title-bar gestures: minimize, close, quit, full screen, hide,
+        /// Spaces and displays).
+        case action(WindowAction)
+
+        /// The move to `place`, named by its tiling layout when it has one.
+        static func to(_ place: Place) -> Move {
+            place.layout.map { .cell($0) } ?? .place(place)
+        }
+
+        /// Where the window goes, for a move to a cell or place.
+        var destination: Place? {
+            switch self {
+            case .cell(let layout): return Place(layout)
+            case .place(let place): return place
+            case .restore, .action: return nil
+            }
+        }
+    }
+
+    /// The cells a window can be recognised in, most specific first.
+    static let recognisedCells: [CustomSnapZone.Layout] = [
+        .topLeft, .topRight, .bottomLeft, .bottomRight,
+        .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds,
+        .leftHalf, .rightHalf, .topHalf, .bottomHalf, .maximize
+    ]
+
+    /// The grid cell a frame fills, so the next swipe can move it from there
+    /// (Swish chains swipes the same way). Nil for a free-floating window.
+    /// With thirds off a window that happens to fill a third is free-floating,
+    /// so no swipe steps it through thirds (3.3.2).
+    ///
+    /// A window with a minimum size larger than its cell (snapped by AOM's
+    /// keyboard or drag snapping, or by another tool) does not fill it: it
+    /// sits flush with the cell's snapped edges and overflows it, the way
+    /// `WindowGeometry.anchoredFrame` places it. Such a window counts as in
+    /// the cell it overflows least, so a top quarter swiped down still moves
+    /// to the bottom instead of being treated as free-floating (3.3.2).
+    static func cell(of frame: CGRect, visible: CGRect, margin: CGFloat, tolerance: CGFloat = 16,
+                     thirds: Bool = true) -> CustomSnapZone.Layout? {
+        let candidates = recognisedCells.filter { thirds || !isThird($0) }
+        if let exact = candidates.first(where: { layout in
+            let rect = targetFrame(layout: layout, visible: visible, margin: margin)
+            return abs(rect.minX - frame.minX) <= tolerance && abs(rect.minY - frame.minY) <= tolerance
+                && abs(rect.maxX - frame.maxX) <= tolerance && abs(rect.maxY - frame.maxY) <= tolerance
+        }) { return exact }
+        let area = margin > 0 ? visible.insetBy(dx: margin, dy: margin) : visible
+        var best: (layout: CustomSnapZone.Layout, overflow: CGFloat)?
+        for layout in candidates {
+            let rect = targetFrame(layout: layout, visible: visible, margin: margin)
+            let overflowX = frame.width - rect.width, overflowY = frame.height - rect.height
+            // Each side fits the cell or is larger than it, and at least one is larger.
+            guard overflowX >= -tolerance, overflowY >= -tolerance,
+                  overflowX > tolerance || overflowY > tolerance else { continue }
+            let anchored = WindowGeometry.anchoredFrame(desired: rect, actualSize: frame.size, visible: area)
+            guard abs(anchored.minX - frame.minX) <= tolerance, abs(anchored.minY - frame.minY) <= tolerance else { continue }
+            let overflow = max(0, overflowX) + max(0, overflowY)
+            if best.map({ overflow < $0.overflow }) ?? true { best = (layout, overflow) }
+        }
+        return best?.layout
+    }
+
+    /// The cells of the opt-in 3 × 2 grid.
+    static func isThird(_ layout: CustomSnapZone.Layout) -> Bool {
+        [.leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds].contains(layout)
+    }
+
+    /// Swish-style chaining on the 2 × 2 grid, or with `thirds` on the 3 × 2
+    /// grid (`step(from:stroke:grid:almost:)` has the full rules and the 3 × 3
+    /// grid):
+    /// - From a half, the other axis halves it again: left half + down →
+    ///   bottom-left quarter, top half + right → top-right quarter.
+    /// - From a quarter, a swipe toward the other row or column moves it
+    ///   there (top-left + down → bottom-left); a swipe toward the edge it
+    ///   already touches grows it along that edge (top-left + up → top half,
+    ///   top-left + left → left half).
+    /// - Maximized, or on the bottom edge, a swipe down puts the window back.
+    /// - Thirds only when `thirds` is on: a longer swipe on a free window, and
+    ///   swipes toward an edge that step half → third → two thirds → half;
+    ///   a third swiped up or down becomes its upper or lower sixth.
+    /// - An L-shaped swipe picks a quarter outright, from anywhere.
+    static func move(from current: CustomSnapZone.Layout?, stroke: Stroke, thirds: Bool) -> Move {
+        step(from: current.flatMap(Place.init), stroke: stroke, grid: thirds ? .threeByTwo : .twoByTwo)
+    }
+
+    // MARK: Swish's other title-bar gestures (3.3.2)
+
+    /// A two-finger pinch on a title bar.
+    enum Pinch: Equatable { case `in`, out }
+
+    /// The modifier keys Swish names for its title-bar gestures: the general
+    /// modifier (⌥ Option), the secondary modifier (⇧ Shift, double tap only)
+    /// and the screen modifier (⌘ Command).
+    struct Modifiers: OptionSet, Equatable {
+        let rawValue: Int
+        init(rawValue: Int) { self.rawValue = rawValue }
+        static let general = Modifiers(rawValue: 1)
+        static let secondary = Modifiers(rawValue: 1 << 1)
+        static let screen = Modifiers(rawValue: 1 << 2)
+
+        init(flags: NSEvent.ModifierFlags) {
+            self.init(rawValue: (flags.contains(.option) ? Modifiers.general.rawValue : 0)
+                | (flags.contains(.shift) ? Modifiers.secondary.rawValue : 0)
+                | (flags.contains(.command) ? Modifiers.screen.rawValue : 0))
+        }
+    }
+
+    /// What a title-bar gesture does to the window instead of moving it to a cell.
+    enum WindowAction: Equatable {
+        case minimize, close, quitApp, toggleFullscreen, hideApp, hideOthers
+        case spaceLeft, spaceRight
+        /// To the display in that direction, keeping the window's cell.
+        case screen(Direction)
+        /// To the next display, then into full screen there (Swish: "On a two
+        /// screen setup, use the screen modifier or pinch out twice to
+        /// directly enter fullscreen mode on the other screen").
+        case fullscreenOnOtherScreen
+    }
+
+    /// What a short swipe down does to a free-floating window.
+    enum DownAction: String, CaseIterable { case minimize, center }
+
+    /// What a two-finger double tap on a title bar does.
+    enum DoubleTap: String, CaseIterable { case restoreOrCenter, center, off }
+
+    /// The settings the gesture mapping depends on.
+    struct GestureOptions: Equatable {
+        /// The snapping grid (3.3.2: Swish's thirds, sixths and ninths).
+        var grid: Grid
+        var downAction: DownAction
+        var holdGestures: Bool
+        var modifierGestures: Bool
+        /// Swish's "Almost Maximize".
+        var almostMaximize: Bool
+
+        /// Thirds are reachable (a 3 × 2 or 3 × 3 grid): the 3.3.2 switch.
+        /// Turning it on picks 3 × 2 unless a grid with thirds is set.
+        var thirds: Bool {
+            get { grid.thirds }
+            set { grid = newValue ? (grid.thirds ? grid : .threeByTwo) : .twoByTwo }
+        }
+
+        /// `grid` nil follows `thirds`: 3 × 2 with thirds, else 2 × 2.
+        init(thirds: Bool = false, downAction: DownAction = .minimize, holdGestures: Bool = true,
+             modifierGestures: Bool = true, grid: Grid? = nil, almostMaximize: Bool = false) {
+            self.grid = grid ?? (thirds ? .threeByTwo : .twoByTwo)
+            self.downAction = downAction
+            self.holdGestures = holdGestures
+            self.modifierGestures = modifierGestures
+            self.almostMaximize = almostMaximize
+        }
+    }
+
+    /// Every title-bar swipe, after Swish 1.13:
+    /// - ⌘ (screen modifier), any direction: "move a window to the next
+    ///   screen in that direction".
+    /// - ⌥ (general modifier): sideways moves the window a Space ("use the
+    ///   general modifier to move a window between Mission Control spaces"),
+    ///   down closes it ("swipe down once while holding the general
+    ///   modifier"), and after tap-and-hold down quits the app. Up is a
+    ///   plain swipe up.
+    /// - Tap and hold first (`stroke.held`): up enters or leaves full screen,
+    ///   down minimizes ("in fullscreen mode, tap and hold before swiping
+    ///   down"), sideways moves a Space.
+    /// - Otherwise the cell chaining of `step(from:stroke:grid:almost:)`,
+    ///   except that a short swipe down on a free-floating or centred window
+    ///   minimizes it ("Swipe down once to minimize a window") while
+    ///   `downAction` is `.minimize`; a longer one still snaps the bottom half.
+    /// A window in native full screen only answers to tap-and-hold and the
+    /// modifiers. Nil: the stroke does nothing.
+    static func move(from current: CustomSnapZone.Layout?, stroke: Stroke, modifiers: Modifiers,
+                     options: GestureOptions, fullscreen: Bool = false) -> Move? {
+        move(at: current.flatMap(Place.init), stroke: stroke, modifiers: modifiers, options: options,
+             fullscreen: fullscreen)
+    }
+
+    /// The same mapping for any place (sixths, ninths, almost-maximize).
+    static func move(at current: Place?, stroke: Stroke, modifiers: Modifiers,
+                     options: GestureOptions, fullscreen: Bool = false) -> Move? {
+        let modifiers = options.modifierGestures ? modifiers : []
+        let held = stroke.held && options.holdGestures
+        let direction = stroke.direction
+        if modifiers.contains(.screen) { return .action(.screen(direction)) }
+        if modifiers.contains(.general), direction != .up {
+            switch direction {
+            case .down: return .action(held ? .quitApp : .close)
+            case .left: return fullscreen ? nil : .action(.spaceLeft)
+            default: return fullscreen ? nil : .action(.spaceRight)
+            }
+        }
+        if held {
+            switch direction {
+            case .up: return .action(.toggleFullscreen)
+            case .down: return .action(.minimize)
+            case .left: return fullscreen ? nil : .action(.spaceLeft)
+            case .right: return fullscreen ? nil : .action(.spaceRight)
+            }
+        }
+        guard !fullscreen else { return nil }
+        let grid = options.grid, almost = options.almostMaximize
+        guard options.downAction == .minimize else { return step(from: current, stroke: stroke, grid: grid, almost: almost) }
+        // Swish: a centred window, or a place the grid cannot produce (a
+        // third while thirds are off), is free-floating too.
+        let free = current.map { $0 == .center || !usable($0, grid: grid, almost: almost) } ?? true
+        if free, direction == .down, stroke.tier < 2, stroke.cross == nil { return .action(.minimize) }
+        return step(from: free ? nil : current, stroke: stroke, grid: grid, almost: almost)
+    }
+
+    /// What a finished pinch does, and whether it first waits for a second
+    /// pinch of the same kind. `second`: it follows such a pinch on the same
+    /// app within the repeat window.
+    /// - In closes the window, after waiting: a second pinch in quits the app
+    ///   instead ("Pinch in twice to quit an application"), as does a
+    ///   tap-and-hold pinch in ("tap, hold and pinch in once").
+    /// - Out toggles full screen. With two or more displays it waits: a second
+    ///   pinch out, ⌘, or a tap-and-hold pinch out moves the window to the
+    ///   other display and enters full screen there.
+    static func pinchAction(_ pinch: Pinch, second: Bool, held: Bool, modifiers: Modifiers,
+                            displays: Int) -> (action: WindowAction, waits: Bool) {
+        switch pinch {
+        case .in:
+            return held || second ? (.quitApp, false) : (.close, true)
+        case .out:
+            guard displays >= 2 else { return (.toggleFullscreen, false) }
+            if held || second || modifiers.contains(.screen) { return (.fullscreenOnOtherScreen, false) }
+            return (.toggleFullscreen, true)
+        }
+    }
+
+    /// Swish's double tap: "unsnap and/or center a window" (or only centre
+    /// it), ⌥ hides the app's windows and ⇧ every other app. Nil: off.
+    static func doubleTapMove(_ option: DoubleTap, modifiers: Modifiers) -> Move? {
+        guard option != .off else { return nil }
+        if modifiers.contains(.secondary) { return .action(.hideOthers) }
+        if modifiers.contains(.general) { return .action(.hideApp) }
+        return option == .center ? .cell(.center) : .restore
+    }
+
+    /// The display a swipe in `direction` moves a window to: the nearest one
+    /// that lies that way from the window's display — its centre is further
+    /// that way, and it either overlaps the display across the swipe (side
+    /// by side for a sideways swipe, stacked for a vertical one) or lies more
+    /// that way than sideways, so a taller display to the right is not
+    /// "below". Overlapping displays win. Accessibility (top-left)
+    /// coordinates, so up is towards smaller y. Nil when none lies that way.
+    static func screenIndex(toward direction: Direction, from window: CGRect, screens: [CGRect]) -> Int? {
+        let own = WindowGeometry.screenIndex(for: window, screens: screens)
+        let origin = own.map { screens[$0] } ?? window
+        func along(_ screen: CGRect) -> CGFloat {
+            switch direction {
+            case .left: return origin.midX - screen.midX
+            case .right: return screen.midX - origin.midX
+            case .up: return origin.midY - screen.midY
+            case .down: return screen.midY - origin.midY
+            }
+        }
+        func across(_ screen: CGRect) -> CGFloat {
+            direction.axis == .horizontal ? abs(screen.midY - origin.midY) : abs(screen.midX - origin.midX)
+        }
+        func overlaps(_ screen: CGRect) -> Bool {
+            direction.axis == .horizontal
+                ? screen.minY < origin.maxY && screen.maxY > origin.minY
+                : screen.minX < origin.maxX && screen.maxX > origin.minX
+        }
+        let candidates = screens.indices.filter { index in
+            let screen = screens[index]
+            return index != own && along(screen) > 0 && (overlaps(screen) || along(screen) >= across(screen))
+        }
+        let aligned = candidates.filter { overlaps(screens[$0]) }
+        if let nearest = aligned.min(by: { along(screens[$0]) < along(screens[$1]) }) { return nearest }
+        return candidates.min {
+            hypot(screens[$0].midX - origin.midX, screens[$0].midY - origin.midY)
+                < hypot(screens[$1].midX - origin.midX, screens[$1].midY - origin.midY)
+        }
+    }
+
+    static func arrow(_ direction: Direction) -> String {
+        switch direction {
+        case .left: return "←"
+        case .right: return "→"
+        case .up: return "↑"
+        case .down: return "↓"
+        }
+    }
+
+    /// The HUD title naming what lifting the fingers will do.
+    static func title(for action: WindowAction, appName: String?, fullscreen: Bool = false) -> String {
+        let app = appName.flatMap { $0.isEmpty ? nil : $0 } ?? "App"
+        switch action {
+        case .minimize: return "Minimize"
+        case .close: return "Close Window"
+        case .quitApp: return "Quit \(app)"
+        case .toggleFullscreen: return fullscreen ? "Exit Full Screen" : "Full Screen"
+        case .hideApp: return "Hide \(app)"
+        case .hideOthers: return "Hide Others"
+        case .spaceLeft: return "Move to Space ←"
+        case .spaceRight: return "Move to Space →"
+        case .screen(let direction): return "Move to Display \(arrow(direction))"
+        case .fullscreenOnOtherScreen: return "Full Screen on Other Display"
+        }
+    }
 }
 
 /// Swish keeps each window's frame from before its first snap so the window
@@ -181,6 +533,13 @@ struct SwishSnapHistory {
         var original: CGRect
         /// The frame the window really took at its last snap.
         var snapped: CGRect
+        /// The place AOM snapped it to (a grid cell, the centre or
+        /// almost-maximize), so the next swipe moves on from there even when
+        /// a size-limited app is not exactly the cell's size.
+        var place: SwishSnap.Place? = nil
+
+        /// The tiling layout of `place`, when it has one.
+        var layout: CustomSnapZone.Layout? { place?.layout }
     }
 
     private(set) var entries: [String: Entry] = [:]
@@ -190,16 +549,40 @@ struct SwishSnapHistory {
     /// Records a snap. A chain of snaps keeps the first starting frame, so a
     /// restore goes back to where the window began; a window moved by hand
     /// since its last snap starts a new chain.
-    mutating func recordSnap(key: String, from start: CGRect, to actual: CGRect) {
+    mutating func recordSnap(key: String, from start: CGRect, to actual: CGRect,
+                             layout: CustomSnapZone.Layout? = nil) {
+        recordSnap(key: key, from: start, to: actual, place: layout.flatMap(SwishSnap.Place.init))
+    }
+
+    mutating func recordSnap(key: String, from start: CGRect, to actual: CGRect, place: SwishSnap.Place?) {
         if var entry = entries[key] {
             if !WindowGeometry.close(entry.snapped, start) { entry.original = start }
             entry.snapped = actual
+            entry.place = place
             entries[key] = entry
             return
         }
-        entries[key] = Entry(original: start, snapped: actual)
+        entries[key] = Entry(original: start, snapped: actual, place: place)
         order.append(key)
         if order.count > limit { entries.removeValue(forKey: order.removeFirst()) }
+    }
+
+    /// The window was moved for it, not by hand (re-snapped after a display
+    /// change, or following a neighbour's resize): it stays snapped in its
+    /// place, and an unsnap still restores the frame from before the chain.
+    mutating func moveSnapped(key: String, to actual: CGRect) {
+        entries[key]?.snapped = actual
+    }
+
+    /// The cell AOM last snapped the window to, while it still sits there.
+    func cell(key: String, current: CGRect) -> CustomSnapZone.Layout? {
+        place(key: key, current: current)?.layout
+    }
+
+    /// The place AOM last snapped the window to, while it still sits there.
+    func place(key: String, current: CGRect) -> SwishSnap.Place? {
+        guard let entry = entries[key], WindowGeometry.close(entry.snapped, current) else { return nil }
+        return entry.place
     }
 
     /// The frame to restore, while the window still sits where it was snapped.
@@ -288,16 +671,22 @@ enum TrackpadReadiness {
     }
 }
 
-/// Classifies a two-finger swipe from raw contact frames. It is fed from one
+/// Classifies a two-finger swipe from raw contact frames — and, since 3.3.2,
+/// Swish's other title-bar gestures: a pinch in or out (only from a touch
+/// that has not engaged a swipe, and never turning into one), a tap (the
+/// service pairs taps into a double tap), and tap-and-hold (fingers resting
+/// `holdTime` before the swipe mark its strokes `held`). It is fed from one
 /// thread only, allocates nothing per frame and reports state transitions
 /// through closures (which the service hops to the main thread).
 ///
 /// Only lifting the fingers commits: going from two contacts to none or one.
 /// Activity is measured in contact frames: while two fingers stay on the
-/// pad the gesture stays alive, however long the preview is held, and the
-/// recognizer tells the service so (`onActive`). Until 3.3.0 only a zone
-/// change refreshed the service's 1.2 s timer, so holding one preview hid it
-/// and the later lift had nothing to apply (audit 2026-10-28 F05).
+/// pad the gesture stays alive, and the recognizer tells the service so
+/// (`onActive`). Until 3.3.0 only a zone change refreshed the service's 1.2 s
+/// timer, so holding one preview hid it and the later lift had nothing to
+/// apply (audit 2026-10-28 F05). Since 3.3.2 fingers held perfectly still for
+/// `holdCancelTime` (Swish's 2 s) cancel on purpose, with the preview fading
+/// over the last second; any movement keeps the gesture.
 ///
 /// Everything else that ends a gesture cancels it, and a cancelled gesture
 /// stays spent until the fingers lift, so its remains can never start a new
@@ -322,19 +711,78 @@ final class TitleBarSnapRecognizer {
     var frameGap: Double = 0.25
     /// How often an engaged gesture reports that it is still held.
     var activeInterval: Double = 0.25
+    /// Two fingers must have rested this long before a swipe can engage, so
+    /// the settling of a touch-down is never read as a swipe.
+    var settleTime: Double = 0.04
+    /// Fingers that lift within `tapTime` of landing without ever travelling
+    /// `tapTravel` made a tap: it cancels instead of snapping (3.3.2: a
+    /// two-finger tap on a title bar used to maximize the window).
+    var tapTime: Double = 0.18
+    var tapTravel: Float = 0.065
+    /// A contact whose size falls below this share of its peak is lifting.
+    /// Its last positions slide towards the top of the pad, which read as a
+    /// swipe up, so those frames never engage or change the stroke.
+    var liftShare: Float = 0.55
+    /// Swish's hold-still cancel (3.3.2): fingers that stay still for this
+    /// long, before or after the swipe engaged, cancel the gesture. The
+    /// preview fades out and lifting does nothing. 0 turns it off.
+    var holdCancelTime: Double = 2.0
+    /// How far (pad units) the centroid or the finger spread may wander and
+    /// still count as held still. Resting fingers jitter by about 0.003, but
+    /// a resting hand drifts further over 2 s: 0.012 (about 1.2–1.9 mm) let
+    /// that drift restart the hold clock (3.3.2 review), so 0.018.
+    var stillRadius: Float = 0.018
+    /// Swish's tap and hold (3.3.2): fingers resting this long, on the same
+    /// still clock as the hold-still cancel, before a swipe or pinch make the
+    /// touch a held one for the rest of it; its strokes carry `held`. 0
+    /// turns it off. 2 s of stillness still spends the touch.
+    var holdTime: Double = 0.45
+    /// A pinch needs the fingers to land at least this far apart (pad
+    /// units); closer together, a spread ratio means nothing.
+    var pinchMinSpread: Float = 0.05
+    /// Spread ratios (now ÷ at touch-down) that make a pinch in or out, and
+    /// the band the ratio must come back into to let the pinch go again.
+    var pinchInRatio: Float = 0.72
+    var pinchOutRatio: Float = 1.38
+    var pinchRelease: ClosedRange<Float> = 0.85...1.18
 
+    /// Two fingers landed: the service can look up the window under the
+    /// pointer now, before the swipe engages (the pointer does not move
+    /// while two fingers rest or scroll).
+    var onTouchDown: (() -> Void)?
     /// Engaged with a stroke; the service captures the window.
     var onBegin: ((SwishSnap.Stroke) -> Void)?
     /// The stroke changed while engaged; the service moves the preview.
     var onUpdate: ((SwishSnap.Stroke) -> Void)?
-    /// Still engaged, fingers on the pad (at most every `activeInterval`).
-    var onActive: (() -> Void)?
+    /// Still engaged or pinching, fingers on the pad (at most every
+    /// `activeInterval`), with how long they have been held still, in seconds.
+    var onActive: ((Double) -> Void)?
     /// The fingers lifted after engaging; commit the current preview.
     var onCommit: (() -> Void)?
     /// The gesture fell apart before committing; hide the preview.
     var onCancel: (() -> Void)?
+    /// The fingers were held still for `holdCancelTime` after engaging,
+    /// pinching or a tap-and-hold. The gesture is spent until they lift.
+    /// Without a handler `onCancel` runs.
+    var onHoldCancel: (() -> Void)?
+    /// The fingers came together (`.in`) or apart (`.out`) far enough to be
+    /// a pinch, or (nil) went back to about where they landed. Only a touch
+    /// that never engaged a swipe can pinch, and a pinch never swipes.
+    var onPinchChange: ((SwishSnap.Pinch?) -> Void)?
+    /// The fingers lifted while pinching.
+    var onPinch: ((SwishSnap.Pinch) -> Void)?
+    /// A tap (lifted within `tapTime` without travelling `tapTravel`), with
+    /// the lift's timestamp. Reported right after the tap's `onCancel`.
+    var onTap: ((Double) -> Void)?
+    /// The fingers rested `holdTime` before swiping: the touch is held.
+    var onHoldBegan: (() -> Void)?
 
-    private enum Phase { case idle, tracking, engaged, spent }
+    /// Whether the current touch (or, inside the callbacks of its lift, the
+    /// touch that just ended) rested `holdTime` before swiping or pinching.
+    /// Reset when the next touch lands.
+    private(set) var isHeld = false
+
+    private enum Phase { case idle, tracking, engaged, pinching, spent }
     private var phase: Phase = .idle
     private var startX: Float = 0
     private var startY: Float = 0
@@ -344,6 +792,20 @@ final class TitleBarSnapRecognizer {
     private var device: UInt64?
     private var lastFrameAt: Double = 0
     private var lastActiveAt: Double = 0
+    private var startedAt: Double = 0
+    /// The furthest the centroid has been from the start (pad units).
+    private var maxTravel: Float = 0
+    /// Peak contact sizes by contact id, for the lift-off guard.
+    private var peakID: (Int, Int) = (-1, -1)
+    private var peakSize: (Float, Float) = (0, 0)
+    /// Where the fingers last moved to, and since when they have been still.
+    private var stillX: Float = 0
+    private var stillY: Float = 0
+    private var stillSpread: Float = 0
+    private var stillSince: Double = 0
+    /// The finger spread at touch-down, and the pinch on show (nil: released).
+    private var startSpread: Float = 0
+    private var pinch: SwishSnap.Pinch?
 
     func feed(contacts: [TouchPoint], timestamp: Double, device: UInt64 = 0) {
         if let owner = self.device {
@@ -363,43 +825,201 @@ final class TitleBarSnapRecognizer {
             guard count == 2 else { return }
             phase = .tracking
             self.device = device
+            startedAt = timestamp
+            maxTravel = 0
+            isHeld = false
+            pinch = nil
+            peakID = (contacts[0].id, contacts[1].id)
+            peakSize = (contacts[0].size, contacts[1].size)
             (startX, startY) = Self.centroid(contacts)
+            startSpread = Self.spread(contacts)
+            (stillX, stillY, stillSpread) = (startX, startY, startSpread)
+            stillSince = timestamp
+            onTouchDown?()
         case .tracking:
             guard count == 2 else {
+                // Lifted soon after landing without travelling: a tap. A
+                // third finger is never one.
+                let tap = count <= 1 && isTap(at: timestamp)
                 onCancel?()
                 if count >= 3 { phase = .spent } else { clear() }
+                if tap { onTap?(timestamp) }
                 return
             }
+            guard !isLifting(contacts) else { return }
             let (cx, cy) = Self.centroid(contacts)
+            let spread = Self.spread(contacts)
+            let still = stillTime(cx, cy, spread, at: timestamp)
+            // Resting on the title bar without swiping: after the hold time
+            // nothing this touch does can act any more. A tap-and-hold that
+            // never swiped is told, so the service can drop what it showed.
+            if holdCancelTime > 0, still >= holdCancelTime {
+                phase = .spent
+                if isHeld { holdCancelled() }
+                return
+            }
+            if !isHeld, holdTime > 0, still >= holdTime {
+                isHeld = true
+                onHoldBegan?()
+            }
             let dx = cx - startX, dy = cy - startY
-            guard let direction = SwishSnap.direction(dx: dx, dy: dy, engage: engage, ratio: ratio) else { return }
+            let travel = (dx * dx + dy * dy).squareRoot()
+            maxTravel = max(maxTravel, travel)
+            guard timestamp - startedAt >= settleTime else { return }
+            if let kind = pinchKind(spread: spread, travel: travel) {
+                phase = .pinching
+                pinch = kind
+                lastActiveAt = timestamp
+                onPinchChange?(kind)
+                return
+            }
+            // A diagonal engages straight into its quarter; otherwise the
+            // dominant axis, once it is clear enough.
+            var stroke: SwishSnap.Stroke
+            if let diagonal = SwishSnap.diagonal(dx: dx, dy: dy, engage: engage) {
+                stroke = diagonal
+            } else if let direction = SwishSnap.direction(dx: dx, dy: dy, engage: engage, ratio: ratio) {
+                stroke = SwishSnap.Stroke(direction)
+            } else { return }
+            stroke.tier = SwishSnap.tier(dx: dx, dy: dy, tier2: tier2)
+            stroke.held = isHeld
             phase = .engaged
-            axis = direction.axis
-            let stroke = SwishSnap.Stroke(direction, tier: SwishSnap.tier(dx: dx, dy: dy, tier2: tier2))
+            axis = stroke.direction.axis
             last = stroke
             lastActiveAt = timestamp
             onBegin?(stroke)
         case .engaged:
-            if count <= 1 { clear(); onCommit?(); return }
+            if count <= 1 {
+                let tap = isTap(at: timestamp)
+                clear()
+                if tap { onCancel?(); onTap?(timestamp) } else { onCommit?() }
+                return
+            }
             if count >= 3 { phase = .spent; onCancel?(); return }
             // Two fingers are still down: this frame is activity, whether or
             // not the stroke changed.
-            if timestamp - lastActiveAt >= activeInterval {
-                lastActiveAt = timestamp
-                onActive?()
-            }
+            reportActivity(at: timestamp)
+            guard !isLifting(contacts) else { return }
             let (cx, cy) = Self.centroid(contacts)
-            guard let stroke = SwishSnap.refine(dx: cx - startX, dy: cy - startY, axis: axis, previous: last,
+            // Swish: holding the fingers still cancels the snap on show.
+            let still = stillTime(cx, cy, Self.spread(contacts), at: timestamp)
+            if holdCancelTime > 0, still >= holdCancelTime {
+                phase = .spent
+                holdCancelled()
+                return
+            }
+            let dx = cx - startX, dy = cy - startY
+            maxTravel = max(maxTravel, (dx * dx + dy * dy).squareRoot())
+            guard var stroke = SwishSnap.refine(dx: dx, dy: dy, axis: axis, previous: last,
                                                 engage: engage, tier2: tier2, ratio: ratio,
                                                 crossEngage: crossEngage, crossShare: crossShare) else { return }
+            stroke.held = isHeld
             axis = stroke.direction.axis
             if stroke != last {
                 last = stroke
                 onUpdate?(stroke)
             }
+        case .pinching:
+            if count <= 1 {
+                let kind = pinch
+                clear()
+                if let kind { onPinch?(kind) } else { onCancel?() }
+                return
+            }
+            if count >= 3 { phase = .spent; onCancel?(); return }
+            reportActivity(at: timestamp)
+            guard !isLifting(contacts) else { return }
+            let (cx, cy) = Self.centroid(contacts)
+            let spread = Self.spread(contacts)
+            let still = stillTime(cx, cy, spread, at: timestamp)
+            if holdCancelTime > 0, still >= holdCancelTime {
+                phase = .spent
+                holdCancelled()
+                return
+            }
+            // Hysteresis: a pinch in holds until the fingers are back near
+            // where they landed, and the same for a pinch out.
+            let ratio = spread / startSpread
+            var next = pinch
+            if ratio <= pinchInRatio { next = .in }
+            else if ratio >= pinchOutRatio { next = .out }
+            else if pinchRelease.contains(ratio) { next = nil }
+            if next != pinch {
+                pinch = next
+                onPinchChange?(next)
+            }
         case .spent:
             if count <= 1 { clear() }
         }
+    }
+
+    /// A lift soon after landing that never travelled `tapTravel` is a tap.
+    /// Once a swipe has engaged (its preview is up) a lift is a tap only if
+    /// the fingers moved less than `min(tapTravel, engagedTapShare × engage)`
+    /// (3.3.2 review): under `tapTravel` alone, every quick flick between the
+    /// engage distance (4 % of the pad at "Quick", 3.1 % at "Instant") and
+    /// 6.5 % flashed a preview and then did nothing, which read as "the snap
+    /// reacts slowly". The lift-slide behind 3.3.1's "a tap maximizes" is
+    /// stopped by `liftShare`, the touch-down settle by `settleTime`.
+    private func isTap(at timestamp: Double) -> Bool {
+        let travel = phase == .engaged ? min(tapTravel, Self.engagedTapShare * engage) : tapTravel
+        return timestamp - startedAt < tapTime && maxTravel < travel
+    }
+
+    /// The share of the engage distance an engaged swipe's lift may have
+    /// travelled and still count as a tap.
+    static let engagedTapShare: Float = 0.6
+
+    private func reportActivity(at timestamp: Double) {
+        guard timestamp - lastActiveAt >= activeInterval else { return }
+        lastActiveAt = timestamp
+        onActive?(timestamp - stillSince)
+    }
+
+    private func holdCancelled() {
+        if let onHoldCancel { onHoldCancel() } else { onCancel?() }
+    }
+
+    /// A pinch: fingers that landed apart enough, whose spread changed past
+    /// a pinch ratio and by more than their centroid travelled (a swipe moves
+    /// the centroid; a pinch mostly changes the spread).
+    private func pinchKind(spread: Float, travel: Float) -> SwishSnap.Pinch? {
+        guard startSpread > pinchMinSpread, abs(spread - startSpread) > travel else { return nil }
+        let ratio = spread / startSpread
+        if ratio <= pinchInRatio { return .in }
+        if ratio >= pinchOutRatio { return .out }
+        return nil
+    }
+
+    /// Tracks each contact's peak size; true while either contact has shrunk
+    /// below `liftShare` of it (the finger is coming off the pad). Contacts
+    /// that report no size (0) never count as lifting.
+    private func isLifting(_ contacts: [TouchPoint]) -> Bool {
+        var lifting = false
+        for contact in contacts.prefix(2) {
+            if contact.id == peakID.0 {
+                peakSize.0 = max(peakSize.0, contact.size)
+                if peakSize.0 > 0, contact.size < peakSize.0 * liftShare { lifting = true }
+            } else if contact.id == peakID.1 {
+                peakSize.1 = max(peakSize.1, contact.size)
+                if peakSize.1 > 0, contact.size < peakSize.1 * liftShare { lifting = true }
+            }
+        }
+        return lifting
+    }
+
+    /// Follows the fingers for the hold gestures: any move of the centroid or
+    /// the spread beyond `stillRadius` restarts the clock. Returns how long
+    /// they have stayed put (`holdTime` holds the touch, `holdCancelTime`
+    /// cancels it).
+    private func stillTime(_ cx: Float, _ cy: Float, _ spread: Float, at timestamp: Double) -> Double {
+        let wx = cx - stillX, wy = cy - stillY
+        if (wx * wx + wy * wy).squareRoot() > stillRadius || abs(spread - stillSpread) > stillRadius {
+            (stillX, stillY, stillSpread) = (cx, cy, spread)
+            stillSince = timestamp
+            return 0
+        }
+        return timestamp - stillSince
     }
 
     /// Silently forgets any gesture in progress (the service is already
@@ -410,21 +1030,35 @@ final class TitleBarSnapRecognizer {
     /// going to sleep): end the gesture without callbacks and ignore the
     /// fingers until they lift, so the remains cannot start a new snap.
     func cancelUntilLift() {
-        if phase == .tracking || phase == .engaged { phase = .spent }
+        if phase == .tracking || phase == .engaged || phase == .pinching { phase = .spent }
     }
 
     /// Ends an interrupted gesture, telling the service if it had begun.
     private func abandon() {
-        if phase == .tracking || phase == .engaged { onCancel?() }
+        if phase == .tracking || phase == .engaged || phase == .pinching { onCancel?() }
         clear()
     }
 
     private func clear() {
-        phase = .idle; device = nil; last = nil; axis = .horizontal
+        phase = .idle; device = nil; last = nil; axis = .horizontal; pinch = nil
     }
 
+    /// The centroid in the pad coordinates `SwishSnap` works in: x grows to
+    /// the right and y toward the BOTTOM of the pad, like the screen, so dy > 0
+    /// is a swipe down. TouchPoint's y grows toward the top of the pad (the
+    /// MultitouchSupport and NSTouch convention, which `LiveTouchView`, the
+    /// gesture engine and `GestureReplaySuite` all use: a swipe up is +y), so
+    /// it is flipped here. Until 3.3.2 it was not, and every vertical title-bar
+    /// swipe ran the other way on a real trackpad: a swipe down maximized or
+    /// went to the top quarter, so a window at the top never reached a bottom
+    /// quarter, and a swipe up centred or minimized it.
     private static func centroid(_ contacts: [TouchPoint]) -> (Float, Float) {
-        ((contacts[0].x + contacts[1].x) / 2, (contacts[0].y + contacts[1].y) / 2)
+        ((contacts[0].x + contacts[1].x) / 2, 1 - (contacts[0].y + contacts[1].y) / 2)
+    }
+
+    private static func spread(_ contacts: [TouchPoint]) -> Float {
+        let dx = contacts[0].x - contacts[1].x, dy = contacts[0].y - contacts[1].y
+        return (dx * dx + dy * dy).squareRoot()
     }
 }
 
@@ -450,12 +1084,256 @@ final class TitleBarWindowSnap {
     /// Swish `snappingMoveCursor`: put the pointer back on the snapped window's
     /// title bar so the next swipe chains. Default off.
     static let keepPointerKey = "AOMTitleBarSnapKeepPointer"
+    /// Thirds and two-thirds (Swish's 3×2 grid). Off by default (3.3.2): the
+    /// 2×2 grid of halves and quarters, with no longer-swipe third.
+    static let thirdsKey = "AOMTitleBarSnapThirds"
+    /// The translucent preview while swiping. On by default.
+    static let previewKey = "AOMTitleBarSnapPreview"
+    /// Swish's hold-still cancel, in seconds (0 = off, default 2): fingers
+    /// resting without moving on a title bar, the menu bar or the Dock cancel
+    /// the gesture. Shared with `TrackpadUtilityGestures`.
+    static let holdCancelKey = "AOMTitleBarSnapHoldCancel"
+    static let holdCancelDefault: Double = 2
 
-    /// What lifting the fingers will do: move to a layout cell, or (layout nil)
-    /// restore the frame the window had before AOM snapped it.
+    /// Swish's title-bar pinches (3.3.2): pinch in closes the window (twice:
+    /// quits the app), pinch out enters or leaves full screen. Default on.
+    static let pinchKey = "AOMTitleBarSnapPinch"
+    /// Two-finger double tap on a title bar, a `SwishSnap.DoubleTap` raw
+    /// value: "restoreOrCenter" (default: unsnap, else centre), "center" or "off".
+    static let doubleTapKey = "AOMTitleBarSnapDoubleTap"
+    /// Tap and hold, then swipe: up full screen, down minimize, sideways a
+    /// Space. Default on.
+    static let holdKey = "AOMTitleBarSnapHold"
+    /// A short swipe down on a free-floating window, a `SwishSnap.DownAction`
+    /// raw value: "minimize" (Swish, default) or "center" (as in 3.3.1).
+    static let downActionKey = "AOMTitleBarSnapDownAction"
+    /// The ⌥ / ⇧ / ⌘ variants (Spaces, close, quit, hide, displays). Default on.
+    static let modifiersKey = "AOMTitleBarSnapModifiers"
+    /// How little travel engages a swipe, as a multiple of the 3.3.1 distance
+    /// (5 % of the pad). 3.3.2 defaults to 1.25 — engaging after 4 % — since
+    /// "the snap reacts too slowly" was the first complaint; the tap guard
+    /// still turns a sloppy two-finger tap into nothing.
+    static let sensitivityKey = "AOMTitleBarSnapSensitivity"
+    static let sensitivityDefault: Double = 1.25
+
+    /// The swipe sensitivity, clamped to 0.5…2.
+    static func sensitivity(_ defaults: UserDefaults = .standard) -> Double {
+        guard let value = defaults.object(forKey: sensitivityKey) as? Double, value.isFinite else { return sensitivityDefault }
+        return min(max(value, 0.5), 2)
+    }
+
+    /// The recognizer distances (pad units) for a sensitivity: engage and the
+    /// cross leg of a quarter scale together, so L-shapes and diagonals feel
+    /// the same at every setting. Thirds' longer swipe (`tier2`) stays put.
+    static func distances(sensitivity: Double) -> (engage: Float, crossEngage: Float) {
+        let s = Float(min(max(sensitivity.isFinite ? sensitivity : 1, 0.5), 2))
+        return (0.05 / s, 0.06 / s)
+    }
+
+    /// The tap-and-hold rest, and how soon the second half of a "twice"
+    /// gesture or a double tap must follow the first.
+    static let holdTime: Double = 0.45
+    static let repeatWindow: Double = 0.35
+    /// How far (points) the pointer may move between the taps of a double tap.
+    static let doubleTapDistance: CGFloat = 8
+
+    /// The hold-still cancel time in seconds, clamped to 0…10 (0 = off).
+    static func holdCancelSeconds(_ defaults: UserDefaults = .standard) -> Double {
+        guard let value = defaults.object(forKey: holdCancelKey) as? Double, value.isFinite else { return holdCancelDefault }
+        return min(max(value, 0), 10)
+    }
+
+    /// The options of the swipe mapping (`SwishSnap.move(from:stroke:modifiers:options:fullscreen:)`).
+    static func gestureOptions(_ defaults: UserDefaults = .standard) -> SwishSnap.GestureOptions {
+        SwishSnap.GestureOptions(
+            downAction: defaults.string(forKey: downActionKey).flatMap(SwishSnap.DownAction.init(rawValue:)) ?? .minimize,
+            holdGestures: defaults.object(forKey: holdKey) as? Bool ?? true,
+            modifierGestures: defaults.object(forKey: modifiersKey) as? Bool ?? true,
+            grid: grid(defaults),
+            almostMaximize: almostMaximizeOn(defaults))
+    }
+
+    static func doubleTapOption(_ defaults: UserDefaults = .standard) -> SwishSnap.DoubleTap {
+        defaults.string(forKey: doubleTapKey).flatMap(SwishSnap.DoubleTap.init(rawValue:)) ?? .restoreOrCenter
+    }
+
+    static func pinchesOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: pinchKey) as? Bool ?? true
+    }
+
+    /// The gap kept around snapped windows, in points: 0 by default, 0…24
+    /// (Settings › Window Tiling › Margin).
+    static func margin(_ defaults: UserDefaults = .standard) -> CGFloat {
+        guard let value = defaults.object(forKey: marginKey) as? Double, value.isFinite else { return 0 }
+        return CGFloat(min(max(value, 0), marginRange.upperBound))
+    }
+
+    static let marginRange: ClosedRange<Double> = 0...24
+
+    // MARK: Swish 1.13's remaining snapping options (3.3.2)
+
+    /// The snapping grid, a `SwishSnap.Grid` raw value: "2x2", "3x2" or
+    /// "3x3". Unset, it follows the 3.3.2 Thirds switch (`thirdsKey`, still
+    /// read): 3 × 2 when that was on, else 2 × 2.
+    static let gridKey = "AOMTitleBarSnapGrid"
+    /// Swish's "Almost Maximize": swipe up leaves a small gap all round; up
+    /// again maximizes. Off by default.
+    static let almostKey = "AOMTitleBarSnapAlmost"
+    /// Swish's keyboard hotkeys, a `SwishSnap.HotkeyScheme` raw value: "off"
+    /// (default), "arrows", "wasd", "ijkl" or "hjkl", with ⌃⌥.
+    static let hotkeysKey = "AOMTitleBarSnapHotkeys"
+    /// Swish's "snappingDragUnsnap": dragging a snapped window by its title
+    /// bar gives it back its size from before the snap. On by default.
+    static let dragUnsnapKey = "AOMTitleBarSnapDragUnsnap"
+    /// Swish's re-snapping after a display change. On by default.
+    static let resnapKey = "AOMTitleBarSnapResnap"
+    /// Swish's "tooltipAnimationTime", a `SwishSnap.AnimationSpeed` raw value:
+    /// "fast", "normal" (default) or "off".
+    static let animationKey = "AOMTitleBarSnapAnimation"
+    /// Swish's "snappingStageManagerOffset": points kept free on the left
+    /// while Stage Manager is on, 0…200. 0 by default.
+    static let stageManagerOffsetKey = "AOMTitleBarSnapStageManagerOffset"
+    static let stageManagerOffsetRange: ClosedRange<Double> = 0...200
+    /// Swish's "snappingResizeAdjacent": resizing a snapped window along an
+    /// edge it shares with another snapped window resizes that one too. On by default.
+    static let resizeAdjacentKey = "AOMTitleBarSnapResizeAdjacent"
+    /// Posted when the keyboard hotkeys start or stop being wanted, so the
+    /// keyboard monitor installs or drops its event tap (`AppState`).
+    static let hotkeysDidChange = Notification.Name("AOMTitleBarSnapHotkeysDidChange")
+    /// Swish waits for the displays to settle before re-snapping.
+    static let resnapDelay: Double = 1.5
+
+    static func grid(_ defaults: UserDefaults = .standard) -> SwishSnap.Grid {
+        if let raw = defaults.string(forKey: gridKey), let grid = SwishSnap.Grid(rawValue: raw) { return grid }
+        return defaults.object(forKey: thirdsKey) as? Bool == true ? .threeByTwo : .twoByTwo
+    }
+
+    static func almostMaximizeOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: almostKey) as? Bool ?? false
+    }
+
+    static func hotkeyScheme(_ defaults: UserDefaults = .standard) -> SwishSnap.HotkeyScheme {
+        defaults.string(forKey: hotkeysKey).flatMap(SwishSnap.HotkeyScheme.init(rawValue:)) ?? .off
+    }
+
+    /// The hotkeys are wanted: the snap is on and a key set is chosen.
+    static func hotkeysWanted(_ defaults: UserDefaults = .standard) -> Bool {
+        (defaults.object(forKey: enabledKey) as? Bool ?? false) && hotkeyScheme(defaults) != .off
+    }
+
+    static func dragUnsnapOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: dragUnsnapKey) as? Bool ?? true
+    }
+
+    static func resnapOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: resnapKey) as? Bool ?? true
+    }
+
+    static func resizeAdjacentOn(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: resizeAdjacentKey) as? Bool ?? true
+    }
+
+    static func animationSpeed(_ defaults: UserDefaults = .standard) -> SwishSnap.AnimationSpeed {
+        defaults.string(forKey: animationKey).flatMap(SwishSnap.AnimationSpeed.init(rawValue:)) ?? .normal
+    }
+
+    static func stageManagerOffset(_ defaults: UserDefaults = .standard) -> CGFloat {
+        guard let value = defaults.object(forKey: stageManagerOffsetKey) as? Double, value.isFinite else { return 0 }
+        return CGFloat(min(max(value, stageManagerOffsetRange.lowerBound), stageManagerOffsetRange.upperBound))
+    }
+
+    /// Whether Stage Manager is on. Read-only: `com.apple.WindowManager`
+    /// "GloballyEnabled", missing meaning off.
+    static func stageManagerOn() -> Bool {
+        let value = CFPreferencesCopyAppValue("GloballyEnabled" as CFString, "com.apple.WindowManager" as CFString)
+        if let number = value as? NSNumber { return number.boolValue }
+        return false
+    }
+
+    /// The area windows snap in on a display: its visible area, less the
+    /// Stage Manager offset on the left while Stage Manager is on.
+    static func snapArea(_ visible: CGRect, defaults: UserDefaults = .standard) -> CGRect {
+        let offset = stageManagerOffset(defaults)
+        guard offset > 0 else { return visible }
+        return SwishSnap.stageManagerArea(visible, offset: offset, stageManager: stageManagerOn())
+    }
+
+    /// How far apart two snapped windows' facing edges may be and still
+    /// count as sharing it: 8 pt plus the gap the margin leaves between cells.
+    static func adjacencyTolerance(margin: CGFloat) -> CGFloat { 8 + 2 * max(0, margin) }
+
+    // MARK: The snap history for the menu-bar gestures (3.3.2)
+
+    /// The frame `target` had before the title-bar snap moved it, while it
+    /// still sits where the snap put it (Swish's "double tap the menu bar to
+    /// unsnap all windows"). Read-only: the history stays private.
+    @MainActor
+    func unsnapFrame(for target: WindowManager.Target, current: CGRect) -> CGRect? {
+        history.restoreFrame(key: Self.key(target), current: current)
+    }
+
+    /// The cell the snap last put `target` in, while it is still there.
+    @MainActor
+    func snappedCell(for target: WindowManager.Target, current: CGRect) -> CustomSnapZone.Layout? {
+        history.cell(key: Self.key(target), current: current)
+    }
+
+    /// The place (any grid cell, almost-maximize) the snap last put `target`
+    /// in, while it is still there.
+    @MainActor
+    func snappedPlace(for target: WindowManager.Target, current: CGRect) -> SwishSnap.Place? {
+        history.place(key: Self.key(target), current: current)
+    }
+
+    /// A snapped window the menu bar's ⌘ swipe moved to another display, in
+    /// the same cell: the history follows it, so the next title-bar swipe
+    /// chains from that cell and an unsnap still restores the frame from
+    /// before the first snap.
+    @MainActor
+    func recordDisplayMove(of target: WindowManager.Target, from start: CGRect, to actual: CGRect,
+                           layout: CustomSnapZone.Layout) {
+        guard let place = SwishSnap.Place(layout) else { return }
+        recordDisplayMove(of: target, from: start, to: actual, place: place)
+    }
+
+    @MainActor
+    func recordDisplayMove(of target: WindowManager.Target, from start: CGRect, to actual: CGRect,
+                           place: SwishSnap.Place) {
+        let key = Self.key(target)
+        history.recordSnap(key: key, from: start, to: actual, place: place)
+        remember(target, key: key)
+    }
+
+    /// What lifting the fingers will do: move to a place, (place nil)
+    /// restore the frame the window had before AOM snapped it, or (action
+    /// set) act on the window; `rect` is then the destination of a display
+    /// move, or null.
     struct Plan: Equatable {
-        var layout: CustomSnapZone.Layout?
+        var place: SwishSnap.Place?
         var rect: CGRect
+        var action: SwishSnap.WindowAction? = nil
+        /// The action first waits `repeatWindow` for the second half of a
+        /// "twice" gesture (pinch in or ⌥ swipe down twice: quit; pinch out
+        /// twice: full screen on the other display).
+        var waits = false
+    }
+
+    /// A close or full-screen toggle waiting for a possible second pinch or swipe.
+    private struct Pending {
+        let action: SwishSnap.WindowAction
+        let target: WindowManager.Target
+        let start: CGRect
+        var extended = false
+    }
+
+    /// The window under the pointer, looked up when two fingers land so the
+    /// preview can appear the moment the swipe engages (an Accessibility
+    /// hit-test is a synchronous round trip to the app).
+    private struct Capture {
+        let mouse: CGPoint
+        let window: WindowManager.Target
+        let frame: CGRect
+        let at: TimeInterval
     }
 
     /// Read on the multitouch thread, written on main. A stale bool for one
@@ -466,23 +1344,74 @@ final class TitleBarWindowSnap {
     @MainActor private var target: WindowManager.Target?
     @MainActor private var targetVisible: CGRect?
     @MainActor private var startFrame: CGRect?
+    /// The place the window sat in when the swipe began (nil: free-floating).
+    @MainActor private var startPlace: SwishSnap.Place?
+    @MainActor private var prefetched: Capture?
     @MainActor private var plan: Plan?
     @MainActor private var committing = false
     @MainActor private var history = SwishSnapHistory()
+    /// The windows in the history, so drag to unsnap, re-snapping and
+    /// resizing adjacent windows can reach them again. Same keys.
+    @MainActor private var snapTargets: [String: WindowManager.Target] = [:]
     @MainActor private var overlay = SnapPreviewOverlay()
     @MainActor private var timeout: DispatchWorkItem?
+    /// The modifiers held when the gesture began, and whether its window was
+    /// in native full screen then.
+    @MainActor private var modifiers: SwishSnap.Modifiers = []
+    @MainActor private var fullscreen = false
+    /// This gesture is a pinch (its window was captured by `pinchChanged`).
+    @MainActor private var pinching = false
+    /// The action waiting on the same app when this gesture began, which this
+    /// gesture may complete (the second pinch or ⌥ swipe down).
+    @MainActor private var repeating: SwishSnap.WindowAction?
+    /// The action the HUD names for this gesture.
+    @MainActor private var shownAction: SwishSnap.WindowAction?
+    @MainActor private var pending: Pending?
+    @MainActor private var pendingWork: DispatchWorkItem?
+    @MainActor private var lastTap: (at: Double, mouse: CGPoint, target: WindowManager.Target)?
+    /// The keyboard hotkeys in use, and whether they were wanted last time
+    /// (to tell the keyboard monitor when that changes).
+    @MainActor private var hotkeys: SwishSnap.HotkeyScheme = .off
+    @MainActor private var hotkeysWereWanted: Bool?
+    /// The left-button monitor for drag to unsnap and resizing adjacent
+    /// windows; it exists only while the history has windows in it.
+    @MainActor private var mouseMonitor: Any?
+    @MainActor private var drag: DragState?
+    /// The history windows still where they were snapped as the displays
+    /// began to change, and the debounced re-snap.
+    @MainActor private var resnapKeys: Set<String>?
+    @MainActor private var resnapWork: DispatchWorkItem?
+
+    /// One left-button press: where it went down (top-left coordinates), the
+    /// snapped window its first drag found on a title bar, and the snapped
+    /// windows sharing an edge near it, as they were when it went down.
+    private struct DragState {
+        struct Unsnap {
+            let target: WindowManager.Target
+            let key: String
+            let snapped: CGRect
+            let original: CGRect
+        }
+        let down: CGPoint
+        var probed = false
+        var unsnap: Unsnap?
+        var lastProbe: TimeInterval = 0
+        var neighbours: [String: CGRect] = [:]
+    }
 
     @MainActor
     private init() {
-        recognizer.onBegin = { stroke in
-            DispatchQueue.main.async { TitleBarWindowSnap.shared.begin(stroke) }
-        }
-        recognizer.onUpdate = { stroke in
-            DispatchQueue.main.async { TitleBarWindowSnap.shared.update(stroke) }
-        }
-        recognizer.onActive = { DispatchQueue.main.async { TitleBarWindowSnap.shared.stillHeld() } }
-        recognizer.onCommit = { DispatchQueue.main.async { TitleBarWindowSnap.shared.commit() } }
-        recognizer.onCancel = { DispatchQueue.main.async { TitleBarWindowSnap.shared.cancel() } }
+        recognizer.onTouchDown = { Self.onMain { TitleBarWindowSnap.shared.prefetch() } }
+        recognizer.onBegin = { stroke in Self.onMain { TitleBarWindowSnap.shared.begin(stroke) } }
+        recognizer.onUpdate = { stroke in Self.onMain { TitleBarWindowSnap.shared.update(stroke) } }
+        recognizer.onActive = { still in Self.onMain { TitleBarWindowSnap.shared.stillHeld(for: still) } }
+        recognizer.onCommit = { Self.onMain { TitleBarWindowSnap.shared.commit() } }
+        recognizer.onCancel = { Self.onMain { TitleBarWindowSnap.shared.cancel() } }
+        recognizer.onHoldCancel = { Self.onMain { TitleBarWindowSnap.shared.heldStillCancel() } }
+        recognizer.onPinchChange = { kind in Self.onMain { TitleBarWindowSnap.shared.pinchChanged(kind) } }
+        recognizer.onPinch = { kind in Self.onMain { TitleBarWindowSnap.shared.pinched(kind) } }
+        recognizer.onTap = { timestamp in Self.onMain { TitleBarWindowSnap.shared.tapped(at: timestamp) } }
+        recognizer.onHoldBegan = { Self.onMain { TitleBarWindowSnap.shared.holdBegan() } }
         aomTitleBarSnapFeed = { [weak self] contacts, timestamp, device in
             self?.handle(contacts: contacts, timestamp: timestamp, device: device)
         }
@@ -503,6 +1432,16 @@ final class TitleBarWindowSnap {
                 MainActor.assumeIsolated { TitleBarWindowSnap.shared.abandonGesture() }
             }
         }
+        // Re-snapping (3.3.2): which snapped windows were still in place is
+        // read as the reconfiguration begins (macOS moves windows off a
+        // display that goes away), the re-snap runs once it has settled.
+        if !PresetManager.isRunningTests {
+            CGDisplayRegisterReconfigurationCallback(aomSnapDisplaysReconfiguring, nil)
+            NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                                   object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { TitleBarWindowSnap.shared.displaysChanged() }
+            }
+        }
         refreshEnabled()
     }
 
@@ -510,7 +1449,45 @@ final class TitleBarWindowSnap {
     func refreshEnabled() {
         let on = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? false
         active = on && AXIsProcessTrusted() && AutomationGate.isOn
-        if !active { cancel() }
+        recognizer.holdCancelTime = Self.holdCancelSeconds()
+        recognizer.holdTime = Self.gestureOptions().holdGestures ? Self.holdTime : 0
+        let distances = Self.distances(sensitivity: Self.sensitivity())
+        recognizer.engage = distances.engage
+        recognizer.crossEngage = distances.crossEngage
+        hotkeys = Self.hotkeyScheme()
+        let hotkeysWanted = Self.hotkeysWanted()
+        if hotkeysWanted != hotkeysWereWanted {
+            // The keyboard monitor installs its event tap only when something
+            // needs it; tell it (after this turn) when the hotkeys came or went.
+            if hotkeysWereWanted != nil || hotkeysWanted {
+                DispatchQueue.main.async { NotificationCenter.default.post(name: Self.hotkeysDidChange, object: nil) }
+            }
+            hotkeysWereWanted = hotkeysWanted
+        }
+        if !active {
+            // Switched off or paused: nothing waiting may still act, and the
+            // trigger engine gets every touch back.
+            Self.ownsTouch = false
+            cancelPending()
+            lastTap = nil
+            cancel()
+            drag = nil
+            resnapWork?.cancel(); resnapWork = nil; resnapKeys = nil
+        }
+        updateMouseMonitor()
+    }
+
+    /// The recognizer is fed on the main thread (`MultitouchSource` hands
+    /// every frame to main before `TrackpadMonitor` fans it out), so its
+    /// transitions run at once instead of each queueing one more main-queue
+    /// turn (3.3.2: part of the lag before the preview appeared). Frames fed
+    /// from any other thread still hop.
+    private static func onMain(_ work: @escaping @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work() }
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
+        }
     }
 
     /// From `TrackpadMonitor.source.onFrame`. Cheap and non-blocking: it
@@ -518,7 +1495,11 @@ final class TitleBarWindowSnap {
     /// switched off; otherwise any half-seen gesture is forgotten so it
     /// cannot resume with a stale start when the snap comes back.
     nonisolated func handle(contacts: [TouchPoint], timestamp: Double, device: UInt64 = 0) {
-        guard Self.feedsRecognizer(active: active, automationOn: AutomationGate.isOn) else { recognizer.reset(); return }
+        guard Self.feedsRecognizer(active: active, automationOn: AutomationGate.isOn) else {
+            recognizer.reset()
+            Self.ownsTouch = false
+            return
+        }
         // The service cancelled on its own since the last frame: the
         // recognizer drops the gesture too, so both reset together.
         if cancelRequests != handledCancelRequests {
@@ -526,6 +1507,35 @@ final class TitleBarWindowSnap {
             recognizer.cancelUntilLift()
         }
         recognizer.feed(contacts: contacts, timestamp: timestamp, device: device)
+    }
+
+    /// Whether the two-finger touch on the pad landed on a title bar the snap
+    /// captured (written on main at touch-down and whenever the snap stops,
+    /// read by `TrackpadMonitor` on main). 3.3.2 review: a pinch, double tap,
+    /// long touch or two-finger swipe on a title bar ran a BTT-style trigger
+    /// and the snap's own action together; the snap now owns that touch.
+    nonisolated(unsafe) static var ownsTouch = false
+
+    /// Pure: whether the trigger engine leaves `gesture` to the snap. Only
+    /// two-finger gestures of a touch the snap owns, and only those the snap
+    /// itself answers with its current settings.
+    nonisolated static func claims(_ gesture: TrackpadGesture, ownsTouch: Bool, pinches: Bool,
+                                   doubleTap: Bool, hold: Bool) -> Bool {
+        guard ownsTouch else { return false }
+        switch gesture {
+        case .twoFingerSwipeUp, .twoFingerSwipeDown, .twoFingerSwipeLeft, .twoFingerSwipeRight: return true
+        case .twoFingerPinchIn, .twoFingerPinchOut: return pinches
+        case .twoFingerTap, .twoFingerDoubleTap: return doubleTap
+        case .twoFingerLongTouch: return hold
+        default: return false
+        }
+    }
+
+    /// `claims` with the current settings (main thread, like the trigger engine).
+    nonisolated static func claimsNow(_ gesture: TrackpadGesture, defaults: UserDefaults = .standard) -> Bool {
+        guard ownsTouch else { return false }
+        return claims(gesture, ownsTouch: true, pinches: pinchesOn(defaults),
+                      doubleTap: doubleTapOption(defaults) != .off, hold: gestureOptions(defaults).holdGestures)
     }
 
     /// Bumped on main by `abandonGesture`, read on the multitouch thread
@@ -550,45 +1560,159 @@ final class TitleBarWindowSnap {
     private func begin(_ stroke: SwishSnap.Stroke) {
         // Only engage over a window's title bar, so the gesture never competes
         // with AOM's other two-finger gestures elsewhere on screen. A swipe that
-        // starts while the previous snap is still settling is ignored.
-        guard !committing else { return }
+        // engages while the previous snap is still landing is kept (3.3.2
+        // review: it used to be dropped): its latest stroke applies to that
+        // window once the commit lands (`finishCommit`).
+        guard !committing else {
+            if allowedNow, !keyboardCommit { chain.began(stroke) }
+            return
+        }
         guard allowedNow else { hideOwnPreview(); reset(); return }
-        let mouse = NSEvent.mouseLocation
-        let pointerTopLeft = CGPoint(x: mouse.x, y: primaryTop - mouse.y)
-        guard let window = WindowManager.shared.captureTarget(atMousePoint: mouse),
-              let frame = WindowManager.shared.frame(of: window),
-              SwishSnap.titleBarHit(pointerTopLeft: pointerTopLeft, windowFrame: frame) else {
-            hideOwnPreview(); reset(); return
-        }
-        let screens = WindowManager.shared.screens()
-        guard let index = WindowGeometry.screenIndex(for: frame, screens: screens.map(\.frame)) else {
-            reset(); return
-        }
-        target = window
-        targetVisible = screens[index].visible
-        startFrame = frame
+        guard let capture = takeCapture(), adopt(capture) else { hideOwnPreview(); reset(); return }
         scheduleTimeout()
         showPreview(for: stroke, zoneHaptic: false)
     }
 
+    /// The swipe that engaged while a commit was landing.
+    @MainActor private var chain = SwishChainQueue()
+
+    /// The window under the pointer for a gesture that is starting. The
+    /// touch-down lookup is reused while the pointer has not moved (two
+    /// resting or scrolling fingers do not move it).
+    @MainActor
+    private func takeCapture() -> Capture? {
+        let mouse = NSEvent.mouseLocation
+        defer { prefetched = nil }
+        if let early = prefetched, hypot(early.mouse.x - mouse.x, early.mouse.y - mouse.y) < 2,
+           ProcessInfo.processInfo.systemUptime - early.at < 2 {
+            return early
+        }
+        return captureTitleBar(at: mouse)
+    }
+
+    /// Makes `capture` this gesture's window: its display and cell, the
+    /// modifiers held now, whether it is in full screen, and whether it
+    /// completes an action waiting on the same app. False when no display
+    /// holds it.
+    @MainActor
+    private func adopt(_ capture: Capture) -> Bool {
+        // AOM paused for the window's app: no gesture acts on it, even while
+        // another app is in front (3.3.2 review: the pause is keyed to the
+        // frontmost app).
+        guard !Self.appPaused(capture.window.pid) else { return false }
+        let screens = WindowManager.shared.screens()
+        guard let index = WindowGeometry.screenIndex(for: capture.frame, screens: screens.map(\.frame)) else { return false }
+        target = capture.window
+        let area = Self.snapArea(screens[index].visible)
+        targetVisible = area
+        startFrame = capture.frame
+        let options = Self.gestureOptions()
+        startPlace = history.place(key: Self.key(capture.window), current: capture.frame)
+            ?? SwishSnap.place(of: capture.frame, visible: area, margin: margin,
+                               grid: options.grid, almost: options.almostMaximize)
+        modifiers = SwishSnap.Modifiers(flags: NSEvent.modifierFlags)
+        // Bounded (3.3.2 review): this runs on main as the swipe engages.
+        fullscreen = Self.boundedIsFullscreen(capture.window)
+        repeating = pending.flatMap { $0.target.pid == capture.window.pid ? $0.action : nil }
+        shownAction = nil
+        return true
+    }
+
+    /// Whether the window is in native full screen, asked with a bounded wait;
+    /// the element goes back to the default timeout for the commit's writes.
+    private static func boundedIsFullscreen(_ target: WindowManager.Target, timeout: Float = 0.25) -> Bool {
+        AXUIElementSetMessagingTimeout(target.window, timeout)
+        defer { AXUIElementSetMessagingTimeout(target.window, 0) }
+        return isFullscreen(target)
+    }
+
+    /// Two fingers landed: find the window now, so `begin` has nothing slow
+    /// left to do. Cheap for the common case: the window server is asked
+    /// which window is under the pointer, and only a pointer in the top band
+    /// of an ordinary window reaches the Accessibility hit-test, so scrolling
+    /// inside documents costs nothing.
+    @MainActor
+    private func prefetch() {
+        guard active, !committing, target == nil, allowedNow else { prefetched = nil; Self.ownsTouch = false; return }
+        prefetched = captureTitleBar(at: NSEvent.mouseLocation)
+        // This touch is on a title bar: its two-finger triggers are the snap's.
+        Self.ownsTouch = prefetched != nil
+        // The second half of a "twice" gesture is landing on the same app:
+        // give it time to show what it is before the first half runs.
+        if let waiting = pending, !waiting.extended, prefetched?.window.pid == waiting.target.pid {
+            pending?.extended = true
+            armPending(after: Self.repeatWindow + 0.15)
+        }
+    }
+
+    /// The window whose title bar (or toolbar) is under the pointer, or nil.
+    /// 3.3.2 review: the Accessibility hit-test goes to the window's owner,
+    /// the PID the window server reports for it, never to the system-wide
+    /// element; each request is bounded to 0.25 s and the walk to 0.3 s, and
+    /// the frame read to 0.25 s, since this runs on main as two fingers land.
+    @MainActor
+    private func captureTitleBar(at mouse: CGPoint) -> Capture? {
+        let pointerTopLeft = CGPoint(x: mouse.x, y: primaryTop - mouse.y)
+        // Window-server pre-filter: an ordinary (layer 0) window of another
+        // app, with the pointer in its top 60 pt.
+        let number = NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0)
+        guard number > 0, !NSApp.windows.contains(where: { $0.windowNumber == number }),
+              let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]])?.first,
+              (info[kCGWindowLayer as String] as? Int ?? 0) == 0,
+              let owner = info[kCGWindowOwnerPID as String] as? pid_t,
+              owner > 0, owner != ProcessInfo.processInfo.processIdentifier,
+              let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
+              pointerTopLeft.y >= bounds.minY, pointerTopLeft.y - bounds.minY <= SwishSnap.toolbarBand else { return nil }
+        guard let hit = WindowManager.shared.titleBarTarget(atMousePoint: mouse, pid: owner),
+              let frame = Self.boundedFrame(of: hit.target),
+              hit.onTitleBar || SwishSnap.titleBarHit(pointerTopLeft: pointerTopLeft, windowFrame: frame) else { return nil }
+        return Capture(mouse: mouse, window: hit.target, frame: frame, at: ProcessInfo.processInfo.systemUptime)
+    }
+
     @MainActor
     private func update(_ stroke: SwishSnap.Stroke) {
-        guard target != nil, !committing else { return }
+        // A swipe that began while the last commit was landing keeps its latest stroke.
+        if committing { chain.updated(stroke); return }
+        guard target != nil, !pinching else { return }
         scheduleTimeout()
         showPreview(for: stroke, zoneHaptic: true)
     }
 
-    /// Fingers still on the pad with the preview up: keep it.
+    /// Fingers still on the pad with the preview up: keep it. Over the last
+    /// second before a hold-still cancel the preview fades, so the user sees
+    /// the cancel coming and can move to keep the snap.
     @MainActor
-    private func stillHeld() {
+    private func stillHeld(for still: Double) {
         guard target != nil, !committing else { return }
         scheduleTimeout()
+        let limit = recognizer.holdCancelTime
+        guard limit > 0, overlay.isShowing else { return }
+        let lead = min(1, limit / 2)
+        overlay.dim(CGFloat(max(0, min(1, (still - (limit - lead)) / lead))))
     }
 
-    /// The service gives up on its own (no frames, sleep): hide the preview
-    /// and make the recognizer drop the gesture as well.
+    /// Swish: the fingers rested without moving for the hold-cancel time, so
+    /// the gesture on show is dropped and lifting them does nothing. When the
+    /// HUD named an action (no preview to fade) it says so.
+    @MainActor
+    private func heldStillCancel() {
+        // A chained swipe waiting for the commit in flight is dropped too.
+        guard !committing else { chain.cancelTouch(); return }
+        let named = shownAction != nil
+        if target != nil {
+            GestureLog.shared.logFromAnyThread("Title-bar snap cancelled: fingers held still", level: .detect)
+        }
+        cancel()
+        if named { GestureHUD.shared.show(title: "Cancelled") }
+    }
+
+    /// The service gives up on its own (no frames, sleep): hide the preview,
+    /// drop anything waiting, and make the recognizer drop the gesture too.
     @MainActor
     private func abandonGesture() {
+        cancelPending()
+        lastTap = nil
         cancel()
         cancelRequests &+= 1
     }
@@ -600,70 +1724,220 @@ final class TitleBarWindowSnap {
         // Swish taps the trackpad as the preview moves to a new zone.
         if zoneHaptic, next != plan, hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
         plan = next
-        overlay.show(frame: SwishSnap.appKitRect(next.rect, primaryTop: primaryTop), restoring: next.layout == nil)
+        // The second ⌥ swipe down on the app quits it: the first one's close no longer waits.
+        if next?.action == .quitApp, repeating == .close { cancelPending() }
+        present(next)
     }
 
-    /// A plain swipe down on a window that still sits where AOM snapped it
-    /// unsnaps it; every other stroke maps to its layout cell.
+    /// The swipe moves the window on from the place it sits in (Swish-style
+    /// chaining, `SwishSnap.move(at:…)`) or acts on it (minimize, close, quit,
+    /// full screen, Spaces, displays). Nil: the swipe does nothing (a
+    /// full-screen window swiped without tap-and-hold).
     @MainActor
     private func plan(for stroke: SwishSnap.Stroke, target: WindowManager.Target,
-                      visible: CGRect, start: CGRect) -> Plan {
-        if stroke == SwishSnap.Stroke(.down),
-           let original = history.restoreFrame(key: Self.key(target), current: start) {
-            return Plan(layout: nil, rect: original)
+                      visible: CGRect, start: CGRect) -> Plan? {
+        guard let move = SwishSnap.move(at: startPlace, stroke: stroke, modifiers: modifiers,
+                                        options: Self.gestureOptions(), fullscreen: fullscreen) else { return nil }
+        switch move {
+        case .restore:
+            return restorePlan(target: target, visible: visible, start: start)
+        case .cell, .place:
+            let place = move.destination ?? .center
+            return Plan(place: place, rect: SwishSnap.targetFrame(place: place, visible: visible, margin: margin))
+        case .action(.close):
+            // ⌥ swipe down twice quits (Swish): the second swipe on an app
+            // whose close is still waiting.
+            if repeating == .close { return Plan(place: nil, rect: .null, action: .quitApp) }
+            return Plan(place: nil, rect: .null, action: .close, waits: true)
+        case .action(.screen(let direction)):
+            return Plan(place: startPlace, rect: displayFrame(toward: direction, start: start) ?? .null,
+                        action: .screen(direction))
+        case .action(let action):
+            return Plan(place: nil, rect: .null, action: action)
         }
-        let layout = SwishSnap.layout(for: stroke)
-        return Plan(layout: layout, rect: SwishSnap.targetFrame(layout: layout, visible: visible, margin: margin))
+    }
+
+    /// A restore goes back to the frame from before AOM snapped the window,
+    /// or centres a window AOM has no frame for.
+    @MainActor
+    private func restorePlan(target: WindowManager.Target, visible: CGRect, start: CGRect) -> Plan {
+        if let original = history.restoreFrame(key: Self.key(target), current: start) {
+            return Plan(place: nil, rect: original)
+        }
+        return Plan(place: .center, rect: SwishSnap.targetFrame(place: .center, visible: visible, margin: margin))
+    }
+
+    /// Where a display move puts the window: the same place on the display
+    /// that way, or, free-floating, centred there at its own size. Nil when
+    /// no display lies that way.
+    @MainActor
+    private func displayFrame(toward direction: SwishSnap.Direction, start: CGRect) -> CGRect? {
+        let screens = WindowManager.shared.screens()
+        guard let index = SwishSnap.screenIndex(toward: direction, from: start, screens: screens.map(\.frame)) else { return nil }
+        let visible = Self.snapArea(screens[index].visible)
+        if let place = startPlace { return SwishSnap.targetFrame(place: place, visible: visible, margin: margin) }
+        return WindowGeometry.moved(start, into: visible, maximize: false)
+    }
+
+    /// Shows what lifting will do: the translucent frame for a snap (for a
+    /// display move, on the destination) and the HUD for any other action.
+    /// Both follow the preview switch.
+    @MainActor
+    private func present(_ plan: Plan?) {
+        let visuals = Self.flag(Self.previewKey, default: true)
+        guard let plan, let action = plan.action else {
+            if shownAction != nil { GestureHUD.shared.dismiss(); shownAction = nil }
+            guard let plan else { hideOwnPreview(); return }
+            guard visuals else { return }
+            overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop), restoring: plan.place == nil)
+            return
+        }
+        if case .screen = action, !plan.rect.isNull, visuals {
+            overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop))
+        } else {
+            hideOwnPreview()
+        }
+        guard visuals, shownAction != action else { return }
+        shownAction = action
+        GestureHUD.shared.show(title: hudTitle(for: action, plan: plan))
+    }
+
+    @MainActor
+    private func hudTitle(for action: SwishSnap.WindowAction, plan: Plan) -> String {
+        if case .screen(let direction) = action, plan.rect.isNull { return "No Display \(SwishSnap.arrow(direction))" }
+        let name = target.flatMap { NSRunningApplication(processIdentifier: $0.pid)?.localizedName }
+        return SwishSnap.title(for: action, appName: name, fullscreen: fullscreen)
     }
 
     @MainActor
     private func commit() {
         timeout?.cancel(); timeout = nil
-        // A lift that arrives while the previous snap is still landing belongs
-        // to a gesture that never engaged; leave the in-flight commit alone.
-        guard !committing else { return }
+        // The lift of a swipe that engaged while the previous snap is still
+        // landing: it is applied once that commit is done (`finishCommit`).
+        guard !committing else { chain.liftedFingers(); return }
         // Paused (or switched off) while the fingers were down: never move the window.
         guard allowedNow, let target, let visible = targetVisible,
               let plan, let start = startFrame else {
             hideOwnPreview(); reset(); return
         }
+        if let action = plan.action {
+            run(action, plan: plan, target: target, start: start)
+            return
+        }
+        commitFrame(plan.rect, target: target, anchorVisible: visible, start: start,
+                    restoring: plan.place == nil, place: plan.place)
+    }
+
+    /// Moves the window to `rect` the way Swish commits a snap; the preview
+    /// then settles on the frame it took, which is kept for unsnapping.
+    @MainActor
+    private func commitFrame(_ rect: CGRect, target: WindowManager.Target, anchorVisible visible: CGRect,
+                             start: CGRect, restoring: Bool, place: SwishSnap.Place?) {
         committing = true
-        let restoring = plan.layout == nil
         let key = Self.key(target)
         // Anchor inside the margin-inset area, so a gap the user asked for is
         // kept when an app refuses the cell's size.
         let anchorArea = margin > 0 ? visible.insetBy(dx: margin, dy: margin) : visible
-        WindowManager.shared.applySnap(plan.rect, target: target, visible: restoring ? nil : anchorArea) { actual in
+        WindowManager.shared.applySnap(rect, target: target, visible: restoring ? nil : anchorArea) { actual in
             // `applySnap` reports on the main thread (its settle polling runs there).
             MainActor.assumeIsolated {
                 TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: key,
-                                                       start: start, restoring: restoring)
+                                                       start: start, restoring: restoring, place: place)
             }
         }
     }
 
     @MainActor
     private func finishCommit(_ actual: CGRect?, target: WindowManager.Target, key: String,
-                              start: CGRect, restoring: Bool) {
+                              start: CGRect, restoring: Bool, place: SwishSnap.Place?) {
         committing = false
-        defer { reset() }
-        guard let actual else { hideOwnPreview(); return }
-        if restoring { history.forget(key: key) } else { history.recordSnap(key: key, from: start, to: actual) }
+        let fromKeyboard = keyboardCommit
+        keyboardCommit = false
+        // A swipe that engaged meanwhile carries on with this window (3.3.2 review).
+        let chained = chain.landed(succeeded: actual != nil)
+        guard let actual else { hideOwnPreview(); reset(); return }
+        if restoring {
+            forgetSnap(key)
+        } else {
+            history.recordSnap(key: key, from: start, to: actual, place: place)
+            remember(target, key: key)
+        }
         if hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
         overlay.settle(on: SwishSnap.appKitRect(actual, primaryTop: primaryTop))
         if Self.flag(Self.activateKey, default: true) { bringForward(target) }
-        if Self.flag(Self.keepPointerKey, default: false) {
+        if Self.flag(Self.keepPointerKey, default: false), !fromKeyboard {
             CGWarpMouseCursorPosition(SwishSnap.titleBarRestPoint(for: actual))
             // A warp briefly suppresses local mouse events; re-associate so
             // the pointer moves again immediately.
             CGAssociateMouseAndMouseCursorPosition(1)
         }
+        reset()
+        if let chained { resumeChain(chained, target: target, frame: actual) }
+    }
+
+    /// The swipe that engaged while the last commit was landing (3.3.2
+    /// review): it carries on with the window that just moved, from the place
+    /// it moved to, as if it had begun now. Lifted already, it commits at
+    /// once; still on the pad, its preview follows the fingers as usual.
+    @MainActor
+    private func resumeChain(_ queued: SwishChainQueue.Pending, target: WindowManager.Target, frame: CGRect) {
+        guard active, allowedNow else { return }
+        let capture = Capture(mouse: NSEvent.mouseLocation, window: target, frame: frame,
+                              at: ProcessInfo.processInfo.systemUptime)
+        guard adopt(capture) else { reset(); return }
+        GestureLog.shared.logFromAnyThread("Title-bar snap: chained swipe applied after the last snap landed", level: .detect)
+        scheduleTimeout()
+        showPreview(for: queued.stroke, zoneHaptic: false)
+        if queued.lifted { commit() }
+    }
+
+    /// Keeps the window findable for as long as the history holds it (the
+    /// history drops the oldest past its limit; so does this table).
+    @MainActor
+    private func remember(_ target: WindowManager.Target, key: String) {
+        snapTargets[key] = target
+        if snapTargets.count > history.entries.count {
+            snapTargets = snapTargets.filter { history.entries[$0.key] != nil }
+        }
+        updateMouseMonitor()
+    }
+
+    @MainActor
+    private func forgetSnap(_ key: String) {
+        history.forget(key: key)
+        snapTargets.removeValue(forKey: key)
+        updateMouseMonitor()
+    }
+
+    /// Lifting on a gesture that acts on the window. A display move is a snap
+    /// onto that display (its preview settles there); the first half of a
+    /// "twice" gesture waits `repeatWindow` for the second; the rest run now.
+    @MainActor
+    private func run(_ action: SwishSnap.WindowAction, plan: Plan, target: WindowManager.Target, start: CGRect) {
+        if case .screen = action, !Self.isFullscreen(target) {
+            guard !plan.rect.isNull else { hideOwnPreview(); reset(); return }
+            let screens = WindowManager.shared.screens()
+            let visible = WindowGeometry.screenIndex(for: plan.rect, screens: screens.map(\.frame))
+                .map { Self.snapArea(screens[$0].visible) } ?? plan.rect
+            commitFrame(plan.rect, target: target, anchorVisible: visible, start: start, restoring: false, place: plan.place)
+            return
+        }
+        if hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
+        hideOwnPreview()
+        if plan.waits {
+            schedulePending(Pending(action: action, target: target, start: start))
+        } else {
+            perform(action, target: target, start: start, destination: plan.rect)
+        }
+        reset()
     }
 
     @MainActor
     private func cancel() {
         timeout?.cancel(); timeout = nil
+        chain.cancelTouch()
         hideOwnPreview()
+        if shownAction != nil { GestureHUD.shared.dismiss() }
         reset()
     }
 
@@ -676,7 +1950,306 @@ final class TitleBarWindowSnap {
 
     @MainActor
     private func reset() {
-        target = nil; targetVisible = nil; startFrame = nil; plan = nil
+        target = nil; targetVisible = nil; startFrame = nil; startPlace = nil; plan = nil
+        modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil
+    }
+
+    // MARK: Pinches, taps and tap-and-hold (3.3.2)
+
+    /// A pinch was recognised, or let go: its window is captured the way a
+    /// swipe's is, and the HUD names what lifting will do.
+    @MainActor
+    private func pinchChanged(_ kind: SwishSnap.Pinch?) {
+        guard !committing, Self.pinchesOn() else { return }
+        if target == nil {
+            guard kind != nil, allowedNow, let capture = takeCapture(), adopt(capture) else { return }
+            pinching = true
+        }
+        guard pinching else { return }
+        scheduleTimeout()
+        guard let kind else {
+            // Back to where the fingers landed: lifting now does nothing.
+            plan = nil
+            present(nil)
+            return
+        }
+        let options = Self.gestureOptions()
+        let second = (kind == .in && repeating == .close) || (kind == .out && repeating == .toggleFullscreen)
+        let decision = SwishSnap.pinchAction(kind, second: second, held: recognizer.isHeld && options.holdGestures,
+                                             modifiers: options.modifierGestures ? modifiers : [],
+                                             displays: WindowManager.shared.screens().count)
+        // The second pinch completes the first: its action no longer waits.
+        if second { cancelPending() }
+        let next = Plan(place: nil, rect: .null, action: decision.action, waits: decision.waits)
+        if plan != nil, next != plan, hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
+        plan = next
+        present(next)
+    }
+
+    @MainActor
+    private func pinched(_ kind: SwishSnap.Pinch) {
+        timeout?.cancel(); timeout = nil
+        guard pinching, !committing, allowedNow, let target, let plan, let action = plan.action,
+              let start = startFrame else { cancel(); return }
+        run(action, plan: plan, target: target, start: start)
+    }
+
+    /// A two-finger tap on a title bar. The second one within `repeatWindow`,
+    /// on the same window with the pointer where it was, is a double tap.
+    @MainActor
+    private func tapped(at timestamp: Double) {
+        let option = Self.doubleTapOption()
+        guard active, !committing, allowedNow, option != .off, let capture = takeCapture() else { lastTap = nil; return }
+        if let last = lastTap, timestamp >= last.at, timestamp - last.at <= Self.repeatWindow,
+           hypot(capture.mouse.x - last.mouse.x, capture.mouse.y - last.mouse.y) <= Self.doubleTapDistance,
+           last.target.pid == capture.window.pid, CFEqual(last.target.window, capture.window.window) {
+            lastTap = nil
+            doubleTapped(capture, option: option)
+        } else {
+            lastTap = (timestamp, capture.mouse, capture.window)
+        }
+    }
+
+    /// Swish's double tap: unsnap (restore the pre-snap frame while the
+    /// window still sits where AOM put it) or centre; ⌥ hides the app and ⇧
+    /// the other apps.
+    @MainActor
+    private func doubleTapped(_ capture: Capture, option: SwishSnap.DoubleTap) {
+        let options = Self.gestureOptions()
+        let held = options.modifierGestures ? SwishSnap.Modifiers(flags: NSEvent.modifierFlags) : []
+        guard let move = SwishSnap.doubleTapMove(option, modifiers: held) else { return }
+        switch move {
+        case .action(let action):
+            if hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
+            if Self.flag(Self.previewKey, default: true) {
+                let name = NSRunningApplication(processIdentifier: capture.window.pid)?.localizedName
+                GestureHUD.shared.show(title: SwishSnap.title(for: action, appName: name))
+            }
+            perform(action, target: capture.window, start: capture.frame)
+        case .restore, .cell, .place:
+            guard adopt(capture), let visible = targetVisible else { reset(); return }
+            let plan = move == .restore ? restorePlan(target: capture.window, visible: visible, start: capture.frame)
+                : Plan(place: .center, rect: SwishSnap.targetFrame(place: .center, visible: visible, margin: margin))
+            if Self.flag(Self.previewKey, default: true) {
+                overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop), restoring: plan.place == nil)
+            }
+            commitFrame(plan.rect, target: capture.window, anchorVisible: visible, start: capture.frame,
+                        restoring: plan.place == nil, place: plan.place)
+        }
+    }
+
+    /// The fingers rested long enough for tap-and-hold: Swish answers with a
+    /// haptic. Only over a title bar; resting fingers elsewhere are no gesture.
+    @MainActor
+    private func holdBegan() {
+        guard active, !committing, allowedNow, prefetched != nil, hapticsOn else { return }
+        _ = GestureHaptics.shared.feedback(enabled: true)
+    }
+
+    // MARK: "Twice" gestures
+
+    @MainActor
+    private func schedulePending(_ waiting: Pending) {
+        // An earlier action still waiting (on another app: on the same app
+        // this gesture would have completed it) runs now instead of being lost.
+        if pending != nil {
+            pendingWork?.cancel()
+            firePending()
+        }
+        pending = waiting
+        armPending(after: Self.repeatWindow)
+    }
+
+    @MainActor
+    private func armPending(after delay: Double) {
+        pendingWork?.cancel()
+        let item = DispatchWorkItem { MainActor.assumeIsolated { TitleBarWindowSnap.shared.firePending() } }
+        pendingWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// No second half came: the first half runs (it checks the pause again).
+    @MainActor
+    private func firePending() {
+        pendingWork = nil
+        guard let waiting = pending else { return }
+        pending = nil
+        if repeating == waiting.action { repeating = nil }
+        perform(waiting.action, target: waiting.target, start: waiting.start)
+    }
+
+    @MainActor
+    private func cancelPending() {
+        pendingWork?.cancel(); pendingWork = nil
+        pending = nil
+    }
+
+    // MARK: Window actions
+
+    /// Runs a window action on the gesture's window (never one of AOM's own:
+    /// `captureTitleBar` skips them). Each one asks the way the user would:
+    /// the close button, the app's own Quit, the system's full screen.
+    @MainActor
+    private func perform(_ action: SwishSnap.WindowAction, target: WindowManager.Target, start: CGRect,
+                         destination: CGRect = .null) {
+        guard allowedNow, !Self.appPaused(target.pid) else { return }
+        let app = NSRunningApplication(processIdentifier: target.pid)
+        let title = SwishSnap.title(for: action, appName: app?.localizedName)
+        GestureLog.shared.logFromAnyThread("Title-bar gesture: \(title)", level: .action)
+        let report: (Bool) -> Void = { ok in
+            if !ok { GestureLog.shared.logFromAnyThread("Title-bar gesture failed: \(title)", level: .error) }
+        }
+        switch action {
+        case .minimize:
+            guard Self.isFullscreen(target) else {
+                WindowManager.shared.execute(.minimizeWindow, target: target, completion: report); return
+            }
+            // A full-screen window cannot be minimized: leave full screen first.
+            leavingFullscreen(target, report) {
+                WindowManager.shared.execute(.minimizeWindow, target: target, completion: report)
+            }
+        case .close:
+            WindowManager.shared.execute(.closeWindow, target: target, completion: report)
+        case .quitApp:
+            // Never AOM itself, and never forced (the app may ask to save).
+            guard let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { report(false); return }
+            TrackpadUtilityGestures.politeQuit(app)
+        case .toggleFullscreen:
+            WindowManager.shared.execute(.toggleFullscreenWindow, target: target, completion: report)
+        case .hideApp:
+            report(app?.hide() ?? false)
+        case .hideOthers:
+            hideOthers(keeping: target.pid, report)
+        case .spaceLeft, .spaceRight:
+            bringForward(target)
+            let frame = WindowManager.shared.frame(of: target) ?? start
+            ExtendedActions.moveWindowToSpace(next: action == .spaceRight, target: target,
+                                              grab: spaceGrabPoint(target, frame: frame), report)
+        case .screen:
+            moveFullscreenWindow(target, to: destination, report)
+        case .fullscreenOnOtherScreen:
+            fullscreenOnOtherDisplay(target, report)
+        }
+    }
+
+    /// Hide Others (⌥⌘H) for the window's app: every other regular app is
+    /// hidden and the window's app stays in front. AOM is left alone.
+    @MainActor
+    private func hideOthers(keeping pid: pid_t, _ report: @escaping (Bool) -> Void) {
+        let own = ProcessInfo.processInfo.processIdentifier
+        NSRunningApplication(processIdentifier: pid)?.activate(options: [])
+        var refused: [String] = []
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && app.processIdentifier != pid && app.processIdentifier != own && !app.isHidden {
+            if !app.hide() { refused.append(app.localizedName ?? "?") }
+        }
+        if !refused.isEmpty {
+            GestureLog.shared.logFromAnyThread("Could not hide: \(refused.joined(separator: ", "))", level: .error)
+        }
+        report(refused.isEmpty)
+    }
+
+    /// Leaves native full screen, then runs `work` once the window is out of
+    /// it (the animation takes about 0.8 s; a slow one gets up to 1.2 s more).
+    @MainActor
+    private func leavingFullscreen(_ target: WindowManager.Target, _ report: @escaping (Bool) -> Void,
+                                   then work: @escaping @MainActor () -> Void) {
+        guard Self.setFullscreen(false, target) else { report(false); return }
+        func check(_ attempt: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0.8 : 0.4)) {
+                MainActor.assumeIsolated {
+                    guard TitleBarWindowSnap.shared.allowedNow else { return }
+                    if Self.isFullscreen(target), attempt < 3 { check(attempt + 1); return }
+                    work()
+                }
+            }
+        }
+        check(0)
+    }
+
+    /// A full-screen window cannot be dragged to another display: it leaves
+    /// full screen, moves to `destination`, and enters full screen there.
+    @MainActor
+    private func moveFullscreenWindow(_ target: WindowManager.Target, to destination: CGRect,
+                                      _ report: @escaping (Bool) -> Void) {
+        guard !destination.isNull else { report(false); return }
+        leavingFullscreen(target, report) {
+            WindowManager.shared.applySnap(destination, target: target, visible: nil) { actual in
+                guard actual != nil else { report(false); return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { report(Self.setFullscreen(true, target)) }
+            }
+        }
+    }
+
+    /// Swish's "pinch out twice" with two displays (or ⌘ pinch out): the
+    /// window moves to the next display and enters full screen there,
+    /// leaving full screen first if it is in it.
+    @MainActor
+    private func fullscreenOnOtherDisplay(_ target: WindowManager.Target, _ report: @escaping (Bool) -> Void) {
+        let move: @MainActor () -> Void = {
+            let screens = WindowManager.shared.screens()
+            guard screens.count > 1, let frame = WindowManager.shared.frame(of: target),
+                  let index = WindowGeometry.screenIndex(for: frame, screens: screens.map(\.frame)) else {
+                report(false); return
+            }
+            let next = screens[(index + 1) % screens.count].visible
+            WindowManager.shared.applySnap(WindowGeometry.moved(frame, into: next, maximize: false),
+                                           target: target, visible: next) { actual in
+                guard actual != nil else { report(false); return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { report(Self.setFullscreen(true, target)) }
+            }
+        }
+        if Self.isFullscreen(target) { leavingFullscreen(target, report, then: move) } else { move() }
+    }
+
+    /// Where to grab the window for a Space move: the pointer if it rests on
+    /// the bare title bar or toolbar background (a control under it would be
+    /// pressed instead of the window dragged), else the first such point
+    /// along the title bar, else its middle as the Space action does.
+    @MainActor
+    private func spaceGrabPoint(_ target: WindowManager.Target, frame: CGRect) -> CGPoint {
+        let mouse = NSEvent.mouseLocation
+        let y = frame.minY + 10
+        let candidates = [CGPoint(x: mouse.x, y: primaryTop - mouse.y), CGPoint(x: frame.midX, y: y),
+                          CGPoint(x: frame.minX + 96, y: y), CGPoint(x: frame.maxX - 64, y: y)]
+        return candidates.first { frame.contains($0) && Self.isDragHandle(at: $0, of: target) }
+            ?? CGPoint(x: frame.midX, y: y)
+    }
+
+    /// Whether a mouse-down at `point` (top-left coordinates) lands on the
+    /// window itself or its toolbar background, which drag the window. The
+    /// window server must report the window's app on top there (a press
+    /// lands on whatever is in front); the hit-test then goes to that app,
+    /// bounded to 0.25 s (3.3.2 review: it asked the system-wide element with
+    /// no limit, on main).
+    @MainActor
+    private static func isDragHandle(at point: CGPoint, of target: WindowManager.Target) -> Bool {
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        guard DockLookup.windowUnder(CGPoint(x: point.x, y: top - point.y))?.pid == target.pid else { return false }
+        let app = AXUIElementCreateApplication(target.pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success,
+              let hit else { return false }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(hit, &pid) == .success, pid == target.pid else { return false }
+        AXUIElementSetMessagingTimeout(hit, 0.25)
+        var role: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(hit, kAXRoleAttribute as CFString, &role) == .success,
+              let role = role as? String else { return false }
+        if role == kAXWindowRole as String { return CFEqual(hit, target.window) }
+        return role == kAXToolbarRole as String
+    }
+
+    private static func isFullscreen(_ target: WindowManager.Target) -> Bool {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(target.window, "AXFullScreen" as CFString, &value) == .success
+            && (value as? Bool) == true
+    }
+
+    @discardableResult
+    private static func setFullscreen(_ on: Bool, _ target: WindowManager.Target) -> Bool {
+        AXUIElementSetAttributeValue(target.window, "AXFullScreen" as CFString, on ? kCFBooleanTrue : kCFBooleanFalse) == .success
     }
 
     @MainActor
@@ -703,8 +2276,362 @@ final class TitleBarWindowSnap {
         NSRunningApplication(processIdentifier: target.pid)?.activate(options: [])
     }
 
+    // MARK: Keyboard hotkeys (3.3.2, Swish's Advanced tab)
+
+    /// From `KeyboardMonitor`'s event tap, AOM's global shortcut path (after
+    /// explicit bindings and the clipboard and capture shortcuts): ⌃⌥ and one
+    /// of the chosen keys swipes the front window that way. True consumes the
+    /// key. Off, paused, AOM in front, or any other key: it goes on to the app.
+    @MainActor
+    func handleHotKey(keyCode: UInt16, modifiers flags: NSEvent.ModifierFlags) -> Bool {
+        guard hotkeys != .off, hotkeyAllowedNow,
+              let direction = SwishSnap.hotkeyDirection(keyCode: keyCode, modifiers: flags, scheme: hotkeys),
+              let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+        let pid = front.processIdentifier
+        // The Accessibility work runs once the tap callback has returned.
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { TitleBarWindowSnap.shared.hotkeySwipe(direction, pid: pid) }
+        }
+        return true
+    }
+
+    /// The commit in flight came from a hotkey: the pointer stays where it is.
+    @MainActor private var keyboardCommit = false
+
+    /// A hotkey press is a swipe on the front window: the same chaining from
+    /// its place, the same commit (`WindowManager.applySnap`) and the same
+    /// history as a title-bar swipe.
+    @MainActor
+    private func hotkeySwipe(_ direction: SwishSnap.Direction, pid: pid_t) {
+        guard hotkeyAllowedNow, !committing, target == nil, pid != ProcessInfo.processInfo.processIdentifier,
+              let window = Self.focusedWindow(of: pid), let frame = Self.boundedFrame(of: window) else { return }
+        let capture = Capture(mouse: NSEvent.mouseLocation, window: window, frame: frame,
+                              at: ProcessInfo.processInfo.systemUptime)
+        // `adopt` asks whether the window is in full screen: bounded too.
+        AXUIElementSetMessagingTimeout(window.window, 0.25)
+        let adopted = adopt(capture)
+        AXUIElementSetMessagingTimeout(window.window, 0)
+        guard adopted, let visible = targetVisible else { reset(); return }
+        // ⌃⌥ belong to the hotkey, not to Swish's gesture modifiers, and a key
+        // never completes a half-done "twice" gesture.
+        modifiers = []
+        repeating = nil
+        guard let next = plan(for: SwishSnap.Stroke(direction), target: window, visible: visible, start: frame) else {
+            reset(); return
+        }
+        plan = next
+        GestureLog.shared.logFromAnyThread("Snap hotkey \(SwishSnap.arrow(direction))", level: .detect)
+        if let action = next.action {
+            run(action, plan: next, target: window, start: frame)
+            return
+        }
+        keyboardCommit = true
+        commitFrame(next.rect, target: window, anchorVisible: visible, start: frame,
+                    restoring: next.place == nil, place: next.place)
+    }
+
+    /// The app's focused window, asked with a bounded wait.
+    private static func focusedWindow(of pid: pid_t) -> WindowManager.Target? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return WindowManager.Target(window: value as! AXUIElement, pid: pid)
+    }
+
+    /// A window's frame with a bounded wait (a busy app answers late or not at
+    /// all); the element goes back to the default timeout for the commit's writes.
+    private static func boundedFrame(of target: WindowManager.Target, timeout: Float = 0.25) -> CGRect? {
+        AXUIElementSetMessagingTimeout(target.window, timeout)
+        defer { AXUIElementSetMessagingTimeout(target.window, 0) }
+        return WindowManager.shared.frame(of: target)
+    }
+
+    /// Minimized and full-screen windows are left where macOS keeps them.
+    private static func isMinimizedOrFullscreen(_ target: WindowManager.Target) -> Bool {
+        AXUIElementSetMessagingTimeout(target.window, 0.25)
+        defer { AXUIElementSetMessagingTimeout(target.window, 0) }
+        var minimized: CFTypeRef?
+        if AXUIElementCopyAttributeValue(target.window, kAXMinimizedAttribute as CFString, &minimized) == .success,
+           (minimized as? Bool) == true { return true }
+        return isFullscreen(target)
+    }
+
+    // MARK: Drag to unsnap and resizing adjacent windows (3.3.2)
+
+    /// A global left-button monitor (like `CustomSnapZoneMonitor`), present
+    /// only while the history holds windows and one of the two options is on.
+    /// Global monitors never see AOM's own windows.
+    @MainActor
+    private func updateMouseMonitor() {
+        let wanted = active && !PresetManager.isRunningTests && !PresetManager.isUIPreview
+            && !history.entries.isEmpty && (Self.dragUnsnapOn() || Self.resizeAdjacentOn())
+        if wanted, mouseMonitor == nil {
+            mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { event in
+                // Global monitors call back on the main thread.
+                let type = event.type
+                MainActor.assumeIsolated { TitleBarWindowSnap.shared.mouseEvent(type) }
+            }
+        } else if !wanted, let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMonitor = nil
+            drag = nil
+        }
+    }
+
+    /// Down: note the snapped windows sharing an edge near the pointer. First
+    /// drag: the one hit-test, for a snapped window's title bar. Later drags:
+    /// once that window really moves, give it its old size under the pointer.
+    /// Up: let neighbours follow a resized edge.
+    @MainActor
+    private func mouseEvent(_ type: NSEvent.EventType) {
+        guard !history.entries.isEmpty else { drag = nil; return }
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x, y: primaryTop - mouse.y)
+        switch type {
+        case .leftMouseDown:
+            drag = nil
+            guard mouseAllowedNow, !committing else { return }
+            var state = DragState(down: point)
+            if Self.resizeAdjacentOn() { state.neighbours = neighbourFrames(near: point) }
+            drag = state
+        case .leftMouseDragged:
+            guard var state = drag else { return }
+            if !state.probed {
+                state.probed = true
+                if Self.dragUnsnapOn(), mouseAllowedNow { state.unsnap = unsnapCandidate(at: state.down, pointer: point) }
+            }
+            if let candidate = state.unsnap {
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - state.lastProbe >= 0.05 {
+                    state.lastProbe = now
+                    let frame = Self.boundedFrame(of: candidate.target)
+                    if let frame, WindowGeometry.windowActuallyMoved(from: candidate.snapped, to: frame) {
+                        state.unsnap = nil
+                        unsnapDrag(candidate, grab: state.down, pointer: point)
+                    } else if frame.map({ abs($0.width - candidate.snapped.width) > 4
+                                            || abs($0.height - candidate.snapped.height) > 4 }) ?? true {
+                        // Resized (its top edge sits in the title-bar band) or gone: no unsnap.
+                        state.unsnap = nil
+                    }
+                }
+            }
+            drag = state
+        case .leftMouseUp:
+            let state = drag
+            drag = nil
+            guard let state, state.probed, state.neighbours.count >= 2, mouseAllowedNow, !committing else { return }
+            followResize(from: state.neighbours)
+        default:
+            break
+        }
+    }
+
+    /// The snapped window whose title bar the drag started on, while it still
+    /// sits where it was snapped (it may already have followed the pointer a
+    /// few points, at its snapped size) and has a frame from before to go back to.
+    @MainActor
+    private func unsnapCandidate(at down: CGPoint, pointer: CGPoint) -> DragState.Unsnap? {
+        let mouse = CGPoint(x: down.x, y: primaryTop - down.y)
+        // The window server names the window's owner; the hit-test goes to
+        // that app, bounded (3.3.2 review), as for the title-bar swipe.
+        guard let under = DockLookup.windowUnder(mouse), under.layer == 0,
+              under.pid != ProcessInfo.processInfo.processIdentifier,
+              let hit = WindowManager.shared.titleBarTarget(atMousePoint: mouse, pid: under.pid),
+              hit.target.pid != ProcessInfo.processInfo.processIdentifier else { return nil }
+        let key = Self.key(hit.target)
+        guard let entry = history.entries[key], entry.place != nil,
+              !WindowGeometry.close(entry.original, entry.snapped),
+              let frame = Self.boundedFrame(of: hit.target),
+              abs(frame.width - entry.snapped.width) <= 3, abs(frame.height - entry.snapped.height) <= 3,
+              hypot(frame.minX - entry.snapped.minX, frame.minY - entry.snapped.minY)
+                <= hypot(pointer.x - down.x, pointer.y - down.y) + 4,
+              hit.onTitleBar || SwishSnap.titleBarHit(pointerTopLeft: down, windowFrame: entry.snapped),
+              down.y >= entry.snapped.minY, down.y - entry.snapped.minY <= SwishSnap.toolbarBand else { return nil }
+        return DragState.Unsnap(target: hit.target, key: key, snapped: entry.snapped, original: entry.original)
+    }
+
+    /// Swish and Windows: the dragged window gets its pre-snap size under the
+    /// pointer, which keeps its place along the title bar; the window is no
+    /// longer snapped, so its history entry goes.
+    @MainActor
+    private func unsnapDrag(_ candidate: DragState.Unsnap, grab: CGPoint, pointer: CGPoint) {
+        let frame = SwishSnap.unsnapDragFrame(snapped: candidate.snapped, original: candidate.original.size,
+                                              grab: grab, pointer: pointer)
+        AXUIElementSetMessagingTimeout(candidate.target.window, 0.25)
+        let resized = WindowManager.shared.setFrame(frame, of: candidate.target)
+        AXUIElementSetMessagingTimeout(candidate.target.window, 0)
+        history.forget(key: candidate.key)
+        snapTargets.removeValue(forKey: candidate.key)
+        // Not from inside the monitor's own callback.
+        DispatchQueue.main.async { MainActor.assumeIsolated { TitleBarWindowSnap.shared.updateMouseMonitor() } }
+        GestureLog.shared.logFromAnyThread(resized ? "Drag to unsnap: the window is back to its size from before the snap"
+                                                   : "Drag to unsnap: the window refused its earlier size",
+                                           level: resized ? .action : .error)
+    }
+
+    /// The snapped windows sharing an edge near the button going down, read
+    /// now: at least two still where they were snapped, or none.
+    @MainActor
+    private func neighbourFrames(near point: CGPoint) -> [String: CGRect] {
+        guard history.entries.count >= 2 else { return [:] }
+        let snapped = history.entries.compactMapValues { $0.place != nil ? $0.snapped : nil }
+        let keys = SwishSnap.edgeCandidates(at: point, frames: snapped, tolerance: Self.adjacencyTolerance(margin: margin))
+        guard keys.count >= 2 else { return [:] }
+        var frames: [String: CGRect] = [:]
+        for key in keys {
+            guard let target = snapTargets[key], let recorded = snapped[key],
+                  let frame = Self.boundedFrame(of: target), WindowGeometry.close(frame, recorded) else { continue }
+            frames[key] = frame
+        }
+        return frames.count >= 2 ? frames : [:]
+    }
+
+    /// Swish's "Drag the divider to resize multiple windows at once", in one
+    /// pass on mouse-up: if one of the windows was resized along an edge it
+    /// shared with the others, they follow it. All of them stay snapped.
+    @MainActor
+    private func followResize(from before: [String: CGRect]) {
+        var after: [String: CGRect] = [:]
+        for key in before.keys {
+            if let target = snapTargets[key], let frame = Self.boundedFrame(of: target) { after[key] = frame }
+        }
+        let moves = SwishSnap.adjacentMoves(before: before, after: after,
+                                            tolerance: Self.adjacencyTolerance(margin: margin))
+        guard !moves.isEmpty else { return }
+        for (key, frame) in after where moves[key] == nil {
+            if let old = before[key], !WindowGeometry.close(old, frame) { history.moveSnapped(key: key, to: frame) }
+        }
+        GestureLog.shared.logFromAnyThread("Resize adjacent: \(moves.count) window(s) follow the shared edge", level: .action)
+        let screens = WindowManager.shared.screens()
+        for (key, frame) in moves {
+            guard let target = snapTargets[key] else { continue }
+            let anchor = WindowGeometry.screenIndex(for: frame, screens: screens.map(\.frame)).map { index -> CGRect in
+                let area = Self.snapArea(screens[index].visible)
+                return margin > 0 ? area.insetBy(dx: margin, dy: margin) : area
+            }
+            WindowManager.shared.applySnap(frame, target: target, visible: anchor) { actual in
+                guard let actual else { return }
+                MainActor.assumeIsolated { TitleBarWindowSnap.shared.history.moveSnapped(key: key, to: actual) }
+            }
+        }
+    }
+
+    // MARK: Re-snapping after display changes (3.3.2)
+
+    /// The displays are about to change (the reconfiguration callback's begin
+    /// flag, before macOS moves windows off a display that goes away): note
+    /// which snapped windows still sit where they were snapped.
+    @MainActor
+    fileprivate func displaysWillChange() {
+        guard resnapKeys == nil, active, Self.resnapOn(), !history.entries.isEmpty else { return }
+        resnapKeys = snappedInPlace()
+        scheduleResnap()
+    }
+
+    /// The displays changed (also the Dock or a resolution change, which may
+    /// not pass through the reconfiguration callback): re-snap once settled.
+    @MainActor
+    private func displaysChanged() {
+        guard active, Self.resnapOn(), !history.entries.isEmpty else { resnapKeys = nil; return }
+        if resnapKeys == nil { resnapKeys = snappedInPlace() }
+        scheduleResnap()
+    }
+
+    @MainActor
+    private func scheduleResnap() {
+        resnapWork?.cancel()
+        let item = DispatchWorkItem { MainActor.assumeIsolated { TitleBarWindowSnap.shared.resnap() } }
+        resnapWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resnapDelay, execute: item)
+    }
+
+    /// The history windows still at the frame AOM snapped them to: bounded
+    /// reads, and no more than half a second in all (hung apps are skipped).
+    @MainActor
+    private func snappedInPlace() -> Set<String> {
+        var keys = Set<String>()
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        for (key, entry) in history.entries where entry.place != nil {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+            guard let target = snapTargets[key], let frame = Self.boundedFrame(of: target, timeout: 0.15),
+                  WindowGeometry.close(frame, entry.snapped) else { continue }
+            keys.insert(key)
+        }
+        return keys
+    }
+
+    private struct Resnap {
+        let key: String
+        let target: WindowManager.Target
+        let frame: CGRect
+        let anchor: CGRect
+    }
+
+    /// Swish's "Resnapping after …": each window still snapped when the
+    /// displays changed gets its place again on the display it is on now.
+    @MainActor
+    private func resnap() {
+        resnapWork = nil
+        let keys = resnapKeys ?? []
+        resnapKeys = nil
+        guard !keys.isEmpty, Self.resnapOn(), resnapAllowedNow else { return }
+        let screens = WindowManager.shared.screens()
+        let frames = screens.map(\.frame)
+        let areas = screens.map { Self.snapArea($0.visible) }
+        var moves: [Resnap] = []
+        let deadline = ProcessInfo.processInfo.systemUptime + 1
+        for key in keys.sorted() {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
+            guard let place = history.entries[key]?.place, let target = snapTargets[key],
+                  target.pid != ProcessInfo.processInfo.processIdentifier,
+                  !Self.isMinimizedOrFullscreen(target),
+                  let current = Self.boundedFrame(of: target),
+                  let frame = SwishSnap.resnapFrame(place: place, current: current, screens: frames, areas: areas,
+                                                    margin: margin),
+                  let index = WindowGeometry.screenIndex(for: frame, screens: frames) else { continue }
+            let anchor = margin > 0 ? areas[index].insetBy(dx: margin, dy: margin) : areas[index]
+            moves.append(Resnap(key: key, target: target, frame: frame, anchor: anchor))
+        }
+        guard !moves.isEmpty else { return }
+        GestureLog.shared.logFromAnyThread("Resnapping after display change: \(moves.count) window(s)", level: .action)
+        applyResnaps(moves[...])
+    }
+
+    /// One window at a time, each once the last has landed.
+    @MainActor
+    private func applyResnaps(_ moves: ArraySlice<Resnap>) {
+        guard let move = moves.first, resnapAllowedNow else { return }
+        WindowManager.shared.applySnap(move.frame, target: move.target, visible: move.anchor) { actual in
+            MainActor.assumeIsolated {
+                let service = TitleBarWindowSnap.shared
+                if let actual { service.history.moveSnapped(key: move.key, to: actual) }
+                service.applyResnaps(moves.dropFirst())
+            }
+        }
+    }
+
+    /// The pause rules for the other inputs: hotkeys answer to keyboard
+    /// pauses, the mouse handlers to pointer ones, re-snapping to a paused AOM.
+    @MainActor private var hotkeyAllowedNow: Bool {
+        Self.mayMoveWindow(active: active, gateAllows: AutomationGate.allows(.keyboard))
+    }
+    @MainActor private var mouseAllowedNow: Bool {
+        Self.mayMoveWindow(active: active, gateAllows: AutomationGate.allows(.mouse))
+    }
+    @MainActor private var resnapAllowedNow: Bool {
+        Self.mayMoveWindow(active: active, gateAllows: AutomationGate.allows(.system))
+    }
+
     @MainActor private static func key(_ target: WindowManager.Target) -> String {
         "\(target.pid):\(CFHash(target.window))"
+    }
+
+    /// The per-app pause for the app that owns a window (main thread).
+    @MainActor private static func appPaused(_ pid: pid_t) -> Bool {
+        TriggerSuppression.shared.isPaused(forApp: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
     }
 
     private static func flag(_ key: String, default fallback: Bool) -> Bool {
@@ -716,8 +2643,17 @@ final class TitleBarWindowSnap {
     @MainActor private var primaryTop: CGFloat { NSScreen.screens.first?.frame.maxY ?? 0 }
 
     @MainActor
-    private var margin: CGFloat {
-        CGFloat(UserDefaults.standard.object(forKey: Self.marginKey) as? Double ?? 0)
+    private var margin: CGFloat { Self.margin() }
+}
+
+/// `CGDisplayRegisterReconfigurationCallback` for re-snapping: the begin flag
+/// arrives before macOS rearranges windows.
+private let aomSnapDisplaysReconfiguring: CGDisplayReconfigurationCallBack = { _, flags, _ in
+    guard flags.contains(.beginConfigurationFlag) else { return }
+    if Thread.isMainThread {
+        MainActor.assumeIsolated { TitleBarWindowSnap.shared.displaysWillChange() }
+    } else {
+        DispatchQueue.main.async { MainActor.assumeIsolated { TitleBarWindowSnap.shared.displaysWillChange() } }
     }
 }
 
@@ -746,22 +2682,29 @@ final class SnapPreviewOverlay {
         view.setStyle(committed: false, restoring: restoring)
         if panel.frame == .zero || !panel.isVisible {
             panel.setFrame(frame, display: true)
-            panel.alphaValue = 0
+            // Short enough that the preview is there as the swipe engages
+            // (3.3.2: 0.12 s and 0.14 s felt sluggish).
+            let fade = duration(0.08, movesFrame: false)
+            panel.alphaValue = fade > 0 ? 0 : 1
             panel.orderFrontRegardless()
+            guard fade > 0 else { return }
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
+                context.duration = fade
                 panel.animator().alphaValue = 1
             }
-        } else if AOMDesign.reduceMotion {
+            return
+        }
+        let move = duration(0.1, movesFrame: true)
+        guard move > 0 else {
             panel.setFrame(frame, display: true)
             panel.alphaValue = 1
-        } else {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.14
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrame(frame, display: true)
-                panel.animator().alphaValue = 1
-            }
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = move
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(frame, display: true)
+            panel.animator().alphaValue = 1
         }
     }
 
@@ -773,10 +2716,16 @@ final class SnapPreviewOverlay {
         isShowing = false
         let started = generation
         view.setStyle(committed: true, restoring: false)
+        let fadeTime = duration(0.16, movesFrame: false)
         let fade = { [weak self] in
             guard let self, self.generation == started else { return }
+            guard fadeTime > 0 else {
+                self.view.setStyle(committed: false, restoring: false)
+                self.panel?.orderOut(nil)
+                return
+            }
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.16
+                context.duration = fadeTime
                 panel.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
                 guard let self, self.generation == started else { return }
@@ -784,13 +2733,14 @@ final class SnapPreviewOverlay {
                 self.panel?.orderOut(nil)
             })
         }
-        guard !AOMDesign.reduceMotion, !WindowGeometry.close(panel.frame, frame) else {
+        let move = duration(0.12, movesFrame: true)
+        guard move > 0, !WindowGeometry.close(panel.frame, frame) else {
             panel.setFrame(frame, display: true)
             fade()
             return
         }
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.12
+            context.duration = move
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().setFrame(frame, display: true)
         }, completionHandler: { fade() })
@@ -800,13 +2750,37 @@ final class SnapPreviewOverlay {
         isShowing = false
         guard let panel, panel.isVisible else { return }
         let started = generation
+        let fade = duration(0.1, movesFrame: false)
+        guard fade > 0 else { panel.orderOut(nil); return }
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
+            context.duration = fade
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self, self.generation == started else { return }
             self.panel?.orderOut(nil)
         })
+    }
+
+    /// Fades a held preview towards the hold-still cancel: 0 is fully shown,
+    /// 1 the faintest it gets before it goes. Moving again restores it.
+    func dim(_ amount: CGFloat) {
+        guard isShowing, let panel, panel.isVisible else { return }
+        let alpha = 1 - 0.7 * min(max(amount, 0), 1)
+        guard abs(panel.alphaValue - alpha) > 0.01 else { return }
+        let time = AOMDesign.reduceMotion ? 0 : duration(0.2, movesFrame: false)
+        guard time > 0 else { panel.alphaValue = alpha; return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = time
+            panel.animator().alphaValue = alpha
+        }
+    }
+
+    /// Swish's "tooltipAnimationTime" (3.3.2): Fast halves every duration,
+    /// Off shows and hides the preview at once; Reduce Motion still keeps the
+    /// frame from sliding.
+    private func duration(_ base: Double, movesFrame: Bool) -> Double {
+        SwishSnap.animationDuration(base, speed: TitleBarWindowSnap.animationSpeed(),
+                                    reduceMotion: AOMDesign.reduceMotion, movesFrame: movesFrame)
     }
 
     private func makePanel() -> NSPanel {

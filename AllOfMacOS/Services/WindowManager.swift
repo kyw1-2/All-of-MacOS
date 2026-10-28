@@ -3,6 +3,40 @@ import Combine
 
 enum SnapPosition { case left, right, topLeft, topRight, bottomLeft, bottomRight }
 
+/// A total time budget for a run of Accessibility requests made on main
+/// (3.3.2 review): each request waits at most `perRequest` and never past the
+/// deadline, so one slow app cannot stall the trackpad frames queued behind
+/// the walk. Timeouts are always set on the element being asked: on the
+/// system-wide element `AXUIElementSetMessagingTimeout` changes the timeout
+/// of every Accessibility call in the process (AXUIElement.h), so AOM never
+/// sets it there.
+struct AXDeadline {
+    let perRequest: Float
+    let deadline: TimeInterval
+
+    init(perRequest: Float = 0.25, budget: TimeInterval, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        self.perRequest = perRequest
+        self.deadline = now + max(0, budget)
+    }
+
+    /// The timeout the next request may use, or nil once less than 5 ms of
+    /// the budget is left.
+    func timeout(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Float? {
+        let remaining = deadline - now
+        guard remaining > 0.005 else { return nil }
+        return Float(min(Double(perRequest), remaining))
+    }
+
+    /// Bounds the next request on `element`; false once the budget is spent.
+    func allow(_ element: AXUIElement) -> Bool {
+        guard let timeout = timeout() else { return false }
+        AXUIElementSetMessagingTimeout(element, timeout)
+        return true
+    }
+
+    var isSpent: Bool { timeout() == nil }
+}
+
 enum WindowGeometry {
     /// AX/CG use a top-left origin; AppKit uses bottom-left of the primary display.
     static func accessibilityFrame(_ frame: CGRect, primaryTop: CGFloat) -> CGRect {
@@ -294,6 +328,72 @@ final class WindowManager: ObservableObject {
         }
         return nil
     }
+    /// The window under the pointer and whether the element under it belongs
+    /// to the window's title bar or toolbar: the window itself (empty title
+    /// bar), anything inside an AXToolbar (unified toolbars, about 52 pt),
+    /// the title text, or one of the window buttons. The title-bar snap uses
+    /// this so a swipe on Safari's or Finder's toolbar counts, while a swipe
+    /// in the document below it scrolls as usual.
+    ///
+    /// 3.3.2 review: this walk runs on main while trackpad frames queue
+    /// behind it. It used to hit-test the system-wide element with no time
+    /// limit of its own (6 s against a hung app). It now hit-tests the
+    /// window's owner (`pid`: `kCGWindowOwnerPID` of the window the window
+    /// server reports under the pointer), each request gives up after
+    /// `timeout` and the whole walk after `budget`. The window handed back
+    /// gets the default timeout again, so the snap's own size and position
+    /// writes are not cut short.
+    func titleBarTarget(atMousePoint point: CGPoint, pid owner: pid_t, timeout: Float = 0.25,
+                        budget: TimeInterval = 0.3) -> (target: Target, onTitleBar: Bool)? {
+        guard owner > 0 else { return nil }
+        let limit = AXDeadline(perRequest: min(timeout, 0.25), budget: budget)
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        let app = AXUIElementCreateApplication(owner)
+        var hit: AXUIElement?
+        guard limit.allow(app),
+              AXUIElementCopyElementAtPosition(app, Float(point.x), Float(top - point.y), &hit) == .success,
+              let hit else { return nil }
+        func string(_ element: AXUIElement, _ attribute: String) -> String? {
+            guard limit.allow(element) else { return nil }
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success ? value as? String : nil
+        }
+        func element(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+            guard limit.allow(element) else { return nil }
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+                  let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+            return (value as! AXUIElement)
+        }
+        let buttonSubroles: Set<String> = [kAXCloseButtonSubrole as String, kAXMinimizeButtonSubrole as String,
+                                           kAXZoomButtonSubrole as String, kAXFullScreenButtonSubrole as String]
+        func found(_ window: AXUIElement, _ pid: pid_t, _ onTitleBar: Bool) -> (target: Target, onTitleBar: Bool) {
+            AXUIElementSetMessagingTimeout(window, 0)
+            return (Target(window: window, pid: pid), onTitleBar)
+        }
+        var current = hit
+        var onTitleBar = false
+        for depth in 0..<24 {
+            guard !limit.isSpent else { return nil }
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(current, &pid) == .success, pid > 0 else { return nil }
+            let role = string(current, kAXRoleAttribute)
+            if role == kAXWindowRole as String {
+                // The window itself was hit: its title bar has no element of its own.
+                return found(current, pid, onTitleBar || depth == 0)
+            }
+            if role == kAXToolbarRole as String { onTitleBar = true }
+            if depth == 0, let subrole = string(current, kAXSubroleAttribute), buttonSubroles.contains(subrole) { onTitleBar = true }
+            guard let parent = element(current, kAXParentAttribute) else {
+                // No parent chain: fall back to the element's window attribute.
+                guard let window = element(current, kAXWindowAttribute) else { return nil }
+                return found(window, pid, onTitleBar)
+            }
+            current = parent
+        }
+        return nil
+    }
+
     /// Continuous gesture path (window drag layer): writes position and
     /// optionally size in one AX round-trip. AX frames are top-left based.
     func setFrame(_ frame: CGRect, of target: Target) -> Bool {
@@ -505,7 +605,7 @@ final class WindowManager: ObservableObject {
             completion(success)
         }
     }
-    private func applyFrame(_ desired: CGRect, target: Target, anchorIn anchor: CGRect? = nil,
+    private func applyFrame(_ desired: CGRect, target: Target, anchorIn anchor: CGRect? = nil, immediate: Bool = false,
                             completion: @escaping (Bool) -> Void) {
         let key = "\(target.pid):\(CFHash(target.window))"
         guard moving.insert(key).inserted else { completion(false); return }
@@ -590,6 +690,30 @@ final class WindowManager: ObservableObject {
             guard write(attribute, value) else { self.fail("Window refused size or position", completion); return }
             settle(attribute, toward: desired) { apply(index + 1) }
         }
+        // Swish's own commit is immediate: size → position → size in one go,
+        // read back at once (FUN_1000329c8). Most apps apply AX writes
+        // synchronously, so the window lands in one run-loop turn instead of
+        // after four 50 ms settle polls (3.3.2: the gesture felt slow). Only an
+        // app whose frame does not read back as written (it animates, or is
+        // still moving) falls through to the staged, polled path below.
+        if immediate {
+            _ = write(kAXSizeAttribute, s)
+            _ = write(kAXPositionAttribute, p)
+            _ = write(kAXSizeAttribute, s)
+            if let actual = self.frame(of: target) {
+                if WindowGeometry.close(actual, desired) { completion(true); return }
+                if let anchor, abs(actual.width - desired.width) > 3 || abs(actual.height - desired.height) > 3 {
+                    let anchored = WindowGeometry.anchoredFrame(desired: desired, actualSize: actual.size, visible: anchor)
+                    var origin = anchored.origin
+                    if let value = AXValueCreate(.cgPoint, &origin), write(kAXPositionAttribute, value),
+                       let settled = self.frame(of: target),
+                       abs(settled.minX - anchored.minX) <= 3, abs(settled.minY - anchored.minY) <= 3,
+                       abs(settled.width - actual.width) <= 3, abs(settled.height - actual.height) <= 3 {
+                        completion(true); return
+                    }
+                }
+            }
+        }
         apply(0)
     }
 
@@ -619,7 +743,7 @@ final class WindowManager: ObservableObject {
             saved.append(Saved(target: target, frame: current))
             if saved.count > 100 { saved.removeFirst() }
         }
-        applyFrame(desired, target: target, anchorIn: visible) { success in
+        applyFrame(desired, target: target, anchorIn: visible, immediate: true) { success in
             let actual = self.frame(of: target)
             if let actual, !WindowGeometry.close(current, actual) {
                 self.remember([Saved(target: target, frame: current)])

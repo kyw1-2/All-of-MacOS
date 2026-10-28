@@ -20,6 +20,8 @@ struct AppAudioState: Identifiable, Equatable {
     var magicBoost: Bool = false
     /// Volume Overdrive multiplier, 1...4 (SoundSource: up to 400 %).
     var overdrive: Float = 1
+    /// Stereo balance, -1 (left) … 0 (centre) … +1 (right); see `AudioBalance`.
+    var balance: Float = 0
     /// A process of this app is producing output right now.
     var isPlaying: Bool = false
     var error: String? = nil
@@ -35,7 +37,8 @@ struct AppAudioState: Identifiable, Equatable {
         lhs.muted == rhs.muted &&
         lhs.tapped == rhs.tapped &&
         lhs.outputDeviceUID == rhs.outputDeviceUID &&
-        lhs.magicBoost == rhs.magicBoost && lhs.overdrive == rhs.overdrive && lhs.isPlaying == rhs.isPlaying && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
+        lhs.magicBoost == rhs.magicBoost && lhs.overdrive == rhs.overdrive && lhs.balance == rhs.balance &&
+        lhs.isPlaying == rhs.isPlaying && lhs.error == rhs.error && lhs.peakLevel == rhs.peakLevel && lhs.processingStatus == rhs.processingStatus
     }
 }
 
@@ -61,6 +64,22 @@ enum AppAudioPreferences {
         let clamped = AudioVolumeOverdrive.clamp(value)
         if clamped <= 1.0001 { defaults.removeObject(forKey: "AOMAudioOverdrive_\(bundleID)") }
         else { defaults.set(Double(clamped), forKey: "AOMAudioOverdrive_\(bundleID)") }
+        return true
+    }
+
+    /// Stereo balance, -1...1 (0 = centre). A missing key is centre; a
+    /// corrupt or out-of-range stored value is clamped, never trusted.
+    static func balance(bundleID: String, defaults: UserDefaults = .standard) -> Float {
+        AudioBalance.clamp(Float(defaults.object(forKey: "AOMAudioBalance_\(bundleID)") as? Double ?? 0))
+    }
+
+    /// Stored in whole-percent steps and only while off centre, so a centred
+    /// app carries no setting (and needs no processing for balance).
+    static func setBalance(_ value: Float, bundleID: String, defaults: UserDefaults = .standard) -> Bool {
+        guard !bundleID.isEmpty, value.isFinite else { return false }
+        let stepped = AudioBalance.stepped(value)
+        if stepped == 0 { defaults.removeObject(forKey: "AOMAudioBalance_\(bundleID)") }
+        else { defaults.set(Double(stepped), forKey: "AOMAudioBalance_\(bundleID)") }
         return true
     }
 
@@ -104,6 +123,10 @@ final class AppAudioEngine {
         var gain: Float
         var muted: Bool
         var processIDs: [AudioObjectID] = []
+        /// Debounces tap membership rewrites (main thread, see updateProcesses).
+        var membership = TapMembershipDebounce()
+        /// Tap description writes after creation (diagnostics).
+        var tapRewrites = 0
         var tapDescription: CATapDescription?
         var outputUID = ""
         var sampleRate: Double = 48000
@@ -264,6 +287,7 @@ final class AppAudioEngine {
                     var stats = transport.statistics
                     stats["bundleID"] = session.bundleID
                     stats["airPlay"] = session.sourceToken?.isAirPlay ?? false
+                    stats["tapRewrites"] = session.tapRewrites
                     return (String(session.pid), stats)
                 })
                 let outputs = MainActor.assumeIsolated { SharedOutputRenderer.shared.airPlayStatistics }
@@ -391,6 +415,7 @@ final class AppAudioEngine {
                 mixer.gain = session.gain; mixer.muted = session.muted
                 mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
                 mixer.overdrive = AppAudioPreferences.overdrive(bundleID: app.bundleID)
+                mixer.balance = AppAudioPreferences.balance(bundleID: app.bundleID)
                 guard updateProcesses(session, ids: ids) else {
                     continue
                 }
@@ -568,6 +593,7 @@ final class AppAudioEngine {
             d.string(forKey: "AOMAudioRoute_\(bundleID)") != nil ||
             d.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ||
             AppAudioPreferences.overdrive(bundleID: bundleID) > 1 ||
+            AppAudioPreferences.balance(bundleID: bundleID) != 0 ||
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
@@ -625,6 +651,7 @@ final class AppAudioEngine {
                 master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                 appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
             mixer.overdrive = AppAudioPreferences.overdrive(bundleID: session.bundleID)
+            mixer.balance = AppAudioPreferences.balance(bundleID: session.bundleID)
         }
         scheduleSync()
     }
@@ -848,6 +875,7 @@ final class AppAudioEngine {
             state.outputDeviceUID = d.string(forKey: "AOMAudioRoute_\(state.bundleID)")
             state.magicBoost = d.bool(forKey: "AOMAudioMagicBoost_\(state.bundleID)")
             state.overdrive = AppAudioPreferences.overdrive(bundleID: state.bundleID, defaults: d)
+            state.balance = AppAudioPreferences.balance(bundleID: state.bundleID, defaults: d)
             let recovering = !recoveringAirPlayUIDs.isEmpty &&
                 Self.targetOutputUID(for: state.bundleID).map { recoveringAirPlayUIDs.contains($0) } == true
             state.error = airPlayBypassed || !isEnabled || recovering ? nil : errors[state.pid]
@@ -880,6 +908,21 @@ final class AppAudioEngine {
     func setMagicBoost(_ enabled: Bool, bundleID: String) {
         UserDefaults.standard.set(enabled, forKey: "AOMAudioMagicBoost_\(bundleID)")
         updateEffects()
+    }
+
+    /// Persists the app's stereo balance and retunes its live sessions in
+    /// place (the mixer ramps to it); sync attaches an app that now needs
+    /// processing only because it is off centre.
+    @discardableResult
+    func setBalance(_ value: Float, bundleID: String) -> Bool {
+        guard bundleID != Bundle.main.bundleIdentifier,
+              AppAudioPreferences.setBalance(value, bundleID: bundleID) else { return false }
+        let stored = AppAudioPreferences.balance(bundleID: bundleID)
+        for session in sessions.values where session.bundleID == bundleID {
+            session.box.takeUnretainedValue().balance = stored
+        }
+        scheduleSync()
+        return true
     }
 
     nonisolated private static func property<T>(_ object: AudioObjectID, selector: AudioObjectPropertySelector,
@@ -1077,8 +1120,11 @@ final class AppAudioEngine {
                          master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
                          appBoost: appBoost)
         mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
+        mixer.balance = AppAudioPreferences.balance(bundleID: bundleID)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
         let isAirPlay = Self.outputTransport(device.id) == kAudioDeviceTransportTypeAirPlay
+        // Overdrive on an AirPlay output releases like the network bus.
+        mixer.usesNetworkDynamics = isAirPlay
         let transport = AppAudioTransport(sampleRate: sampleRate, bufferedForAirPlay: isAirPlay)
         // Add only a software render source; the hardware graph remains fixed.
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
@@ -1128,12 +1174,27 @@ final class AppAudioEngine {
     }
 
     private func updateProcesses(_ session: Session, ids: [AudioObjectID]) -> Bool {
-        guard ids != session.processIDs else { return true }
+        guard ids != session.processIDs else { session.membership.settle(); return true }
         // An empty snapshot during helper replacement is transient. Keep the
         // tap alive; the next process-list notification updates its membership.
         guard !ids.isEmpty, let description = session.tapDescription else { return true }
+        // Crackle audit 3.3.2, follow-up: browsers' helper processes flap in
+        // and out of the process list, and every write of the tap
+        // description can glitch the tap's stream. A membership change is
+        // applied once it holds for two syncs; a new member that is already
+        // producing output joins at once (otherwise it would play natively,
+        // unmuted, until then), and a member still producing output is
+        // never dropped.
+        let current = Set(session.processIDs)
+        let outputting = current.union(ids).filter {
+            Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
+        }
+        guard let next = session.membership.propose(Set(ids), current: current, outputting: outputting) else {
+            return true
+        }
+        let members = next.sorted()
         let previous = session.processIDs
-        description.processes = ids
+        description.processes = members
         var value = Unmanaged.passUnretained(description).toOpaque()
         var address = AudioOutputService.address(kAudioTapPropertyDescription)
         let result = AudioObjectSetPropertyData(session.tapID, &address, 0, nil,
@@ -1148,7 +1209,8 @@ final class AppAudioEngine {
             GestureLog.shared.logFromAnyThread("Tap membership update deferred (\(result)) — keeping the session", level: .noMatch)
             return true
         }
-        session.processIDs = ids
+        session.processIDs = members
+        session.tapRewrites += 1
         return true
     }
 
@@ -1166,6 +1228,7 @@ final class AppAudioEngine {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
         }
         transport.setBufferedForAirPlay(source.isAirPlay)
+        mixer.usesNetworkDynamics = source.isAirPlay
         session.sourceToken = source
         session.outputUID = device.uid
         return true
@@ -1235,6 +1298,41 @@ final class AppAudioEngine {
     }
 }
 
+/// Per-app stereo balance, -1 (full left) … 0 (centre) … +1 (full right).
+/// Linear balance law: the centre is unity on both sides and moving away
+/// only attenuates the opposite side, so balancing never makes an app louder.
+nonisolated enum AudioBalance {
+    static func clamp(_ value: Float) -> Float { value.isFinite ? min(max(value, -1), 1) : 0 }
+
+    /// Whole-percent steps; anything that rounds to 0 % is centre (never -0).
+    static func stepped(_ value: Float) -> Float {
+        let stepped = (clamp(value) * 100).rounded() / 100
+        return stepped == 0 ? 0 : stepped
+    }
+
+    /// left = min(1, 1 − b), right = min(1, 1 + b).
+    static func sideGains(_ balance: Float) -> (left: Float, right: Float) {
+        let b = clamp(balance)
+        return (min(1, 1 - b), min(1, 1 + b))
+    }
+
+    static func percent(_ balance: Float) -> Int { Int((abs(clamp(balance)) * 100).rounded()) }
+
+    /// VoiceOver value: "Center", "30% left", "30% right".
+    static func spokenValue(_ balance: Float) -> String {
+        let amount = percent(balance)
+        guard amount > 0 else { return "Center" }
+        return "\(amount)% \(balance < 0 ? "left" : "right")"
+    }
+
+    /// Compact readout beside the slider: "C", "30% L", "30% R".
+    static func shortLabel(_ balance: Float) -> String {
+        let amount = percent(balance)
+        guard amount > 0 else { return "C" }
+        return "\(amount)% \(balance < 0 ? "L" : "R")"
+    }
+}
+
 /// Five-millisecond, sample-counted ramps stay continuous across callback sizes.
 struct AudioGainRamp {
     private(set) var current: Float
@@ -1257,8 +1355,8 @@ struct AudioGainRamp {
 
 /// Control writes are short and synchronized. The audio callback never waits
 /// for the UI; it retains the previous render configuration on contention.
-/// Rendering is block based: EQ, Magic Boost, volume and Volume Overdrive run
-/// over preallocated deinterleaved chunks.
+/// Rendering is block based: EQ, Magic Boost, volume with balance and Volume
+/// Overdrive run over preallocated deinterleaved chunks.
 final class MixerBox {
     static let chunk = 512
     private let lock = NSLock()
@@ -1295,7 +1393,24 @@ final class MixerBox {
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
     fileprivate let boostProcessor = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    /// Volume Overdrive. While the app plays to AirPlay (`usesNetworkDynamics`)
+    /// its limiter releases like the network bus; the release switches in
+    /// place (3.3.2 review: a second, preallocated processor took over with a
+    /// stale delay line, which could click when an overdriven app moved).
     fileprivate let overdriveProcessor = AudioVolumeOverdrive(sampleRate: SharedOutputRenderer.sampleRate, chunk: MixerBox.chunk)
+    private let networkDynamicsFlag = AudioAtomicCounter()
+    /// Snapshot per callback (render thread only).
+    fileprivate var renderNetworkDynamics = false
+    /// Set on the control thread when the app's output is (or stops being)
+    /// an AirPlay receiver; one atomic load per callback.
+    var usesNetworkDynamics: Bool {
+        get { networkDynamicsFlag.load() == 1 }
+        set { networkDynamicsFlag.store(newValue ? 1 : 0) }
+    }
+    /// EQ processors the render thread retired, freed later on the control
+    /// thread (`setEffects`) so no deinit/free runs on the mix thread.
+    private var retiredAppEQ: AudioEQProcessor?
+    private var retiredMasterEQ: AudioEQProcessor?
     fileprivate let left: UnsafeMutablePointer<Float>
     fileprivate let right: UnsafeMutablePointer<Float>
     fileprivate let previousLeft: UnsafeMutablePointer<Float>
@@ -1303,6 +1418,20 @@ final class MixerBox {
     var inputBufferOffset = 0 // immutable once the IOProc starts
     var leftOutputChannel = 0
     var rightOutputChannel = 1
+    /// Stereo balance is published lock-free into this preallocated box: the
+    /// control thread stores the clamped value's bit pattern and the render
+    /// callback loads it once per callback (no lock, allocation or ObjC call),
+    /// then ramps each side over the same 5 ms as the gain.
+    private let balanceBits = AudioAtomicCounter(UInt64(Float(0).bitPattern))
+    fileprivate var leftBalanceRamp = AudioGainRamp(1)
+    fileprivate var rightBalanceRamp = AudioGainRamp(1)
+    private var balanceStarted = false
+
+    /// -1 (left) … 0 (centre) … +1 (right).
+    var balance: Float {
+        get { Float(bitPattern: UInt32(truncatingIfNeeded: balanceBits.load())) }
+        set { balanceBits.store(UInt64(AudioBalance.clamp(newValue).bitPattern)) }
+    }
 
     var deviceGain: Float {
         get { lock.lock(); defer { lock.unlock() }; return desiredDeviceGain }
@@ -1356,8 +1485,24 @@ final class MixerBox {
             desiredMasterEQ = AudioEQProcessor(master)
         }
         desiredBoost = appBoost > 0
+        // Free what the render thread retired (this thread, under the lock
+        // the render thread only try-locks).
+        retiredAppEQ = nil; retiredMasterEQ = nil
     }
     fileprivate func beginRender() {
+        renderNetworkDynamics = networkDynamicsFlag.load() == 1
+        // An AirPlay route releases Overdrive's limiter like the network bus,
+        // switched in place (no second limiter, no stale delay line).
+        overdriveProcessor.useNetworkRelease(renderNetworkDynamics)
+        // Balance does not wait on the control lock below: one atomic load
+        // per callback. The first callback starts at the target; changes ramp.
+        let sides = AudioBalance.sideGains(balance)
+        if balanceStarted {
+            leftBalanceRamp.setTarget(sides.left); rightBalanceRamp.setTarget(sides.right)
+        } else {
+            leftBalanceRamp = AudioGainRamp(sides.left); rightBalanceRamp = AudioGainRamp(sides.right)
+            balanceStarted = true
+        }
         guard lock.try() else { return }
         renderGain = desiredGain; renderMuted = desiredMuted
         renderBoost = desiredBoost
@@ -1365,11 +1510,24 @@ final class MixerBox {
         renderDeviceGain = desiredDeviceGain
         if !hasRendered || (eqTransitionRemaining == 0 && appEQ !== desiredAppEQ) {
             if hasRendered {
+                // The processor dropped here would be freed on the render
+                // (AirPlay mix) thread; park it for `setEffects` instead.
+                // A swap needs a new desired chain, which only `setEffects`
+                // makes after emptying these slots, so they are free here.
+                if retiredAppEQ == nil { retiredAppEQ = previousAppEQ }
+                if retiredMasterEQ == nil { retiredMasterEQ = previousMasterEQ }
                 previousAppEQ = appEQ; previousMasterEQ = masterEQ
                 previousEQHeadroom = renderEQHeadroom
                 eqTransitionRemaining = 480
             }
             renderEQHeadroom = desiredEQHeadroom
+            if !hasRendered {
+                // `setEffects` may have replaced the initial chain before the
+                // first callback: park those processors too, or their deinit
+                // (a free) would run here, on the render (AirPlay mix) thread.
+                if retiredAppEQ == nil, appEQ !== desiredAppEQ { retiredAppEQ = appEQ }
+                if retiredMasterEQ == nil, masterEQ !== desiredMasterEQ { retiredMasterEQ = masterEQ }
+            }
             appEQ = desiredAppEQ; masterEQ = desiredMasterEQ
         }
         let target = renderMuted ? 0 : renderGain * renderDeviceGain
@@ -1436,6 +1594,12 @@ nonisolated enum Mixer {
         if planar { frames = min(frames, Int(second.mDataByteSize) / MemoryLayout<Float>.size) }
         let outputChannels = outputs.reduce(0) { $0 + Int($1.mNumberChannels) }
         guard outputChannels > 0 else { return }
+        // Balance needs a stereo source and a stereo destination. A mono
+        // input is duplicated to both sides and a mono output sums them, so
+        // attenuating one side there would only lose level: left untouched.
+        // Only the first two input channels form the app's bus, so a wider
+        // input is balanced on exactly those two.
+        let balanced = channels >= 2 && outputChannels >= 2
         var offset = 0
         while offset < frames {
             let count = min(MixerBox.chunk, frames - offset)
@@ -1450,8 +1614,15 @@ nonisolated enum Mixer {
             box.boostProcessor.process(left: box.left, right: box.right, frames: count, enabled: box.renderBoost)
             for index in 0..<count {
                 let gain = box.gainRamp.next()
-                box.left[index] *= gain; box.right[index] *= gain
+                // Both side ramps advance every sample, so a bypassed block
+                // never leaves them behind their target.
+                let leftBalance = box.leftBalanceRamp.next(), rightBalance = box.rightBalanceRamp.next()
+                box.left[index] *= balanced ? gain * leftBalance : gain
+                box.right[index] *= balanced ? gain * rightBalance : gain
             }
+            // No class reference is copied into a local here (no retain on
+            // the render thread). One Overdrive whose release follows the
+            // route (`beginRender`).
             box.overdriveProcessor.process(left: box.left, right: box.right, frames: count,
                                            multiplier: box.renderOverdrive)
             for index in 0..<count {
@@ -1477,4 +1648,37 @@ nonisolated enum Mixer {
             offset += count
         }
     }
+}
+
+/// Tap membership debounce (crackle audit 3.3.2, follow-up). Every sync
+/// (once a second, plus CoreAudio notifications) rewrote the tap description
+/// whenever an app's set of process objects changed, and browsers' helper
+/// processes come and go constantly; each rewrite can glitch the tap stream.
+/// Pure and main-thread only.
+struct TapMembershipDebounce: Equatable {
+    /// Syncs a changed membership must hold before it is applied.
+    static let confirmations = 2
+    private(set) var pending: Set<AudioObjectID>?
+    private(set) var seen = 0
+
+    /// `proposed`: the app's process objects now; `current`: the tap's
+    /// members; `outputting`: those (of either) whose
+    /// kAudioProcessPropertyIsRunningOutput is set. Returns the membership to
+    /// write now, or nil to leave the tap as it is.
+    mutating func propose(_ proposed: Set<AudioObjectID>, current: Set<AudioObjectID>,
+                          outputting: Set<AudioObjectID>) -> Set<AudioObjectID>? {
+        // A member that still produces output is never dropped.
+        let effective = proposed.union(current.intersection(outputting))
+        guard !effective.isEmpty, effective != current else { settle(); return nil }
+        // A new member already playing joins at once: until it is in the
+        // muted tap its audio plays natively, beside the captured copy.
+        if !effective.subtracting(current).isDisjoint(with: outputting) { settle(); return effective }
+        if pending == effective { seen += 1 } else { pending = effective; seen = 1 }
+        guard seen >= Self.confirmations else { return nil }
+        settle()
+        return effective
+    }
+
+    /// The tap matches the app again (or a change was applied).
+    mutating func settle() { pending = nil; seen = 0 }
 }
