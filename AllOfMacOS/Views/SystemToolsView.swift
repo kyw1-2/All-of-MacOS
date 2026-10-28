@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The System Tools page — MacMagic's toolbox as a grid of tool cards,
-/// grouped by category: Finder, Network & System, PDF & Media, Files.
+/// grouped by category: Finder & Network, PDF & Media, Cleanup.
 /// Sidebar-only (the menu bar stays lean); every tool is one click and
 /// collects its own inputs via panels.
 struct SystemToolsView: View {
@@ -104,21 +104,25 @@ struct SystemToolsView: View {
 
     private var groups: [(name: String, symbol: String, tools: [Tool])] {
         [
-            ("Finder", "folder", [
+            // One section for the four quick system switches: a "Network"
+            // card holding a single tool cost a whole section of height.
+            ("Finder & Network", "folder", [
                 Tool(id: "hidden", title: "Hidden Files", symbol: "eye.trianglebadge.exclamationmark", tint: .blue) {
-                    Task { let next = await service.toggleHiddenFiles(); toast = next ? "Hidden files shown" : "Hidden files hidden" }
+                    Task {
+                        do { let next = try await service.toggleHiddenFiles(); toast = next ? "Hidden files shown" : "Hidden files hidden" }
+                        catch { reportFailure("Hidden Files Not Changed", error.localizedDescription) }
+                    }
                 },
                 Tool(id: "desktop", title: "Desktop Icons", symbol: "menubar.rectangle", tint: .blue) {
-                    Task { let next = await service.toggleDesktopIcons(); toast = next ? "Desktop icons shown" : "Desktop icons hidden" }
+                    Task {
+                        do { let next = try await service.toggleDesktopIcons(); toast = next ? "Desktop icons shown" : "Desktop icons hidden" }
+                        catch { reportFailure("Desktop Icons Not Changed", error.localizedDescription) }
+                    }
                 },
                 Tool(id: "finder", title: "Restart Finder", symbol: "arrow.clockwise", tint: .blue) {
                     Task { await service.restartFinder(); toast = "Finder restarted" }
-                }
-            ]),
-            ("Network", "network", [
-                Tool(id: "dns", title: "Flush DNS", symbol: "network", tint: .indigo) {
-                    Task { do { try await service.flushDNSCache(); toast = "DNS cache flushed" } catch { toast = error.localizedDescription } }
-                }
+                },
+                Tool(id: "dns", title: "Flush DNS", symbol: "network", tint: .indigo) { flushDNS() }
             ]),
             ("PDF & Media", "doc.richtext", [
                 Tool(id: "pdfmerge", title: "Merge PDFs", symbol: "doc.badge.plus", tint: .orange) { mergePDFs() },
@@ -235,7 +239,53 @@ struct SystemToolsView: View {
         alert.addButton(withTitle: "Empty Trash")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        Task { do { try await service.forceEmptyTrash(); toast = "Trash emptied" } catch { toast = error.localizedDescription } }
+        Task {
+            do {
+                let result = try await service.forceEmptyTrash()
+                if result.succeeded { toast = result.summary } else { reportFailure("Trash Not Fully Emptied", result.summary) }
+            } catch { reportFailure("Trash Not Emptied", error.localizedDescription) }
+        }
+    }
+
+    /// Success only when every step exited 0. A standard user cannot restart
+    /// the DNS resolver; that is said, with the administrator prompt as the
+    /// way forward, instead of a "flushed" toast for a flush that did not
+    /// happen (audit 2026-10-28 F09).
+    private func flushDNS() {
+        Task {
+            do {
+                try await service.flushDNSCache()
+                toast = "DNS cache flushed"
+            } catch let error as SystemToolError where error.needsAdministrator {
+                offerAdministratorFlush(error)
+            } catch {
+                reportFailure("DNS Cache Not Flushed", error.localizedDescription)
+            }
+        }
+    }
+
+    private func offerAdministratorFlush(_ error: SystemToolError) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Flush DNS Needs an Administrator"
+        alert.informativeText = "macOS refused part of the flush (\(error.localizedDescription)), so the DNS cache is not fully flushed. Flush it with an administrator password?"
+        alert.addButton(withTitle: "Use Administrator Password…")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { toast = "DNS cache not flushed"; return }
+        switch service.flushDNSCacheAsAdministrator() {
+        case .done: toast = "DNS cache flushed"
+        case .cancelled: toast = "DNS cache not flushed"
+        case .failed(let message): reportFailure("DNS Cache Not Flushed", message)
+        }
+    }
+
+    /// Failures that need reading stay on screen until dismissed.
+    private func reportFailure(_ title: String, _ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.runModal()
     }
 
     // MARK: - Pickers

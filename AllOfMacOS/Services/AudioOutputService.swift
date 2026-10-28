@@ -495,12 +495,13 @@ extension AudioOutputService {
         }
     }
 
-    static func selectInput(uid: String) {
-        guard let device = inputDevices().first(where: { $0.uid == uid }) else { return }
+    @discardableResult
+    static func selectInput(uid: String) -> Bool {
+        guard let device = inputDevices().first(where: { $0.uid == uid }) else { return false }
         var property = address(kAudioHardwarePropertyDefaultInputDevice)
         var id = device.id
-        _ = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil,
-                                       UInt32(MemoryLayout.size(ofValue: id)), &id)
+        return AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &property, 0, nil,
+                                          UInt32(MemoryLayout.size(ofValue: id)), &id) == noErr
     }
 
     private static func inputVolumeProperties(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {

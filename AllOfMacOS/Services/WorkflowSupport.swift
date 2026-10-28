@@ -355,9 +355,14 @@ final class GestureHUD {
         }
         guard NSApp != nil else { return }
 
-        // Apple-style native OSD HUD card: 200 x 160 pt, balanced & ultra-translucent
-        let size = NSSize(width: 200, height: 160)
+        // Apple-style native OSD HUD card: 200 x 160 pt, balanced & ultra-translucent.
+        // A detail longer than its one-line badge (an outcome with a reason or
+        // an instruction) gets a wider card, several lines and more time;
+        // until 3.3.1 about 25 characters of it were visible for 1.1 s.
+        let notice = Self.isNotice(detail)
+        let size = notice ? NSSize(width: 320, height: 210) : NSSize(width: 200, height: 160)
         let panel = panel ?? makePanel(size: size, interactive: false)
+        panel.setContentSize(size)
         self.panel = panel
         let token = UUID()
         generation = token
@@ -375,8 +380,9 @@ final class GestureHUD {
         let content = NSHostingView(
             rootView: BTTHUDView(
                 title: String(title.prefix(80)),
-                detail: detail.map { String($0.prefix(120)) },
-                customIcon: icon
+                detail: detail.map { String($0.prefix(notice ? 320 : 120)) },
+                customIcon: icon,
+                notice: notice
             )
         )
         content.frame = NSRect(origin: .zero, size: size)
@@ -398,8 +404,8 @@ final class GestureHUD {
             panel.animator().alphaValue = 1.0
         }
 
-        // Auto-dismiss after 1.1s with smooth fade
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self, weak panel] in
+        // Auto-dismiss after 1.1 s (a notice: long enough to read) with smooth fade
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.displayDuration(detail)) { [weak self, weak panel] in
             guard self?.generation == token, let panel else { return }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
@@ -410,6 +416,16 @@ final class GestureHUD {
                 }
             }
         }
+    }
+
+    /// A detail that does not fit the one-line badge of the 200 pt card.
+    static func isNotice(_ detail: String?) -> Bool { (detail?.count ?? 0) > 30 }
+
+    /// 1.1 s for a gesture badge; a notice stays about as long as it takes
+    /// to read (2.5 s plus 1 s per 25 characters, at most 8 s).
+    static func displayDuration(_ detail: String?) -> TimeInterval {
+        guard isNotice(detail), let detail else { return 1.1 }
+        return min(8, 2.5 + Double(min(detail.count, 320)) / 25)
     }
 
     /// Takes the HUD down immediately, without waiting for its auto-dismiss.
@@ -464,14 +480,17 @@ struct BTTHUDView: View {
     let title: String
     let detail: String?
     var customIcon: String? = nil
+    /// Several lines of plain detail instead of the one-line badge.
+    var notice = false
 
     // Translucent glass backing plate: default 15% black keeps the background desktop/video visible
     @AppStorage("AOMHUDBackgroundOpacity") private var backgroundOpacity: Double = 0.06
 
-    init(title: String, detail: String? = nil, customIcon: String? = nil) {
+    init(title: String, detail: String? = nil, customIcon: String? = nil, notice: Bool = false) {
         self.title = title
         self.detail = detail
         self.customIcon = customIcon
+        self.notice = notice
     }
 
     init(text: String) {
@@ -490,9 +509,9 @@ struct BTTHUDView: View {
         VStack(spacing: 10) {
             // Apple-style SF Symbol
             Image(systemName: iconName)
-                .font(.system(size: 42, weight: .medium))
+                .font(.system(size: notice ? 30 : 42, weight: .medium))
                 .foregroundStyle(.white)
-                .frame(height: 48)
+                .frame(height: notice ? 34 : 48)
                 .shadow(color: .black.opacity(0.45), radius: 3, y: 1.5)
 
             // Primary gesture / title
@@ -504,8 +523,17 @@ struct BTTHUDView: View {
                 .shadow(color: .black.opacity(0.60), radius: 2.5, y: 1)
                 .padding(.horizontal, 10)
 
-            // Detail / action badge
-            if let detail, !detail.isEmpty {
+            // Detail: a notice's reason or instruction in full, else the action badge
+            if let detail, !detail.isEmpty, notice {
+                Text(detail)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(6)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .shadow(color: .black.opacity(0.55), radius: 2, y: 1)
+                    .padding(.horizontal, 6)
+            } else if let detail, !detail.isEmpty {
                 HStack(spacing: 4) {
                     Text(detail)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))

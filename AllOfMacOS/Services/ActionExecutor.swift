@@ -111,7 +111,7 @@ class ActionExecutor {
             isHeld: {
                 isHeld() && TriggerSuppression.shared.allows(trigger) && externalBundleID == startApp &&
                 NSEvent.modifierFlags.rawValue & TriggerResolver.modifierMask == startModifiers &&
-                (UserDefaults.standard.object(forKey: "AOMGlobalEnabled") as? Bool ?? true)
+                (AutomationGate.isOn)
             }, perform: run)
         holds[triggerID] = repeater
         repeater.start { holds.removeValue(forKey: triggerID); cancelSequence(triggerID) }
@@ -266,7 +266,8 @@ class ActionExecutor {
     /// SIGKILL rather than terminate(): terminate() is the polite request
     /// `quitApplication` already sends, and a hung app ignores it. This is the
     /// gesture you reach for when something has stopped responding.
-    private static func forceQuit(bundleID: String?) {
+    @discardableResult
+    private static func forceQuit(bundleID: String?) -> Bool {
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let ownBundleID = Bundle.main.bundleIdentifier
 
@@ -284,14 +285,20 @@ class ActionExecutor {
             ownBundleID: ownBundleID
         )
 
+        guard !targets.isEmpty else {
+            GestureLog.shared.logFromAnyThread("Force Quit: no matching app is running", level: .error)
+            return false
+        }
+        var allKilled = true
         for target in targets {
             let name = running.first { $0.processIdentifier == target.pid }?.localizedName ?? "?"
             GestureLog.shared.logFromAnyThread(
                 "forceQuit: SIGKILL \(name) (pid \(target.pid))",
                 level: .action
             )
-            kill(target.pid, SIGKILL)
+            if kill(target.pid, SIGKILL) != 0 { allKilled = false }
         }
+        return allKilled
     }
 
     static func executeAction(_ action: TriggerAction) {
@@ -457,7 +464,39 @@ class ActionExecutor {
         default: break
         }
 
-        defer { completion(true) }
+        if action.actionType == .toggleDarkMode {
+            // Needs Automation permission for System Events; a denied or
+            // timed-out script used to be reported as success.
+            let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
+            // The system change propagates to AOM by itself; forcing
+            // NSApp.appearance here pinned AOM and ignored "Follow System".
+            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { code, _, timedOut in
+                if code != 0 || timedOut {
+                    GestureLog.shared.logFromAnyThread("Dark Mode: allow AOM to control System Events in Privacy & Security › Automation.", level: .error)
+                }
+                completion(code == 0 && !timedOut)
+            }
+            return
+        }
+        if action.actionType == .recordScreen {
+            onMain {
+                // Starting without Screen Recording permission cannot succeed
+                // (it used to be reported as success); stopping always can.
+                let service = ScreenRecordingService.shared
+                guard service.isRecording || ActionPermissions.canRecordScreen else {
+                    GestureLog.shared.logFromAnyThread(ActionPermissions.screenRecordingDeniedMessage, level: .error)
+                    ActionPermissions.screenRecordingDenied()
+                    completion(false); return
+                }
+                service.toggleRecording()
+                completion(true)
+            }
+            return
+        }
+        // Cases below report what they could verify; the default stays true
+        // only for actions that complete elsewhere or cannot fail visibly.
+        var result = true
+        defer { completion(result) }
         switch action.actionType {
         case .showPinnedWindowPicker, .selectWindowToPin, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows:
             break // Completed asynchronously above.
@@ -493,25 +532,21 @@ class ActionExecutor {
         case .sendKeyStroke:
             if let keyCode = action.parameters.shortcutKeyCode {
                 let flags = NSEvent.ModifierFlags(rawValue: action.parameters.shortcutModifiers ?? 0)
-                sendKeyStroke(keyCode: keyCode, flags: flags)
-            }
+                result = sendKeyStroke(keyCode: keyCode, flags: flags)
+            } else { result = false }
         case .typeText, .activateApplication:
             break // Completed asynchronously above.
 
         // Application Control
         case .launchApplication:
-            if let path = action.parameters.applicationPath {
-                NSWorkspace.shared.open(URL(fileURLWithPath: path))
-            } else if let name = action.parameters.applicationName {
-                NSWorkspace.shared.launchApplication(name)
-            }
+            break // Completed above (activate/launch report their own result).
         case .quitApplication:
             if let name = action.parameters.applicationName {
                 let apps = NSRunningApplication.runningApplications(withBundleIdentifier: name)
                 apps.forEach { $0.terminate() }
             }
         case .forceQuitApplication:
-            forceQuit(bundleID: action.parameters.applicationName)
+            result = forceQuit(bundleID: action.parameters.applicationName)
         case .hideApplication:
             if let name = action.parameters.applicationName {
                 let apps = NSRunningApplication.runningApplications(withBundleIdentifier: name)
@@ -530,9 +565,12 @@ class ActionExecutor {
         // System Actions
         case .sleepComputer:
             let task = Process()
-            task.launchPath = "/usr/bin/pmset"
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
             task.arguments = ["sleepnow"]
-            try? task.run()
+            do { try task.run() } catch {
+                GestureLog.shared.logFromAnyThread("Sleep: \(error.localizedDescription)", level: .error)
+                result = false
+            }
         case .toggleKeepAwake:
             // Imported JSON/MCP values can be fractional or absurd; clamp to
             // the same 1...1440 range the form offers.
@@ -560,22 +598,19 @@ class ActionExecutor {
                     return
                 }
             }
-            _ = SyntheticInput.key(12, flags: [.maskControl, .maskCommand])
+            result = SyntheticInput.key(12, flags: [.maskControl, .maskCommand])
         case .toggleDarkMode:
-            let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
-            // The system change propagates to AOM by itself; forcing
-            // NSApp.appearance here pinned AOM and ignored "Follow System".
-            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { _, _, _ in }
+            break // Completed asynchronously above with the script's result.
         case .toggleDoNotDisturb:
             break
         case .volumeUp, .volumeDown:
             break // Absolute percentage-point adjustment completed above.
         case .muteVolume:
-            sendMediaKey(keyCode: NX_KEYTYPE_MUTE)
+            break // Completed above with the output device's mute result.
         case .brightnessUp:
-            sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_UP)
+            result = sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_UP)
         case .brightnessDown:
-            sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_DOWN)
+            result = sendMediaKey(keyCode: NX_KEYTYPE_BRIGHTNESS_DOWN)
 
         // Script execution is completed asynchronously through ScriptRunnerClient above.
         case .runAppleScript, .runShellScript:
@@ -587,11 +622,11 @@ class ActionExecutor {
 
         // Media Controls
         case .playPause:
-            sendMediaKey(keyCode: NX_KEYTYPE_PLAY)
+            result = sendMediaKey(keyCode: NX_KEYTYPE_PLAY)
         case .nextTrack:
-            sendMediaKey(keyCode: NX_KEYTYPE_NEXT)
+            result = sendMediaKey(keyCode: NX_KEYTYPE_NEXT)
         case .previousTrack:
-            sendMediaKey(keyCode: NX_KEYTYPE_PREVIOUS)
+            result = sendMediaKey(keyCode: NX_KEYTYPE_PREVIOUS)
 
         // Capture actions above complete only after their output is ready.
         case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
@@ -600,7 +635,7 @@ class ActionExecutor {
              .copyLastCapture, .saveLastCapture, .pinLastCapture:
             break
         case .recordScreen:
-            onMain { ScreenRecordingService.shared.toggleRecording() }
+            break // Completed on the main actor above.
         case .annotateLastCapture:
             onMain { AnnotationEditorController.shared.openMostRecent() }
         case .openCaptureHistory:
@@ -696,7 +731,10 @@ class ActionExecutor {
             for number in 1...max(1, count) where count > 1 || number == 1 {
                 down?.setIntegerValueField(.mouseEventClickState, value: number)
                 up?.setIntegerValueField(.mouseEventClickState, value: number)
-                ok = post(down) && post(up) && ok
+                // Both halves are always posted: `&&` would skip the release
+                // after a false reading and leave the button held.
+                let pressed = post(down), released = post(up)
+                ok = pressed && released && ok
             }
             completion(ok)
         }
@@ -770,18 +808,20 @@ class ActionExecutor {
                        y: (point.y - visible.minY) / visible.height)
     }
 
-    private static func sendKeyStroke(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+    @discardableResult
+    private static func sendKeyStroke(keyCode: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
         GestureLog.shared.logFromAnyThread("sendKeyStroke keyCode=\(keyCode) mods=\(flags.rawValue)", level: .action)
 
-        sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "cgSessionEventTap")
+        return sendViaCGEvent(keyCode: keyCode, flags: flags, tapPoint: .cgSessionEventTap, label: "cgSessionEventTap")
     }
 
-    private static func sendViaCGEvent(keyCode: UInt16, flags: NSEvent.ModifierFlags, tapPoint: CGEventTapLocation, label: String) {
+    @discardableResult
+    private static func sendViaCGEvent(keyCode: UInt16, flags: NSEvent.ModifierFlags, tapPoint: CGEventTapLocation, label: String) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
             GestureLog.shared.logFromAnyThread("CGEvent[\(label)] creation failed", level: .error)
-            return
+            return false
         }
 
         var cgFlags = CGEventFlags()
@@ -814,6 +854,11 @@ class ActionExecutor {
               label, keyCode, cgFlags.rawValue,
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")
         GestureLog.shared.logFromAnyThread("CGEvent[\(label)] posted keyCode=\(keyCode)", level: .fire)
+        guard ActionPermissions.canPostEvents else {
+            GestureLog.shared.logFromAnyThread(ActionPermissions.postEventsDenied, level: .error)
+            return false
+        }
+        return true
     }
 
     private static func keyCodeToCharacter(_ keyCode: UInt16) -> String? {
@@ -961,10 +1006,13 @@ class ActionExecutor {
         DispatchQueue.main.async { session.start() }
     }
 
-    private static func sendMediaKey(keyCode: Int32) {
+    @discardableResult
+    private static func sendMediaKey(keyCode: Int32) -> Bool {
+        // Test hosts never press real media keys; that is not a failure.
         guard NSClassFromString("XCTestCase") == nil,
-              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        func doKey(down: Bool) {
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return true }
+        defer { if !ActionPermissions.canPostEvents { GestureLog.shared.logFromAnyThread(ActionPermissions.postEventsDenied, level: .error) } }
+        func doKey(down: Bool) -> Bool {
             let flags = NSEvent.ModifierFlags(rawValue: (down ? 0xa00 : 0xb00))
             let data1 = Int((keyCode << 16) | (down ? 0xa00 : 0xb00))
             let event = NSEvent.otherEvent(
@@ -979,9 +1027,11 @@ class ActionExecutor {
                 data2: -1
             )
             event?.cgEvent?.post(tap: .cghidEventTap)
+            return event?.cgEvent != nil
         }
-        doKey(down: true)
-        doKey(down: false)
+        let pressed = doKey(down: true)
+        let released = doKey(down: false)
+        return pressed && released && ActionPermissions.canPostEvents
     }
 
     private static func actionDetail(_ action: TriggerAction) -> String {

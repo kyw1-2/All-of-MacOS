@@ -103,8 +103,11 @@ final class TextCaptureHUDController {
     private func copy(_ text: String) {
         let board = NSPasteboard.general
         board.clearContents()
-        board.setString(text, forType: .string)
-        GestureHUD.shared.show(title: "Copied", detail: "\(text.count) characters")
+        if board.setString(text, forType: .string) {
+            GestureHUD.shared.show(title: "Copied", detail: "\(text.count) characters")
+        } else {
+            GestureHUD.shared.show(title: "Could Not Copy", detail: "The clipboard did not accept the text.")
+        }
         dismiss()
     }
 
@@ -255,7 +258,10 @@ final class TextCaptureEditorWindowController: NSObject, NSWindowDelegate {
                                          onCopy: { [weak self] value in
                                              let board = NSPasteboard.general
                                              board.clearContents()
-                                             board.setString(value, forType: .string)
+                                             guard board.setString(value, forType: .string) else {
+                                                 GestureHUD.shared.show(title: "Could Not Copy", detail: "The clipboard did not accept the text.")
+                                                 return
+                                             }
                                              GestureHUD.shared.show(title: "Copied", detail: "\(value.count) characters")
                                              self?.window?.close()
                                          },

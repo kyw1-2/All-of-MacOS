@@ -1834,14 +1834,21 @@ struct ClipboardPanelView: View {
     static let shelfInset: CGFloat = 18
 
     private var isFiltering: Bool { !state.query.isEmpty || hasFilters }
+    /// A storage failure is reported before "empty" (audit 2026-10-28 F08).
+    private var storageContent: ClipboardEmptyContent {
+        ClipboardEmptyContent.resolve(isLoading: store.isLoading, storage: store.storageStatus, paused: store.paused)
+    }
     private var emptyTitle: String {
-        isFiltering ? "Nothing found" : state.board == nil ? "History is empty" : "Pinboard is empty"
+        if isFiltering { return "Nothing found" }
+        if state.board != nil { return "Pinboard is empty" }
+        // Loading and storage problems say so; only a real empty history is "empty".
+        if case .empty = storageContent { return "History is empty" }
+        return storageContent.title
     }
     private var emptyMessage: String {
         if isFiltering { return "Try another search or clear the filters." }
         if state.board != nil { return "Drag items onto this Pinboard, or use Pin in a card's menu." }
-        return store.paused ? "Clipboard history is paused. Resume it from the ⋯ menu (⌘T)."
-            : "Copy text, links, images or files to keep them here."
+        return storageContent.compactMessage
     }
 
     private func symbol(_ kind: ClipboardEntry.Kind) -> String {

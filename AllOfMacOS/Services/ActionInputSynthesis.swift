@@ -183,16 +183,70 @@ enum SymbolicHotKeys {
     }
 }
 
+/// Permission state that decides whether an action really did something.
+///
+/// macOS drops synthetic keyboard and mouse events without telling the
+/// sender when the app may not post events (the Accessibility permission).
+/// Until 3.3.1 every click, key, scroll and paste action then reported
+/// success (3.3.1, alongside audit 2026-10-28 F09). The checks are injectable so tests can
+/// prove the denied paths without posting anything.
+enum ActionPermissions {
+    nonisolated(unsafe) static var postEventCheck: () -> Bool = { CGPreflightPostEventAccess() }
+    nonisolated(unsafe) static var screenRecordingCheck: () -> Bool = { CGPreflightScreenCaptureAccess() }
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cached: (value: Bool, at: TimeInterval)?
+
+    /// Cached for a second: scrolls and repeated keys post many events.
+    static var canPostEvents: Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock(); defer { lock.unlock() }
+        if let cached, now - cached.at < 1 { return cached.value }
+        let value = postEventCheck()
+        cached = (value, now)
+        return value
+    }
+
+    static var canRecordScreen: Bool { screenRecordingCheck() }
+
+    /// What a refused Record Screen shows: a HUD and the system prompt (the
+    /// prompt appears once per app; later it only opens nothing). Tests
+    /// replace it so no prompt or panel appears.
+    nonisolated(unsafe) static var screenRecordingDenied: () -> Void = {
+        DispatchQueue.main.async {
+            GestureHUD.shared.show(title: "Screen Recording Permission Needed",
+                                   detail: "Allow All of MacOS in System Settings › Privacy & Security › Screen & System Audio Recording.")
+            _ = CGRequestScreenCaptureAccess()
+        }
+    }
+
+    /// Tests that replace a check call this so the cache cannot leak.
+    static func resetCache() { lock.lock(); cached = nil; lock.unlock() }
+
+    static let postEventsDenied = "AOM needs the Accessibility permission to send keys and clicks (System Settings › Privacy & Security › Accessibility)."
+    static let screenRecordingDeniedMessage = "AOM needs the Screen Recording permission to record (System Settings › Privacy & Security › Screen & System Audio Recording)."
+}
+
+/// How a batch action reports: success only when something was attempted and
+/// nothing failed. A partly done batch used to count as success as soon as
+/// one item worked (3.3.1, alongside audit 2026-10-28 F09).
+enum ActionOutcome {
+    static func batch(attempted: Int, failed: Int) -> Bool { attempted > 0 && failed == 0 }
+}
+
 /// Posts events tagged so AOM's own monitors ignore them.
 enum SyntheticInput {
     static let selfTag: Int64 = 0x475454
 
+    /// Posts the event and returns whether it can have been delivered: false
+    /// for a missing event or when AOM may not post events. The event is
+    /// still posted in that case, so a stale permission reading never blocks
+    /// input that macOS would accept.
     @discardableResult
     static func post(_ event: CGEvent?, tap: CGEventTapLocation = .cgSessionEventTap) -> Bool {
         guard let event else { return false }
         event.setIntegerValueField(.eventSourceUserData, value: selfTag)
         event.post(tap: tap)
-        return true
+        return ActionPermissions.canPostEvents
     }
 
     @discardableResult
@@ -201,8 +255,9 @@ enum SyntheticInput {
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return false }
         down.flags = flags; up.flags = flags
-        post(down, tap: tap); post(up, tap: tap)
-        return true
+        let pressed = post(down, tap: tap)
+        let released = post(up, tap: tap)
+        return pressed && released
     }
 
     @discardableResult

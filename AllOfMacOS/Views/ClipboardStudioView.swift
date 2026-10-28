@@ -1,6 +1,75 @@
 import AppKit
 import SwiftUI
 
+/// What the clipboard shows when it has nothing to list. A storage failure
+/// comes before "empty": until 3.3.1 a locked login Keychain or an unreadable
+/// archive looked exactly like an empty history ("Your Clipboard Is Empty"),
+/// which reads as "my history was deleted" (audit 2026-10-28 F08). The
+/// three cases — a really empty history, a Keychain that is not available
+/// yet, and a damaged archive — each say something different.
+enum ClipboardEmptyContent: Equatable {
+    case loading
+    /// `ClipboardStore.StorageStatus.transientFailure`: retried automatically.
+    case keychainUnavailable
+    /// `ClipboardStore.StorageStatus.unreadableArchive`: waits for the user.
+    case unreadableArchive
+    case empty(paused: Bool)
+
+    static func resolve(isLoading: Bool, storage: ClipboardStore.StorageStatus, paused: Bool) -> ClipboardEmptyContent {
+        switch storage {
+        case .transientFailure: return .keychainUnavailable
+        case .unreadableArchive: return .unreadableArchive
+        case .ok: return isLoading ? .loading : .empty(paused: paused)
+        }
+    }
+
+    var isStorageProblem: Bool { self == .keychainUnavailable || self == .unreadableArchive }
+
+    var title: String {
+        switch self {
+        case .loading: return "Unlocking Clipboard History"
+        case .keychainUnavailable: return "Clipboard History Is Locked"
+        case .unreadableArchive: return "Clipboard History Can't Be Read"
+        case .empty: return "Your Clipboard Is Empty"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .loading: return "lock"
+        case .keychainUnavailable: return "lock.trianglebadge.exclamationmark"
+        case .unreadableArchive: return "exclamationmark.triangle"
+        case .empty: return "doc.on.clipboard"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .loading:
+            return "If macOS asks for your login keychain password, choose Always Allow."
+        case .keychainUnavailable:
+            return "Your saved history is still there, but the login Keychain that unlocks it is locked or unavailable. Nothing has been deleted or overwritten. AOM retries for about a minute; after that, unlock the Keychain and choose Try Again. New copies are kept until then."
+        case .unreadableArchive:
+            return "The saved history file could not be decoded, so AOM stopped saving to protect it. The file has not been changed. Recover Storage keeps it under a new name and starts a new history."
+        case .empty(let paused):
+            return paused ? "Recording is paused. Resume to keep what you copy."
+                : "Copy text, links, colors, images or files and they appear here — searchable, pinnable and encrypted on this Mac."
+        }
+    }
+
+    /// The shorter line for the ⇧⌘V shelf.
+    var compactMessage: String {
+        switch self {
+        case .loading: return "If macOS asks for your login keychain password, choose Always Allow."
+        case .keychainUnavailable: return "The login Keychain is locked. Your history is kept; unlock it, then choose Try Again on the Clipboard page."
+        case .unreadableArchive: return "The history file can't be read. It is kept unchanged; recover it in Clipboard Settings."
+        case .empty(let paused):
+            return paused ? "Clipboard history is paused. Resume it from the ⋯ menu (⌘T)."
+                : "Copy text, links, images or files to keep them here."
+        }
+    }
+}
+
 /// Clipboard library: the full, searchable history and pinboards in the main
 /// window (the ⇧⌘V shelf is the quick-paste surface). Native search field,
 /// segmented type filter, pinboard chips and an adaptive card grid whose
@@ -15,6 +84,7 @@ struct ClipboardStudioView: View {
     @State private var showingSettings = false
     @State private var showingNewBoardSheet = false
     @State private var showingEraseConfirmation = false
+    @State private var showingRecoverConfirmation = false
     @State private var newBoardName = ""
     @State private var newBoardColor = "blue"
     @StateObject private var toast = AOMToastModel()
@@ -34,20 +104,24 @@ struct ClipboardStudioView: View {
 
     var body: some View {
         let entries = filteredEntries
+        let state = ClipboardEmptyContent.resolve(isLoading: store.isLoading, storage: store.storageStatus, paused: store.paused)
         VStack(spacing: 0) {
             filterBar
             AOMDivider()
+            // Copies made while storage is blocked are listed but not saved:
+            // the library says so above the list, with the way to fix it.
+            if state.isStorageProblem && !store.entries.isEmpty {
+                AOMNotice(.warning, "Clipboard history isn't being saved", detail: state.message) { storageActions(state) }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+            }
             Group {
                 if search.isSearchPending {
                     ProgressView("Searching clipboard…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if entries.isEmpty {
-                    if store.isLoading && store.entries.isEmpty {
-                        AOMEmptyState("Unlocking Clipboard History", systemImage: "lock",
-                                      message: "If macOS asks for your login keychain password, choose Always Allow.")
+                    if store.entries.isEmpty && (state.isStorageProblem || state == .loading) {
+                        AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) { storageActions(state) }
                     } else if store.entries.isEmpty {
-                        AOMEmptyState("Your Clipboard Is Empty", systemImage: "doc.on.clipboard",
-                                      message: store.paused ? "Recording is paused. Resume to keep what you copy."
-                                      : "Copy text, links, colors, images or files and they appear here — searchable, pinnable and encrypted on this Mac.") {
+                        AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) {
                             if store.paused { Button("Resume Recording") { store.resume() }.buttonStyle(.borderedProminent) }
                         }
                     } else if !search.query.isEmpty {
@@ -97,7 +171,30 @@ struct ClipboardStudioView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text(ClipboardEraseCopy.message(unpinned: store.entries.filter { $0.pinboardIDs.isEmpty }.count)) }
+        .confirmationDialog("Recover clipboard storage?", isPresented: $showingRecoverConfirmation) {
+            Button("Archive Unreadable File and Resume", role: .destructive) { Task { await store.recoverStorage() } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The unreadable file is renamed and kept; AOM then starts a new history file.") }
         .aomToast(toast.message)
+    }
+
+    /// The retry or recovery for a storage problem, on the same screen that
+    /// reports it (until 3.3.1 they lived only in Clipboard Settings).
+    @ViewBuilder
+    private func storageActions(_ state: ClipboardEmptyContent) -> some View {
+        switch state {
+        case .keychainUnavailable:
+            Button("Try Again") { Task { await store.recoverStorage() } }
+                .buttonStyle(.borderedProminent)
+        case .unreadableArchive:
+            HStack(spacing: 8) {
+                Button("Recover Storage…") { showingRecoverConfirmation = true }
+                    .buttonStyle(.borderedProminent)
+                Button("Clipboard Settings…") { showingSettings = true }
+            }
+        case .loading, .empty:
+            EmptyView()
+        }
     }
 
     // MARK: - Library (Bear's list + preview; Paste's cards for the gallery)

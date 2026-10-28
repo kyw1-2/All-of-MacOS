@@ -829,8 +829,11 @@ enum ParityActions {
             if needsAccessibility(completion) { return }
             guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { completion(false); return }
             let windows = AX.windows(pid: app.processIdentifier).filter { AX.isStandardWindow($0) && AX.bool($0, kAXMinimizedAttribute) != true }
-            for window in windows { AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) }
-            completion(!windows.isEmpty)
+            let failed = windows.filter {
+                AXUIElementSetAttributeValue($0, kAXMinimizedAttribute as CFString, kCFBooleanTrue) != .success
+            }.count
+            if failed > 0 { log("\(failed) of \(windows.count) windows could not be minimized") }
+            completion(ActionOutcome.batch(attempted: windows.count, failed: failed))
         case .gatherWindowsToPointerDisplay:
             if needsAccessibility(completion) { return }
             gatherWindows(completion)
@@ -846,7 +849,7 @@ enum ParityActions {
         case .setSoundInput:
             let uid = p.audioInputUID ?? ""
             guard AudioOutputService.inputDevices().contains(where: { $0.uid == uid }) else { log("Choose a connected input device"); completion(false); return }
-            AudioOutputService.selectInput(uid: uid)
+            guard AudioOutputService.selectInput(uid: uid) else { log("macOS did not switch the input device"); completion(false); return }
             completion(true)
         case .toggleDisplayMirroring:
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1005,7 +1008,9 @@ enum ParityActions {
         // Elements without AXShowMenu still answer a secondary click.
         guard let down = CGEvent(mouseEventSource: nil, mouseType: .rightMouseDown, mouseCursorPosition: point, mouseButton: .right),
               let up = CGEvent(mouseEventSource: nil, mouseType: .rightMouseUp, mouseCursorPosition: point, mouseButton: .right) else { return false }
-        return SyntheticInput.post(down) && SyntheticInput.post(up)
+        // Always post the release too, whatever the press reported.
+        let pressed = SyntheticInput.post(down), released = SyntheticInput.post(up)
+        return pressed && released
     }
 
     @MainActor
@@ -1047,7 +1052,8 @@ enum ParityActions {
         guard !placements.isEmpty else { log("Every window is already on this display", error: false); completion(true); return }
         manager.applyPlacements(placements) { moved, failed in
             log("Gathered \(moved) windows\(failed > 0 ? ", \(failed) could not move" : "")", error: failed > 0)
-            completion(moved > 0)
+            // Some windows left behind is a failure, not a success (3.3.1, alongside audit F09).
+            completion(ActionOutcome.batch(attempted: moved + failed, failed: failed))
         }
     }
 
@@ -1168,7 +1174,8 @@ enum ParityActions {
                           let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: target, mouseButton: .left) else {
                         completion(false); return
                     }
-                    completion(SyntheticInput.post(down) && SyntheticInput.post(up))
+                    let pressed = SyntheticInput.post(down), released = SyntheticInput.post(up)
+                    completion(pressed && released)
                     return
                 }
                 completion(true)

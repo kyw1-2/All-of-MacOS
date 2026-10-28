@@ -68,6 +68,12 @@ enum AutomationMCP {
             trigger.actions = actions
             trigger.isEnabled = args["enabled"] as? Bool ?? false
             if matches.isEmpty { app.addTrigger(trigger) } else { app.updateTrigger(trigger) }
+            // "saved" means on disk: the debounced save is flushed and its
+            // result checked, instead of reporting a write that failed.
+            app.flushPendingWrites()
+            if let failure = app.lastPresetSaveError {
+                throw ClipboardMCPHandler.ToolError("The trigger is active but could not be saved: \(failure)")
+            }
             return ["trigger": try object(trigger), "saved": true]
         case "automation_run_named_trigger":
             let name = try requiredName()
@@ -125,9 +131,11 @@ enum AutomationMCP {
             AppAudioEngine.shared.setRoute(uid: trimmed.isEmpty ? nil : trimmed, bundleID: bundleID)
             let apps = AppAudioEngine.shared.runningAudioApps()
             guard let updated = apps.first(where: { $0.bundleID == bundleID }) else {
-                return ["routed": true, "bundleID": bundleID, "uid": trimmed]
+                // Stored for later; nothing is playing through it yet.
+                return ["routed": true, "applied": false, "bundleID": bundleID, "uid": trimmed,
+                        "note": "Saved. It applies when the app next plays audio."]
             }
-            return ["routed": true, "updated": audioSnapshot(updated)]
+            return ["routed": true, "applied": true, "updated": audioSnapshot(updated)]
         default: throw ClipboardMCPHandler.ToolError("Unknown automation tool.")
         }
     }

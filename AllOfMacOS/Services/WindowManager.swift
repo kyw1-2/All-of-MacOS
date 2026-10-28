@@ -191,11 +191,15 @@ final class WindowManager: ObservableObject {
             guard layouts.count < 20 else { lastLayoutResult = "Up to 20 layouts can be saved."; return false }
             layouts.append(SavedWindowLayout(name: name, windows: windows))
         }
-        persistLayouts(); lastLayoutResult = "Saved \(windows.count) windows."; return true
+        guard persistLayouts() else { lastLayoutResult = "The layout is kept for now but could not be saved."; return false }
+        lastLayoutResult = "Saved \(windows.count) windows."; return true
     }
     func removeLayout(_ id: UUID) { guard !layoutBusy else { return }; layouts.removeAll { $0.id == id }; persistLayouts() }
-    private func persistLayouts() {
-        if let data = try? JSONEncoder().encode(layouts) { UserDefaults.standard.set(data, forKey: "AOMWindowLayoutsV1") }
+    @discardableResult
+    private func persistLayouts() -> Bool {
+        guard let data = try? JSONEncoder().encode(layouts) else { return false }
+        UserDefaults.standard.set(data, forKey: "AOMWindowLayoutsV1")
+        return true
     }
     func restoreLayout(name: String, completion: @escaping (Bool) -> Void) {
         guard !layoutBusy, moving.isEmpty, let layout = layouts.first(where: { $0.name == name }) else { completion(false); return }

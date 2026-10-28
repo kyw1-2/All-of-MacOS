@@ -91,11 +91,14 @@ enum ExtendedActions {
         case .hideOtherApps:
             let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
             let own = ProcessInfo.processInfo.processIdentifier
+            var refused: [String] = []
             for app in NSWorkspace.shared.runningApplications
             where app.activationPolicy == .regular && app.processIdentifier != front && app.processIdentifier != own && !app.isHidden {
-                app.hide()
+                if !app.hide() { refused.append(app.localizedName ?? "?") }
             }
-            completion(true)
+            // A partial result is not reported as success (3.3.1, alongside audit F09).
+            if !refused.isEmpty { log("Could not hide: \(refused.joined(separator: ", "))") }
+            completion(refused.isEmpty)
 
         // MARK: Mouse
         case .ctrlLeftClick, .optionLeftClick, .shiftLeftClick, .cmdDoubleClick:
@@ -128,6 +131,8 @@ enum ExtendedActions {
                     event.setIntegerValueField(.eventSourceUserData, value: SyntheticInput.selfTag)
                     event.postToPid(target.processIdentifier)
                 }
+                // ⌘V is dropped silently without the post-event permission.
+                guard ActionPermissions.canPostEvents else { log(ActionPermissions.postEventsDenied); return false }
                 return true
             }, completion)
         case .pressFunctionKey:
@@ -240,6 +245,9 @@ enum ExtendedActions {
     /// Grabs the window by its title bar, switches Space with the system shortcut,
     /// then lets go; macOS carries a held window along.
     private static func moveWindowToSpace(next: Bool, _ completion: @escaping (Bool) -> Void) {
+        // The move is a synthetic title-bar drag plus a Space shortcut; both
+        // are dropped silently without the post-event permission.
+        guard ActionPermissions.canPostEvents else { log(ActionPermissions.postEventsDenied); completion(false); return }
         guard let target = WindowManager.shared.captureTarget(), let frame = WindowManager.shared.frame(of: target),
               frame.width > 120 else { log("No accessible window to move"); completion(false); return }
         let table = SymbolicHotKeys.load()
@@ -287,7 +295,9 @@ enum ExtendedActions {
                 event?.setIntegerValueField(.mouseEventClickState, value: Int64(index))
                 event?.setIntegerValueField(.mouseEventButtonNumber, value: spec.buttonNumber)
             }
-            ok = SyntheticInput.post(down) && SyntheticInput.post(up) && ok
+            // Always post the release too, whatever the press reported.
+            let pressed = SyntheticInput.post(down), released = SyntheticInput.post(up)
+            ok = pressed && released && ok
         }
         completion(ok)
     }

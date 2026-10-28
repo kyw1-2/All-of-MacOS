@@ -7,6 +7,43 @@ import ImageIO
 import UniformTypeIdentifiers
 import AVFoundation
 
+/// Why a system tool did not do what its tile says. Until 3.3.1 Flush DNS
+/// ignored the exit status of its commands and Empty Trash dropped every
+/// per-item error, so both could announce success after doing nothing
+/// (audit 2026-10-28 F09).
+enum SystemToolError: LocalizedError, Equatable {
+    /// A helper command ran and exited unsuccessfully.
+    case commandFailed(command: String, status: Int32, message: String)
+    /// macOS keeps AOM out of the Trash folder (Full Disk Access).
+    case trashNotReadable
+    /// A Finder preference could not be written.
+    case finderSettingNotSaved(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .commandFailed(let command, let status, let message):
+            let detail = message.isEmpty ? "" : ": \(message)"
+            return "\(command) failed (exit status \(status))\(detail)"
+        case .trashNotReadable:
+            return "macOS doesn't let All of MacOS read the Trash. Turn on All of MacOS in System Settings › Privacy & Security › Full Disk Access, or empty the Trash in Finder."
+        case .finderSettingNotSaved(let key):
+            return "Finder's \(key) setting could not be changed, so nothing was toggled."
+        }
+    }
+
+    /// macOS refused the command for lack of privileges (restarting the
+    /// system DNS resolver needs an administrator). Run by anyone but root,
+    /// `killall` only looks at the caller's own processes, so for
+    /// mDNSResponder it answers "No matching processes belonging to you were
+    /// found" (exit 1) rather than a permission error.
+    var needsAdministrator: Bool {
+        guard case .commandFailed(_, _, let message) = self else { return false }
+        let text = message.lowercased()
+        return text.contains("not permitted") || text.contains("permission denied")
+            || text.contains("no matching processes belonging to you")
+    }
+}
+
 /// System maintenance and file utility suite replicating MacMagic 2.0 features inside AOM.
 final class MacMagicSystemToolService {
     static let shared = MacMagicSystemToolService()
@@ -19,47 +56,96 @@ final class MacMagicSystemToolService {
         let fileDescriptor: String
     }
 
+    /// One helper command a tool runs.
+    struct ToolCommand: Equatable {
+        let path: String
+        let arguments: [String]
+        var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    }
+
+    /// What Empty Trash actually did.
+    struct TrashResult: Equatable {
+        var deleted = 0
+        /// "name: reason" for every item that could not be deleted.
+        var failures: [String] = []
+        var succeeded: Bool { failures.isEmpty }
+
+        /// The message for the user; never "emptied" when anything was left.
+        var summary: String {
+            if failures.isEmpty {
+                return deleted == 0 ? "Trash was already empty" : "Trash emptied (\(deleted) item\(deleted == 1 ? "" : "s"))"
+            }
+            let kept = failures.count
+            return "Deleted \(deleted) item\(deleted == 1 ? "" : "s"); \(kept) could not be deleted: "
+                + failures.prefix(3).joined(separator: "; ") + (kept > 3 ? "; …" : "")
+        }
+    }
+
     init() {}
 
     // MARK: - Finder Tweaks
 
-    /// Toggles visibility of hidden files in Finder and restarts Finder to apply.
-    @discardableResult
-    func toggleHiddenFiles() async -> Bool {
-        let suite = "com.apple.finder"
-        let key = "AppleShowAllFiles"
-        let current = UserDefaults(suiteName: suite)?.bool(forKey: key) ?? false
-        let next = !current
-        UserDefaults(suiteName: suite)?.set(next, forKey: key)
-        
-        // Sync using defaults CLI for cross-process visibility
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["write", "com.apple.finder", "AppleShowAllFiles", "-bool", next ? "true" : "false"]
-        try? process.run()
-        process.waitUntilExit()
+    /// Reads a Finder boolean the way Finder does: a missing key means
+    /// `fallback`. `bool(forKey:) ?? fallback` never reaches the fallback,
+    /// because UserDefaults answers false for a missing key — so the first
+    /// Desktop Icons toggle on a Mac with the default setting wrote true and
+    /// changed nothing (audit 2026-10-28 F10).
+    static func finderFlag(_ key: String, in defaults: UserDefaults?, default fallback: Bool) -> Bool {
+        guard let defaults, defaults.object(forKey: key) != nil else { return fallback }
+        return defaults.bool(forKey: key)
+    }
 
+    /// The state the Desktop Icons tool switches to: Finder draws desktop
+    /// icons unless `CreateDesktop` is false.
+    static func nextDesktopIconsState(in defaults: UserDefaults?) -> Bool {
+        !finderFlag("CreateDesktop", in: defaults, default: true)
+    }
+
+    /// Toggles visibility of hidden files in Finder and restarts Finder to apply.
+    /// Returns the new state; throws when the setting could not be written.
+    @discardableResult
+    func toggleHiddenFiles() async throws -> Bool {
+        let key = "AppleShowAllFiles"
+        let next = !Self.finderFlag(key, in: UserDefaults(suiteName: "com.apple.finder"), default: false)
+        try writeFinderFlag(key, next)
         await restartFinder()
         return next
     }
 
-    /// Toggles desktop icons on macOS and restarts Finder.
+    /// Toggles desktop icons on macOS and restarts Finder. Returns the new
+    /// state; throws when the setting could not be written.
     @discardableResult
-    func toggleDesktopIcons() async -> Bool {
-        let suite = "com.apple.finder"
-        let key = "CreateDesktop"
-        let current = UserDefaults(suiteName: suite)?.bool(forKey: key) ?? true
-        let next = !current
-        UserDefaults(suiteName: suite)?.set(next, forKey: key)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["write", "com.apple.finder", "CreateDesktop", "-bool", next ? "true" : "false"]
-        try? process.run()
-        process.waitUntilExit()
-
+    func toggleDesktopIcons() async throws -> Bool {
+        let next = Self.nextDesktopIconsState(in: UserDefaults(suiteName: "com.apple.finder"))
+        try writeFinderFlag("CreateDesktop", next)
         await restartFinder()
         return next
+    }
+
+    /// Writes a Finder boolean through cfprefsd (the mechanism the capture
+    /// menu's Hide Desktop Icons uses) and reports a failed synchronise
+    /// instead of claiming the new state.
+    private func writeFinderFlag(_ key: String, _ value: Bool) throws {
+        let domain = "com.apple.finder" as CFString
+        CFPreferencesSetAppValue(key as CFString, value as CFBoolean, domain)
+        guard CFPreferencesAppSynchronize(domain) else { throw SystemToolError.finderSettingNotSaved(key) }
+    }
+
+    /// Runs a helper to completion and returns its exit status and standard
+    /// error (standard output is discarded).
+    static func run(_ command: ToolCommand) throws -> (status: Int32, message: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.path)
+        process.arguments = command.arguments
+        let errors = Pipe()
+        process.standardError = errors
+        process.standardOutput = FileHandle.nullDevice
+        try process.run()
+        // Read before waiting, so a chatty helper cannot fill the pipe and stall.
+        let data = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let message = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (process.terminationStatus, message)
     }
 
     /// Restarts the Finder process cleanly.
@@ -82,19 +168,40 @@ final class MacMagicSystemToolService {
 
     // MARK: - System Network & DNS
 
-    /// Flushes macOS local DNS resolver cache and sends HUP to mDNSResponder.
-    func flushDNSCache() async throws {
-        let dscache = Process()
-        dscache.executableURL = URL(fileURLWithPath: "/usr/bin/dscacheutil")
-        dscache.arguments = ["-flushcache"]
-        try dscache.run()
-        dscache.waitUntilExit()
+    static let dnsFlushCommands = [
+        ToolCommand(path: "/usr/bin/dscacheutil", arguments: ["-flushcache"]),
+        ToolCommand(path: "/usr/bin/killall", arguments: ["-HUP", "mDNSResponder"])
+    ]
 
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        kill.arguments = ["-HUP", "mDNSResponder"]
-        try kill.run()
-        kill.waitUntilExit()
+    /// Flushes macOS local DNS resolver cache and sends HUP to mDNSResponder.
+    /// Every step must exit 0; the first one that does not is thrown with its
+    /// exit status and standard error. AOM runs as the user, not root, so
+    /// `killall` cannot signal mDNSResponder (even for an administrator
+    /// account); `needsAdministrator` then tells the caller to offer
+    /// `flushDNSCacheAsAdministrator()` instead of announcing success.
+    func flushDNSCache(commands: [ToolCommand] = MacMagicSystemToolService.dnsFlushCommands) async throws {
+        for command in commands {
+            let result = try Self.run(command)
+            guard result.status == 0 else {
+                throw SystemToolError.commandFailed(command: command.name, status: result.status, message: result.message)
+            }
+        }
+    }
+
+    enum AdministratorResult: Equatable { case done, cancelled, failed(String) }
+
+    /// The same flush with an administrator password, through the standard
+    /// macOS authorization prompt. Only ever started by the user.
+    @MainActor
+    func flushDNSCacheAsAdministrator() -> AdministratorResult {
+        let shell = Self.dnsFlushCommands.map { ([$0.path] + $0.arguments).joined(separator: " ") }.joined(separator: " && ")
+        let source = "do shell script \"\(shell)\" with administrator privileges"
+        var error: NSDictionary?
+        guard let script = NSAppleScript(source: source) else { return .failed("The request could not be prepared.") }
+        script.executeAndReturnError(&error)
+        guard let error else { return .done }
+        if (error[NSAppleScript.errorNumber] as? Int) == -128 { return .cancelled }
+        return .failed(error[NSAppleScript.errorMessage] as? String ?? "macOS refused the request.")
     }
 
     // MARK: - File Maintenance & Attributes
@@ -371,12 +478,39 @@ final class MacMagicSystemToolService {
         try FileManager.default.removeItem(at: url)
     }
 
-    /// Empties the user Trash directory.
-    func forceEmptyTrash() async throws {
-        let trashURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
-        let items = try FileManager.default.contentsOfDirectory(at: trashURL, includingPropertiesForKeys: nil)
-        for item in items {
-            try? FileManager.default.removeItem(at: item)
+    /// Empties the user Trash directory and reports what it deleted and what
+    /// it could not (a locked item, an item owned by another user). Until
+    /// 3.3.1 every per-item error was dropped, so "Trash emptied" could follow
+    /// a run that deleted nothing. `trash` is injectable for tests.
+    func forceEmptyTrash(at trash: URL? = nil) async throws -> TrashResult {
+        let trashURL = trash ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
+        let items: [URL]
+        do {
+            items = try FileManager.default.contentsOfDirectory(at: trashURL, includingPropertiesForKeys: nil)
+        } catch let error as CocoaError where error.code == .fileReadNoPermission {
+            // ~/.Trash is privacy-protected; reading it needs Full Disk Access.
+            throw SystemToolError.trashNotReadable
         }
+        var result = TrashResult()
+        for item in items {
+            do {
+                try FileManager.default.removeItem(at: item)
+                result.deleted += 1
+            } catch {
+                result.failures.append("\(item.lastPathComponent): \(Self.reason(error))")
+            }
+        }
+        return result
+    }
+
+    /// The POSIX reason behind a file error ("Operation not permitted"),
+    /// which says more than Foundation's generic sentence.
+    private static func reason(_ error: Error) -> String {
+        let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+        if let underlying, underlying.domain == NSPOSIXErrorDomain,
+           let code = POSIXErrorCode(rawValue: Int32(underlying.code)) {
+            return String(cString: strerror(code.rawValue))
+        }
+        return error.localizedDescription
     }
 }
