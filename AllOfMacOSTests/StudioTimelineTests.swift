@@ -222,9 +222,12 @@ final class StudioTimelineTests: XCTestCase {
     }
 
     func testSidecarRejectsOversizedButOtherwiseValidJSON() throws {
+        // The bound moved from 8 MB to `maximumBytes` (24 MB) in 3.3.1 so a
+        // long, busy recording's track fits (audit 2026-10-28 F06); anything
+        // beyond it is still refused before decoding.
         try withTemporaryMovie { movie in
             var data = Data("{\"points\":[]}".utf8)
-            data.append(Data(repeating: 0x20, count: 8_000_001 - data.count))
+            data.append(Data(repeating: 0x20, count: AOMCursorTrack.maximumBytes + 1 - data.count))
             try data.write(to: AOMCursorTrack.sidecarURL(for: movie))
             XCTAssertNil(AOMCursorTrack.read(for: movie))
         }

@@ -33,22 +33,41 @@ struct AOMCursorTrack: Codable {
         } && zip(points, points.dropFirst()).allSatisfy { $0.0.time <= $0.1.time }
     }
 
+    /// Upper bound for a sidecar on disk. A full track (60,000 cursor points,
+    /// clicks and keystrokes each) encodes to about 16 MB; the old 8 MB bound
+    /// rejected long recordings with heavy typing and reported it as a full
+    /// disk.
+    static let maximumBytes = 24_000_000
+
+    enum Failure: LocalizedError, Equatable {
+        case invalid
+        case tooLarge(bytes: Int)
+        var errorDescription: String? {
+            switch self {
+            case .invalid: return "The input track has unordered or out-of-range samples."
+            case .tooLarge(let bytes):
+                return "The input track is \(bytes / 1_000_000) MB, above the \(AOMCursorTrack.maximumBytes / 1_000_000) MB limit."
+            }
+        }
+    }
+
     static func read(for movie: URL) -> AOMCursorTrack? {
         let url = sidecarURL(for: movie)
         guard url.isFileURL, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         // Bound the read itself, rather than allocating an arbitrary-sized file
         // and checking its size afterwards.
-        guard let data = try? handle.read(upToCount: 8_000_001), data.count <= 8_000_000,
+        guard let data = try? handle.read(upToCount: maximumBytes + 1), data.count <= maximumBytes,
               let track = try? JSONDecoder().decode(AOMCursorTrack.self, from: data),
               track.isValid else { return nil }
         return track
     }
 
     func write(for movie: URL) throws {
-        guard movie.isFileURL, isValid else { throw CocoaError(.fileWriteInvalidFileName) }
+        guard movie.isFileURL else { throw CocoaError(.fileWriteInvalidFileName) }
+        guard isValid else { throw Failure.invalid }
         let data = try JSONEncoder().encode(self)
-        guard data.count <= 8_000_000 else { throw CocoaError(.fileWriteOutOfSpace) }
+        guard data.count <= Self.maximumBytes else { throw Failure.tooLarge(bytes: data.count) }
         try data.write(to: Self.sidecarURL(for: movie), options: .atomic)
     }
 
@@ -94,6 +113,90 @@ struct AOMCursorTrack: Codable {
         let from = filtered(lo - 1), to = filtered(lo)
         return CGPoint(x: from.x + (to.x - from.x) * t,
                        y: from.y + (to.y - from.y) * t)
+    }
+}
+
+/// Bounded cursor sampling that always covers the whole recording.
+///
+/// The recorder samples the pointer every 50 ms, and a track holds at most
+/// 60,000 points — 50 minutes. Until 3.3.0 later samples were dropped
+/// silently, so the last 15 minutes of a 65-minute recording had no pointer
+/// at all (audit F06: `smoothedPosition(at: 3001)` was nil). Now, when the
+/// buffer fills, the sampler keeps every other point and doubles its spacing:
+/// 50 ms resolution up to 50 minutes, 100 ms up to 100 minutes, 200 ms up to
+/// 200 minutes, and so on, always within the sidecar limits. Points on either
+/// side of a visibility change are kept on the first thinning pass, so
+/// hidden intervals keep their edges.
+struct AOMCursorSampler {
+    static let capacity = 60_000
+    let capacity: Int
+    /// The recorder's sampling interval (50 ms).
+    let baseSpacing: Double
+    private(set) var points: [AOMCursorPoint] = []
+    /// The target spacing between kept samples; doubles with each thinning.
+    private(set) var spacing: Double
+    /// Samples come from a run-loop timer and arrive 48–55 ms apart, not at
+    /// exactly 50 ms. Spacing is enforced with half a sampling interval of
+    /// slack, so jitter never drops a sample before the first thinning and
+    /// the average spacing after it stays at the target.
+    private var minimumGap: Double { spacing - baseSpacing * 0.5 }
+
+    init(spacing: Double = 0.05, capacity: Int = AOMCursorSampler.capacity) {
+        baseSpacing = max(0.001, spacing)
+        self.spacing = baseSpacing
+        self.capacity = max(16, capacity)
+        points.reserveCapacity(min(self.capacity, 4_096))
+    }
+
+    mutating func removeAll() {
+        points.removeAll(keepingCapacity: true)
+        spacing = baseSpacing
+    }
+
+    mutating func append(_ point: AOMCursorPoint) {
+        guard point.time.isFinite, point.x.isFinite, point.y.isFinite else { return }
+        if let last = points.last {
+            guard point.time >= last.time else { return }
+            let changed = (point.visible ?? true) != (last.visible ?? true)
+            // Closer than the current spacing only visibility changes are kept.
+            guard changed || point.time - last.time >= minimumGap else { return }
+        }
+        points.append(point)
+        if points.count >= capacity { thin() }
+    }
+
+    private mutating func thin() {
+        var preserveTransitions = true
+        repeat {
+            spacing *= 2
+            points = Self.thinned(points, spacing: minimumGap, preserveTransitions: preserveTransitions)
+            // A pointer that flickers in and out of the area on every sample
+            // has nothing to drop but transitions; the next pass ignores them
+            // so the track stays bounded whatever the input.
+            preserveTransitions = false
+        } while points.count > capacity * 3 / 4
+    }
+
+    /// Keeps the first and last point, visibility transitions (optionally)
+    /// and every point at least `spacing` after the previous kept one.
+    static func thinned(_ points: [AOMCursorPoint], spacing: Double, preserveTransitions: Bool) -> [AOMCursorPoint] {
+        guard points.count > 2 else { return points }
+        var kept: [AOMCursorPoint] = []
+        kept.reserveCapacity(points.count / 2 + 16)
+        var lastKept = -Double.infinity
+        for index in points.indices {
+            let point = points[index]
+            let visible = point.visible ?? true
+            let edge = index == points.startIndex || index == points.index(before: points.endIndex)
+            let transition = preserveTransitions && (
+                (index > points.startIndex && (points[index - 1].visible ?? true) != visible) ||
+                (index + 1 < points.endIndex && (points[index + 1].visible ?? true) != visible))
+            if edge || transition || point.time - lastKept >= spacing {
+                kept.append(point)
+                lastKept = point.time
+            }
+        }
+        return kept
     }
 }
 

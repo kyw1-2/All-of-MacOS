@@ -269,14 +269,21 @@ struct AOMStudioProject: Codable {
     var settings: AOMStudioSettings
     var muteAudio = false
     static func url(for source: URL) -> URL { source.appendingPathExtension("aom-studio.json") }
+    /// The project embeds the whole input track (up to ~16 MB for a long,
+    /// busy recording) plus edits. Reading used to stop at 16 MB while
+    /// writing had no bound, so a long take's project was saved but silently
+    /// never restored.
+    static let maximumBytes = 40_000_000
     func write(for source: URL) throws {
         guard settings.isValid, sourceDuration.isFinite, sourceDuration > 0, clips.count <= 1000, !clips.isEmpty, clips.allSatisfy({ $0.isValid(duration: sourceDuration) }) else { throw CocoaError(.fileWriteInvalidFileName) }
-        try JSONEncoder().encode(self).write(to: Self.url(for: source), options: .atomic)
+        let data = try JSONEncoder().encode(self)
+        guard data.count <= Self.maximumBytes else { throw AOMCursorTrack.Failure.tooLarge(bytes: data.count) }
+        try data.write(to: Self.url(for: source), options: .atomic)
     }
     static func read(for source: URL, duration: Double) -> Self? {
         guard let handle = try? FileHandle(forReadingFrom: url(for: source)) else { return nil }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 16_000_001), data.count <= 16_000_000,
+        guard let data = try? handle.read(upToCount: maximumBytes + 1), data.count <= maximumBytes,
               let project = try? JSONDecoder().decode(Self.self, from: data), project.version == 1, project.settings.isValid,
               project.sourceName == source.lastPathComponent,
               project.sourceBytes == (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize),

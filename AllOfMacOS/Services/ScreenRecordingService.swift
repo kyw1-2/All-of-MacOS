@@ -37,8 +37,22 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var recordsEditableCursor = false
     private var gifFPS = 10
     private var outputSize = CGSize.zero
+    /// Free space required on the save volume before a take starts.
+    nonisolated static let minimumFreeBytes: Int64 = 2_000_000_000
     private var cursorSampler: Timer?
-    private var cursorPoints: [AOMCursorPoint] = []
+    /// Bounded but full-length: thins itself instead of stopping at 50 min.
+    private var cursorSamples = AOMCursorSampler()
+    /// Clicks or keystrokes beyond the 60,000-event track limit were seen.
+    private var inputEventsOverflowed = false
+    /// Recording time of the last crash-recovery sidecar write.
+    private var lastSidecarWrite: Double = 0
+    /// Sidecar encoding (several MB for long takes) stays off the main
+    /// thread, where it competed with the frame timer. Serial, so the final
+    /// write at stop always lands after every periodic one.
+    private let sidecarQueue = DispatchQueue(label: "com.kyw.allofmacos.recording-sidecar", qos: .utility)
+    private var sidecarWriteInFlight = false
+    /// Why ScreenCaptureKit or the writer ended the take early, if it did.
+    private var interruption: String?
     private var pauseStarted: CMTime?
     private var pausedDuration = CMTime.zero
     private var acceptAudioAfter = CMTime.zero
@@ -154,6 +168,12 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let height = max(2, Int(globalRect.height * effectiveScale) & ~1)
         let folder = CaptureSettings.saveDirectory
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // An hour at the default quality is roughly 10 GB; refuse to start
+        // on a nearly full volume rather than fail mid-take.
+        if let free = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage, free < Self.minimumFreeBytes {
+            throw CaptureError.captureFailed("Only \(ByteCountFormatter.string(fromByteCount: free, countStyle: .file)) is free where recordings are saved. Free up space before recording.")
+        }
         let url = Self.uniqueRecordingURL(in: folder)
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
@@ -199,7 +219,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         firstSampleTime = nil; lastVideoTime = nil; firstImage = nil
         pausedDuration = .zero; pauseStarted = nil; isPaused = false; acceptAudioAfter = .zero
         isSessionStarted = false; elapsedSeconds = 0
-        frames.removeAll(); displayRects.removeAll(); cursorPoints.removeAll(); clickEvents.removeAll(); keyEvents.removeAll()
+        frames.removeAll(); displayRects.removeAll(); cursorSamples.removeAll(); clickEvents.removeAll(); keyEvents.removeAll()
+        inputEventsOverflowed = false; lastSidecarWrite = 0; interruption = nil
         do {
             try RecordingRecovery.add(url)
             if CaptureSettings.recordingCameraOverlay {
@@ -302,8 +323,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let hasFrames = isSessionStarted
         let needsMix = audioInput != nil && microphoneInput != nil
         let thumb = firstImage ?? Self.makeFallbackThumbnail(size: recordingRect.size)
-        let rect = recordingRect; let scale = recordedScale; let points = cursorPoints
+        let rect = recordingRect; let scale = recordedScale; let points = cursorSamples.points
         let telemetry = AOMCursorTrack(points: recordsEditableCursor ? points : [], clicks: clickEvents, keystrokes: keyEvents)
+        let overflowed = inputEventsOverflowed
+        let interruption = self.interruption
         let cameraWriter = cameraWriter
         cameraInput?.markAsFinished()
         if cameraWriter?.status == .writing { await cameraWriter?.finishWriting() }
@@ -313,7 +336,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         clearSession()
         guard hasFrames, writer.status == .completed else {
             // Preserve fragments and the journal for the recovery flow.
-            GestureHUD.shared.show(title: "Recording Interrupted", detail: "Saved fragments are available for recovery when AOM next opens.")
+            let reason = interruption ?? writer.error?.localizedDescription ?? "The movie could not be finalized."
+            RecordingEventLog.record("interrupted", file: url, detail: reason)
+            GestureHUD.shared.show(title: "Recording Interrupted",
+                                   detail: "\(reason) Saved fragments are available for recovery when AOM next opens.")
             throw writer.error ?? CaptureError.captureFailed("The recording could not finalize. Its fragments have been retained.")
         }
         if needsMix {
@@ -322,10 +348,15 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 GestureHUD.shared.show(title: "Audio Mix Warning", detail: "Both audio tracks were saved, but could not be mixed: \(error.localizedDescription)")
             }
         }
-        RecordingRecovery.remove(url)
-        var finishingWarning: String?
-        do { try telemetry.write(for: url) }
-        catch { finishingWarning = "Editable input track could not be saved: \(error.localizedDescription)" }
+        // The recovery journal keeps this take until it is in Capture History
+        // (below): a quit or crash during the long Presentation render used to
+        // leave a finished movie that no list or recovery prompt pointed to.
+        var warnings: [String] = []
+        do { try await writeFinalTrack(telemetry, for: url) }
+        catch { warnings.append("Editable input track could not be saved: \(error.localizedDescription)") }
+        if overflowed {
+            warnings.append("More than 60,000 clicks or keystrokes: later ones are not in the editable overlay.")
+        }
         var defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
         defaultStyle.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
         defaultStyle.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
@@ -347,15 +378,17 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 try AOMStudioSourceLink.write(presentation: rendered, source: url)
                 presentation = rendered
             } catch {
-                finishingWarning = "Layer export failed; raw recording and editable tracks were kept: \(error.localizedDescription). Open Edit Recording to retry."
+                warnings.append("Layer export failed; raw recording and editable tracks were kept: \(error.localizedDescription). Open Edit Recording to retry.")
             }
         }
         if let cameraWriter, cameraWriter.status != .completed {
-            finishingWarning = "The screen recording was saved. Camera fragments were retained: \(cameraWriter.error?.localizedDescription ?? "Camera track could not finalize.")"
+            warnings.append("Camera fragments were retained: \(cameraWriter.error?.localizedDescription ?? "Camera track could not finalize.")")
         }
         let result = CaptureResult(image: thumb, globalRect: rect, scale: scale, kind: .videoRecording, windowTitle: "Screen Recording")
         let entry = CaptureHistory.shared.add(result, url: presentation)
+        RecordingRecovery.remove(url)
         CaptureCoordinator.shared.showRecordingOverlay(for: entry)
+        let outcome = Self.stopOutcome(interruption: interruption, warnings: warnings, file: presentation.lastPathComponent)
         if wantsGIF {
             GestureHUD.shared.show(title: "Creating GIF", detail: "The MP4 source has been saved.")
             do {
@@ -363,17 +396,35 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 let gif = try await RecordingExportService.gif(source: url, start: 0, end: duration, fps: animationFPS,
                     studio: defaultStyle)
                 NSWorkspace.shared.activateFileViewerSelecting([gif])
-                GestureHUD.shared.show(title: "GIF Saved", detail: gif.lastPathComponent)
+                if outcome.event == "saved" { GestureHUD.shared.show(title: "GIF Saved", detail: gif.lastPathComponent) }
+                else { GestureHUD.shared.show(title: "GIF Saved — \(outcome.title)", detail: outcome.detail) }
             } catch {
                 GestureHUD.shared.show(title: "GIF Export Failed", detail: "MP4 retained. \(error.localizedDescription)")
+                warnings.append("GIF export failed: \(error.localizedDescription)")
             }
-        } else if let finishingWarning {
-            GestureHUD.shared.show(title: "Recording Saved with Warning", detail: finishingWarning)
         } else {
-            GestureHUD.shared.show(title: "Recording Saved", detail: presentation.lastPathComponent)
+            GestureHUD.shared.show(title: outcome.title, detail: outcome.detail)
         }
+        RecordingEventLog.record(outcome.event, file: presentation,
+                                 detail: ([interruption].compactMap { $0 } + warnings).joined(separator: " | "))
         AOMSystemSound.play("Glass")
         return presentation
+    }
+
+    /// What the user is told when a take ends. A take that macOS or the
+    /// writer cut short is never announced as a plain "Recording Saved"
+    /// (3.3.1, alongside audit F09), and several warnings are all kept instead of the last
+    /// one overwriting the others.
+    nonisolated static func stopOutcome(interruption: String?, warnings: [String], file: String)
+        -> (title: String, detail: String, event: String) {
+        if let interruption {
+            let rest = warnings.isEmpty ? "" : " " + warnings.joined(separator: " ")
+            return ("Recording Stopped Early", "\(interruption) Saved up to that point: \(file).\(rest)", "stopped-early")
+        }
+        if !warnings.isEmpty {
+            return ("Recording Saved with Warning", warnings.joined(separator: " "), "saved-with-warning")
+        }
+        return ("Recording Saved", file, "saved")
     }
 
     /// CleanShot's Restart: throw the take away and record the same area again
@@ -402,11 +453,18 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         stopTimer(); stopCursorSampling(); stopOverlays(); ScreenRecordingBarController.shared.hide()
         let activeStreams = streams; let writer = writer; let cameraWriter = cameraWriter; let url = outputURL
         clearSession()
+        let sidecarQueue = sidecarQueue
         Task {
             defer { isStopping = false }
             for stream in activeStreams { try? await stream.stopCapture() }
             writer?.cancelWriting(); cameraWriter?.cancelWriting()
-            if let url { try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: AOMStudioCameraFrames.url(for: url)); try? FileManager.default.removeItem(at: AOMCursorTrack.sidecarURL(for: url)); RecordingRecovery.remove(url) }
+            if let url {
+                try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: AOMStudioCameraFrames.url(for: url))
+                // Behind any periodic sidecar write still running, so a
+                // discarded take cannot leave its pointer/keystroke track.
+                sidecarQueue.async { try? FileManager.default.removeItem(at: AOMCursorTrack.sidecarURL(for: url)) }
+                RecordingRecovery.remove(url)
+            }
         }
         if announce { GestureHUD.shared.show(title: "Recording Discarded", detail: "") }
     }
@@ -417,12 +475,16 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         cameraWriter = nil; cameraInput = nil; cameraAdaptor = nil; cameraStarted = false
         writer = nil; videoInput = nil; pixelAdaptor = nil; audioInput = nil; microphoneInput = nil
         outputURL = nil; isSessionStarted = false; isPaused = false
-        firstSampleTime = nil; lastVideoTime = nil; cursorPoints.removeAll()
+        firstSampleTime = nil; lastVideoTime = nil; cursorSamples.removeAll()
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        let reason = error.localizedDescription
         Task { @MainActor [weak self] in
             guard let self, self.streams.contains(where: { $0 === stream }), self.isRecording, !self.isStopping else { return }
+            // Permission revoked, display gone…: the take is saved but must
+            // not be announced as a normal stop.
+            self.interruption = "macOS stopped the screen capture: \(reason)."
             do { _ = try await self.stopRecording() }
             catch { GestureHUD.shared.show(title: "Recording Interrupted", detail: error.localizedDescription) }
         }
@@ -542,7 +604,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         guard let label = Self.keystrokeLabel(keyCode: event.keyCode, flags: event.modifierFlags,
                                               characters: event.charactersIgnoringModifiers,
                                               allKeys: CaptureSettings.recordingKeystrokesAllKeys) else { return }
-        guard let time = recordingTime(), keyEvents.count < 60_000 else { return }
+        guard let time = recordingTime() else { return }
+        guard keyEvents.count < 60_000 else { inputEventsOverflowed = true; return }
         keyEvents.append(AOMKeystrokeEvent(time: time, label: label))
     }
 
@@ -574,7 +637,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     private func recordClick(_ event: NSEvent) {
-        guard let time = recordingTime(), clickEvents.count < 60_000 else { return }
+        guard let time = recordingTime() else { return }
+        guard clickEvents.count < 60_000 else { inputEventsOverflowed = true; return }
         let mouse = NSEvent.mouseLocation
         let x = (mouse.x - recordingRect.minX) / recordingRect.width
         let y = ((NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y - recordingRect.minY) / recordingRect.height
@@ -597,15 +661,39 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         }
     }
     private func sampleCursor() {
-        guard isRecording, !isPaused, let start = firstSampleTime, cursorPoints.count < 60_000 else { return }
+        guard isRecording, !isPaused, let start = firstSampleTime else { return }
         let mouse = NSEvent.mouseLocation
         let sx = (mouse.x - recordingRect.minX) / recordingRect.width
         let sy = ((NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y - recordingRect.minY) / recordingRect.height
         let seconds = CMTimeGetSeconds(CMTimeSubtract(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pausedDuration), start))
         guard sx.isFinite, sy.isFinite, seconds.isFinite, seconds >= 0 else { return }
-        cursorPoints.append(AOMCursorPoint(time: seconds, x: Double(min(1, max(0, sx))), y: Double(min(1, max(0, sy))), visible: (0...1).contains(sx) && (0...1).contains(sy)))
-        if cursorPoints.count % 40 == 0, let url = outputURL {
-            try? AOMCursorTrack(points: recordsEditableCursor ? cursorPoints : [], clicks: clickEvents, keystrokes: keyEvents).write(for: url)
+        cursorSamples.append(AOMCursorPoint(time: seconds, x: Double(min(1, max(0, sx))), y: Double(min(1, max(0, sy))), visible: (0...1).contains(sx) && (0...1).contains(sy)))
+        // Crash-recovery copy every two seconds of recording, encoded and
+        // written off the main thread; a write still running is not doubled.
+        if seconds - lastSidecarWrite >= 2, !sidecarWriteInFlight, let url = outputURL {
+            lastSidecarWrite = seconds
+            sidecarWriteInFlight = true
+            let track = AOMCursorTrack(points: recordsEditableCursor ? cursorSamples.points : [], clicks: clickEvents, keystrokes: keyEvents)
+            sidecarQueue.async { [weak self] in
+                let failure: String?
+                do { try track.write(for: url); failure = nil } catch { failure = error.localizedDescription }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self?.sidecarWriteInFlight = false
+                        if let failure { RecordingEventLog.record("sidecar-write-failed", file: url, detail: failure) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes the final input track after every periodic write, off main.
+    private func writeFinalTrack(_ track: AOMCursorTrack, for url: URL) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sidecarQueue.async {
+                do { try track.write(for: url); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
         }
     }
     private func stopCursorSampling() { cursorSampler?.invalidate(); cursorSampler = nil }
@@ -614,6 +702,14 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / Double(CaptureSettings.recordingFPS), repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, !self.isPaused else { return }
+                // A full disk or encoder failure used to stop writing silently
+                // while the REC bar kept counting. Stop and say why; the
+                // fragments stay recoverable.
+                if let writer = self.writer, writer.status == .failed, self.isRecording, !self.isStopping {
+                    self.interruption = "The movie writer failed: \(writer.error?.localizedDescription ?? "unknown error")."
+                    _ = try? await self.stopRecording()
+                    return
+                }
                 self.appendVideoFrame(at: CMClockGetTime(CMClockGetHostTimeClock()))
                 guard let start = self.firstSampleTime else { return }
                 let seconds = CMTimeGetSeconds(CMTimeSubtract(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), self.pausedDuration), start))
@@ -646,8 +742,12 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                     do {
                         let recovered = try await RecordingExportService.recoverInterrupted(source: url)
                         RecordingRecovery.remove(url)
+                        RecordingEventLog.record("recovered", file: recovered, detail: "from \(url.lastPathComponent)")
                         NSWorkspace.shared.activateFileViewerSelecting([recovered])
-                    } catch { GestureHUD.shared.show(title: "Recovery Unavailable", detail: "\(url.lastPathComponent): \(error.localizedDescription). Original fragments were kept.") }
+                    } catch {
+                        RecordingEventLog.record("recovery-failed", file: url, detail: error.localizedDescription)
+                        GestureHUD.shared.show(title: "Recovery Unavailable", detail: "\(url.lastPathComponent): \(error.localizedDescription). Original fragments were kept.")
+                    }
                 }
             }
         }
@@ -692,7 +792,18 @@ private enum RecordingRecovery {
             .appendingPathComponent("AllOfMacOS", isDirectory: true).appendingPathComponent("interrupted-recordings.json")
     }
     static func pending() -> [URL] {
-        guard let data = try? Data(contentsOf: journalURL), let paths = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        guard let data = try? Data(contentsOf: journalURL) else { return [] }
+        guard let paths = try? JSONDecoder().decode([String].self, from: data) else {
+            // 3.3.1 archive hardening: an unreadable journal was silently replaced by the
+            // next recording's entry. Keep its bytes before starting afresh.
+            let kept = journalURL.deletingLastPathComponent()
+                .appendingPathComponent("interrupted-recordings.unreadable-\(UUID().uuidString.prefix(8)).json")
+            if (try? data.write(to: kept, options: .atomic)) != nil {
+                try? FileManager.default.removeItem(at: journalURL)
+                RecordingEventLog.record("journal-unreadable", file: nil, detail: "Kept as \(kept.lastPathComponent)")
+            }
+            return []
+        }
         return paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
     static func add(_ url: URL) throws {

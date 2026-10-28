@@ -361,10 +361,20 @@ final class CaptureHistory: ObservableObject {
         directory.appendingPathComponent(id.uuidString).appendingPathExtension("png")
     }
 
+    /// Where an unreadable manifest is kept, if one was found at launch.
+    private(set) var preservedManifestURL: URL?
+
     private func load() {
         captureHistoryIOQueue.sync {}
-        guard let data = try? Data(contentsOf: manifestURL),
-              let records = try? JSONDecoder().decode([Record].self, from: data) else { return }
+        guard let data = try? Data(contentsOf: manifestURL) else { return }
+        guard let records = try? JSONDecoder().decode([Record].self, from: data) else {
+            // 3.3.1 archive hardening: an unreadable manifest used to load as an
+            // empty history, and the next capture overwrote it — every earlier
+            // entry, pins included, was gone although its PNG was still here.
+            // Keep the bytes under a new name, then rebuild from the cache.
+            recoverFromUnreadableManifest(data)
+            return
+        }
         // The file name is always derived from the validated UUID and stays in
         // our managed folder, even if manifest text was corrupted. Only the PNG
         // header is read here: pixels are decoded lazily on demand, so startup
@@ -392,6 +402,59 @@ final class CaptureHistory: ObservableObject {
         trim()
     }
 
+    private func recoverFromUnreadableManifest(_ data: Data) {
+        let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
+                                                formatOptions: [.withFullDate, .withTime])
+            .replacingOccurrences(of: ":", with: "")
+        let preserved = directory.appendingPathComponent("history-v1.unreadable-\(stamp)-\(UUID().uuidString.prefix(6)).json")
+        do {
+            try data.write(to: preserved, options: .atomic)
+            preservedManifestURL = preserved
+        } catch {
+            // Without a preserved copy, never write over the only one.
+            NSLog("[CaptureHistory] Unreadable manifest could not be preserved: %@", error.localizedDescription)
+            manifestWritesBlocked = true
+            return
+        }
+        // Each managed PNG is named by its entry's UUID. Kind, title, pins and
+        // the external file link lived only in the manifest; the capture date
+        // comes from the PNG itself.
+        let scale = max(1, NSScreen.main?.backingScaleFactor ?? 2)
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])) ?? []
+        var rebuilt: [CaptureHistoryEntry] = []
+        for listed in files where listed.pathExtension == "png" {
+            // Only canonical managed names; the enumerated URL may spell the
+            // folder differently (/private/var vs /var), so rebuild it.
+            let name = listed.deletingPathExtension().lastPathComponent
+            guard let id = UUID(uuidString: name), id.uuidString == name else { continue }
+            let file = imageURL(for: id)
+            guard let source = CGImageSourceCreateWithURL(file as CFURL, nil), CGImageSourceGetCount(source) > 0,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0, height > 0 else { continue }
+            let created = (try? listed.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+            let entry = CaptureHistoryEntry(
+                id: id, kind: .area, capturedAt: created, windowTitle: nil, fileURL: nil,
+                pointSize: CGSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale),
+                scale: scale, pixelWidth: width, pixelHeight: height, cacheURL: file)
+            // Pins lived only in the lost manifest. Every recovered capture
+            // is kept pinned, so no later retention pass can delete one the
+            // user had pinned; unpinning returns it to normal retention.
+            entry.isPinned = true
+            entry.onResidencyChange = residencyChangeHandler()
+            rebuilt.append(entry)
+        }
+        entries = rebuilt.sorted { $0.capturedAt > $1.capturedAt }
+        NSLog("[CaptureHistory] Rebuilt %d entries from the cache (kept pinned); unreadable manifest kept as %@",
+              entries.count, preserved.lastPathComponent)
+        persistIndex()
+    }
+
+    /// Set when an unreadable manifest could not be preserved: the history
+    /// stays usable in memory but never overwrites the original file.
+    private var manifestWritesBlocked = false
+
     /// A rehydration runs off whatever thread first needs the pixels, so hop
     /// back to the main actor before re-applying the budget.
     private func residencyChangeHandler() -> () -> Void {
@@ -402,6 +465,7 @@ final class CaptureHistory: ObservableObject {
     }
 
     private func persistIndex() {
+        guard !manifestWritesBlocked else { return }
         let records: [Record] = entries.map { entry in
             Record(id: entry.id, kind: entry.kind, capturedAt: entry.capturedAt,
                    windowTitle: entry.windowTitle, externalFilePath: entry.fileURL?.path,
