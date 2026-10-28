@@ -237,7 +237,16 @@ final class ClipboardMCPServer {
 
     private func handle(_ line: String, on connection: Connection) {
         guard let data = line.data(using: .utf8),
-              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            // JSON-RPC 2.0: an unparseable request still gets an answer (with a
+            // null id), so the client is never left waiting for a reply.
+            if connection.toolID == nil {
+                connection.send(["aom_mcp_auth": "denied"]); connection.close()
+            } else {
+                connection.send(ClipboardMCPHandler.parseError)
+            }
+            return
+        }
         if connection.toolID == nil {
             // First line authenticates the bridge.
             guard let token = object["aom_mcp_auth"] as? String,
@@ -253,66 +262,225 @@ final class ClipboardMCPServer {
         if let response = ClipboardMCPHandler.handle(object, store: .shared, automationAccess: automation) { connection.send(response) }
     }
 
+    /// One bridge connection. Reading, writing and teardown run on the
+    /// server's private queue; `send` and `close` are called on the main actor.
+    ///
+    /// Every reply is delivered whole or the connection is closed — never a
+    /// truncated line:
+    /// - Darwin's `accept()` hands back a socket that inherits the listener's
+    ///   O_NONBLOCK. The old `send` wrote in a loop and gave up on the first
+    ///   short write, so once a large reply filled the socket buffer `write`
+    ///   returned EAGAIN and the rest of the line, newline included, was
+    ///   dropped (audit F03: 4,096 of 1,000,015 bytes arrived). Unsent bytes
+    ///   now stay in an outbox that a write source drains as the peer reads,
+    ///   without ever blocking the main thread.
+    /// - A bridge that has exited (its AI tool closed it) turned the next
+    ///   `write` into SIGPIPE, whose default action terminated all of AOM
+    ///   (audit F02). The socket carries SO_NOSIGPIPE, as Apple recommends for
+    ///   BSD sockets, so EPIPE just closes this one connection.
     final class Connection {
         let fd: Int32
-        private let source: DispatchSourceRead
+        private let queue: DispatchQueue
+        private let readSource: DispatchSourceRead
+        private let writeSource: DispatchSourceWrite
+        // Queue-confined state.
         private var buffer = Data()
+        private var outbox = Data()
+        private var outboxOffset = 0
+        /// A fresh dispatch source is inactive; it is resumed only while
+        /// output waits for the socket to become writable.
+        private var writeSuspended = true
+        private var shutDown = false
+        private var started = false
+        // Main-actor state.
         private var closed = false
         var toolID: UUID?
         var onLine: (@MainActor (String) -> Void)?
         var onClose: (@MainActor () -> Void)?
 
-        init(fd: Int32, queue: DispatchQueue) {
+        /// Output a peer has not read beyond this means it stopped reading;
+        /// the connection is closed instead of buffering without bound.
+        static let maximumPendingBytes = 64 * 1_024 * 1_024
+        static let maximumLineBytes = 4 * 1_024 * 1_024
+        /// A peer that takes no bytes at all for this long while a reply
+        /// waits has stopped reading (its AI tool hung): only this connection
+        /// is closed. Any progress, however slow, restarts the clock.
+        static let defaultStallTimeout: TimeInterval = 30
+        private let stallTimeout: TimeInterval
+        // Queue-confined.
+        private var lastProgress = DispatchTime.now()
+        private var stallCheckPending = false
+
+        init(fd: Int32, queue: DispatchQueue, stallTimeout: TimeInterval = Connection.defaultStallTimeout) {
             self.fd = fd
-            source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+            self.queue = queue
+            self.stallTimeout = stallTimeout
+            var on: Int32 = 1
+            _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+            // Non-blocking by design rather than by inheritance from the listener.
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+            readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+            writeSource = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
         }
 
         func start() {
-            source.setEventHandler { [weak self] in self?.readAvailable() }
-            source.setCancelHandler { [fd] in Darwin.close(fd) }
-            source.resume()
+            guard !started else { return }
+            started = true
+            // The descriptor is closed once, after both sources are cancelled.
+            let fd = fd
+            let remaining = CancelCountdown(2) { Darwin.close(fd) }
+            readSource.setEventHandler { [weak self] in self?.readAvailable() }
+            readSource.setCancelHandler { remaining.tick() }
+            writeSource.setEventHandler { [weak self] in self?.flush() }
+            writeSource.setCancelHandler { remaining.tick() }
+            readSource.resume()
+        }
+
+        deinit {
+            // `close()` normally tore the sources down already. One that was
+            // never started or closed must still not release an inactive or
+            // suspended dispatch source, which libdispatch traps on.
+            guard !shutDown else { return }
+            readSource.cancel(); writeSource.cancel()
+            if !started { readSource.resume(); Darwin.close(fd) }
+            if writeSuspended { writeSource.resume() }
         }
 
         private func readAvailable() {
             var chunk = [UInt8](repeating: 0, count: 65_536)
             let count = read(fd, &chunk, chunk.count)
-            guard count > 0 else { finish(); return }
+            if count < 0 {
+                // A spurious wake-up or a signal is not the end of the stream.
+                if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { return }
+                fail(); return
+            }
+            // EOF, an error or an oversized line: stop the (level-triggered)
+            // sources now rather than once main has run close().
+            guard count > 0 else { fail(); return }
             buffer.append(contentsOf: chunk[0..<count])
-            guard buffer.count < 4 * 1_024 * 1_024 else { finish(); return }
+            guard buffer.count < Self.maximumLineBytes else { fail(); return }
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let lineData = buffer[buffer.startIndex..<newline]
                 buffer.removeSubrange(buffer.startIndex...newline)
-                guard let line = String(data: lineData, encoding: .utf8), !line.isEmpty else { continue }
+                // Invalid UTF-8 is decoded lossily so the request is still
+                // answered (normally with a JSON-RPC parse error) instead of
+                // being dropped while the client waits for a reply forever.
+                let line = String(decoding: lineData, as: UTF8.self)
+                guard !line.isEmpty else { continue }
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated { self?.onLine?(line) }
                 }
             }
         }
 
+        /// Serialises on the caller's thread and queues the whole line.
         func send(_ object: [String: Any]) {
             guard !closed, var data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]) else { return }
             data.append(0x0A)
-            data.withUnsafeBytes { raw in
-                var offset = 0
-                while offset < raw.count {
-                    let written = write(fd, raw.baseAddress! + offset, raw.count - offset)
-                    if written <= 0 { break }
-                    offset += written
-                }
+            queue.async { [self] in enqueue(data) }
+        }
+
+        private func enqueue(_ data: Data) {
+            guard !shutDown else { return }
+            // An idle connection's stall clock starts with its next reply.
+            if outboxOffset >= outbox.count { lastProgress = .now() }
+            if outboxOffset > 0, outboxOffset >= outbox.count / 2 {
+                outbox.removeSubrange(0..<outboxOffset)
+                outboxOffset = 0
             }
+            outbox.append(data)
+            guard outbox.count - outboxOffset <= Self.maximumPendingBytes else {
+                NSLog("[AOM MCP] Closing a connection whose client stopped reading (%d bytes pending)", outbox.count - outboxOffset)
+                fail(); return
+            }
+            flush()
+        }
+
+        /// Writes as much of the outbox as the socket takes, then waits for
+        /// writability if anything is left.
+        private func flush() {
+            guard !shutDown else { return }
+            while outboxOffset < outbox.count {
+                let written = outbox.withUnsafeBytes { raw -> Int in
+                    write(fd, raw.baseAddress! + outboxOffset, raw.count - outboxOffset)
+                }
+                if written > 0 { outboxOffset += written; lastProgress = .now(); continue }
+                if written < 0, errno == EINTR { continue }
+                if written < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                    if writeSuspended { writeSuspended = false; writeSource.resume() }
+                    armStallCheck()
+                    return
+                }
+                // EPIPE, ECONNRESET or a zero-length write: the peer is gone.
+                fail(); return
+            }
+            outbox.removeAll(keepingCapacity: outbox.count <= 1_024 * 1_024)
+            outboxOffset = 0
+            if !writeSuspended { writeSuspended = true; writeSource.suspend() }
+        }
+
+        /// The output deadline (audit 2026-10-28 F03: "출력 큐 상한과 기한").
+        private func armStallCheck() {
+            guard !stallCheckPending else { return }
+            stallCheckPending = true
+            queue.asyncAfter(deadline: lastProgress + stallTimeout) { [weak self] in self?.checkStall() }
+        }
+
+        private func checkStall() {
+            stallCheckPending = false
+            guard !shutDown, outboxOffset < outbox.count else { return }
+            let idle = Double(DispatchTime.now().uptimeNanoseconds &- lastProgress.uptimeNanoseconds) / 1e9
+            guard idle >= stallTimeout else { armStallCheck(); return }
+            NSLog("[AOM MCP] Closing a connection whose client read nothing for %.1f s (%d bytes pending)",
+                  idle, outbox.count - outboxOffset)
+            fail()
+        }
+
+        /// Queue side: stop all I/O now and report the close on main.
+        private func fail() {
+            shutDownSources()
+            finish()
+        }
+
+        private func shutDownSources() {
+            guard !shutDown else { return }
+            shutDown = true
+            outbox = Data(); outboxOffset = 0
+            readSource.cancel()
+            writeSource.cancel()
+            // A cancelled source runs its cancel handler only once resumed.
+            if writeSuspended { writeSuspended = false; writeSource.resume() }
         }
 
         private func finish() {
             DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.close() } }
         }
 
+        /// Test seam: runs `body` after every queued send has been attempted.
+        func afterPendingWrites(_ body: @escaping () -> Void) { queue.async(execute: body) }
+
         func close() {
             guard !closed else { return }
             closed = true
-            source.cancel()
+            // A never-started connection still needs its sources activated
+            // (and cancel handlers installed) before they can be released.
+            start()
+            queue.async { [self] in shutDownSources() }
             let callback = onClose
             onClose = nil
             MainActor.assumeIsolated { callback?() }
+        }
+    }
+
+    /// Runs `action` when `tick()` has been called `count` times. Used by the
+    /// two cancel handlers of one connection, both on its serial queue.
+    private final class CancelCountdown {
+        private var count: Int
+        private let action: () -> Void
+        init(_ count: Int, action: @escaping () -> Void) { self.count = count; self.action = action }
+        func tick() {
+            count -= 1
+            if count == 0 { action() }
         }
     }
 }
@@ -323,9 +491,18 @@ final class ClipboardMCPServer {
 enum ClipboardMCPHandler {
     static let protocolVersion = "2025-06-18"
 
+    /// JSON-RPC 2.0 parse error; the id is null because none could be read.
+    static let parseError: [String: Any] = ["jsonrpc": "2.0", "id": NSNull(),
+                                            "error": ["code": -32700, "message": "Parse error: the request is not a JSON object."]]
+
     static func handle(_ message: [String: Any], store: ClipboardStore, automationAccess: Bool = false) -> [String: Any]? {
         let id = message["id"]
-        guard let method = message["method"] as? String else { return nil }
+        guard let method = message["method"] as? String else {
+            // Responses (result/error) and id-less notifications get no reply;
+            // a request with an id but no method is an Invalid Request.
+            guard let id, message["result"] == nil, message["error"] == nil else { return nil }
+            return ["jsonrpc": "2.0", "id": id, "error": ["code": -32600, "message": "Invalid Request: method is missing."]]
+        }
         func result(_ value: Any) -> [String: Any]? {
             guard let id else { return nil }
             return ["jsonrpc": "2.0", "id": id, "result": value]
@@ -564,29 +741,83 @@ enum ClipboardMCPBridge {
                 : "The token was rejected. Reconnect this tool in All of MacOS settings."
             failAll(reason)
         }
+        let closed = "All of MacOS closed the connection. Reopen it, then restart this MCP server."
         // socket → stdout
         let reader = Thread {
-            while let line = readLine(fd) { FileHandle.standardOutput.write(Data((line + "\n").utf8)) }
+            while let line = readLine(fd) {
+                unanswered.resolve(reply: line)
+                writeOutput(line)
+            }
+            // The app closed the connection: answer every request it left
+            // unanswered, then end as before. Until the review of 3.3.1 the
+            // bridge exited here at once and requests in flight got no reply.
+            for request in unanswered.drain() { answer(request, closed) }
             exit(0)
         }
         reader.start()
         // stdin → socket
         while let line = Swift.readLine(strippingNewline: true) {
-            if !line.isEmpty { writeLine(fd, line) }
+            guard !line.isEmpty else { continue }
+            unanswered.add(line)
+            // All of MacOS quit or dropped the connection: answer this and
+            // every later request with an error instead of dying on SIGPIPE.
+            if !writeLine(fd, line) { failAll(closed, pending: unanswered.drain()) }
         }
         exit(0)
     }
 
-    private static func failAll(_ reason: String) -> Never {
-        while let line = Swift.readLine(strippingNewline: true) {
-            guard let data = line.data(using: .utf8),
-                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let id = object["id"] else { continue }
-            let response: [String: Any] = ["jsonrpc": "2.0", "id": id, "error": ["code": -32000, "message": reason]]
-            if let out = try? JSONSerialization.data(withJSONObject: response) {
-                FileHandle.standardOutput.write(out + Data("\n".utf8))
-            }
+    /// Requests forwarded to All of MacOS and not answered yet, keyed by
+    /// their JSON-RPC id (in JSON form, so 1 and "1" stay apart).
+    final class Unanswered: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requests: [String: String] = [:]
+        private static func message(_ line: String) -> [String: Any]? {
+            guard let data = line.data(using: .utf8) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         }
+        private static func key(_ object: [String: Any]) -> String? {
+            guard let id = object["id"], !(id is NSNull), let data = try? JSONSerialization.data(withJSONObject: [id]) else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+        func add(_ line: String) {
+            guard let object = Self.message(line), object["method"] != nil, let key = Self.key(object) else { return }
+            lock.lock(); requests[key] = line; lock.unlock()
+        }
+        func resolve(reply line: String) {
+            guard let object = Self.message(line), object["method"] == nil, let key = Self.key(object) else { return }
+            lock.lock(); requests[key] = nil; lock.unlock()
+        }
+        /// Takes every unanswered request, so only one thread answers each.
+        func drain() -> [String] {
+            lock.lock(); defer { lock.unlock() }
+            let all = Array(requests.values)
+            requests.removeAll()
+            return all
+        }
+    }
+    private static let unanswered = Unanswered()
+    private static let outputLock = NSLock()
+
+    /// One whole line to stdout; the reader thread and the main thread both write.
+    private static func writeOutput(_ line: String) {
+        outputLock.lock(); defer { outputLock.unlock() }
+        FileHandle.standardOutput.write(Data((line + "\n").utf8))
+    }
+
+    /// A JSON-RPC error reply to `line`, if it is a request with an id.
+    private static func answer(_ line: String, _ reason: String) {
+        guard let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let id = object["id"], !(id is NSNull) else { return }
+        let response: [String: Any] = ["jsonrpc": "2.0", "id": id, "error": ["code": -32000, "message": reason]]
+        if let out = try? JSONSerialization.data(withJSONObject: response) {
+            writeOutput(String(decoding: out, as: UTF8.self))
+        }
+    }
+
+    private static func failAll(_ reason: String, pending: [String] = []) -> Never {
+        for line in pending { answer(line, reason) }
+        while let line = Swift.readLine(strippingNewline: true) { answer(line, reason) }
         exit(1)
     }
 
@@ -594,7 +825,7 @@ enum ClipboardMCPBridge {
         (try? String(decoding: JSONSerialization.data(withJSONObject: [value]), as: UTF8.self)).map { String($0.dropFirst().dropLast()) } ?? "\"\""
     }
 
-    private static func connect(path: String) -> Int32 {
+    static func connect(path: String) -> Int32 {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return -1 }
         var address = sockaddr_un()
@@ -606,17 +837,26 @@ enum ClipboardMCPBridge {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         if result != 0 { close(fd); return -1 }
+        // A write after All of MacOS quits must fail with EPIPE, not kill
+        // the bridge (and with it the AI tool's request) through SIGPIPE.
+        var on: Int32 = 1
+        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         return fd
     }
 
-    private static func writeLine(_ fd: Int32, _ line: String) {
+    /// Blocking socket: loops until the whole line is written. Returns false
+    /// when the app side is gone.
+    @discardableResult
+    private static func writeLine(_ fd: Int32, _ line: String) -> Bool {
         let data = Array((line + "\n").utf8)
         var offset = 0
         while offset < data.count {
             let written = data[offset...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-            if written <= 0 { return }
+            if written < 0, errno == EINTR { continue }
+            if written <= 0 { return false }
             offset += written
         }
+        return true
     }
 
     private static var pending = [UInt8]()
@@ -629,6 +869,7 @@ enum ClipboardMCPBridge {
             }
             var chunk = [UInt8](repeating: 0, count: 65_536)
             let count = read(fd, &chunk, chunk.count)
+            if count < 0, errno == EINTR { continue }
             if count <= 0 { return nil }
             pending.append(contentsOf: chunk[0..<count])
         }
