@@ -62,11 +62,12 @@ struct ModernWindowSnappingView: View {
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.m) {
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
+                                // The switches people come here for go first;
+                                // the large preview and the static gallery
+                                // used to push them below the fold.
+                                trackpadSnapCard
                                 previewCard
                                 galleryCard
-                                // The wide column gives the gesture legend and
-                                // readiness rows room, and balances the page.
-                                trackpadSnapCard
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             VStack(alignment: .leading, spacing: AOMSpace.m) {
@@ -80,11 +81,11 @@ struct ModernWindowSnappingView: View {
                         }
                     } else {
                         VStack(alignment: .leading, spacing: AOMSpace.m) {
+                            snappingCard
+                            trackpadSnapCard
                             previewCard
                             galleryCard
                             WindowPinningCard()
-                            snappingCard
-                            trackpadSnapCard
                             zonesCard
                         }
                     }
@@ -278,7 +279,7 @@ struct ModernWindowSnappingView: View {
             EmptyView()
         } content: {
             VStack(spacing: 0) {
-                Text("Swipe two fingers on a title bar: left or right for a half (further for a third), up to maximize, down to center. Add a leg along the other axis for a quarter, and swipe down on a snapped window to put it back.")
+                Text("Swipe two fingers on a title bar: left or right for a half (further for a third), up to maximize, down to center. Add a leg along the other axis for a quarter, and swipe down on a snapped window to put it back. Lift your fingers to apply the preview, however long you hold it; add a third finger to cancel.")
                     .font(AOMType.caption)
                     .foregroundStyle(AOMTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -245,6 +245,65 @@ final class UpdateCheckerNetworkTests: XCTestCase {
     }
 }
 
+// MARK: - Published tag formats and policy (audit 2026-10-28 F11)
+
+@MainActor
+final class UpdatePolicyTests: XCTestCase {
+    func testPublishedTagsParseToVersionAndBuild() {
+        XCTAssertEqual(AOMReleaseTag("aom-v3.3.0-b2026102801-ge83fb23d936e"), AOMReleaseTag(version: "3.3.0", build: "2026102801"))
+        XCTAssertEqual(AOMReleaseTag("aom-dev-v1.6.0-b2026101701-abcdef123456"), AOMReleaseTag(version: "1.6.0", build: "2026101701"))
+        XCTAssertEqual(AOMReleaseTag("v1.5.4"), AOMReleaseTag(version: "1.5.4", build: nil))
+        XCTAssertNil(AOMReleaseTag("aom-v3.3.0"), "an incomplete published tag is rejected")
+        XCTAssertNil(AOMReleaseTag("nightly"))
+    }
+
+    /// The audit's UpdateProbe: both comparisons answered "not newer".
+    func testRealReleasesAreRecognisedAsNewer() throws {
+        let current = try XCTUnwrap(AOMReleaseTag("aom-v3.3.0-b2026102801-ge83fb23d936e"))
+        XCTAssertTrue(UpdateChecker.isNewer(current, thanVersion: "3.2.0", build: "2026102706"))
+        let major = try XCTUnwrap(AOMReleaseTag("aom-v4.0.0-b2026102901-gabcdef"))
+        XCTAssertTrue(UpdateChecker.isNewer(major, thanVersion: "3.3.0", build: "2026102801"))
+        let rebuild = try XCTUnwrap(AOMReleaseTag("aom-v3.3.0-b2026102802-g0123456789ab"))
+        XCTAssertTrue(UpdateChecker.isNewer(rebuild, thanVersion: "3.3.0", build: "2026102801"), "same version, later build")
+        XCTAssertFalse(UpdateChecker.isNewer(current, thanVersion: "3.3.0", build: "2026102801"), "the installed build itself")
+        XCTAssertFalse(UpdateChecker.isNewer(current, thanVersion: "3.3.1", build: "2026102701"), "an older version with a later build number is not newer")
+    }
+
+    func testTheRealSessionNeverClaimsToBeUpToDate() async {
+        let checker = UpdateChecker(currentVersion: "0.0.1")
+        XCTAssertEqual(checker.status, .notChecked, "nothing is claimed before a check")
+        await checker.checkForUpdate()
+        XCTAssertEqual(checker.status, .disabled(UpdateChecker.disabledReason), "3.3.0 answered .upToDate without checking")
+    }
+
+    func testAMockedPublishedReleaseIsOffered() async {
+        let mock = MockNetworkSession()
+        mock.dataHandler = { _ in
+            let json = #"{"tag_name":"aom-v3.3.1-b2026102802-g0123456789ab","assets":[{"name":"All-of-MacOS-3.3.1.dmg","browser_download_url":"https://example.com/a.dmg"}]}"#
+            return (Data(json.utf8), HTTPURLResponse(url: UpdateChecker.releaseURL, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let checker = UpdateChecker(session: mock, currentVersion: "3.3.0", currentBuild: "2026102801")
+        await checker.checkForUpdate()
+        XCTAssertEqual(checker.status, .available(version: "3.3.1", downloadURL: URL(string: "https://example.com/a.dmg")!))
+    }
+
+    func testAnHTTPErrorIsAnErrorNotUpToDate() async {
+        let mock = MockNetworkSession()
+        mock.dataHandler = { _ in
+            (Data(#"{"message":"Not Found"}"#.utf8), HTTPURLResponse(url: UpdateChecker.releaseURL, statusCode: 404, httpVersion: nil, headerFields: nil)!)
+        }
+        let checker = UpdateChecker(session: mock, currentVersion: "3.3.0")
+        await checker.checkForUpdate()
+        XCTAssertEqual(checker.status, .error("GitHub answered 404."))
+    }
+}
+
+extension AOMReleaseTag {
+    init(version: String, build: String?) {
+        self = AOMReleaseTag(build.map { "aom-v\(version)-b\($0)-gtest" } ?? version)!
+    }
+}
+
 // MARK: - GitHubRelease model tests
 
 final class GitHubReleaseTests: XCTestCase {

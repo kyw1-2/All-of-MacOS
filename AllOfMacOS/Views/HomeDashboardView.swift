@@ -498,6 +498,9 @@ private struct HomeAutomationRow: View {
             Button(trigger.isEnabled ? "Turn Off" : "Turn On") { appState.toggleTrigger(trigger) }
         }
         .accessibilityAction(named: "Open in Automation") { open() }
+        // The Run button only appears on hover; VoiceOver and keyboard users
+        // reach the same command here.
+        .accessibilityAction(named: "Run Now") { if canRun { onRun() } }
         .help("Open \(trigger.displayName)")
     }
 
@@ -530,7 +533,7 @@ private struct HomeClipboardRow: View {
                 Image(systemName: "doc.on.doc").font(.system(size: 11.5)).foregroundStyle(AOMTheme.textSecondary)
                     .accessibilityHidden(true)
             } else if !entry.pinboardIDs.isEmpty {
-                Image(systemName: "pin.fill").font(.system(size: 9.5)).foregroundStyle(AOMTheme.textTertiary)
+                Image(systemName: "pin.fill").font(AOMType.micro).foregroundStyle(AOMTheme.textSecondary)
                     .accessibilityLabel("Pinned")
             }
         }

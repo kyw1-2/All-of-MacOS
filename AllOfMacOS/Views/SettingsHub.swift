@@ -434,10 +434,16 @@ struct SettingsSearchField: View {
         .frame(height: 28)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
+            // Increase Contrast gets a visible edge; the standard 0.06 rim
+            // was nearly invisible on both appearances.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(focused ? Color.accentColor.opacity(0.8) : Color.primary.opacity(0.06), lineWidth: focused ? 1.5 : 0.5)
+                .strokeBorder(focused ? Color.accentColor.opacity(0.8)
+                                      : (contrast == .increased ? Color(nsColor: .secondaryLabelColor) : Color.primary.opacity(0.12)),
+                              lineWidth: focused || contrast == .increased ? 1.5 : 0.5)
         }
     }
+
+    @Environment(\.colorSchemeContrast) private var contrast
 }
 
 // MARK: - Catalog
@@ -648,9 +654,11 @@ struct PermissionSummaryBadge: View {
                             .accessibilityLabel("Permissions need attention")
                     }
                 } else {
+                    // A text style rather than a fixed 10.5 pt, so it stays
+                    // readable and follows the system text size.
                     Label(complete ? "All granted" : "\(granted) of \(AOMPermission.required.count)",
                           systemImage: complete ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(AOMType.micro.weight(.medium))
                         .foregroundStyle(complete ? AOMTheme.positive : AOMTheme.warning)
                         .fixedSize()
                 }

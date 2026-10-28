@@ -155,7 +155,7 @@ jobs:
             exit 0
           fi
           cat > "$RUNNER_TEMP/aom-release-notes.md" <<EOF
-          All of MacOS $VERSION ($BUILD) — private AOM Dev development release.
+          All of MacOS $VERSION ($BUILD) — AOM Dev self-signed development release.
 
           - Source commit: $GITHUB_SHA
           - Code signing: AOM Dev (main app and XPC helper)
