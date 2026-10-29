@@ -305,8 +305,85 @@ struct MouseTriggerSpec: Codable, Hashable {
     }
 }
 
+/// MIDI 1.0 channel-voice messages a MIDI trigger can match. The raw value is
+/// the status byte without its channel, as stored in
+/// `SystemTriggerKind.midiMessage(status:)`; names follow BTT's MIDI list.
+///
+/// Filters: `channel` 0 = any; `number` (note, controller or program) -1 = any
+/// and is ignored by the two messages that have none; the value range filters
+/// the velocity, controller value, pressure or 14-bit bend, and is ignored by
+/// Program Change, whose only data is the program number.
+enum MIDIMessageType: Int, CaseIterable, Identifiable {
+    case noteOff = 0x80, noteOn = 0x90, polyPressure = 0xA0, controlChange = 0xB0
+    case programChange = 0xC0, channelPressure = 0xD0, pitchBend = 0xE0
+
+    static let anyNumber = -1
+    static let pitchBendCentre = 8192
+
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .noteOff: return "Note Off"
+        case .noteOn: return "Note On"
+        case .polyPressure: return "Poly Pressure"
+        case .controlChange: return "Control Change"
+        case .programChange: return "Program Change"
+        case .channelPressure: return "Channel Pressure"
+        case .pitchBend: return "Pitch Bend"
+        }
+    }
+    /// Trigger names keep the short "CC" they always used.
+    var shortTitle: String { self == .controlChange ? "CC" : title }
+    /// What `number` selects, or nil when the message has no number.
+    var numberTitle: String? {
+        switch self {
+        case .noteOff, .noteOn, .polyPressure: return "Note"
+        case .controlChange: return "Controller"
+        case .programChange: return "Program"
+        case .channelPressure, .pitchBend: return nil
+        }
+    }
+    var hasNumber: Bool { numberTitle != nil }
+    /// What the value range filters, or nil when it is not a filter.
+    var valueTitle: String? {
+        switch self {
+        case .noteOff, .noteOn: return "Velocity"
+        case .polyPressure, .channelPressure: return "Pressure"
+        case .controlChange: return "Value"
+        case .programChange: return nil
+        case .pitchBend: return "Bend"
+        }
+    }
+    var valueRange: ClosedRange<Int> { self == .pitchBend ? 0...16383 : 0...127 }
+    /// Messages that can drive a continuous value binding.
+    var isContinuous: Bool { [.controlChange, .pitchBend, .channelPressure, .polyPressure].contains(self) }
+    /// The decoded value as the AOM value 0…1.
+    func normalized(_ value: Int) -> Double {
+        Double(min(max(value, valueRange.lowerBound), valueRange.upperBound)) / Double(valueRange.upperBound)
+    }
+}
+
 /// Creation-time validation that is independent of any UI.
 enum TriggerValidation {
+    /// MIDI filters and Force Touch stages, which the UI cannot always rule out.
+    static func systemProblem(for kind: SystemTriggerKind) -> String? {
+        switch kind {
+        case .midiMessage(_, let status, let channel, let number, let low, let high):
+            guard let type = MIDIMessageType(rawValue: status) else { return "Choose a MIDI message type." }
+            if !(0...16).contains(channel) { return "MIDI channel must be 1–16, or any." }
+            if let title = type.numberTitle, !(MIDIMessageType.anyNumber...127).contains(number) {
+                return "\(title) must be 0–127, or any."
+            }
+            if let title = type.valueTitle, !(type.valueRange.contains(low) && type.valueRange.contains(high) && low <= high) {
+                return "\(title) range must lie within \(type.valueRange.lowerBound)–\(type.valueRange.upperBound)."
+            }
+            return nil
+        case .forceTouchStage(let stage):
+            return (1...2).contains(stage) ? nil : "Force Touch stage must be 1 or 2."
+        default: return nil
+        }
+    }
+
     /// A human-readable reason this trigger must not be created, or nil.
     ///
     /// Mirrors BTT's warning that binding the left (or right) button without a
@@ -326,7 +403,11 @@ enum TriggerValidation {
         }
         return nil
     }
-    static func problem(for trigger: Trigger) -> String? { problem(for: trigger.input, requiredModifiers: trigger.requiredModifiers) }
+    static func problem(for trigger: Trigger) -> String? {
+        if let problem = problem(for: trigger.input, requiredModifiers: trigger.requiredModifiers) { return problem }
+        if case .systemEvent(let kind) = trigger.input, let problem = systemProblem(for: kind) { return problem }
+        return trigger.valueBinding?.problem(for: trigger.input)
+    }
 }
 
 struct KeyboardShortcut: Codable, Equatable, Hashable {
