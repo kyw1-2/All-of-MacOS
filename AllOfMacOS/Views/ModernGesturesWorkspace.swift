@@ -158,6 +158,9 @@ struct ModernGesturesWorkspace: View {
             reconcileSelection()
             showInputSettings = selectedTrigger?.actions.isEmpty == true
             applyPreviewEditorHook()
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-add-midi-trigger") {
+                presentAddTrigger(.otherTriggers)
+            }
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
