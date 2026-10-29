@@ -670,13 +670,48 @@ extension CaptureSettings {
         static let clickSize = "AOMCaptureRecordingClickSize"
         static let clickDuration = "AOMCaptureRecordingClickDuration"
         static let keystrokeModifiers = "AOMCaptureRecordingKeystrokeModifiers"
+        static let hidesDesktopIcons = "AOMCaptureRecordingHidesDesktopIcons"
+        static let gifMaxDimension = "AOMCaptureRecordingGIFSize"
+        static let gifLoops = "AOMCaptureRecordingGIFLoop"
+        static let scalesTo1x = "AOMCaptureRecordingScaleTo1x"
     }
 
     /// The 3.3.3 recording keys a profile backup carries.
     static var recording333BackedUpKeys: [String] {
         [RecordingKey.showsCursor, RecordingKey.cursorSize, RecordingKey.cursorHighlight, RecordingKey.cursorHighlightColor,
          RecordingKey.cursorHighlightSize, RecordingKey.clickStyle, RecordingKey.clickColor, RecordingKey.rightClickColor,
-         RecordingKey.clickSize, RecordingKey.clickDuration, RecordingKey.keystrokeModifiers]
+         RecordingKey.clickSize, RecordingKey.clickDuration, RecordingKey.keystrokeModifiers,
+         RecordingKey.hidesDesktopIcons, RecordingKey.gifMaxDimension, RecordingKey.gifLoops, RecordingKey.scalesTo1x]
+    }
+
+    /// Hide Finder's desktop icons while a recording runs (opt-in; restarts
+    /// Finder at start and stop, restored after a crash at the next launch).
+    static var recordingHidesDesktopIcons: Bool {
+        get { d.bool(forKey: RecordingKey.hidesDesktopIcons) }
+        set { d.set(newValue, forKey: RecordingKey.hidesDesktopIcons) }
+    }
+
+    static let recordingGIFSizeChoices = [480, 640, 800, 960, 1280]
+    /// Longest edge of exported GIF frames, in pixels (960 before 3.3.3).
+    static var recordingGIFMaxDimension: Int {
+        get {
+            let value = d.integer(forKey: RecordingKey.gifMaxDimension)
+            return recordingGIFSizeChoices.contains(value) ? value : 960
+        }
+        set { d.set(recordingGIFSizeChoices.contains(newValue) ? newValue : 960, forKey: RecordingKey.gifMaxDimension) }
+    }
+
+    /// GIFs loop forever (default) or play once.
+    static var recordingGIFLoops: Bool {
+        get { d.object(forKey: RecordingKey.gifLoops) as? Bool ?? true }
+        set { d.set(newValue, forKey: RecordingKey.gifLoops) }
+    }
+
+    /// CleanShot's "Scale Retina videos to 1x": record Retina displays at
+    /// standard resolution for files about a quarter of the size.
+    static var recordingScalesTo1x: Bool {
+        get { d.bool(forKey: RecordingKey.scalesTo1x) }
+        set { d.set(newValue, forKey: RecordingKey.scalesTo1x) }
     }
 
     private static func clamped(_ key: String, _ range: ClosedRange<Double>, default value: Double) -> Double {

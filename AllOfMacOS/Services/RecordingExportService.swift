@@ -295,8 +295,11 @@ enum RecordingExportService {
 
     /// Export the requested span as a GIF, capped at 120 seconds / 30 fps to keep
     /// memory and output file sizes bounded. Work runs off the main event loop.
+    /// `maxDimension` bounds the longest frame edge (320…1600 px); `loops`
+    /// false plays the animation once (3.3.3 GIF options).
     static func gif(source: URL, start: Double, end: Double, fps: Int = 8,
-                    studio: AOMStudioSettings = AOMStudioSettings(), clips: [AOMStudioClip]? = nil) async throws -> URL {
+                    studio: AOMStudioSettings = AOMStudioSettings(), clips: [AOMStudioClip]? = nil,
+                    maxDimension: Int = 960, loops: Bool = true) async throws -> URL {
         let total = try await duration(for: source)
         let range = try validatedRange(start: start, end: end, duration: total)
         let safeEnd = CMTimeGetSeconds(range.end)
@@ -306,9 +309,11 @@ enum RecordingExportService {
             throw ExportError.failed("GIFs support up to 120 seconds at 1–30 fps.")
         }
         try Task.checkCancellation()
+        let side = CGFloat(min(1600, max(320, maxDimension)))
         let worker = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
-            return try generateGIF(source: source, clips: selected, fps: fps, studio: studio)
+            return try generateGIF(source: source, clips: selected, fps: fps, studio: studio,
+                                   maximumSize: CGSize(width: side, height: side), loops: loops)
         }
         return try await withTaskCancellationHandler {
             try await worker.value
@@ -318,7 +323,8 @@ enum RecordingExportService {
     }
 
     private static func generateGIF(source: URL, clips: [AOMStudioClip], fps: Int,
-                                    studio: AOMStudioSettings) throws -> URL {
+                                    studio: AOMStudioSettings, maximumSize: CGSize = CGSize(width: 960, height: 960),
+                                    loops: Bool = true) throws -> URL {
         let target = outputURL(for: source, suffix: "Animated", extension: "gif")
         let temporary = target.deletingLastPathComponent()
             .appendingPathComponent(".\(UUID().uuidString).gif")
@@ -326,7 +332,7 @@ enum RecordingExportService {
         let asset = AVURLAsset(url: source)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 960, height: 960)
+        generator.maximumSize = maximumSize
         let camera = studio.showCamera ? AOMStudioCameraFrames(source: source) : nil
         if studio.isActive || camera != nil {
             let filters = AVMutableVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
@@ -346,7 +352,8 @@ enum RecordingExportService {
                                                                 frames, nil) else {
             throw ExportError.failed("Could not initialize the GIF encoder.")
         }
-        let loop: [CFString: Any] = [kCGImagePropertyGIFLoopCount: 0]
+        // Loop count 0 repeats forever; 1 plays the animation once.
+        let loop: [CFString: Any] = [kCGImagePropertyGIFLoopCount: loops ? 0 : 1]
         CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: loop] as CFDictionary)
         let delay = 1 / Double(fps)
         let properties: [CFString: Any] = [

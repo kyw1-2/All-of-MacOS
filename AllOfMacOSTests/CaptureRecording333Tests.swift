@@ -546,3 +546,174 @@ final class CaptureRecording333ClickTests: XCTestCase {
         }
     }
 }
+
+// MARK: - §10 CS-옵션 recording contract gaps
+
+/// A stand-in for Finder's `CreateDesktop` preference and its restart.
+@MainActor
+private final class FakeFinder {
+    var value: Bool?
+    var restarts = 0
+    var writes = 0
+    init(_ value: Bool?) { self.value = value }
+    var finder: RecordingDesktopIcons.Finder {
+        RecordingDesktopIcons.Finder(read: { self.value },
+                                     write: { self.value = $0; self.writes += 1 },
+                                     restart: { self.restarts += 1 })
+    }
+}
+
+@MainActor
+final class CaptureRecording333ContractTests: XCTestCase {
+    func testDesktopIconsAreHiddenOnlyWhenShowingAndArePutBack() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let journal = folder.appendingPathComponent("icons.json")
+        let fake = FakeFinder(nil)
+        let icons = RecordingDesktopIcons(journal: journal, finder: fake.finder)
+
+        XCTAssertTrue(icons.hide())
+        XCTAssertEqual(fake.value, false)
+        XCTAssertEqual(fake.restarts, 1)
+        XCTAssertTrue(icons.isHidingIcons, "journaled before the change")
+        XCTAssertFalse(icons.hide(), "a restarted take keeps them hidden without another Finder restart")
+        XCTAssertEqual(fake.restarts, 1)
+        icons.restore()
+        XCTAssertNil(fake.value, "an unset preference goes back to unset")
+        XCTAssertEqual(fake.restarts, 2)
+        XCTAssertFalse(icons.isHidingIcons)
+        icons.restore()
+        XCTAssertEqual(fake.restarts, 2, "nothing to restore twice")
+
+        fake.value = true
+        XCTAssertTrue(icons.hide())
+        icons.restore()
+        XCTAssertEqual(fake.value, true)
+
+        // Icons the user had hidden already are left alone and never shown.
+        fake.value = false
+        let restarts = fake.restarts
+        XCTAssertFalse(icons.hide())
+        XCTAssertFalse(icons.isHidingIcons)
+        icons.restore()
+        XCTAssertEqual(fake.value, false)
+        XCTAssertEqual(fake.restarts, restarts)
+    }
+
+    func testDesktopIconsComeBackAtTheNextLaunchAfterACrash() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let journal = folder.appendingPathComponent("icons.json")
+        let fake = FakeFinder(true)
+        XCTAssertTrue(RecordingDesktopIcons(journal: journal, finder: fake.finder).hide())
+        // The process ends without stopping; a new instance reads the journal.
+        let relaunched = RecordingDesktopIcons(journal: journal, finder: fake.finder)
+        XCTAssertTrue(relaunched.isHidingIcons)
+        relaunched.restore()
+        XCTAssertEqual(fake.value, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journal.path))
+
+        // An unreadable journal still shows the icons again.
+        fake.value = false
+        try Data("not json".utf8).write(to: journal)
+        relaunched.restore()
+        XCTAssertNil(fake.value)
+        XCTAssertFalse(relaunched.isHidingIcons)
+
+        // Shown again by hand meanwhile: no needless Finder restart.
+        XCTAssertTrue(relaunched.hide())
+        fake.value = true
+        let restarts = fake.restarts
+        relaunched.restore()
+        XCTAssertEqual(fake.restarts, restarts)
+        XCTAssertNil(fake.value)
+    }
+
+    func testFocusShortcutEngagedForARecordingIsUndoneAfterACrash() async throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let originalRunner = RecordingFocus.runner, originalJournal = RecordingFocus.journalURL
+        defer { RecordingFocus.runner = originalRunner; RecordingFocus.journalURL = originalJournal }
+        var ran: [String] = []
+        RecordingFocus.runner = { ran.append($0) }
+        RecordingFocus.journalURL = folder.appendingPathComponent("focus.json")
+        try await preservingDefaults(["AOMCaptureRecordingFocus", "AOMCaptureRecordingFocusOn", "AOMCaptureRecordingFocusOff"]) {
+            CaptureSettings.recordingFocus = true
+            CaptureSettings.recordingFocusOnShortcut = "Focus On Test"
+            CaptureSettings.recordingFocusOffShortcut = "Focus Off Test"
+            RecordingFocus.engage()
+            XCTAssertEqual(ran, ["Focus On Test"])
+            XCTAssertEqual(RecordingSystemState.read(RecordingFocus.journalURL)?["offShortcut"], "Focus Off Test")
+            RecordingFocus.release()
+            XCTAssertEqual(ran, ["Focus On Test", "Focus Off Test"])
+            XCTAssertNil(RecordingSystemState.read(RecordingFocus.journalURL))
+
+            // A crash left the journal behind: the next launch turns Focus off.
+            XCTAssertTrue(RecordingSystemState.write(["offShortcut": "Older Off"], to: RecordingFocus.journalURL))
+            RecordingFocus.recoverAfterUnexpectedExit()
+            XCTAssertEqual(ran.last, "Older Off")
+            RecordingFocus.recoverAfterUnexpectedExit()
+            XCTAssertEqual(ran.count, 3, "only once")
+            CaptureSettings.recordingFocus = false
+            RecordingFocus.engage()
+            XCTAssertEqual(ran.count, 3, "off unless opted in")
+        }
+    }
+
+    func testGIFOptionsBoundTheFrameSizeAndTheLoop() async throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("movie.mp4")
+        try await makeSyntheticMovie(at: source)
+        let big = AOMStudioSettings(aspect: .square, resolution: .hd720)
+        func frameWidthAndLoop(_ gif: URL) throws -> (Int, Int?) {
+            let image = try XCTUnwrap(CGImageSourceCreateWithURL(gif as CFURL, nil))
+            let frame = try XCTUnwrap(CGImageSourceCreateImageAtIndex(image, 0, nil))
+            let properties = CGImageSourceCopyProperties(image, nil) as? [CFString: Any]
+            let gifProperties = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+            return (frame.width, gifProperties?[kCGImagePropertyGIFLoopCount] as? Int)
+        }
+        let small = try await RecordingExportService.gif(source: source, start: 0, end: 1, fps: 2, studio: big,
+                                                         maxDimension: 480, loops: false)
+        let (smallWidth, once) = try frameWidthAndLoop(small)
+        XCTAssertEqual(smallWidth, 480)
+        XCTAssertNotEqual(once, 0, "plays once instead of looping forever")
+        let standard = try await RecordingExportService.gif(source: source, start: 0, end: 1, fps: 2, studio: big)
+        let (standardWidth, forever) = try frameWidthAndLoop(standard)
+        XCTAssertEqual(standardWidth, 960, "960 px stays the default")
+        XCTAssertEqual(forever, 0)
+
+        try await preservingDefaults(["AOMCaptureRecordingGIFSize", "AOMCaptureRecordingGIFLoop"]) {
+            UserDefaults.standard.removeObject(forKey: "AOMCaptureRecordingGIFSize")
+            UserDefaults.standard.removeObject(forKey: "AOMCaptureRecordingGIFLoop")
+            XCTAssertEqual(CaptureSettings.recordingGIFMaxDimension, 960)
+            XCTAssertTrue(CaptureSettings.recordingGIFLoops)
+            CaptureSettings.recordingGIFMaxDimension = 640
+            XCTAssertEqual(CaptureSettings.recordingGIFMaxDimension, 640)
+            UserDefaults.standard.set(777, forKey: "AOMCaptureRecordingGIFSize")
+            XCTAssertEqual(CaptureSettings.recordingGIFMaxDimension, 960)
+            CaptureSettings.recordingGIFLoops = false
+            XCTAssertFalse(CaptureSettings.recordingGIFLoops)
+        }
+    }
+
+    func testScaleRetinaTo1xAndTheEncoderLimit() async {
+        XCTAssertEqual(ScreenRecordingService.captureScale(displayScales: [2, 1], scalesTo1x: false, longestEdge: 1000), 2)
+        XCTAssertEqual(ScreenRecordingService.captureScale(displayScales: [2], scalesTo1x: true, longestEdge: 1000), 1)
+        XCTAssertEqual(ScreenRecordingService.captureScale(displayScales: [2], scalesTo1x: false, longestEdge: 5000), 7680.0 / 5000,
+                       accuracy: 0.0001)
+        XCTAssertEqual(ScreenRecordingService.captureScale(displayScales: [], scalesTo1x: false, longestEdge: 100), 1)
+        await preservingDefaults(["AOMCaptureRecordingScaleTo1x", "AOMCaptureRecordingHidesDesktopIcons"]) {
+            UserDefaults.standard.removeObject(forKey: "AOMCaptureRecordingScaleTo1x")
+            UserDefaults.standard.removeObject(forKey: "AOMCaptureRecordingHidesDesktopIcons")
+            XCTAssertFalse(CaptureSettings.recordingScalesTo1x)
+            XCTAssertFalse(CaptureSettings.recordingHidesDesktopIcons, "hiding desktop icons is opt-in")
+            CaptureSettings.recordingScalesTo1x = true
+            XCTAssertTrue(CaptureSettings.recordingScalesTo1x)
+        }
+        for key in ["AOMCaptureRecordingHidesDesktopIcons", "AOMCaptureRecordingGIFSize", "AOMCaptureRecordingGIFLoop",
+                    "AOMCaptureRecordingScaleTo1x"] {
+            XCTAssertTrue(PresetManager.isBackedUpSetting(key), "\(key) is in profile backups")
+        }
+    }
+}

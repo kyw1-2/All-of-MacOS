@@ -14,6 +14,9 @@ struct RecordingExportEditor: View {
     @State private var start = 0.0
     @State private var end = 0.0
     @State private var fps = 8
+    /// GIF options (3.3.3); shared with the recording settings.
+    @AppStorage("AOMCaptureRecordingGIFSize") private var gifSize = 960
+    @AppStorage("AOMCaptureRecordingGIFLoop") private var gifLoops = true
     @State private var muteAudio = false
     @State private var quality: RecordingExportService.StudioQuality = .high
     @State private var previewPlayer: AVPlayer?
@@ -164,6 +167,15 @@ struct RecordingExportEditor: View {
                     }
                     .frame(width: 110)
                     .disabled(isExporting)
+                    Picker("Size", selection: $gifSize) {
+                        ForEach(CaptureSettings.recordingGIFSizeChoices, id: \.self) { Text("\($0) px").tag($0) }
+                    }
+                    .frame(width: 120)
+                    .help("Longest edge of the GIF frames")
+                    .disabled(isExporting)
+                    Toggle("Loop", isOn: $gifLoops)
+                        .help("Off plays the GIF once")
+                        .disabled(isExporting)
                 }
 
                 if outputDuration > 120 {
@@ -546,6 +558,7 @@ struct RecordingExportEditor: View {
         status = ""
         resultURL = nil
         let begin = start, finish = end, frames = fps
+        let gifSide = gifSize, gifRepeats = gifLoops
         let muted = muteAudio, selectedQuality = quality
         let studio = studioSettings
         let selected = exportClips
@@ -555,7 +568,8 @@ struct RecordingExportEditor: View {
                 let exported: URL
                 if gif {
                     exported = try await RecordingExportService.gif(
-                        source: source, start: begin, end: finish, fps: frames, studio: studio, clips: selected)
+                        source: source, start: begin, end: finish, fps: frames, studio: studio, clips: selected,
+                        maxDimension: gifSide, loops: gifRepeats)
                 } else if rendered {
                     exported = try await RecordingExportService.render(
                         source: source, start: begin, end: finish,
