@@ -151,6 +151,20 @@ struct ClipboardPreferenceRow: View {
     }
 }
 
+/// Link cards fetch page titles and images only while private web previews
+/// are on (clipboard P03), so the row is disabled and says why until then.
+struct ClipboardLinkCardsRow: View {
+    @ObservedObject private var prefs = ClipboardPreferences.shared
+
+    var body: some View {
+        ClipboardPreferenceRow(icon: "link.badge.plus", tint: .teal, title: "Link Cards",
+                               subtitle: prefs.networkPreviews ? "Show page titles and images on link cards"
+                                                               : "Turn on Link Previews to show page titles and images",
+                               keyPath: \.linkCards)
+            .dependentSetting(on: prefs.networkPreviews)
+    }
+}
+
 // MARK: - Row chrome
 
 struct HubRowShell<Control: View>: View {
@@ -308,6 +322,9 @@ struct HubSliderRow: View {
     let range: ClosedRange<Double>
     let step: Double
     let percent: Bool
+    /// Digits after the point when not a percentage (3.3.3: 2 for 0.25 s and
+    /// the 0.02–0.3 hysteresis, which one digit would round).
+    var decimals = 1
 
     @State private var liveValue: Double?
 
@@ -326,7 +343,7 @@ struct HubSliderRow: View {
                     }), in: range, step: step)
                     .frame(width: 150)
                     .controlSize(.small)
-                Text(percent ? "\(Int((value * 100).rounded()))%" : String(format: "%.1f", value))
+                Text(percent ? "\(Int((value * 100).rounded()))%" : String(format: "%.\(decimals)f", value))
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 40, alignment: .trailing)
@@ -485,12 +502,18 @@ enum SettingsCatalog {
         "appearance": "Appearance", "accentColor": "Appearance",
         "hud": "Feedback", "hudOpacity": "Feedback",
         // Ten untitled rows used to follow Feedback in one box (e.2: at most 8).
+        // 3.3.3 adds nine more, so Title-Bar Snap and Mission Control, Dock &
+        // Menu Bar are split to stay at 8 rows or fewer per box.
         "titleBarSnap": "Title-Bar Snap", "titleBarSnapGrid": "Title-Bar Snap", "titleBarSnapAlmost": "Title-Bar Snap",
-        "titleBarSnapHotkeys": "Title-Bar Snap", "titleBarSnapHoldCancel": "Title-Bar Snap",
-        "titleBarSnapSensitivity": "Title-Bar Snap",
-        "mcButtons": "Mission Control, Dock & Menu Bar", "spaceSwipe": "Mission Control, Dock & Menu Bar",
-        "dockPinchQuit": "Mission Control, Dock & Menu Bar", "dockGestures": "Mission Control, Dock & Menu Bar",
-        "menuBarGestures": "Mission Control, Dock & Menu Bar",
+        "titleBarSnapNativeTiling": "Title-Bar Snap", "titleBarSnapHotkeys": "Title-Bar Snap",
+        "titleBarSnapTooltip": "Title-Bar Snap",
+        "titleBarSnapHoldCancel": "Title-Bar Gestures", "titleBarSnapSensitivity": "Title-Bar Gestures",
+        "titleBarSnapMotionPause": "Title-Bar Gestures", "titleBarSnapTabs": "Title-Bar Gestures",
+        "titleBarSnapSuperAnywhere": "Title-Bar Gestures",
+        "mcButtons": "Mission Control", "missionControlGestures": "Mission Control",
+        "spaceSwipe": "Dock & Menu Bar", "dockPinchQuit": "Dock & Menu Bar", "dockGestures": "Dock & Menu Bar",
+        "dockDoublePinch": "Dock & Menu Bar", "appMenuGestures": "Dock & Menu Bar",
+        "menuBarGestures": "Dock & Menu Bar", "menuBarScrollToTop": "Dock & Menu Bar",
         "groupByFolder": "Automation List",
         "captureFormat": "Screenshots", "captureQuality": "Screenshots", "showsCursor": "Screenshots",
         "windowShadow": "Screenshots", "playsSound": "Screenshots", "selfTimer": "Screenshots",
@@ -499,11 +522,14 @@ enum SettingsCatalog {
         "overlay": "After Capture", "ocrLineBreaks": "After Capture", "captureDetail": "After Capture",
         "historyCapacity": "History", "historyRetention": "History",
         "recordingFPS": "Recording", "recordingFormat": "Recording", "recordingAudio": "Recording",
-        "clickIndicators": "Recording", "cameraOverlay": "Recording", "keystrokeOverlay": "Recording",
+        "recordingScaleTo1x": "Recording", "recordingHidesDesktopIcons": "Recording",
+        "clickIndicators": "Recording Overlays", "recordingCursorHighlight": "Recording Overlays",
+        "cameraOverlay": "Recording Overlays", "keystrokeOverlay": "Recording Overlays",
         "clipboardCompact": "Shelf", "clipboardCapture": "Shelf", "clipboardPreviews": "Shelf",
+        "clipboardLinkCards": "Shelf",
         "clipboardQuickModifier": "Pasting", "clipboardPlainModifier": "Pasting",
         "clipboardStorage": "History",
-        "gestures": "Automations", "bttPreset": "Import",
+        "gestures": "Automations", "bttPreset": "Import", "forceTouchStageHysteresis": "Force Touch",
         "hyperKey": "Keyboard & Mouse", "keyRemaps": "Keyboard & Mouse", "reverseWheel": "Keyboard & Mouse",
         "permissions": "Access", "privacySettings": "Access",
         "backups": "Your Data", "reset": "Your Data", "tutorial": "Help",
@@ -521,13 +547,22 @@ enum SettingsCatalog {
             item("titleBarSnap", .general, "Trackpad Title-Bar Snap", "Swipe two fingers on a title bar to snap the window", ["snap", "swish", "스냅", "창", "트랙패드", "trackpad"], AnyView(HubToggleRow(icon: "hand.draw", tint: .indigo, title: "Trackpad Title-Bar Snap", subtitle: "Swipe two fingers on a title bar to snap the window", key: TitleBarWindowSnap.enabledKey, fallback: false))),
             item("titleBarSnapGrid", .general, "Title-Bar Snap Grid", "2 × 2 halves and quarters, 3 × 2 thirds and sixths, or 3 × 3 ninths", ["grid", "thirds", "sixths", "ninths", "3분할", "삼분할", "6분할", "9분할", "격자", "그리드", "swish", "스냅"], AnyView(HubChoiceRow(icon: "square.grid.3x3", tint: .indigo, title: "Title-Bar Snap Grid", subtitle: "2 × 2 keeps halves and quarters only", key: TitleBarWindowSnap.gridKey, fallback: TitleBarWindowSnap.grid().rawValue, options: SwishSnap.Grid.allCases.map { (label: $0.rawValue.replacingOccurrences(of: "x", with: " × "), value: $0.rawValue) }))),
             item("titleBarSnapAlmost", .general, "Almost Maximize", "Swipe up to fill almost the whole screen; swipe up again to maximize", ["almost", "maximize", "최대화", "거의", "여백", "swish", "스냅"], AnyView(HubToggleRow(icon: "arrow.up.left.and.arrow.down.right", tint: .indigo, title: "Almost Maximize", subtitle: "Swipe up again to maximize", key: TitleBarWindowSnap.almostKey, fallback: false))),
-            item("titleBarSnapHotkeys", .general, "Snap Keyboard Shortcuts", "⌃⌥ with the arrows, WASD, IJKL or HJKL moves the front window like a swipe", ["hotkey", "keyboard", "shortcut", "단축키", "키보드", "arrows", "화살표", "wasd", "ijkl", "hjkl", "swish", "스냅"], AnyView(HubChoiceRow(icon: "keyboard", tint: .indigo, title: "Snap Keyboard Shortcuts", subtitle: "⌃⌥ and four keys swipe the front window", key: TitleBarWindowSnap.hotkeysKey, fallback: SwishSnap.HotkeyScheme.off.rawValue, options: [("Off", "off"), ("⌃⌥ Arrows", "arrows"), ("⌃⌥ WASD", "wasd"), ("⌃⌥ IJKL", "ijkl"), ("⌃⌥ HJKL", "hjkl")]))),
+            item("titleBarSnapNativeTiling", .general, "Native Window Tiling", "Halves, quarters and Fill use macOS's own tiling where the app offers Window › Move & Resize (macOS 15 or later); other places use AOM's engine", ["native", "tiling", "타일링", "창 타일링", "네이티브", "기본", "macos", "move & resize", "이동 및 크기 조절", "fill", "채우기", "swish", "스냅"], AnyView(HubToggleRow(icon: "rectangle.split.2x2", tint: .indigo, title: "Native Window Tiling", subtitle: "Use macOS tiling for halves, quarters and Fill", key: TitleBarWindowSnap.nativeTilingKey, fallback: false))),
+            item("titleBarSnapHotkeys", .general, "Snap Keyboard Shortcuts", "⌃⌥ with the arrows, WASD, IJKL, HJKL or ,AOE moves the front window like a swipe; add ⌘ for the display that way or ⇧ for the 3 × 2 grid", ["hotkey", "keyboard", "shortcut", "단축키", "키보드", "arrows", "화살표", "wasd", "ijkl", "hjkl", ",aoe", "aoe", "dvorak", "드보락", "swish", "스냅"], AnyView(HubChoiceRow(icon: "keyboard", tint: .indigo, title: "Snap Keyboard Shortcuts", subtitle: "⌃⌥ and four keys swipe the front window", key: TitleBarWindowSnap.hotkeysKey, fallback: SwishSnap.HotkeyScheme.off.rawValue, options: [("Off", "off"), ("⌃⌥ Arrows", "arrows"), ("⌃⌥ WASD", "wasd"), ("⌃⌥ IJKL", "ijkl"), ("⌃⌥ HJKL", "hjkl"), ("⌃⌥ ,AOE", SwishSnap.HotkeyScheme.dvorak.rawValue)]))),
+            item("titleBarSnapTooltip", .general, "Gesture Tooltip", "Name where the window goes beside the pointer while you swipe", ["tooltip", "툴팁", "label", "이름", "pointer", "포인터", "preview", "미리보기", "swish", "스냅"], AnyView(HubToggleRow(icon: "text.bubble", tint: .indigo, title: "Gesture Tooltip", subtitle: "Name where the window goes beside the pointer", key: TitleBarWindowSnap.tooltipKey, fallback: true))),
             item("titleBarSnapHoldCancel", .general, "Hold Still to Cancel", "Seconds of resting fingers that cancel a title-bar, top-bar or Dock gesture (0 = off)", ["cancel", "취소", "hold", "가만히", "swish", "2초"], AnyView(HubSliderRow(icon: "hand.raised", tint: .indigo, title: "Hold Still to Cancel", subtitle: "Seconds of resting fingers (0 = off)", key: TitleBarWindowSnap.holdCancelKey, fallback: TitleBarWindowSnap.holdCancelDefault, range: 0...3, step: 0.5, percent: false))),
             item("titleBarSnapSensitivity", .general, "Title-Bar Snap Sensitivity", "How little travel starts a title-bar swipe (1 = 3.3.1, higher reacts sooner)", ["sensitivity", "민감도", "반응", "속도", "swish", "스냅"], AnyView(HubSliderRow(icon: "speedometer", tint: .indigo, title: "Title-Bar Snap Sensitivity", subtitle: "Higher reacts after less travel", key: TitleBarWindowSnap.sensitivityKey, fallback: TitleBarWindowSnap.sensitivityDefault, range: 0.5...2, step: 0.05, percent: false))),
+            item("titleBarSnapMotionPause", .general, "Multi-Motion Pause", "Rest briefly on a swipe or pinch, then move again to start another gesture without lifting (0 = off)", ["multi", "motion", "pause", "chain", "멀티", "연속", "제스처", "멈춤", "쉬기", "swish", "스냅"], AnyView(HubSliderRow(icon: "pause.circle", tint: .indigo, title: "Multi-Motion Pause", subtitle: "Seconds of rest before the next gesture (0 = off)", key: TitleBarWindowSnap.motionPauseKey, fallback: TitleBarWindowSnap.motionPauseDefault, range: 0...1, step: 0.25, percent: false, decimals: 2))),
+            item("titleBarSnapTabs", .general, "Tab Gestures", "Pinch in on a tab to close it; tap and hold a native or Safari tab, then lift, to move it to a new window", ["tab", "tabs", "탭", "탭 닫기", "close tab", "detach", "분리", "새 윈도우", "새 창", "new window", "safari", "finder", "swish", "스냅"], AnyView(HubToggleRow(icon: "square.on.square", tint: .indigo, title: "Tab Gestures", subtitle: "Pinch in to close a tab; tap and hold to move it to a new window", key: TitleBarWindowSnap.tabGesturesKey, fallback: true))),
+            item("titleBarSnapSuperAnywhere", .general, "Super Key: Whole Window", "Hold the Super key to start window gestures anywhere on a window, not only its title bar", ["super", "modifier", "보조 키", "수정자", "fn", "globe", "지구본", "anywhere", "어디서나", "창 전체", "swish", "스냅"], AnyView(HubToggleRow(icon: "macwindow", tint: .indigo, title: "Super Key: Whole Window", subtitle: "Hold Super to start gestures anywhere on a window", key: TitleBarWindowSnap.superAnywhereKey, fallback: false))),
             item("spaceSwipe", .general, "Top-Bar Space Swipe", "Two fingers at the top of the screen switch Spaces", ["space", "스페이스", "화면"], AnyView(HubToggleRow(icon: "rectangle.split.2x1", tint: .blue, title: "Top-Bar Space Swipe", subtitle: "Two fingers at the top of the screen switch Spaces", key: "AOMTopBarSpaceSwipe", fallback: true))),
             item("dockPinchQuit", .general, "Dock Pinch to Quit", "Pinch in on a Dock icon to quit that app", ["dock", "독", "핀치"], AnyView(HubToggleRow(icon: "dock.rectangle", tint: .pink, title: "Dock Pinch to Quit", subtitle: "Pinch in on a Dock icon to quit that app", key: "AOMDockPinchQuit", fallback: true))),
             item("dockGestures", .general, "Dock Gestures", "Two fingers on a Dock icon: tap and hold to activate, swipe sideways through windows, down to minimize, up to unminimize, double tap to hide, pinch out for a new window", ["dock", "독", "swish", "minimize", "최소화", "hide", "숨기기", "window", "창"], AnyView(HubToggleRow(icon: "dock.arrow.up.rectangle", tint: .pink, title: "Dock Gestures", subtitle: "Swipe, tap and hold, double tap or pinch out on a Dock icon", key: TrackpadUtilityGestures.dockGesturesKey, fallback: true))),
+            item("dockDoublePinch", .general, "Dock Pinch Twice", "Pinch in twice on a Dock icon to minimize all of its windows, out twice to bring them back", ["dock", "독", "pinch", "핀치", "twice", "두 번", "minimize", "최소화", "swish"], AnyView(HubToggleRow(icon: "dock.arrow.down.rectangle", tint: .pink, title: "Dock Pinch Twice", subtitle: "Pinch in twice to minimize an app's windows, out twice to bring them back", key: TrackpadUtilityGestures.dockDoublePinchKey, fallback: true))),
+            item("appMenuGestures", .general, "Dock Gestures on the App Menu", "The Dock gestures also work on the front app's own menu, its name next to the Apple menu", ["dock", "독", "app menu", "앱 메뉴", "menu bar", "메뉴 막대", "메뉴바", "swish"], AnyView(HubToggleRow(icon: "menubar.arrow.up.rectangle", tint: .pink, title: "Dock Gestures on the App Menu", subtitle: "Use the Dock gestures on the front app's name in the menu bar", key: TrackpadUtilityGestures.appMenuGesturesKey, fallback: false))),
             item("menuBarGestures", .general, "Menu-Bar Gestures", "Two fingers at the top of the screen: tap and hold for the window switcher or to switch apps, double tap to unsnap, swipe down to minimize all, up to bring them back, ⌘ swipe to move snapped windows to another display", ["menu bar", "메뉴 막대", "메뉴바", "swish", "minimize", "최소화", "unsnap", "앱 전환", "app switch"], AnyView(HubToggleRow(icon: "menubar.rectangle", tint: .blue, title: "Menu-Bar Gestures", subtitle: "Tap and hold, double tap, swipe up or down at the top of the screen", key: TrackpadUtilityGestures.menuBarGesturesKey, fallback: true))),
+            item("menuBarScrollToTop", .general, "Menu Bar Tap to Scroll to Top", "A two-finger tap on the empty part of the menu bar scrolls the front window to the top", ["scroll", "스크롤", "top", "맨 위", "위로", "menu bar", "메뉴 막대", "메뉴바", "tap", "탭", "swish"], AnyView(HubToggleRow(icon: "arrow.up.to.line", tint: .blue, title: "Menu Bar Tap to Scroll to Top", subtitle: "A two-finger tap on the empty menu bar scrolls the front window up", key: TrackpadUtilityGestures.menuBarScrollToTopKey, fallback: false))),
+            item("missionControlGestures", .general, "Mission Control Gestures", "In Mission Control and App Exposé, pinch in on a window to close it (twice: quit its app), swipe down to minimize it", ["mission", "미션 컨트롤", "미션컨트롤", "exposé", "expose", "앱 엑스포제", "close", "닫기", "minimize", "최소화", "swish"], AnyView(HubToggleRow(icon: "rectangle.3.group", tint: .teal, title: "Mission Control Gestures", subtitle: "Pinch in on a window to close it, swipe down to minimize it", key: TrackpadUtilityGestures.missionControlGesturesKey, fallback: false))),
             item("groupByFolder", .general, "Group Triggers by Folder", "Organize gestures into folders", ["폴더", "그룹", "정렬"], AnyView(HubToggleRow(icon: "folder", tint: .orange, title: "Group Triggers by Folder", subtitle: "Organize gestures into folders", key: "AOMGroupTriggersByFolder", fallback: false))),
         ]
     }
@@ -553,7 +588,10 @@ enum SettingsCatalog {
             item("recordingFPS", .capture, "Recording Frame Rate", "Lower frame rates use less space", ["녹화", "fps"], AnyView(HubIntChoiceRow(icon: "speedometer", tint: .indigo, title: "Recording Frame Rate", subtitle: "Lower frame rates use less space", key: "AOMCaptureRecordingFPS", fallback: 30, options: [("15 fps", 15), ("30 fps", 30), ("60 fps", 60)], width: 110))),
             item("recordingFormat", .capture, "Recording Format", "GIF does not include audio", ["녹화", "gif", "mp4"], AnyView(HubChoiceRow(icon: "film", tint: .blue, title: "Recording Format", subtitle: "GIF does not include audio", key: "AOMCaptureRecordingOutputFormat", fallback: "mp4", options: [("MP4", "mp4"), ("GIF", "gif")], width: 110))),
             item("recordingAudio", .capture, "Audio Source", "System audio, microphone, or both", ["오디오", "마이크", "소리"], AnyView(HubChoiceRow(icon: "speaker.wave.2.fill", tint: .blue, title: "Audio Source", subtitle: "System audio, microphone, or both", key: "AOMCaptureRecordingAudioSource", fallback: RecordingAudioSource.off.rawValue, options: audio, width: 190))),
+            item("recordingScaleTo1x", .capture, "Scale Retina Videos to 1x", "Half the width and height on Retina displays; smaller files", ["retina", "레티나", "1x", "scale", "크기", "해상도", "resolution", "파일 크기", "녹화", "recording"], AnyView(HubToggleRow(icon: "arrow.down.right.and.arrow.up.left", tint: .blue, title: "Scale Retina Videos to 1x", subtitle: "Half the width and height on Retina displays; smaller files", key: CaptureSettings.RecordingKey.scalesTo1x, fallback: false))),
+            item("recordingHidesDesktopIcons", .capture, "Hide Desktop Icons While Recording", "Restarts Finder when a recording starts and ends; if AOM quits unexpectedly, the icons come back at the next launch", ["desktop", "데스크탑", "바탕화면", "icons", "아이콘", "hide", "숨기기", "finder", "녹화", "recording"], AnyView(HubToggleRow(icon: "eye.slash", tint: .gray, title: "Hide Desktop Icons While Recording", subtitle: "Restarts Finder when a recording starts and ends", key: CaptureSettings.RecordingKey.hidesDesktopIcons, fallback: false))),
             item("clickIndicators", .capture, "Show Mouse Clicks", "Highlight clicks in recordings", ["클릭", "마우스"], AnyView(HubToggleRow(icon: "cursorarrow.click.2", tint: .orange, title: "Show Mouse Clicks", subtitle: "Highlight clicks in recordings", key: "AOMCaptureRecordingClickIndicators", fallback: false))),
+            item("recordingCursorHighlight", .capture, "Highlight Cursor", "A soft circle around the pointer in the saved video", ["cursor", "커서", "highlight", "강조", "하이라이트", "pointer", "포인터", "녹화", "recording"], AnyView(HubToggleRow(icon: "cursorarrow.rays", tint: .yellow, title: "Highlight Cursor", subtitle: "A soft circle around the pointer in the saved video", key: CaptureSettings.RecordingKey.cursorHighlight, fallback: false))),
             item("cameraOverlay", .capture, "Camera Overlay", "Save an editable camera layer", ["카메라", "얼굴"], AnyView(HubToggleRow(icon: "video.fill", tint: .green, title: "Camera Overlay", subtitle: "Save an editable camera layer", key: "AOMCaptureRecordingCameraOverlay", fallback: false))),
             item("keystrokeOverlay", .capture, "Show Keystrokes", "Display keystrokes in recordings", ["키보드", "단축키", "녹화", "키스트로크"], AnyView(HubToggleRow(icon: "keyboard", tint: .purple, title: "Show Keystrokes", subtitle: "Display keystrokes in recordings", key: "AOMCaptureRecordingKeystrokeOverlay", fallback: false))),
             item("overlay", .capture, "Floating Overlay", "Show a preview after capturing", ["오버레이", "미리보기"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle.angled", tint: .purple, title: "Floating Overlay", subtitle: "Show a preview after capturing", key: "AOMCaptureOverlayEnabled", fallback: true))),
@@ -573,6 +611,7 @@ enum SettingsCatalog {
             item("clipboardCompact", .clipboard, "Compact Shelf", "Use a smaller clipboard shelf", ["컴팩트", "선반", "shelf"], AnyView(ClipboardPreferenceRow(icon: "rectangle.compress.vertical", tint: .blue, title: "Compact Shelf", subtitle: "Use a smaller clipboard shelf", keyPath: \.compact))),
             item("clipboardCapture", .clipboard, "Visible in Screen Capture", "Include clipboard windows in screen sharing", ["캡처", "공유", "녹화"], AnyView(ClipboardPreferenceRow(icon: "eye", tint: .purple, title: "Visible in Screen Capture", subtitle: "Include clipboard windows in screen sharing", keyPath: \.showInScreenCapture))),
             item("clipboardPreviews", .clipboard, "Link Previews", "Private web previews on link cards", ["링크", "미리보기"], AnyView(ClipboardPreferenceRow(icon: "link", tint: .teal, title: "Link Previews", subtitle: "Private link previews, off by default", keyPath: \.networkPreviews))),
+            item("clipboardLinkCards", .clipboard, "Link Cards", "Show page titles and images on link cards; needs Link Previews", ["link", "링크", "card", "카드", "title", "제목", "image", "이미지", "preview", "미리보기", "web", "웹"], AnyView(ClipboardLinkCardsRow())),
             item("clipboardQuickModifier", .clipboard, "Quick Paste Modifier", "Modifier for quick paste with keys 1–9", ["붙여넣기", "단축키"], AnyView(HubChoiceRow(icon: "command", tint: .indigo, title: "Quick Paste Modifier", subtitle: "Modifier for quick paste with keys 1–9", key: "AOMClipboardQuickModifier", fallback: "command", options: modifiers, width: 150))),
             item("clipboardPlainModifier", .clipboard, "Plain Text Modifier", "Modifier for pasting without formatting", ["텍스트", "서식"], AnyView(HubChoiceRow(icon: "textformat", tint: .gray, title: "Plain Text Modifier", subtitle: "Modifier for pasting without formatting", key: "AOMClipboardPlainModifier", fallback: "shift", options: modifiers, width: 150))),
             item("clipboardStorage", .clipboard, "Storage & Retention", "Retention, storage limits and excluded apps", ["저장", "용량", "보관", "히스토리", "shortcut", "hotkey", "단축키"], AnyView(HubActionRow(icon: "externaldrive", tint: .brown, title: "Storage & Retention", subtitle: "Retention, storage limits and excluded apps") {
@@ -593,6 +632,7 @@ enum SettingsCatalog {
             item("bttPreset", .automation, "Import BTT Preset", "Import BetterTouchTool JSON presets", ["btt", "프리셋", "Import"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT Preset", subtitle: "Import BetterTouchTool JSON presets") {
                 Button("Import") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }.controlSize(.small)
             })),
+            item("forceTouchStageHysteresis", .automation, "Force Touch Stage Hysteresis", "How far the pressure must ease off before a Force Touch stage can fire again", ["force touch", "포스 터치", "pressure", "압력", "stage", "단계", "hysteresis", "히스테리시스", "deep press", "강한 클릭"], AnyView(HubSliderRow(icon: "hand.tap", tint: .orange, title: "Force Touch Stage Hysteresis", subtitle: "How far pressure eases off before a stage fires again", key: PressureStageTracker.hysteresisKey, fallback: PressureStageTracker.defaultHysteresis, range: PressureStageTracker.hysteresisRange, step: 0.01, percent: false, decimals: 2))),
             item("hyperKey", .automation, "Hyper Key", "Hold Caps Lock or another key for ⌃⌥⇧⌘", ["hyper", "caps lock", "캡스락", "하이퍼", "modifier"], AnyView(HyperKeyRow())),
             item("keyRemaps", .automation, "Remap Keys", "Turn one key into another", ["remap", "리맵", "키 변경", "karabiner", "키보드"], AnyView(KeyRemapRow())),
             item("reverseWheel", .automation, "Reverse Mouse Wheel", "Flip a wheel mouse, keep the trackpad natural", ["scroll", "스크롤", "휠", "마우스", "reverse", "natural"], AnyView(ReverseWheelRow())),
