@@ -21,166 +21,16 @@ struct ClipboardSettingsView: View {
     init(store: ClipboardStore = .shared) { self.store = store }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 12) {
-                    Image(systemName: "clipboard.fill").font(.system(size: 28)).foregroundStyle(Color.accentColor)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("AOM Clipboard").font(.title2.weight(.semibold))
-                        Text("A local clipboard workspace for text, links, images, files and pinboards.").font(.callout).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Open Clipboard") { ClipboardPanelController.shared.show() }
-                }
-                GroupBox("History") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Toggle("Keep clipboard history", isOn: $store.settings.enabled)
-                        Toggle("Pause collection", isOn: $store.paused).disabled(!store.settings.enabled)
-                        Picker("Keep unpinned items", selection: Binding(
-                            get: { store.settings.retentionDays },
-                            set: { value in
-                                // A shorter limit that deletes items asks first.
-                                if store.itemsRemoved(byRetentionDays: value) > 0 { pendingRetention = value }
-                                else { store.settings.retentionDays = value }
-                            })) {
-                            Text("1 Day").tag(1); Text("1 Week").tag(7); Text("1 Month").tag(30); Text("3 Months").tag(90)
-                            Text("1 Year").tag(365); Text("Forever").tag(0)
-                        }
-                        Stepper("Maximum history: \(store.settings.maxEntries) items", value: Binding(
-                            get: { store.settings.maxEntries },
-                            set: { value in
-                                // Lowering the limit below what is stored asks first.
-                                if store.itemsRemoved(byMaxEntries: value) > 0 { pendingLimit = value }
-                                else { store.settings.maxEntries = value }
-                            }), in: 100...10000, step: 100)
-                        Picker("Unpinned history storage", selection: Binding(
-                            get: { store.settings.maxBytes },
-                            set: { value in
-                                if store.itemsRemoved(byMaxBytes: value) > 0 { pendingBytes = value }
-                                else { store.settings.maxBytes = value }
-                            })) {
-                            Text("50 MB").tag(50 * 1_024 * 1_024)
-                            Text("200 MB").tag(200 * 1_024 * 1_024)
-                            Text("500 MB").tag(500 * 1_024 * 1_024)
-                            Text("1 GB").tag(1_024 * 1_024 * 1_024)
-                        }
-                        Text("Unpinned history is removed when its age, item count or storage limit is reached, including with Forever selected: the item and storage limits keep the encrypted history file a manageable size. Single items larger than 20 MB are skipped. File clips save references only, not file contents.").font(.caption).foregroundStyle(.secondary)
-                        Text("Pinboards are exempt from age, item count and storage limits. Pinned items stay until you delete them. Removing an item from its last pinboard returns it to history; if it is older than your history limit it is deleted, and Undo Delete brings it back.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("History: \(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · Pinboards: \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file))")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                GroupBox("Pinboards & Search") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Search all lists from a pinboard", isOn: $store.settings.searchesAllLists)
-                        Text("On, as in Paste: searching while a pinboard is open looks through Clipboard History and every pinboard. Add board:Name to search one pinboard. Off: searches stay inside the pinboard on screen.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle("Keep each item on one pinboard", isOn: $store.settings.onePinboardPerItem)
-                        Text("On, as in Paste: pinning an item to another pinboard moves it there. Off: an item can be on several pinboards. Items already on several pinboards stay until you pin them again.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("Deleting a pinboard asks whether to delete its items too, as Paste does, or keep them in history. Undo Delete restores either choice until you quit.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                GroupBox("Pasting") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Paste directly into the previous app", isOn: $store.settings.pasteDirectly)
-                        Toggle("Paste text without formatting by default", isOn: $store.settings.plainText)
-                        Picker("Quick Paste modifier (1–9)", selection: $preferences.quickModifier) {
-                            ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .shift }) { Text($0.symbol).tag($0) }
-                        }
-                        Picker("Plain Text modifier", selection: $preferences.plainModifier) {
-                            ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .command && $0 != preferences.quickModifier }) { Text($0.symbol).tag($0) }
-                        }
-                        Toggle("Compact clipboard shelf", isOn: $preferences.compact)
-                        Text("Turn off direct paste to copy only. Hold the Plain Text modifier while pasting to remove text formatting. Images and files keep their original clipboard representation.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                ClipboardIntelligenceSettingsView(store: store)
-                if let conflict = ShortcutConflicts.clipboardHistoryConflict(shortcut: shortcuts.shortcut(for: .history)) {
-                    Label("\(conflict.appName) also uses \(conflict.shortcut.displayString). macOS sends it to \(conflict.appName), so choose another Clipboard History shortcut or quit \(conflict.appName).",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(AOMTheme.warning)
-                }
-                GroupBox("Keyboard Shortcuts") {
-                    VStack(spacing: 12) {
-                        ForEach(ClipboardShortcuts.Command.allCases) { command in
-                            HStack {
-                                Text(command.title)
-                                Spacer()
-                                Button(recording == command ? "Type shortcut…" : (shortcuts.shortcut(for: command)?.displayString ?? "Record Shortcut")) {
-                                    if recording == command { stopRecording() } else { startRecording(command) }
-                                }.frame(minWidth: 130)
-                                Button { shortcuts.setShortcut(nil, for: command) } label: { Image(systemName: "xmark.circle") }
-                                    .buttonStyle(.borderless).disabled(shortcuts.shortcut(for: command) == nil || recording != nil).help("Disable Shortcut")
-                            }
-                        }
-                        HStack {
-                            Button("Restore Defaults") {
-                                stopRecording()
-                                for command in ClipboardShortcuts.Command.allCases { shortcuts.setShortcut(command.initial, for: command) }
-                            }
-                            Spacer()
-                            Text(recordingNote.isEmpty ? "Escape cancels recording; Delete clears a shortcut." : recordingNote)
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }.padding(10)
-                }
-                GroupBox("Privacy & Storage") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Show clipboard windows in screen sharing and recording", isOn: $preferences.showInScreenCapture)
-                        Text("When disabled, AOM requests macOS window capture exclusion. Some capture apps may ignore this policy; test with your sharing app before displaying sensitive clips.").font(.caption).foregroundStyle(.secondary)
-                        Toggle("Allow private web previews for links", isOn: $preferences.networkPreviews)
-                        Text("Off by default. Opening a link preview contacts the website and may consume one-time links or send tracking parameters. Preview cookies and website data are kept only in memory; JavaScript is disabled.").font(.caption).foregroundStyle(.secondary)
-                        Toggle("Show page titles and images on link cards", isOn: $preferences.linkCards)
-                            .disabled(!preferences.networkPreviews)
-                            .padding(.leading, 18)
-                        Text("Off by default, and only with web previews allowed. Each link card shown in the shelf contacts its website once per session to read the page title, site name and preview image. Links that look like they carry a password, token or signature, and links to this Mac or your local network, are never fetched. Nothing fetched is saved to disk.").font(.caption).foregroundStyle(.secondary)
-                            .padding(.leading, 18)
-                        Text("History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.").font(.callout)
-                        Text("Text inside copied images is indexed locally for search, and matches are highlighted in the image. In a preview, drag over an image to read or copy part of it. Search supports phrases in quotes, type:image, from:Safari, board:Work, is:pinned, before:2026-01-01, after:7d, on:yesterday and -excluded terms.").font(.caption).foregroundStyle(.secondary)
-                        Text("Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps. Excluded apps are also never read for suggestions — no window title, field or screen — and never receive suggestions.").font(.caption).foregroundStyle(.secondary)
-                        Text("Excluded application bundle IDs, one per line").font(.caption.weight(.semibold))
-                        TextEditor(text: Binding(
-                            get: { store.settings.ignoredApps.joined(separator: "\n") },
-                            set: {
-                                store.settings.ignoredApps = $0.components(separatedBy: .newlines)
-                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                    .filter { !$0.isEmpty }
-                            }
-                        )).font(.system(.body, design: .monospaced)).frame(height: 90)
-                            .padding(5).overlay(RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.3)))
-                        Text("Example: com.example.passwordmanager").font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Text("\(store.entries.count) saved items · \(store.boards.count) pinboards").foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Undo Delete") { _ = store.undoLastDeletion() }.disabled(!store.canUndoDeletion)
-                            Button("Erase History…", role: .destructive) { clearConfirmation = true }
-                        }
-                        if let warning = store.storageWarning {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AOMTheme.warning)
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(warning).font(.caption)
-                                    if store.storageStatus == .unreadableArchive {
-                                        Button("Recover Clipboard Storage…") { recoverConfirmation = true }
-                                            .controlSize(.small)
-                                    } else {
-                                        Button("Retry Saving Now") { Task { await store.recoverStorage() } }
-                                            .controlSize(.small)
-                                    }
-                                }
-                            }
-                        }
-                        if let error = store.lastError { Text(error).foregroundStyle(AOMTheme.danger).font(.caption) }
-                    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }.padding(20)
+        AOMPage(maxWidth: AOMSize.readableWidth) {
+            header
+            historySection
+            pinboardsSection
+            pastingSection
+            ClipboardIntelligenceSettingsView(store: store)
+            shortcutsSection
+            privacySection
+            excludedAppsSection
+            savedItemsSection
         }
         .onDisappear { stopRecording() }
         .confirmationDialog("Erase clipboard history?", isPresented: $clearConfirmation) {
@@ -235,6 +85,223 @@ struct ClipboardSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("The unreadable file is renamed and kept; AOM then starts a new history file.") }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        AOMPageHeader(!store.settings.enabled ? "Clipboard history is off"
+                      : (store.paused ? "Clipboard history is paused" : "Clipboard history is on"),
+                      module: .clipboard,
+                      subtitle: "Text, links, images, files and pinboards, encrypted on this Mac",
+                      active: store.settings.enabled && !store.paused) {
+            Button("Open Clipboard") { ClipboardPanelController.shared.show() }
+        }
+    }
+
+    // MARK: - History
+
+    private var historySection: some View {
+        AOMSection("History",
+                   help: "Unpinned history is removed when its age, item count or storage limit is reached, including with Forever selected: the item and storage limits keep the encrypted history file a manageable size. Single items larger than 20 MB are skipped. File clips save references only, not file contents.",
+                   footer: "History: \(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · Pinboards: \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file))") {
+            AOMToggleRow("Keep clipboard history", isOn: $store.settings.enabled)
+            Group {
+                AOMToggleRow("Pause collection", indent: true, isOn: $store.paused)
+            }
+            .disabled(!store.settings.enabled)
+            .opacity(store.settings.enabled ? 1 : 0.55)
+            Group {
+                AOMSettingRow("Keep unpinned items",
+                              help: "Pinboards are exempt from age, item count and storage limits. Pinned items stay until you delete them. Removing an item from its last pinboard returns it to history; if it is older than your history limit it is deleted, and Undo Delete brings it back.") {
+                    Picker("Keep unpinned items", selection: Binding(
+                        get: { store.settings.retentionDays },
+                        set: { value in
+                            // A shorter limit that deletes items asks first.
+                            if store.itemsRemoved(byRetentionDays: value) > 0 { pendingRetention = value }
+                            else { store.settings.retentionDays = value }
+                        })) {
+                        Text("1 Day").tag(1); Text("1 Week").tag(7); Text("1 Month").tag(30); Text("3 Months").tag(90)
+                        Text("1 Year").tag(365); Text("Forever").tag(0)
+                    }
+                    .pickerStyle(.menu)
+                }
+                AOMSettingRow("Maximum history") {
+                    HStack(spacing: AOMSpace.x2) {
+                        Text("\(store.settings.maxEntries.formatted()) items")
+                            .font(AOMFont.body)
+                            .monospacedDigit()
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .accessibilityHidden(true)
+                        Stepper("Maximum history: \(store.settings.maxEntries) items", value: Binding(
+                            get: { store.settings.maxEntries },
+                            set: { value in
+                                // Lowering the limit below what is stored asks first.
+                                if store.itemsRemoved(byMaxEntries: value) > 0 { pendingLimit = value }
+                                else { store.settings.maxEntries = value }
+                            }), in: 100...10000, step: 100)
+                    }
+                }
+                AOMSettingRow("Unpinned history storage") {
+                    Picker("Unpinned history storage", selection: Binding(
+                        get: { store.settings.maxBytes },
+                        set: { value in
+                            if store.itemsRemoved(byMaxBytes: value) > 0 { pendingBytes = value }
+                            else { store.settings.maxBytes = value }
+                        })) {
+                        Text("50 MB").tag(50 * 1_024 * 1_024)
+                        Text("200 MB").tag(200 * 1_024 * 1_024)
+                        Text("500 MB").tag(500 * 1_024 * 1_024)
+                        Text("1 GB").tag(1_024 * 1_024 * 1_024)
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pinboards & search
+
+    private var pinboardsSection: some View {
+        AOMSection("Pinboards & search",
+                   help: "Text inside copied images is indexed locally for search, and matches are highlighted in the image. In a preview, drag over an image to read or copy part of it. Search supports phrases in quotes, type:image, from:Safari, board:Work, is:pinned, before:2026-01-01, after:7d, on:yesterday and -excluded terms.",
+                   footer: "Deleting a pinboard asks whether to delete its items too, as Paste does, or keep them in history. Undo Delete restores either choice until you quit.") {
+            AOMToggleRow("Search all lists from a pinboard",
+                         help: "On, as in Paste: searching while a pinboard is open looks through Clipboard History and every pinboard. Add board:Name to search one pinboard. Off: searches stay inside the pinboard on screen.",
+                         isOn: $store.settings.searchesAllLists)
+            AOMToggleRow("Keep each item on one pinboard",
+                         help: "On, as in Paste: pinning an item to another pinboard moves it there. Off: an item can be on several pinboards. Items already on several pinboards stay until you pin them again.",
+                         isOn: $store.settings.onePinboardPerItem)
+        }
+    }
+
+    // MARK: - Pasting
+
+    private var pastingSection: some View {
+        AOMSection("Pasting",
+                   help: "Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.",
+                   footer: "Turn off direct paste to copy only. Hold the Plain Text modifier while pasting to remove text formatting. Images and files keep their original clipboard representation.") {
+            AOMToggleRow("Paste directly into the previous app", isOn: $store.settings.pasteDirectly)
+            AOMToggleRow("Paste text without formatting by default", isOn: $store.settings.plainText)
+            AOMSettingRow("Quick Paste modifier (1–9)") {
+                Picker("Quick Paste modifier (1–9)", selection: $preferences.quickModifier) {
+                    ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .shift }) { Text($0.symbol).tag($0) }
+                }
+                .pickerStyle(.menu)
+            }
+            AOMSettingRow("Plain Text modifier") {
+                Picker("Plain Text modifier", selection: $preferences.plainModifier) {
+                    ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .command && $0 != preferences.quickModifier }) { Text($0.symbol).tag($0) }
+                }
+                .pickerStyle(.menu)
+            }
+            AOMToggleRow("Compact clipboard shelf", isOn: $preferences.compact)
+        }
+    }
+
+    // MARK: - Keyboard shortcuts
+
+    @ViewBuilder private var shortcutsSection: some View {
+        if let conflict = ShortcutConflicts.clipboardHistoryConflict(shortcut: shortcuts.shortcut(for: .history)) {
+            AOMNotice(.warning, "\(conflict.appName) also uses \(conflict.shortcut.displayString)",
+                      detail: "macOS sends it to \(conflict.appName), so choose another Clipboard History shortcut or quit \(conflict.appName).")
+        }
+        AOMSection("Keyboard shortcuts",
+                   footer: recordingNote.isEmpty ? "Escape cancels recording; Delete clears a shortcut." : recordingNote) {
+            ForEach(ClipboardShortcuts.Command.allCases) { command in
+                AOMSettingRow(command.title) {
+                    HStack(spacing: AOMSpace.x2) {
+                        Button(recording == command ? "Type shortcut…" : (shortcuts.shortcut(for: command)?.displayString ?? "Record Shortcut")) {
+                            if recording == command { stopRecording() } else { startRecording(command) }
+                        }
+                        .frame(minWidth: AOMFeatureSize.recorderMinWidth)
+                        Button { shortcuts.setShortcut(nil, for: command) } label: { Image(systemName: "xmark.circle") }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .disabled(shortcuts.shortcut(for: command) == nil || recording != nil)
+                            .help("Disable Shortcut")
+                            .accessibilityLabel("Disable \(command.title) shortcut")
+                    }
+                }
+            }
+            AOMSettingRow("Default shortcuts", detail: "Puts every clipboard shortcut back to its original keys") {
+                Button("Restore Defaults") {
+                    stopRecording()
+                    for command in ClipboardShortcuts.Command.allCases { shortcuts.setShortcut(command.initial, for: command) }
+                }
+            }
+        }
+    }
+
+    // MARK: - Privacy & storage
+
+    private var privacySection: some View {
+        AOMSection("Privacy & storage",
+                   footer: "History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.") {
+            AOMToggleRow("Show clipboard windows in screen sharing and recording",
+                         help: "When disabled, AOM requests macOS window capture exclusion. Some capture apps may ignore this policy; test with your sharing app before displaying sensitive clips.",
+                         isOn: $preferences.showInScreenCapture)
+            AOMToggleRow("Allow private web previews for links",
+                         help: "Off by default. Opening a link preview contacts the website and may consume one-time links or send tracking parameters. Preview cookies and website data are kept only in memory; JavaScript is disabled.",
+                         isOn: $preferences.networkPreviews)
+            Group {
+                AOMToggleRow("Show page titles and images on link cards",
+                             help: "Off by default, and only with web previews allowed. Each link card shown in the shelf contacts its website once per session to read the page title, site name and preview image. Links that look like they carry a password, token or signature, and links to this Mac or your local network, are never fetched. Nothing fetched is saved to disk.",
+                             indent: true, isOn: $preferences.linkCards)
+            }
+            .disabled(!preferences.networkPreviews)
+            .opacity(preferences.networkPreviews ? 1 : 0.55)
+        }
+    }
+
+    private var excludedAppsSection: some View {
+        AOMSection("Excluded apps",
+                   help: "Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps. Excluded apps are also never read for suggestions — no window title, field or screen — and never receive suggestions.",
+                   footer: "Excluded application bundle IDs, one per line. Example: com.example.passwordmanager") {
+            TextEditor(text: Binding(
+                get: { store.settings.ignoredApps.joined(separator: "\n") },
+                set: {
+                    store.settings.ignoredApps = $0.components(separatedBy: .newlines)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                }
+            ))
+            .font(AOMFont.mono)
+            .scrollContentBackground(.hidden)
+            .frame(height: AOMFeatureSize.textEditorShort)
+            .padding(AOMSpace.x1)
+            .background(AOMColor.canvas, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                .strokeBorder(AOMColor.hairline, lineWidth: 1))
+            .padding(AOMSpace.x3)
+            .accessibilityLabel("Excluded application bundle IDs, one per line")
+        }
+    }
+
+    // MARK: - Saved items
+
+    @ViewBuilder private var savedItemsSection: some View {
+        if let warning = store.storageWarning {
+            AOMNotice(.warning, warning) {
+                if store.storageStatus == .unreadableArchive {
+                    Button("Recover Clipboard Storage…") { recoverConfirmation = true }
+                } else {
+                    Button("Retry Saving Now") { Task { await store.recoverStorage() } }
+                }
+            }
+        }
+        if let error = store.lastError {
+            AOMNotice(.error, error)
+        }
+        AOMSection("Saved items", detail: "\(store.entries.count) saved items · \(store.boards.count) pinboards") {
+            AOMSettingRow("Undo the last deletion", detail: "Works until you quit AOM") {
+                Button("Undo Delete") { _ = store.undoLastDeletion() }.disabled(!store.canUndoDeletion)
+            }
+            AOMSettingRow("Erase history", detail: "Pinned items are kept") {
+                Button("Erase History…", role: .destructive) { clearConfirmation = true }
+                    .aomDestructive()
+            }
+        }
     }
 
     static func retentionTitle(_ days: Int) -> String {
