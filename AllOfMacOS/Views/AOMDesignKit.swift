@@ -1,43 +1,19 @@
 import AppKit
 import SwiftUI
 
-// AOM 3 design kit.
+// AOM design kit: chrome (glass), page chrome, cards with titles, mode
+// buttons, scope bars and tiling diagrams. Values come from AOMTokens.swift.
 //
-// One grammar for every surface, chosen from the references in
-// docs/3.0.0-design-overhaul.md:
-// - Content layer: a calm canvas with white cards, monochrome glyphs and
-//   colour only for meaning, state and the one primary action (Apple HIG
-//   Color/Materials, Linear 2026 "don't compete for attention").
-// - Functional layer: the system sidebar, toolbar and floating chrome carry
-//   the material — Liquid Glass on macOS 26+, the matching AppKit material
-//   before (WWDC25 Meet Liquid Glass, Adopting Liquid Glass).
-// - Every floating panel (shelf, history, Quick Access, palette, HUDs,
-//   recording bar, capture toolbar) shares one material, edge and shadow
-//   (Paste 6, CleanShot X 4.8 and BetterTouchTool 6 on Tahoe).
-
-// MARK: - Radii
-
-/// Corner radii by role. Nested shapes step down so corners stay concentric.
-enum AOMRadius {
-    /// Floating panels: shelf, history overlay, palette, welcome.
-    static let panel: CGFloat = 20
-    /// HUDs, toasts and the recording bar.
-    static let hud: CGFloat = 16
-    /// Control strips floating over the screen (capture toolbars).
-    static let bar: CGFloat = 14
-    /// Content cards on the canvas (grouped boxes).
-    static let card: CGFloat = 12
-    /// Tiles and thumbnails inside a card.
-    static let tile: CGFloat = 9
-    /// Inset wells, small thumbnails, swatches.
-    static let well: CGFloat = 7
-    /// Dense controls: chips' hover wash, small buttons.
-    static let control: CGFloat = 6
-}
+// - Content layer: one opaque canvas, opaque cards with a hairline, colour only
+//   for interaction, status and module identity badges.
+// - Functional layer: the system sidebar and toolbar, plus floating chrome
+//   (palette, HUDs, Quick Access, shelf, toasts) through `aomChrome`: system
+//   Liquid Glass on macOS 26+, an AppKit material before. Never glass on glass,
+//   never a hand-made blur, never an extra shadow on glass.
 
 // MARK: - Floating surfaces
 
-/// The role a floating surface plays; it picks the material.
+/// The role a floating surface plays; it picks the fallback material.
 enum AOMFloatingRole {
     /// Panels people work in: the clipboard shelf, capture history, palette.
     case panel
@@ -55,61 +31,94 @@ enum AOMFloatingRole {
     }
 }
 
-/// The one look shared by every floating surface. On macOS 26 and later it is
-/// Liquid Glass over a light popover wash (the pairing the shelf already
-/// proved readable); earlier systems get the AppKit material with a hairline
-/// edge. Reduce Transparency and Increase Contrast fall back to an opaque
-/// surface with a defined border.
-struct AOMFloatingSurface: ViewModifier {
-    var role: AOMFloatingRole = .panel
+/// The one look shared by every piece of floating chrome (c.4).
+/// - macOS 26+: system Liquid Glass in the given shape, which follows the
+///   Liquid Glass slider, Reduce Transparency and Increase Contrast by itself.
+///   `.interactive()` only when the chrome itself is clickable.
+/// - macOS 14–25: the AppKit material with a 0.5 pt hairline; Reduce
+///   Transparency or Increase Contrast get an opaque raised surface with a
+///   1 pt border.
+struct AOMChromeSurface: ViewModifier {
     var radius: CGFloat = AOMRadius.panel
-    /// Floats over the app's own window (palette, welcome) rather than in a
-    /// panel of its own, so the blur samples the window, not the desktop.
-    var inWindow = false
+    var interactive = false
+    var role: AOMFloatingRole = .panel
+    /// Floats over the app's own window (palette, toast) rather than in a panel
+    /// of its own, so the fallback blur samples the window, not the desktop.
+    var inWindow = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityShowBorders) private var showBorders
 
-    private var blending: NSVisualEffectView.BlendingMode { inWindow ? .withinWindow : .behindWindow }
-
+    @ViewBuilder
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if reduceTransparency || contrast == .increased {
+        if #available(macOS 26.0, *) {
             content
-                .background(Color(nsColor: .windowBackgroundColor), in: shape)
-                .clipShape(shape)
-                .overlay(shape.strokeBorder(Color(nsColor: .separatorColor), lineWidth: contrast == .increased ? 1 : 0.5)
-                    .allowsHitTesting(false))
-        } else if #available(macOS 26.0, *) {
-            // Liquid Glass alone draws edge, depth and adaptive tint. Large
-            // panels people read in keep a faint wash for legibility over busy
-            // wallpapers; small chrome is pure glass (WWDC25 "Meet Liquid Glass").
-            content
-                .background {
-                    if role == .panel {
-                        VisualEffectBackground(material: role.fallbackMaterial, blendingMode: blending, state: .active)
-                            .opacity(0.3)
-                            .clipShape(shape)
-                    }
+                .glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+                .overlay {
+                    if showBorders { shape.strokeBorder(AOMColor.hairline, lineWidth: 1).allowsHitTesting(false) }
                 }
-                .glassEffect(.regular, in: shape)
+        } else if reduceTransparency || contrast == .increased {
+            content
+                .background(AOMColor.raised, in: shape)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 1)
+                    .allowsHitTesting(false))
         } else {
             content
-                .background(VisualEffectBackground(material: role.fallbackMaterial, blendingMode: blending, state: .active))
+                .background(VisualEffectBackground(material: role.fallbackMaterial,
+                                                   blendingMode: inWindow ? .withinWindow : .behindWindow,
+                                                   state: .active))
                 .clipShape(shape)
-                .overlay(shape.strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5).allowsHitTesting(false))
+                .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5).allowsHitTesting(false))
+                // Panels of their own already get the window shadow; chrome
+                // floating inside the main window gets the overlay level.
+                .aomElevation(inWindow ? .overlay : .raised, enabled: inWindow)
         }
     }
 }
 
+/// Every floating panel (shelf, history, Quick Access, palette, HUDs,
+/// recording bar, capture toolbar) uses this; it renders `AOMChromeSurface`.
+struct AOMFloatingSurface: ViewModifier {
+    var role: AOMFloatingRole = .panel
+    var radius: CGFloat = AOMRadius.panel
+    /// Floats over the app's own window (palette, welcome) rather than in a
+    /// panel of its own.
+    var inWindow = false
+
+    func body(content: Content) -> some View {
+        content.modifier(AOMChromeSurface(radius: radius, interactive: false, role: role, inWindow: inWindow))
+    }
+}
+
 extension View {
+    /// Functional layer: system glass on macOS 26+, a material before. Never
+    /// use on content (cards, tiles, rows, forms).
+    func aomChrome(radius: CGFloat = AOMRadius.panel, interactive: Bool = false,
+                   role: AOMFloatingRole = .panel, inWindow: Bool = true) -> some View {
+        modifier(AOMChromeSurface(radius: radius, interactive: interactive, role: role, inWindow: inWindow))
+    }
+
+    /// Inner thumbnails and buttons: concentric with the card on macOS 26+,
+    /// the fixed `control` radius before.
+    @ViewBuilder func aomInnerClip() -> some View {
+        if #available(macOS 26.0, *) {
+            clipShape(ConcentricRectangle(corners: .concentric(minimum: .fixed(AOMRadius.control)), isUniform: true))
+        } else {
+            clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+        }
+    }
+
     /// Primary action: the system prominent style (Liquid Glass tinted on
     /// macOS 26). Use for the one action a page or sheet exists for.
     @ViewBuilder func aomPrimaryButton() -> some View {
         buttonStyle(.borderedProminent)
     }
 
-    /// A control floating over content (HUDs, Quick Access, pins). macOS 26
-    /// renders real glass; earlier systems the bordered style.
+    /// A button on floating chrome (HUDs, Quick Access, pins). macOS 26
+    /// renders real glass; earlier systems the bordered style. Buttons inside
+    /// cards and forms stay `.bordered` / `.borderedProminent`.
     @ViewBuilder func aomGlassButton(prominent: Bool = false) -> some View {
         if #available(macOS 26.0, *) {
             if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
@@ -119,7 +128,8 @@ extension View {
     }
 
     /// Groups nearby custom glass so it samples and morphs as one surface.
-    @ViewBuilder func aomGlassGroup(spacing: CGFloat = 8) -> some View {
+    /// Keep `spacing` at or below the stack spacing (R46).
+    @ViewBuilder func aomGlassGroup(spacing: CGFloat = AOMSpace.x2) -> some View {
         if #available(macOS 26.0, *) {
             GlassEffectContainer(spacing: spacing) { self }
         } else {
@@ -127,17 +137,18 @@ extension View {
         }
     }
 
-    /// Soft scroll-edge effect under the floating toolbar (macOS 26).
+    /// The one top-edge treatment for every page: the automatic scroll edge
+    /// effect under the toolbar (macOS 26+).
     @ViewBuilder func aomScrollEdge() -> some View {
         if #available(macOS 26.0, *) {
-            scrollEdgeEffectStyle(.soft, for: .top)
+            scrollEdgeEffectStyle(.automatic, for: .top)
         } else {
             self
         }
     }
 
-    /// One page grammar for every main-window destination: the system canvas,
-    /// title and subtitle in the window toolbar, no in-content duplicate.
+    /// The page title in the window toolbar. Context belongs in the page
+    /// header (`AOMPageHeader`), not in a toolbar subtitle (d.9).
     func aomPage(_ title: String, subtitle: String? = nil) -> some View {
         modifier(AOMPageChrome(title: title, subtitle: subtitle))
     }
@@ -149,8 +160,8 @@ extension View {
     }
 }
 
-/// Title and subtitle for a main-window page. The canvas belongs to the shell
-/// (`AOMMainShell`), so pages never stack a second behind-window material.
+/// The page title for a main-window page. The canvas belongs to the shell
+/// (`AOMMainShell`); the subtitle is no longer shown in the toolbar.
 struct AOMPageChrome: ViewModifier {
     let title: String
     let subtitle: String?
@@ -158,40 +169,52 @@ struct AOMPageChrome: ViewModifier {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(title)
-            .navigationSubtitle(subtitle ?? "")
     }
 }
 
-/// A circular icon button for floating chrome (HUDs, Quick Access, pins):
-/// a quiet glass-friendly fill, a readable glyph, a press response.
+/// A circular icon button for floating chrome (HUDs, Quick Access, pins).
 struct AOMFloatingIconButtonStyle: ButtonStyle {
     var size: CGFloat = 26
     var destructive = false
 
     func makeBody(configuration: Configuration) -> some View {
+        AOMFloatingIconButtonBody(configuration: configuration, size: size, destructive: destructive)
+    }
+}
+
+private struct AOMFloatingIconButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let size: CGFloat
+    let destructive: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
         configuration.label
             .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(destructive ? AOMTheme.danger : Color.primary)
+            .foregroundStyle(destructive ? AOMColor.dangerText : Color.primary)
             .frame(width: size, height: size)
             .background(Circle().fill(.regularMaterial))
-            .overlay(Circle().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
-            .scaleEffect(configuration.isPressed && !AOMDesign.reduceMotion ? 0.94 : 1)
-            .animation(AOMMotion.quick, value: configuration.isPressed)
+            .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .aomAnimation(.quick, value: configuration.isPressed)
             .contentShape(Circle())
     }
 }
 
 // MARK: - Content cards
 
-/// A titled card on the canvas: a header line (glyph, title, detail and a
-/// trailing accessory such as "Open ›"), its content, and an optional footer
-/// separated by space rather than rules ("structure felt, not seen").
+/// A titled card (3.x API). Renders the one section pattern: the title sits
+/// above the card (Section style, sentence case), with an optional detail and a
+/// trailing accessory such as `AOMCardLink("View All")`; the content sits in an
+/// opaque card; the optional footer is a strip inside the card's bottom edge.
+/// New code uses `AOMSection` directly.
 struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
     let title: String
     var symbol: String?
     var tint: Color = AOMTheme.textSecondary
     var detail: String?
-    var contentPadding: CGFloat = AOMSpace.m
+    var contentPadding: CGFloat = AOMSpace.cardPadding
     /// Grow to the height offered (cards sharing a grid row line up).
     var fillsHeight = false
     @ViewBuilder var accessory: Accessory
@@ -199,7 +222,7 @@ struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
     @ViewBuilder var footer: Footer
 
     init(_ title: String, fillsHeight: Bool = false, symbol: String? = nil, tint: Color = AOMTheme.textSecondary,
-         detail: String? = nil, contentPadding: CGFloat = AOMSpace.m,
+         detail: String? = nil, contentPadding: CGFloat = AOMSpace.cardPadding,
          @ViewBuilder accessory: () -> Accessory = { EmptyView() },
          @ViewBuilder content: () -> Content,
          @ViewBuilder footer: () -> Footer = { EmptyView() }) {
@@ -215,49 +238,24 @@ struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: AOMSpace.xs) {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(tint)
-                        .frame(width: 18)
-                        .accessibilityHidden(true)
-                }
-                Text(title)
-                    .font(AOMType.headline)
-                    .foregroundStyle(AOMTheme.text)
-                    .lineLimit(1)
-                    .accessibilityAddTraits(.isHeader)
-                if let detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(AOMType.caption)
-                        .foregroundStyle(AOMTheme.textSecondary)
-                        .lineLimit(1)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: AOMSpace.xs)
-                accessory
+        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle(title, detail: detail) { accessory }
+            VStack(alignment: .leading, spacing: 0) {
+                content
+                    .padding(contentPadding)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                if fillsHeight { Spacer(minLength: 0) }
+                footer
             }
-            .padding(.horizontal, AOMSpace.m)
-            .padding(.top, AOMSpace.s + 2)
-            .padding(.bottom, 2)
-            content
-                .padding(.horizontal, contentPadding)
-                .padding(.top, AOMSpace.xs)
-                .padding(.bottom, AOMSpace.m)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            if fillsHeight { Spacer(minLength: 0) }
-            footer
+            .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .topLeading)
+            .aomCard(padding: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .topLeading)
-        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
         .accessibilityElement(children: .contain)
     }
 }
 
-/// The trailing "Open ›" link of a card header.
+/// The trailing link of a section title ("View All ›").
 struct AOMCardLink: View {
     let title: String
     let action: () -> Void
@@ -270,25 +268,25 @@ struct AOMCardLink: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: AOMSpace.x0_5) {
                 Text(title)
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
+                Image(systemName: "chevron.right").imageScale(.small)
             }
-            .font(AOMType.caption.weight(.medium))
-            .foregroundStyle(hovering ? AOMTheme.text : AOMTheme.textSecondary)
-            .padding(.horizontal, 7)
-            .frame(height: 22)
-            .background(hovering ? AOMTheme.track : .clear, in: Capsule())
+            .font(AOMFont.callout.weight(.medium))
+            .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(minHeight: 22)
+            .background(hovering ? AOMColor.track : .clear, in: Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(AOMMotion.quick, value: hovering)
+        .aomAnimation(.quick, value: hovering)
         .help(title)
     }
 }
 
-/// A footer strip inside a card: the card's primary action and a quiet hint.
+/// A footer strip inside a card: the card's action and a quiet hint.
 struct AOMCardFooter<Leading: View, Trailing: View>: View {
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
@@ -300,14 +298,14 @@ struct AOMCardFooter<Leading: View, Trailing: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AOMDivider()
-            HStack(spacing: AOMSpace.xs) {
+            AOMRowDivider(inset: 0, trailingInset: 0)
+            HStack(spacing: AOMSpace.x2) {
                 leading
-                Spacer(minLength: AOMSpace.xs)
+                Spacer(minLength: AOMSpace.x2)
                 trailing
             }
-            .padding(.horizontal, AOMSpace.m)
-            .frame(minHeight: 44)
+            .padding(.horizontal, AOMSpace.rowInset)
+            .frame(minHeight: AOMSize.rowDetail - AOMSpace.x2)
         }
     }
 }
@@ -345,42 +343,42 @@ struct AOMModeButton: View {
                 // does not fit, show the glyph alone (the title stays in the
                 // tooltip and the VoiceOver label).
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 5) {
-                        Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                    HStack(spacing: AOMSpace.x1 + 1) {
+                        Image(systemName: symbol).font(AOMFont.body.weight(.medium))
                             .symbolRenderingMode(.hierarchical).foregroundStyle(tint)
-                        Text(title).font(AOMType.caption.weight(.medium)).lineLimit(1)
+                        Text(title).font(AOMFont.caption.weight(.medium)).lineLimit(1)
                     }
-                    Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                    Image(systemName: symbol).font(AOMFont.body.weight(.medium))
                         .symbolRenderingMode(.hierarchical).foregroundStyle(tint)
                 }
-                .frame(maxWidth: .infinity, minHeight: 34)
+                .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard - 2)
                 .contentShape(Rectangle())
             } else {
-            VStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.system(size: 17, weight: .regular))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(tint)
-                    .frame(height: 22)
-                Text(title)
-                    .font(AOMType.caption.weight(.medium))
-                    .foregroundStyle(AOMTheme.text)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.92)
-                    .truncationMode(.tail)
-                Text(shortcut ?? " ")
-                    .font(AOMType.micro)
-                    .foregroundStyle(AOMTheme.textTertiary)
-                    .lineLimit(1)
-                    .opacity(shortcut == nil ? 0 : 1)
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
+                VStack(spacing: AOMSpace.x1 + 1) {
+                    Image(systemName: symbol)
+                        .font(AOMFont.pageStatus.weight(.regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(tint)
+                        .frame(height: 22)
+                    Text(title)
+                        .font(AOMFont.caption.weight(.medium))
+                        .foregroundStyle(AOMTheme.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.92)
+                        .truncationMode(.tail)
+                    Text(shortcut ?? " ")
+                        .font(AOMFont.badge)
+                        .foregroundStyle(AOMTheme.textTertiary)
+                        .lineLimit(1)
+                        .opacity(shortcut == nil ? 0 : 1)
+                }
+                .padding(.horizontal, AOMSpace.x1)
+                .padding(.vertical, AOMSpace.x2)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
             }
         }
-        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.tile))
+        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
         .help(help ?? (shortcut.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(shortcut.map { "Shortcut \($0)" } ?? "")
@@ -399,7 +397,7 @@ struct AOMScopeItem<ID: Hashable>: Identifiable {
     var dot: Color?
 }
 
-/// Filters for the content below as a row of quiet capsules — the selected
+/// Filters for the content below as a row of quiet capsules; the selected
 /// one carries the accent. Counts read as part of the label, so "Trackpad 7"
 /// answers what the filter holds before it is chosen. Scrolls sideways when
 /// space runs out instead of truncating.
@@ -410,7 +408,7 @@ struct AOMScopeBar<ID: Hashable>: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            HStack(spacing: AOMSpace.x1) {
                 ForEach(items) { item in
                     AOMScopeChip(item: item, selected: item.id == selection) { selection = item.id }
                 }
@@ -432,16 +430,16 @@ private struct AOMScopeChip<ID: Hashable>: View {
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     /// Increase Contrast and Differentiate Without Color outline the selected
-    /// chip, so selection is not carried by a 13% tint alone (WCAG 1.4.11).
+    /// chip, so selection is not carried by a tint alone (WCAG 1.4.11).
     private var outlined: Bool { selected && (contrast == .increased || differentiateWithoutColor) }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: AOMSpace.x1 + 1) {
                 if let dot = item.dot {
                     Circle().fill(dot).frame(width: 7, height: 7)
                 } else if let symbol = item.symbol {
-                    Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+                    Image(systemName: symbol).imageScale(.small)
                 }
                 Text(item.title).lineLimit(1)
                 if let count = item.count {
@@ -450,9 +448,9 @@ private struct AOMScopeChip<ID: Hashable>: View {
                         .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMTheme.textTertiary)
                 }
             }
-            .font(.system(size: 12, weight: selected ? .semibold : .medium))
+            .font(AOMFont.callout.weight(selected ? .semibold : .medium))
             .foregroundStyle(selected ? Color.accentColor : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
-            .padding(.horizontal, 10)
+            .padding(.horizontal, AOMSpace.x3 - 2)
             .frame(height: 26)
             .background {
                 Capsule().fill(selected ? Color.accentColor.opacity(contrast == .increased ? 0.24 : 0.13)
@@ -465,39 +463,17 @@ private struct AOMScopeChip<ID: Hashable>: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(AOMMotion.quick, value: hovering)
-        .animation(AOMMotion.quick, value: selected)
+        .aomAnimation(.quick, value: hovering)
+        .aomAnimation(.quick, value: selected)
         .accessibilityLabel(item.count.map { "\(item.title), \($0)" } ?? item.title)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
-    }
-}
-
-// MARK: - Status pill
-
-/// A small state capsule: a dot and a few words ("Automation On", "REC").
-struct AOMStatusPill: View {
-    let text: String
-    var tint: Color = AOMTheme.positive
-    var filled = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle().fill(filled ? Color.white : tint).frame(width: 6, height: 6)
-            Text(text).lineLimit(1)
-        }
-        .font(AOMType.micro.weight(.semibold))
-        .foregroundStyle(filled ? Color.white : AOMTheme.textSecondary)
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(filled ? AnyShapeStyle(tint) : AnyShapeStyle(AOMTheme.track), in: Capsule())
-        .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - Window layouts
 
 /// The geometry of a tiling layout inside a normalised screen, shared by the
-/// Window Tiling page, its previews and the Workspace card.
+/// Window Tiling page, its previews and the Workspace.
 enum AOMTilingGeometry {
     static func rect(for layout: CustomSnapZone.Layout, in size: CGSize) -> CGRect {
         let w = size.width, h = size.height
@@ -554,7 +530,7 @@ enum AOMTilingGeometry {
     }
 }
 
-/// A miniature screen with the layout's region filled — the visual name of a
+/// A miniature screen with the layout's region filled: the visual name of a
 /// layout (Swish, Rectangle Pro and macOS's own tiling menu draw the same).
 struct AOMLayoutDiagram: View {
     /// The window's region in a unit screen, origin at the top left.
@@ -586,9 +562,9 @@ struct AOMLayoutDiagram: View {
                                 width: region.width * inner.width, height: region.height * inner.height)
                 .insetBy(dx: 1, dy: 1)
             ZStack(alignment: .topLeading) {
-                screen.fill(AOMTheme.cardAlt)
+                screen.fill(AOMColor.sunken)
                 screen.strokeBorder(highlighted ? Color.accentColor.opacity(0.6)
-                                                : (contrast == .increased ? AOMTheme.textSecondary : AOMTheme.hairline),
+                                                : (contrast == .increased ? AOMColor.strongLine : AOMColor.hairline),
                                     lineWidth: highlighted || contrast == .increased ? 1 : 0.5)
                 RoundedRectangle(cornerRadius: max(2, size.height * 0.08), style: .continuous)
                     .fill(Color.accentColor.opacity(highlighted || contrast == .increased ? 0.85 : 0.5))
@@ -603,7 +579,7 @@ struct AOMLayoutDiagram: View {
             }
         }
         .aspectRatio(16 / 10, contentMode: .fit)
-        .animation(AOMMotion.quick, value: highlighted)
+        .aomAnimation(.quick, value: highlighted)
         .accessibilityHidden(true)
     }
 }
