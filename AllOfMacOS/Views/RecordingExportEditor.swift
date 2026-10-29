@@ -497,7 +497,12 @@ struct RecordingExportEditor: View {
     private func selectBackground(_ kind: AOMVideoBackgroundKind) {
         switch kind {
         case .image:
-            if background.imagePath == nil || background.kind != .image { chooseBackgroundImage() } else { background.kind = .image }
+            // Reuse a picture chosen earlier; otherwise ask for one.
+            if background.kind != .wallpaper, let path = background.imagePath, FileManager.default.isReadableFile(atPath: path) {
+                background.kind = .image
+            } else {
+                chooseBackgroundImage()
+            }
         case .wallpaper:
             let path = AOMVideoBackground.currentWallpaperPath()
             AOMStudioBackgroundImages.invalidate(path)

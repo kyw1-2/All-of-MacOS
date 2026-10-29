@@ -270,6 +270,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 if #available(macOS 15.0, *) {
                     config.showMouseClicks = false // Editable local click events are rendered in Studio.
                     config.captureMicrophone = wantsMic && index == 0
+                    if wantsMic, index == 0, let microphone = RecordingInputDevice.chosen(
+                        CaptureSettings.recordingMicrophoneID, among: RecordingInputDevice.microphones().map(\.id)) {
+                        config.microphoneCaptureDeviceID = microphone
+                    }
                 }
                 config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(CaptureSettings.recordingFPS))
                 config.queueDepth = 6; config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -836,7 +840,12 @@ private final class RecordingCameraSource: NSObject, AVCaptureVideoDataOutputSam
     var captureSession: AVCaptureSession { session }
     var onFrame: (@MainActor (CIImage) -> Void)?
     func start() async throws {
-        guard let device = AVCaptureDevice.default(for: .video) else { throw CaptureError.captureFailed("No camera is available.") }
+        // The chosen camera when it is connected, else the system default.
+        let chosen = RecordingInputDevice.chosen(CaptureSettings.recordingCameraID,
+                                                 among: RecordingInputDevice.cameras().map(\.id))
+        guard let device = chosen.flatMap(AVCaptureDevice.init(uniqueID:)) ?? AVCaptureDevice.default(for: .video) else {
+            throw CaptureError.captureFailed("No camera is available.")
+        }
         let input = try AVCaptureDeviceInput(device: device)
         session.beginConfiguration()
         session.sessionPreset = .medium
@@ -1213,5 +1222,30 @@ final class RecordingDesktopIcons {
             finder.write(previous)
         }
         try? FileManager.default.removeItem(at: journal)
+    }
+}
+
+/// Cameras and microphones a recording can use (3.3.3, CS-33/35 device
+/// choice). Listing devices records nothing and needs no permission.
+struct RecordingInputDevice: Identifiable, Equatable {
+    let id: String
+    let name: String
+
+    static func cameras() -> [RecordingInputDevice] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+                                         mediaType: .video, position: .unspecified)
+            .devices.map { RecordingInputDevice(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    static func microphones() -> [RecordingInputDevice] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone], mediaType: .audio, position: .unspecified)
+            .devices.map { RecordingInputDevice(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    /// The stored choice when that device is connected; nil means the system
+    /// default, so an unplugged camera or microphone never blocks a take.
+    static func chosen(_ stored: String, among available: [String]) -> String? {
+        let id = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !id.isEmpty && available.contains(id) ? id : nil
     }
 }

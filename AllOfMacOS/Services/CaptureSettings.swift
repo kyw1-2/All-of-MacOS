@@ -250,7 +250,8 @@ enum CaptureSettings {
     }
 
     /// Never in a backup: they describe this Mac, not the user's choices.
-    static let machineSpecificKeys = [Key.saveDirectory, Key.lastArea, Key.lastAreaDisplayID]
+    static let machineSpecificKeys = [Key.saveDirectory, Key.lastArea, Key.lastAreaDisplayID,
+                                      RecordingKey.cameraID, RecordingKey.microphoneID]
 
     static var format: CaptureFormat {
         get { CaptureFormat(rawValue: d.string(forKey: Key.format) ?? "") ?? .png }
@@ -674,6 +675,21 @@ extension CaptureSettings {
         static let gifMaxDimension = "AOMCaptureRecordingGIFSize"
         static let gifLoops = "AOMCaptureRecordingGIFLoop"
         static let scalesTo1x = "AOMCaptureRecordingScaleTo1x"
+        /// Device unique IDs: they describe this Mac, so backups leave them out.
+        static let cameraID = "AOMCaptureRecordingCameraID"
+        static let microphoneID = "AOMCaptureRecordingMicrophoneID"
+    }
+
+    /// The camera for the camera layer and bubble; empty is the system default.
+    static var recordingCameraID: String {
+        get { d.string(forKey: RecordingKey.cameraID) ?? "" }
+        set { d.set(newValue, forKey: RecordingKey.cameraID) }
+    }
+
+    /// The microphone ScreenCaptureKit records (macOS 15); empty is the system default.
+    static var recordingMicrophoneID: String {
+        get { d.string(forKey: RecordingKey.microphoneID) ?? "" }
+        set { d.set(newValue, forKey: RecordingKey.microphoneID) }
     }
 
     /// The 3.3.3 recording keys a profile backup carries.

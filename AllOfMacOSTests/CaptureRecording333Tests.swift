@@ -717,3 +717,31 @@ final class CaptureRecording333ContractTests: XCTestCase {
         }
     }
 }
+
+final class CaptureRecording333DeviceTests: XCTestCase {
+    /// Pure choice logic only: no device is opened or listed here.
+    func testAChosenCameraOrMicrophoneIsUsedOnlyWhileConnected() {
+        XCTAssertNil(RecordingInputDevice.chosen("", among: ["built-in"]), "empty is the system default")
+        XCTAssertEqual(RecordingInputDevice.chosen("usb-cam", among: ["built-in", "usb-cam"]), "usb-cam")
+        XCTAssertEqual(RecordingInputDevice.chosen(" usb-cam ", among: ["usb-cam"]), "usb-cam")
+        XCTAssertNil(RecordingInputDevice.chosen("unplugged", among: ["built-in"]), "falls back instead of failing the take")
+    }
+
+    func testDeviceChoicesRoundTripAndStayOutOfBackups() async {
+        let keys = ["AOMCaptureRecordingCameraID", "AOMCaptureRecordingMicrophoneID"]
+        await preservingDefaults(keys) {
+            for key in keys { UserDefaults.standard.removeObject(forKey: key) }
+            XCTAssertEqual(CaptureSettings.recordingCameraID, "")
+            XCTAssertEqual(CaptureSettings.recordingMicrophoneID, "")
+            CaptureSettings.recordingCameraID = "cam-1"
+            CaptureSettings.recordingMicrophoneID = "mic-1"
+            XCTAssertEqual(CaptureSettings.recordingCameraID, "cam-1")
+            XCTAssertEqual(CaptureSettings.recordingMicrophoneID, "mic-1")
+        }
+        for key in keys {
+            XCTAssertTrue(CaptureSettings.machineSpecificKeys.contains(key))
+            XCTAssertFalse(PresetManager.isBackedUpSetting(key), "\(key) describes this Mac")
+            XCTAssertNotNil(PresetManager.settingsNotBackedUp[key])
+        }
+    }
+}
