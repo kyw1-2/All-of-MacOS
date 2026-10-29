@@ -99,22 +99,47 @@ struct ClipboardStudioView: View {
 
     private var subtitle: String {
         let count = store.entries.count
-        var parts = ["\(count) item\(count == 1 ? "" : "s")", "\(store.boards.count) pinboard\(store.boards.count == 1 ? "" : "s")"]
-        if store.paused { parts.append("recording paused") }
+        let pinned = store.entries.filter { !$0.pinboardIDs.isEmpty }.count
+        var parts = ["\(count.formatted()) item\(count == 1 ? "" : "s")", "\(store.boards.count) pinboard\(store.boards.count == 1 ? "" : "s")"]
+        if pinned > 0 { parts.append("\(pinned.formatted()) pinned") }
+        if store.paused && store.pauseRemainingSeconds > 0 {
+            let minutes = max(1, Int((Double(store.pauseRemainingSeconds) / 60).rounded(.up)))
+            parts.append("resumes in \(minutes) min")
+        }
         return parts.joined(separator: " · ")
+    }
+
+    /// d.9: whether history is being saved, what it holds, and the same
+    /// switch as the Workspace tile (off pauses until resumed).
+    private var header: some View {
+        AOMPageHeader(store.paused ? "Clipboard history is paused" : "Clipboard history is on",
+                      module: .clipboard, subtitle: subtitle,
+                      help: "AOM keeps what you copy, encrypted on this Mac, so you can search it and paste it again. Pinboards keep items past the history limit. Open the shelf with \(ClipboardShortcuts.shared.shortcut(for: .history)?.displayString ?? "its shortcut") to paste without leaving your app.",
+                      active: !store.paused) {
+            Toggle("Save clipboard history", isOn: Binding(get: { !store.paused },
+                                                           set: { $0 ? store.resume() : store.pause() }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .help(store.paused ? "Resume clipboard history" : "Stop saving what you copy until you resume")
+                .accessibilityLabel("Save clipboard history")
+        }
     }
 
     var body: some View {
         let entries = filteredEntries
         let state = ClipboardEmptyContent.resolve(isLoading: store.isLoading, storage: store.storageStatus, paused: store.paused)
         VStack(spacing: 0) {
+            header
+                .padding(.horizontal, AOMSpace.pageMargin)
+                .padding(.top, AOMSpace.x3)
+                .padding(.bottom, AOMSpace.x2)
             filterBar
             AOMDivider()
             // Copies made while storage is blocked are listed but not saved:
             // the library says so above the list, with the way to fix it.
             if state.isStorageProblem && !store.entries.isEmpty {
                 AOMNotice(.warning, "Clipboard history isn't being saved", detail: state.message) { storageActions(state) }
-                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .padding(.horizontal, AOMSpace.x4).padding(.vertical, AOMSpace.x3)
             }
             Group {
                 if search.isSearchPending {
@@ -143,7 +168,6 @@ struct ClipboardStudioView: View {
         }
         .aomPane()
         .navigationTitle("Clipboard")
-        .navigationSubtitle(subtitle)
         .searchable(text: $search.query, placement: .toolbar, prompt: "Search text, links and files")
         .toolbar { toolbarContent }
         .task(id: store.revision) {
@@ -161,11 +185,18 @@ struct ClipboardStudioView: View {
                 ClipboardSettingsView()
                 Divider()
                 HStack { Spacer(); Button("Done") { showingSettings = false }.keyboardShortcut(.defaultAction) }
-                    .padding(12)
+                    .padding(AOMSpace.x3)
             }
             .frame(minWidth: 600, idealWidth: 660, minHeight: 520, idealHeight: 600)
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .onAppear {
+            // Isolated previews can open the settings sheet for review
+            // (`--aom-preview-clipboard-settings`).
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-clipboard-settings") {
+                showingSettings = true
+            }
+        }
         .confirmationDialog("Delete “\(boardPendingDeletion?.name ?? "")”?", isPresented: Binding(
             get: { boardPendingDeletion != nil }, set: { if !$0 { boardPendingDeletion = nil } })) {
             let only = boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0
@@ -202,7 +233,7 @@ struct ClipboardStudioView: View {
             Button("Try Again") { Task { await store.recoverStorage() } }
                 .buttonStyle(.borderedProminent)
         case .unreadableArchive:
-            HStack(spacing: 8) {
+            HStack(spacing: AOMSpace.x2) {
                 Button("Recover Storage…") { showingRecoverConfirmation = true }
                     .buttonStyle(.borderedProminent)
                 Button("Clipboard Settings…") { showingSettings = true }
@@ -218,14 +249,16 @@ struct ClipboardStudioView: View {
         GeometryReader { geometry in
             if gridLayout {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: 16)], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.tileMin, maximum: AOMSize.tileMax), spacing: AOMSpace.tileGap)],
+                              spacing: AOMSpace.tileGap) {
                         ForEach(entries) { entry in libraryCard(entry) }
                     }
-                    .padding(24)
+                    .padding(.horizontal, AOMSpace.pageMargin)
+                    .padding(.vertical, AOMSpace.x4)
                 }
-                .background(AOMTheme.workspace)
+                .background(AOMColor.canvas)
             } else {
-                let showsPreview = geometry.size.width >= 640
+                let showsPreview = geometry.size.width >= AOMFeatureSize.previewPaneMinimumWidth
                 HStack(spacing: 0) {
                     List(selection: $selectedEntryID) {
                         ForEach(entries) { entry in libraryRow(entry) }
@@ -244,7 +277,9 @@ struct ClipboardStudioView: View {
                     if showsPreview, let entry = entries.first(where: { $0.id == selectedEntryID }) ?? entries.first {
                         AOMDivider(axis: .vertical)
                         previewPane(entry)
-                            .frame(width: min(420, max(300, geometry.size.width * 0.42)))
+                            .frame(width: min(AOMFeatureSize.previewPane.upperBound,
+                                              max(AOMFeatureSize.previewPane.lowerBound,
+                                                  geometry.size.width * AOMFeatureSize.previewPaneShare)))
                     }
                 }
             }
@@ -254,10 +289,10 @@ struct ClipboardStudioView: View {
     private func libraryRow(_ entry: ClipboardEntry) -> some View {
         AOMListRow(entry.title,
                    detail: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · ")) {
-            Image(systemName: entry.kind.symbol).font(.system(size: 13, weight: .medium))
+            Image(systemName: entry.kind.symbol).font(AOMFont.body.weight(.medium))
         } trailing: {
             if !entry.pinboardIDs.isEmpty {
-                Image(systemName: "pin.fill").font(.system(size: 9.5)).foregroundStyle(AOMTheme.textTertiary)
+                Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(.secondary)
                     .accessibilityLabel("Pinned")
             }
         }
@@ -286,28 +321,32 @@ struct ClipboardStudioView: View {
     /// and time beneath, and the actions next to it.
     private func previewPane(_ entry: ClipboardEntry) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: AOMSpace.xs) {
+            HStack(spacing: AOMSpace.x2) {
                 if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
-                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                    Image(nsImage: icon).resizable().frame(width: AOMFeatureSize.appIcon, height: AOMFeatureSize.appIcon)
+                        .accessibilityHidden(true)
                 }
                 Text([entry.sourceName ?? entry.kind.displayName, AOMRelativeTime.string(entry.lastCopiedAt)].joined(separator: " · "))
-                    .font(AOMType.caption)
-                    .foregroundStyle(AOMTheme.textSecondary)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
-                Spacer(minLength: 4)
+                Spacer(minLength: AOMSpace.x1)
+                if !entry.pinboardIDs.isEmpty {
+                    AOMStatusPill("Pinned", tone: .neutral, symbol: "pin.fill")
+                }
             }
-            .padding(.horizontal, AOMSpace.m)
-            .frame(height: 38)
+            .padding(.horizontal, AOMSpace.x4)
+            .frame(height: AOMSize.rowStandard + AOMSpace.x1)
             AOMDivider()
             ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.s) {
+                VStack(alignment: .leading, spacing: AOMSpace.x3) {
                     ClipboardStudioCard.Preview(entry: entry, large: true)
-                        .frame(maxWidth: .infinity, minHeight: entry.kind == .text ? nil : 160, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, minHeight: entry.kind == .text ? nil : AOMSize.tileMin, alignment: .topLeading)
                 }
-                .padding(AOMSpace.m)
+                .padding(AOMSpace.x4)
             }
             AOMDivider()
-            HStack(spacing: AOMSpace.xs) {
+            HStack(spacing: AOMSpace.x2) {
                 Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
                     .buttonStyle(AOMFilledButtonStyle())
                     .keyboardShortcut("c", modifiers: [.command, .shift])
@@ -317,13 +356,15 @@ struct ClipboardStudioView: View {
                 } label: {
                     Label("More", systemImage: "ellipsis")
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
                 .fixedSize()
+                .help("More actions for this item")
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, AOMSpace.m)
-            .frame(height: 48)
+            .padding(.horizontal, AOMSpace.x4)
+            .frame(height: AOMSize.rowDetail)
         }
+        .background(AOMColor.canvas)
         .id(entry.id)
     }
 
@@ -388,16 +429,16 @@ struct ClipboardStudioView: View {
     // MARK: - Filter bar (pinboards and kinds — this page's own navigation)
 
     private var filterBar: some View {
-        HStack(spacing: AOMSpace.s) {
+        HStack(spacing: AOMSpace.x3) {
             pinboardsBar
             if store.paused {
+                // Paused is a state (e.6), one click from Resume.
                 Button { store.resume() } label: {
-                    Label("Paused", systemImage: "pause.circle.fill")
+                    AOMStatusPill("Paused", tone: .neutral, symbol: "pause.circle.fill")
                 }
                 .buttonStyle(.plain)
-                .font(AOMType.caption.weight(.semibold))
-                .foregroundStyle(AOMTheme.warning)
                 .help("Clipboard history is paused — click to resume")
+                .accessibilityLabel("Clipboard history is paused. Resume")
             }
             Picker("Type", selection: $search.kind) {
                 Text("All").tag(ClipboardEntry.Kind?.none)
@@ -413,21 +454,22 @@ struct ClipboardStudioView: View {
             .fixedSize()
             .controlSize(.small)
         }
-        .padding(.horizontal, AOMSpace.m)
-        .padding(.vertical, AOMSpace.xs)
-        .frame(minHeight: 42)
+        .padding(.horizontal, AOMSpace.x3)
+        .padding(.vertical, AOMSpace.x2)
+        .frame(minHeight: AOMSize.rowDetail - AOMSpace.x2)
     }
 
     private var pinboardsBar: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 4) {
-                chip(title: "All Items", count: store.entries.count, color: nil, symbol: "tray.full",
-                     selected: search.board == nil) { search.board = nil }
+            HStack(spacing: AOMSpace.x1) {
+                AOMFilterChip("All Items", symbol: "tray.full", count: store.entries.count, selected: search.board == nil) {
+                    withAnimation(AOMMotion.quick) { search.board = nil }
+                }
                 ForEach(store.boards) { board in
                     let count = boardCounts[board.id] ?? 0
-                    chip(title: board.name, count: count, color: colorForBoard(board.color), symbol: nil,
-                         selected: search.board == board.id) {
-                        search.board = search.board == board.id ? nil : board.id
+                    AOMFilterChip(board.name, dot: colorForBoard(board.color), count: count,
+                                  selected: search.board == board.id) {
+                        withAnimation(AOMMotion.quick) { search.board = search.board == board.id ? nil : board.id }
                     }
                     .contextMenu {
                         Button("Delete Pinboard…", role: .destructive) { boardPendingDeletion = board }
@@ -439,12 +481,12 @@ struct ClipboardStudioView: View {
                     showingNewBoardSheet = true
                 } label: {
                     Label("New Pinboard", systemImage: "plus")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 8).frame(height: 26)
+                        .font(AOMFont.callout.weight(.medium))
+                        .padding(.horizontal, AOMSpace.x2).frame(height: AOMFeatureSize.chip)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(AOMTheme.textSecondary)
+                .foregroundStyle(AOMColor.textSecondary)
                 .help("Create a pinboard")
             }
         }
@@ -452,45 +494,24 @@ struct ClipboardStudioView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func chip(title: String, count: Int, color: Color?, symbol: String?, selected: Bool,
-                      action: @escaping () -> Void) -> some View {
-        Button {
-            withAnimation(AOMMotion.quick) { action() }
-        } label: {
-            HStack(spacing: 5) {
-                if let color { Circle().fill(color).frame(width: 7, height: 7) }
-                if let symbol { Image(systemName: symbol).font(.system(size: 11, weight: .medium)) }
-                Text(title).lineLimit(1)
-                Text("\(count)").monospacedDigit()
-                    .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMTheme.textTertiary)
-            }
-            .font(.system(size: 12, weight: selected ? .semibold : .medium))
-            .foregroundStyle(selected ? Color.accentColor : AOMTheme.textSecondary)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(selected ? Color.accentColor.opacity(0.13) : .clear, in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
     // MARK: - New Board Sheet
 
     private var newBoardSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("New Pinboard").font(.headline)
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            Text("New Pinboard").font(AOMFont.pageStatus).foregroundStyle(AOMColor.text)
             TextField("Name (e.g. Snippets, Colors, Work)", text: $newBoardName)
                 .textFieldStyle(.roundedBorder)
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Color").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                Text("Color").font(AOMFont.caption.weight(.medium)).foregroundStyle(AOMColor.textSecondary)
+                HStack(spacing: AOMSpace.x3) {
                     ForEach(boardColors, id: \.self) { colorName in
                         Button { newBoardColor = colorName } label: {
                             Circle()
                                 .fill(colorForBoard(colorName))
-                                .frame(width: 22, height: 22)
-                                .overlay(Circle().strokeBorder(Color.primary, lineWidth: newBoardColor == colorName ? 2 : 0).padding(-3))
+                                .frame(width: AOMFeatureSize.swatch, height: AOMFeatureSize.swatch)
+                                .overlay(Circle().strokeBorder(AOMColor.text,
+                                                               lineWidth: newBoardColor == colorName ? AOMFeatureSize.swatchRing : 0)
+                                    .padding(-AOMFeatureSize.swatchRing - 1))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(colorName.capitalized)
@@ -514,8 +535,8 @@ struct ClipboardStudioView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
-        .frame(width: 380)
+        .padding(AOMSpace.x5)
+        .frame(width: AOMFeatureSize.sheetCompact)
     }
 
     // MARK: - Helpers
@@ -581,40 +602,42 @@ private struct ClipboardStudioCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x2) {
                 if let appIcon {
-                    Image(nsImage: appIcon).resizable().frame(width: 16, height: 16)
+                    Image(nsImage: appIcon).resizable().frame(width: AOMFeatureSize.appIcon, height: AOMFeatureSize.appIcon)
+                        .accessibilityHidden(true)
                 } else {
-                    Image(systemName: entry.kind.symbol).font(.caption).foregroundStyle(.secondary)
+                    Image(systemName: entry.kind.symbol).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 }
                 Text(entry.sourceName ?? entry.kind.displayName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .font(AOMFont.caption.weight(.medium))
+                    .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
                 if !entry.pinboardIDs.isEmpty {
-                    Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
+                    Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(AOMColor.textSecondary)
                         .accessibilityLabel("Pinned")
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: AOMSpace.x1)
                 Text(AOMRelativeTime.string(entry.lastCopiedAt))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(AOMFont.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(AOMColor.textSecondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, AOMSpace.x4)
+            .padding(.vertical, AOMSpace.x3)
 
             Preview(entry: entry)
-                .frame(height: 144)
+                .frame(height: AOMFeatureSize.galleryPreview)
                 .frame(maxWidth: .infinity)
-                .background(AOMTheme.cardAlt.opacity(0.55))
+                .background(AOMColor.sunken)
 
-            HStack(spacing: 8) {
+            HStack(spacing: AOMSpace.x2) {
                 Label(entry.kind.displayName, systemImage: entry.kind.symbol)
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                Spacer(minLength: 4)
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                Spacer(minLength: AOMSpace.x1)
                 Button(action: onCopy) { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.borderless)
-                    .foregroundStyle(AOMTheme.textSecondary)
+                    .foregroundStyle(AOMColor.textSecondary)
                     .help("Copy").accessibilityLabel("Copy item")
                 Menu {
                     Button("Copy", action: onCopy)
@@ -635,12 +658,13 @@ private struct ClipboardStudioCard: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Item actions").accessibilityLabel("Item actions")
             }
-            .padding(.horizontal, 14)
-            .frame(height: 38)
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMSize.rowStandard + AOMSpace.x0_5)
         }
-        .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
-        .clipShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: AOMDesign.tileRadius, style: .continuous))
+        // Hover shifts the fill only; cards never lift or outline (c.6).
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered)
+        .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
         .onTapGesture(count: 2, perform: onCopy)
         .contextMenu {
             Button("Copy", action: onCopy)
@@ -656,7 +680,7 @@ private struct ClipboardStudioCard: View {
             Divider()
             Button("Delete", role: .destructive, action: onDelete)
         }
-        .animation(AOMDesign.animation(.easeOut(duration: 0.12)), value: isHovered)
+        .aomAnimation(.quick, value: isHovered)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(entry.kind.displayName): \(entry.title)")
     }
@@ -690,34 +714,34 @@ extension ClipboardStudioCard {
                 Rectangle().fill(Color(hex: hex))
                     .overlay {
                         Text(hex.uppercased())
-                            .font(.system(.callout, design: .monospaced).weight(.semibold))
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(.regularMaterial, in: Capsule())
+                            .font(AOMFont.mono.weight(.semibold))
+                            .padding(.horizontal, AOMSpace.x2).padding(.vertical, AOMSpace.x0_5)
+                            .aomMediaBadge(radius: AOMRadius.panel)
                     }
             case .image:
                 if let image = thumbnail?.image {
                     Image(decorative: image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
-                        .padding(6)
+                        .padding(AOMSpace.x2)
                         .overlay(alignment: .bottomTrailing) {
                             if let size = thumbnail?.dimensions {
-                                Text(size).font(.caption2.weight(.medium))
-                                    .padding(.horizontal, 5).padding(.vertical, 2)
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
-                                    .padding(6)
+                                Text(size).font(AOMFont.badge).monospacedDigit()
+                                    .padding(.horizontal, AOMSpace.x1).padding(.vertical, AOMSpace.x0_5)
+                                    .aomMediaBadge()
+                                    .padding(AOMSpace.x2)
                             }
                         }
                 } else {
-                    Image(systemName: "photo").font(.title).foregroundStyle(.tertiary)
+                    Image(systemName: "photo").font(AOMFont.title.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                 }
             case .link:
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
                     Label(URL(string: entry.text ?? "")?.host ?? "Link", systemImage: "safari")
-                        .font(.callout.weight(.semibold))
+                        .font(AOMFont.callout.weight(.semibold))
                         .foregroundStyle(.tint)
                         .lineLimit(1)
                     Text(entry.text ?? "")
-                        .font(large ? AOMType.body : .caption)
-                        .foregroundStyle(.secondary)
+                        .font(large ? AOMFont.body : AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(large ? nil : 4)
                         .textSelection(.enabled)
                     if large, let url = URL(string: entry.text ?? ""), url.scheme?.hasPrefix("http") == true {
@@ -725,40 +749,43 @@ extension ClipboardStudioCard {
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(large ? 0 : 10)
+                .padding(large ? 0 : AOMSpace.x3)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             case .file:
-                VStack(spacing: 6) {
+                VStack(spacing: AOMSpace.x2) {
                     if let url = entry.fileURLs.first {
+                        let side = large ? AOMFeatureSize.fileIconLarge : AOMFeatureSize.fileIcon
                         Image(nsImage: AppMetadataCache.shared.fileIcon(for: url)).resizable().scaledToFit()
-                            .frame(width: large ? 64 : 48, height: large ? 64 : 48)
+                            .frame(width: side, height: side)
                     } else {
-                        Image(systemName: "doc.fill").font(.largeTitle).foregroundStyle(.secondary)
+                        Image(systemName: "doc.fill").font(AOMFont.hero.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                     }
                     Text(entry.fileURLs.count > 1 ? "\(entry.fileURLs.first?.lastPathComponent ?? "") +\(entry.fileURLs.count - 1)"
                          : entry.fileURLs.first?.lastPathComponent ?? "File")
-                        .font(.caption.weight(.medium))
+                        .font(AOMFont.caption.weight(.medium))
+                        .foregroundStyle(AOMColor.text)
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .multilineTextAlignment(.center)
                 }
-                .padding(8)
+                .padding(AOMSpace.x2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .text:
                 let full = large ? (entry.text ?? entry.previewText) : entry.previewText
                 let text = String(full.prefix(large ? 16000 : 600))
-                VStack(alignment: .leading, spacing: AOMSpace.xs) {
+                let code = ClipboardStudioCard.isLikelyCode(text)
+                VStack(alignment: .leading, spacing: AOMSpace.x2) {
                     Text(text)
-                        .font(.system(size: large ? 13 : 12, design: ClipboardStudioCard.isLikelyCode(text) ? .monospaced : .default))
-                        .foregroundStyle(.primary.opacity(0.9))
+                        .font(code ? (large ? AOMFont.body : AOMFont.callout).monospaced() : (large ? AOMFont.body : AOMFont.callout))
+                        .foregroundStyle(AOMColor.text)
                         .lineLimit(large ? nil : 5)
                         .textSelection(.enabled)
                     if large, full.count > 16000 {
                         Text("Preview shortened. Copy includes the full text.")
-                            .font(AOMType.caption).foregroundStyle(.secondary)
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                     }
                 }
-                .padding(large ? 0 : 10)
+                .padding(large ? 0 : AOMSpace.x3)
                 .frame(maxWidth: .infinity, maxHeight: large ? nil : .infinity, alignment: .topLeading)
             }
         }

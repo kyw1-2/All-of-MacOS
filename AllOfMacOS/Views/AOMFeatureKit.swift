@@ -29,6 +29,30 @@ enum AOMFeatureSize {
     static let swatchRing: CGFloat = 2
     /// Usage bars in lists (Insights › Most used).
     static let meter: CGFloat = 6
+    /// A preview pane beside a list (Clipboard): shown from this page width,
+    /// sized 42% of it within this range.
+    static let previewPaneMinimumWidth: CGFloat = 640
+    static let previewPane: ClosedRange<CGFloat> = 300...420
+    static let previewPaneShare: CGFloat = 0.42
+    /// The picture area of a gallery card (Clipboard › Gallery).
+    static let galleryPreview: CGFloat = 144
+    /// Finder file icons in previews and cards.
+    static let fileIcon: CGFloat = 48
+    static let fileIconLarge: CGFloat = 64
+    /// Fixed-width sheets: a name and a colour; a short text or form.
+    static let sheetCompact: CGFloat = 380
+    static let sheetStandard: CGFloat = 460
+    /// Shortcut recorder buttons keep one width while their label changes.
+    static let recorderMinWidth: CGFloat = 130
+    /// A short multi-line field inside a card (a list of bundle IDs).
+    static let textEditorShort: CGFloat = 90
+    /// A sheet that shows code or configuration (MCP connection snippets).
+    static let sheetWide: CGFloat = 520
+    /// Code snippets in a sheet: one command line, or a JSON block.
+    static let snippetShort: CGFloat = 70
+    static let snippetTall: CGFloat = 170
+    /// The Paste Stack panel's column (Paste's PasteStack.storyboard width).
+    static let stackPanelWidth: CGFloat = 264
 }
 
 // MARK: - Feature colours
