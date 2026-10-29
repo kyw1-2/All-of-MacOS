@@ -294,6 +294,14 @@ private struct AnnotationEditorView: View {
     /// Which handle of a selected object is being dragged, if any.
     @State private var activeHandle: ResizeHandle?
 
+    // 3.3.3 eraser: the last pointer position of the drag, whether the drag
+    // already took its undo snapshot, and how much it erased.
+    @State private var eraserMode = AnnotationSettings.eraserMode()
+    @State private var eraserSize = AnnotationSettings.eraserSize()
+    @State private var eraserLast: CGPoint?
+    @State private var eraserChanged = false
+    @State private var eraserCount = 0
+
     init(capture: CaptureHistoryEntry, fileURL: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil,
          session: AnnotationEditorSession? = nil) {
         self.capture = capture
@@ -364,10 +372,13 @@ private struct AnnotationEditorView: View {
             if let new { extraSelection.remove(new) } else { extraSelection.removeAll() }
         }
         .sheet(item: $placementRequest) { request in
-            AnnotationPlacementChooser(thumbnail: request.image) { placement in
+            AnnotationPlacementChooser(thumbnail: request.image, choose: { placement in
                 placementRequest = nil
                 if let placement { combine(request.image, imageScale: request.scale, placement: placement) }
-            }
+            }, chooseLayer: {
+                placementRequest = nil
+                insertImageLayer(request.image, imageScale: request.scale)
+            })
         }
         .background(CaptureKeyEventHandler(handle: handleEditorKey))
         .onAppear {
@@ -433,6 +444,11 @@ private struct AnnotationEditorView: View {
                           active: backgroundPanelOpen) { selectToolbarItem(.background) }
             capsuleButton("photo.badge.plus", help: "Add Screenshot From File… (⌘I)") { addScreenshot() }
                 .keyboardShortcut("i", modifiers: .command)
+            capsuleButton(AnnotationToolbarItem.imageLayer.symbol,
+                          help: "Insert Image Layer… (⌥⌘I) — move, resize and rotate it freely") {
+                selectToolbarItem(.imageLayer)
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(AnnotationToolbarItem.segments) { item in
@@ -549,6 +565,20 @@ private struct AnnotationEditorView: View {
             Button("Smart Highlight Text…") { showingSmartHighlight = true }
             Divider()
             Button("Layers…") { layersPopover = true }
+            Button("Insert Image Layer From File…") { insertImageLayerFromFile() }
+            Button("Paste Image as Layer") { pasteImageLayer() }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+            Menu("Arrange") {
+                Button(AnnotationArrangement.bringToFront.title) { arrangeSelection(.bringToFront) }
+                    .keyboardShortcut("]", modifiers: [.command, .shift])
+                Button(AnnotationArrangement.bringForward.title) { arrangeSelection(.bringForward) }
+                    .keyboardShortcut("]", modifiers: .command)
+                Button(AnnotationArrangement.sendBackward.title) { arrangeSelection(.sendBackward) }
+                    .keyboardShortcut("[", modifiers: .command)
+                Button(AnnotationArrangement.sendToBack.title) { arrangeSelection(.sendToBack) }
+                    .keyboardShortcut("[", modifiers: [.command, .shift])
+            }
+            .disabled(selectedID == nil)
             // ⌘C / ⌘V / ⌘D / ⌘A are handled by the editor key monitor rather than
             // menu key equivalents, so they never steal copy/paste from a text field.
             Button("Copy Object (⌘C)") { copyObjects() }.disabled(selectedID == nil)
@@ -698,25 +728,89 @@ private struct AnnotationEditorView: View {
             propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
                            label: "\(Int(style.cornerRadius)) pt")
         case .text:
+            textStylePresetMenu
             propertySlider("Font size", value: $style.fontSize, range: 10...96, width: 90,
                            label: "\(Int(style.fontSize)) pt")
-            Toggle("B", isOn: Binding(get: { style.bold ?? true }, set: { style.bold = $0; applyStyleToSelection() }))
+            Picker("Weight", selection: Binding(
+                get: { style.resolvedFontWeight },
+                set: { style.fontWeight = $0; style.bold = $0.isBold; applyStyleToSelection() })) {
+                ForEach(AnnotationFontWeight.allCases) { Text($0.displayName).tag($0) }
+            }
+            .labelsHidden().frame(width: 100).help("Font weight")
+            Toggle("B", isOn: Binding(get: { style.resolvedFontWeight.isBold },
+                                      set: { style.fontWeight = nil; style.bold = $0; applyStyleToSelection() }))
                 .toggleStyle(.button).bold().help("Bold").accessibilityLabel("Bold")
             Toggle("I", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
                 .toggleStyle(.button).italic().help("Italic").accessibilityLabel("Italic")
+            Picker("Alignment", selection: Binding(
+                get: { style.resolvedTextAlignment },
+                set: { style.textAlignment = $0 == .left ? nil : $0; applyStyleToSelection() })) {
+                ForEach(AnnotationTextAlignment.allCases) { alignment in
+                    Image(systemName: alignment.symbol).tag(alignment).help("Align \(alignment.displayName)")
+                }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 96)
+            .help("Text alignment").accessibilityLabel("Text alignment")
+            Picker("Background", selection: Binding(
+                get: { style.resolvedTextBackground },
+                set: { style.textBackground = $0 == .none ? nil : $0; applyStyleToSelection() })) {
+                ForEach(AnnotationTextBackground.allCases) { Label($0.displayName, systemImage: $0.symbol).tag($0) }
+            }
+            .labelsHidden().frame(width: 140)
+            .help("Text background: a box or speech bubble in the main colour (More Tool Options sets its own colour)")
+            .accessibilityLabel("Text background")
             Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
                 .toggleStyle(.button).help("Outlined text style")
+            Toggle(isOn: Binding(get: { style.textShadow ?? false },
+                                 set: { style.textShadow = $0 ? true : nil; applyStyleToSelection() })) {
+                Image(systemName: "shadow")
+            }
+            .toggleStyle(.button).help("Drop shadow").accessibilityLabel("Text shadow")
             if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .text {
+                // 3.3.3: vertical axis, so ⌥↩ adds a line (the box grows to fit).
                 TextField("Text", text: Binding(
                     get: { object.text },
                     set: { newValue in
                         document.beginChange()
-                        var updated = object; updated.text = newValue; document.update(updated)
-                    }))
+                        var updated = object; updated.text = newValue; document.update(fittedText(updated))
+                    }), axis: .vertical)
+                .lineLimit(1)
                 .textFieldStyle(.roundedBorder)
                 .focused($textFieldFocused)
                 .frame(width: 200)
+                .help("Text (⌥↩ starts a new line; More Tool Options shows every line)")
                 .accessibilityLabel("Text content")
+            }
+        case .eraser:
+            Picker("Eraser mode", selection: Binding(
+                get: { eraserMode },
+                set: { eraserMode = $0; AnnotationSettings.setEraserMode($0) })) {
+                ForEach(AnnotationEraserMode.allCases) { Text($0.title).tag($0).help($0.help) }
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+            .help(eraserMode.help).accessibilityLabel("Eraser mode")
+            propertySlider("Size", value: Binding(get: { eraserSize },
+                                                  set: { eraserSize = $0; AnnotationSettings.setEraserSize($0) }),
+                           range: AnnotationEraser.radiusRange, width: 90, label: "\(Int(eraserSize * 2)) pt")
+            Text("\(eraserMode.help) · ⌘Z restores").foregroundStyle(.secondary)
+        case .image:
+            if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .image {
+                propertySlider("Rotation", value: Binding(
+                    get: { object.resolvedRotation * 180 / .pi },
+                    set: { setRotation(of: id, radians: $0 * .pi / 180) }),
+                               range: -180...180, width: 110, label: "\(Int((object.resolvedRotation * 180 / .pi).rounded()))°")
+                Button("Upright") { setRotation(of: id, radians: 0) }
+                    .disabled(object.resolvedRotation == 0).help("Reset the rotation")
+                Button { arrangeSelection(.bringToFront) } label: {
+                    Image(systemName: "square.3.layers.3d.top.filled")
+                }
+                .buttonStyle(.plain).help("Bring to Front (⇧⌘])").accessibilityLabel("Bring to Front")
+                Button { arrangeSelection(.sendToBack) } label: {
+                    Image(systemName: "square.3.layers.3d.bottom.filled")
+                }
+                .buttonStyle(.plain).help("Send to Back (⇧⌘[)").accessibilityLabel("Send to Back")
+                Text("Corners resize (⇧ keeps the ratio) · the round handle rotates (⇧ snaps to 15°)")
+                    .foregroundStyle(.secondary)
             }
         case .counter:
             Picker("Counter Style", selection: Binding(
@@ -811,6 +905,8 @@ private struct AnnotationEditorView: View {
             selectTool(cropMode ? .move : .crop)
         case .redact:
             selectTool(redactKind)
+        case .imageLayer:
+            insertImageLayerFromFile()
         default:
             if let kind = item.kinds.first { selectTool(kind) }
         }
@@ -958,17 +1054,25 @@ private struct AnnotationEditorView: View {
         HStack(spacing: 12) {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Exit Crop", active: true) { cropMode = false }
-            Picker("Aspect Ratio", selection: $cropAspect) {
-                Text("Freeform").tag(CGFloat(0))
-                Text("Square").tag(CGFloat(1))
-                Text("16:9").tag(CGFloat(16.0 / 9.0))
-                Text("4:3").tag(CGFloat(4.0 / 3.0))
+            Picker("Aspect Ratio", selection: Binding<AnnotationCropPreset>(
+                get: {
+                    // A fixed ratio wins over "Original" when both match.
+                    let size = CGSize(width: document.croppedImage.width, height: document.croppedImage.height)
+                    let fixed = AnnotationCropPreset.allCases.filter { $0 != .original }
+                    return fixed.first { abs($0.ratio(imageSize: size) - cropAspect) < 0.0001 }
+                        ?? (abs(AnnotationCropPreset.original.ratio(imageSize: size) - cropAspect) < 0.0001 ? .original : .freeform)
+                },
+                set: { preset in
+                    let bounds = CGRect(x: 0, y: 0, width: CGFloat(document.croppedImage.width) / scale,
+                                        height: CGFloat(document.croppedImage.height) / scale)
+                    cropAspect = preset.ratio(imageSize: bounds.size)
+                    // The largest selection of that ratio, centred (3.3.3).
+                    guard cropAspect > 0 else { return }
+                    cropRect = boundedCrop(AnnotationCropPreset.centredRect(ratio: cropAspect, in: bounds))
+                })) {
+                ForEach(AnnotationCropPreset.allCases) { Text($0.title).tag($0) }
             }.labelsHidden().frame(width: 135)
-                .onChange(of: cropAspect) { _, ratio in
-                    guard ratio > 0, var rect = cropRect else { return }
-                    rect.size.height = rect.width / ratio
-                    cropRect = boundedCrop(rect)
-                }
+                .help("Aspect ratio of the crop")
             cropDimension("Width", width: true)
             Image(systemName: "arrow.left.and.right").foregroundStyle(.secondary)
             cropDimension("Height", width: false)
@@ -1042,7 +1146,11 @@ private struct AnnotationEditorView: View {
                         Color.clear
                         ForEach(document.objects) { object in
                             if object.id == selectedID, tool == .move {
-                                selectionHandles(for: object, fit: fit)
+                                if object.kind == .image {
+                                    imageLayerHandles(for: object, fit: fit)
+                                } else {
+                                    selectionHandles(for: object, fit: fit)
+                                }
                             } else if extraSelection.contains(object.id), tool == .move {
                                 Rectangle().path(in: object.rect.scaled(by: fit))
                                     .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -1051,6 +1159,14 @@ private struct AnnotationEditorView: View {
                         }
                         if let draft, draft.kind != .blur && draft.kind != .pixelate { DraftOverlay(object: draft, fit: fit, scale: scale) }
                         if cropMode, let cropRect { cropOverlay(cropRect: cropRect, fit: fit, imageSize: imageSize) }
+                        if tool == .eraser, let eraserLast {
+                            Circle()
+                                .fill(Color.white.opacity(0.22))
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.75), lineWidth: 1))
+                                .frame(width: eraserSize * 2 * fit, height: eraserSize * 2 * fit)
+                                .position(eraserLast.scaled(by: fit))
+                                .allowsHitTesting(false)
+                        }
                     }
                     .frame(width: imageSize.width * fit, height: imageSize.height * fit)
                     .contentShape(Rectangle())
@@ -1066,6 +1182,13 @@ private struct AnnotationEditorView: View {
                                                                onDrop: { image, imageScale, placement in
                                                                    combine(image, imageScale: imageScale,
                                                                            placement: placement)
+                                                               },
+                                                               onDropLayer: { image, imageScale, location in
+                                                                   // ⌥-drop: a free layer under the pointer.
+                                                                   let point = CGPoint(x: (location.x - origin.x) / fit,
+                                                                                       y: (location.y - origin.y) / fit)
+                                                                   insertImageLayer(image, imageScale: imageScale ?? scale,
+                                                                                    center: point)
                                                                }))
                 .shadow(color: .black.opacity(0.16), radius: 14, y: 3)
                 .padding(24)
@@ -1170,7 +1293,13 @@ private struct AnnotationEditorView: View {
                     if dragStart == nil {
                         dragStart = point
                         moveHasChanged = false
-                        let hit = document.objects.last { $0.rect.insetBy(dx: -4, dy: -4).contains(point) }
+                        let hit = document.objects.last { object in
+                            // Image layers hit-test their rotated outline (3.3.3).
+                            object.kind == .image
+                                ? AnnotationTransformGeometry.contains(point, rect: object.rect,
+                                                                       rotation: object.resolvedRotation, tolerance: 4)
+                                : object.rect.insetBy(dx: -4, dy: -4).contains(point)
+                        }
                         if NSEvent.modifierFlags.contains(.shift), let hit {
                             toggleSelection(hit.id)
                             moveOriginals = []
@@ -1203,6 +1332,11 @@ private struct AnnotationEditorView: View {
                     return // handled on tap
                 }
 
+                if tool == .eraser {
+                    eraseStep(to: current)
+                    return
+                }
+
                 if tool.isFreehand {
                     if draft == nil {
                         draft = AnnotationObject(kind: tool, rect: .zero, style: style, points: [])
@@ -1223,7 +1357,9 @@ private struct AnnotationEditorView: View {
                 draft = AnnotationObject(kind: tool,
                                          rect: CGRect(x: min(point.x, current.x), y: min(point.y, current.y),
                                                       width: abs(current.x - point.x), height: abs(current.y - point.y)),
-                                         style: style)
+                                         style: style,
+                                         // 3.3.3: lines and arrows keep the drag direction.
+                                         points: tool == .line || tool == .arrow ? [point, current] : [])
             }
             .onEnded { value in
                 defer { dragStart = nil; activeHandle = nil; moveOriginals = []; moveHasChanged = false }
@@ -1231,6 +1367,11 @@ private struct AnnotationEditorView: View {
                     return
                 }
                 if tool == .move { return }
+                if tool == .eraser {
+                    if eraserLast == nil { eraseStep(to: value.location.scaled(by: 1 / fit)) }
+                    finishEraserStroke()
+                    return
+                }
                 if tool == .text || tool == .counter {
                     let point = value.location.scaled(by: 1 / fit)
                     placeTextLike(at: point)
@@ -1251,13 +1392,15 @@ private struct AnnotationEditorView: View {
                 guard let original = resizeOriginal else { return }
                 var updated = original
                 updated.rect = handle.resize(original.rect, to: value.location.scaled(by: 1 / fit))
-                if original.kind.isFreehand {
+                // Freehand strokes and (3.3.3) line/arrow ends follow the rect.
+                if original.kind.isFreehand || ((original.kind == .line || original.kind == .arrow) && original.points.count == 2) {
                     updated.points = original.points.map { point in
                         CGPoint(x: updated.rect.minX + (point.x - original.rect.minX) * updated.rect.width / max(1, original.rect.width),
                                 y: updated.rect.minY + (point.y - original.rect.minY) * updated.rect.height / max(1, original.rect.height))
                     }
                 }
-                document.update(updated)
+                // 3.3.3: a text box's height follows its wrapped lines.
+                document.update(fittedText(updated))
             }
             .onEnded { _ in resizeOriginal = nil }
     }
@@ -1271,6 +1414,7 @@ private struct AnnotationEditorView: View {
                                           rect: CGRect(x: point.x, y: point.y, width: 220, height: style.fontSize * 1.4),
                                           style: style, text: "Text")
             object.style.fontSize = style.fontSize
+            object = fittedText(object)
             document.add(object)
             selectedID = object.id
             // Type straight into the properties bar's text field.
@@ -1340,17 +1484,33 @@ private struct AnnotationEditorView: View {
                             Text("System").tag("")
                             ForEach(NSFontManager.shared.availableFontFamilies.sorted(), id: \.self) { Text($0).tag($0) }
                         }
-                        Toggle("Bold", isOn: Binding(get: { style.bold ?? true }, set: { style.bold = $0; applyStyleToSelection() }))
+                        Toggle("Bold", isOn: Binding(get: { style.resolvedFontWeight.isBold },
+                                                     set: { style.fontWeight = nil; style.bold = $0; applyStyleToSelection() }))
                         Toggle("Italic", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
                         Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
+                        if inspectedKind == .text {
+                            Toggle("Shadow", isOn: Binding(get: { style.textShadow ?? false },
+                                                           set: { style.textShadow = $0 ? true : nil; applyStyleToSelection() }))
+                            textColorPicker("Text Color", keyPath: \.textColorHex, automatic: "Automatic")
+                            textColorPicker("Background Color", keyPath: \.textBackgroundHex, automatic: "Main Color")
+                                .disabled(style.resolvedTextBackground == .none)
+                            textColorPicker("Outline Color", keyPath: \.textOutlineHex, automatic: "Dark (55 %)")
+                                .disabled(!(style.textOutline ?? true))
+                            Text("Outline Width").font(.caption).foregroundStyle(.secondary)
+                            slider(value: Binding(get: { style.textOutlineWidth ?? 6 }, set: { style.textOutlineWidth = $0 }),
+                                   range: 2...40, label: "\(Int(style.textOutlineWidth ?? 6)) %")
+                                .disabled(!(style.textOutline ?? true))
+                        }
                         if let id = selectedID, let object = document.objects.first(where: { $0.id == id }) {
                             TextField("Text", text: Binding(
                                 get: { object.text },
                                 set: { newValue in
                                     document.beginChange()
-                                    var updated = object; updated.text = newValue; document.update(updated)
-                                }))
+                                    var updated = object; updated.text = newValue; document.update(fittedText(updated))
+                                }), axis: .vertical)
+                            .lineLimit(2...6)
                             .textFieldStyle(.roundedBorder)
+                            .help("⌥↩ starts a new line")
                         }
                     }
                 }
@@ -1461,7 +1621,219 @@ private struct AnnotationEditorView: View {
         if object.kind == .counter, let val = Int(object.text) {
             object.text = (style.counterStyle ?? .numbers).format(val)
         }
+        document.update(fittedText(object))
+    }
+
+    // MARK: - 3.3.3 text styles, eraser, image layers
+
+    /// A text object grown (or shrunk) to show every line, its box padding and
+    /// a bubble tail at its current width. Other kinds pass through.
+    private func fittedText(_ object: AnnotationObject) -> AnnotationObject {
+        guard object.kind == .text else { return object }
+        var fitted = object
+        fitted.rect.size.height = AnnotationTextRenderer.fittedHeight(text: object.text, style: object.style,
+                                                                      width: object.rect.width)
+        return fitted
+    }
+
+    /// The CleanShot-like text presets, with the current one checked.
+    private var textStylePresetMenu: some View {
+        let current = AnnotationTextStylePreset.matching(style)
+        return Menu {
+            ForEach(AnnotationTextStylePreset.allCases) { preset in
+                Button {
+                    style = preset.applied(to: style)
+                    applyStyleToSelection()
+                } label: {
+                    if preset == current {
+                        Label(preset.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(preset.displayName)
+                    }
+                }
+                .help(preset.help)
+            }
+        } label: {
+            Text(current?.displayName ?? "Custom Style").frame(minWidth: 70)
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .help("Text style presets (Classic, Plain, Outline, Shadow, Label, Light Label, Pill, Speech Bubble)")
+        .accessibilityLabel("Text style")
+    }
+
+    /// A palette colour (or the automatic choice) for one of the text-style colours.
+    private func textColorPicker(_ title: String, keyPath: WritableKeyPath<AnnotationStyle, String?>,
+                                 automatic: String) -> some View {
+        let current = style[keyPath: keyPath] ?? ""
+        let palette = AnnotationColor.palette.map { ($0.displayName, AnnotationColorLibrary.hex(of: $0.nsColor)) }
+        return Picker(title, selection: Binding(
+            get: { current },
+            set: { style[keyPath: keyPath] = $0.isEmpty ? nil : $0; applyStyleToSelection() })) {
+            Text(automatic).tag("")
+            ForEach(palette, id: \.1) { name, hex in Text(name).tag(hex) }
+            if !current.isEmpty, !palette.contains(where: { $0.1 == current }) {
+                Text("Custom #\(String(current.prefix(6)))").tag(current)
+            }
+        }
+    }
+
+    /// One eraser step from the last pointer position to `point` (canvas
+    /// points). The first change of a drag takes the undo snapshot.
+    private func eraseStep(to point: CGPoint) {
+        let from = eraserLast ?? point
+        eraserLast = point
+        let erased: Int
+        switch eraserMode {
+        case .object:
+            erased = document.eraseObjects(from: from, to: point, radius: eraserSize, registersUndo: !eraserChanged)
+        case .stroke:
+            erased = document.eraseStrokes(from: from, to: point, radius: eraserSize, registersUndo: !eraserChanged)
+        }
+        if erased > 0 {
+            eraserChanged = true
+            eraserCount += erased
+            if let id = selectedID, !document.objects.contains(where: { $0.id == id }) { selectedID = nil }
+        }
+    }
+
+    private func finishEraserStroke() {
+        if eraserCount > 0 {
+            let noun = eraserMode == .object ? (eraserCount == 1 ? "object" : "objects")
+                                             : (eraserCount == 1 ? "stroke" : "strokes")
+            status = "Erased \(eraserCount) \(noun). ⌘Z restores."
+        }
+        eraserLast = nil
+        eraserChanged = false
+        eraserCount = 0
+    }
+
+    /// Sets an image layer's rotation (one undo step per change).
+    private func setRotation(of id: UUID, radians: CGFloat) {
+        guard var object = document.objects.first(where: { $0.id == id }) else { return }
+        let value = AnnotationTransformGeometry.normalized(radians)
+        guard value != object.resolvedRotation else { return }
+        document.beginChange()
+        object.rotation = value == 0 ? nil : value
         document.update(object)
+    }
+
+    private func arrangeSelection(_ arrangement: AnnotationArrangement) {
+        guard selectedID != nil else { return }
+        if document.arrange(selectedIDs, arrangement) {
+            status = "\(arrangement.title)."
+        }
+    }
+
+    /// Adds `image` as a free layer (centred, or at `center` in canvas points)
+    /// and selects it with the Move tool.
+    private func insertImageLayer(_ image: CGImage, imageScale: CGFloat, center: CGPoint? = nil) {
+        guard let id = document.insertImageLayer(image, imageScale: imageScale, scale: scale, center: center,
+                                                 style: style) else {
+            status = "Could not add that image (too large?)."
+            return
+        }
+        select([id])
+        status = "Image layer added. Drag to move, corners resize (⇧ keeps the ratio), the round handle rotates."
+    }
+
+    private func insertImageLayerFromFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Insert"
+        panel.message = "Choose an image to add as a layer you can move, resize and rotate."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            guard let entry = AnnotationEditorController.entry(fromImageAt: url) else {
+                status = "Could not add that image."
+                return
+            }
+            insertImageLayer(entry.image, imageScale: entry.scale)
+        }
+    }
+
+    /// The clipboard's image (or image file) as a layer.
+    @discardableResult
+    private func pasteImageLayer() -> Bool {
+        guard let entry = AnnotationEditorController.entryFromPasteboard(.general) else {
+            status = "No image on the clipboard."
+            return false
+        }
+        insertImageLayer(entry.image, imageScale: entry.scale)
+        return true
+    }
+
+    /// Selection outline, resize handles and a rotation handle that follow an
+    /// image layer's rotation.
+    private func imageLayerHandles(for object: AnnotationObject, fit: CGFloat) -> some View {
+        let rect = object.rect.scaled(by: fit)
+        let rotation = object.resolvedRotation
+        let corners = AnnotationTransformGeometry.corners(of: rect, rotation: rotation)
+        let anchors: [CGPoint] = [CGPoint(x: -1, y: -1), CGPoint(x: 0, y: -1), CGPoint(x: 1, y: -1), CGPoint(x: 1, y: 0),
+                                  CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1), CGPoint(x: -1, y: 1), CGPoint(x: -1, y: 0)]
+        let top = AnnotationTransformGeometry.point(at: CGPoint(x: 0, y: -1), of: rect, rotation: rotation)
+        let knob = CGPoint(x: top.x + sin(rotation) * 24, y: top.y - cos(rotation) * 24)
+        return ZStack {
+            Path { path in
+                path.addLines(corners)
+                path.closeSubpath()
+            }
+            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            .allowsHitTesting(false)
+            Path { path in
+                path.move(to: top)
+                path.addLine(to: knob)
+            }
+            .stroke(Color.accentColor, lineWidth: 1)
+            .allowsHitTesting(false)
+            ForEach(anchors.indices, id: \.self) { index in
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
+                    .frame(width: 9, height: 9)
+                    .position(AnnotationTransformGeometry.point(at: anchors[index], of: rect, rotation: rotation))
+                    .highPriorityGesture(imageResizeGesture(anchor: anchors[index], object: object, fit: fit))
+                    .help("Resize (⇧ keeps the aspect ratio)")
+            }
+            Circle()
+                .fill(Color.accentColor)
+                .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                .frame(width: 12, height: 12)
+                .position(knob)
+                .highPriorityGesture(imageRotateGesture(object: object, fit: fit))
+                .help("Rotate (⇧ snaps to 15°)")
+                .accessibilityLabel("Rotate image layer")
+        }
+    }
+
+    private func imageResizeGesture(anchor: CGPoint, object: AnnotationObject, fit: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("annotationCanvas"))
+            .onChanged { value in
+                if resizeOriginal == nil { resizeOriginal = object; document.beginChange() }
+                guard let original = resizeOriginal else { return }
+                var updated = original
+                updated.rect = AnnotationTransformGeometry.resize(
+                    original.rect, rotation: original.resolvedRotation, anchor: anchor,
+                    to: value.location.scaled(by: 1 / fit), keepAspect: NSEvent.modifierFlags.contains(.shift))
+                document.update(updated)
+            }
+            .onEnded { _ in resizeOriginal = nil }
+    }
+
+    private func imageRotateGesture(object: AnnotationObject, fit: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("annotationCanvas"))
+            .onChanged { value in
+                if resizeOriginal == nil { resizeOriginal = object; document.beginChange() }
+                guard let original = resizeOriginal else { return }
+                var updated = original
+                let angle = AnnotationTransformGeometry.rotation(
+                    center: CGPoint(x: original.rect.midX, y: original.rect.midY),
+                    pointer: value.location.scaled(by: 1 / fit), snap: NSEvent.modifierFlags.contains(.shift))
+                updated.rotation = angle == 0 ? nil : angle
+                document.update(updated)
+            }
+            .onEnded { _ in resizeOriginal = nil }
     }
 
     // MARK: - Output
@@ -1679,7 +2051,12 @@ private struct AnnotationEditorView: View {
     @discardableResult
     private func pasteObjects() -> Bool {
         guard let objects = AnnotationObjectClipboard.read() else {
-            status = "Nothing to paste. Copy an annotation object first (⌘C)."
+            // 3.3.3: an image (or image file) on the clipboard pastes as a free layer.
+            if let entry = AnnotationEditorController.entryFromPasteboard(.general) {
+                insertImageLayer(entry.image, imageScale: entry.scale)
+                return true
+            }
+            status = "Nothing to paste. Copy an annotation object (⌘C) or an image first."
             return false
         }
         let changeCount = NSPasteboard.general.changeCount
@@ -1976,13 +2353,16 @@ private struct DraftOverlay: View {
                 Ellipse().path(in: rect).stroke(color, lineWidth: object.style.thickness * fit)
             case .line:
                 Path { path in
-                    path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-                    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+                    let (start, end) = object.lineEndpoints
+                    path.move(to: start.scaled(by: fit))
+                    path.addLine(to: end.scaled(by: fit))
                 }.stroke(color, lineWidth: object.style.thickness * fit)
             case .arrow:
+                // 3.3.3: from where the drag started to where it is, like the export.
                 Path { path in
-                    path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-                    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+                    let (start, end) = object.lineEndpoints
+                    path.move(to: start.scaled(by: fit))
+                    path.addLine(to: end.scaled(by: fit))
                 }.stroke(color, style: StrokeStyle(lineWidth: object.style.thickness * fit, lineCap: .round))
             case .blur:
                 Rectangle().path(in: rect).fill(Color.gray.opacity(0.25))

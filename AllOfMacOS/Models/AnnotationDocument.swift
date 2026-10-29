@@ -16,17 +16,26 @@ struct AnnotationObject: Identifiable, Equatable, Codable {
     var style: AnnotationStyle
     /// Text content, for `.text` and `.counter`.
     var text: String
-    /// Freehand points, for `.draw` and `.drawHighlight`, relative to `rect`.
+    /// Freehand points, for `.draw` and `.drawHighlight` (absolute canvas
+    /// positions), and the start and end of a `.line` or `.arrow` (3.3.3).
     var points: [CGPoint]
+    /// The pixels of an `.image` layer (3.3.3). Absent on every other kind.
+    var image: AnnotationImagePayload?
+    /// Rotation in radians around the rect's centre, clockwise on screen.
+    /// Only image layers rotate (3.3.3); nil means upright.
+    var rotation: CGFloat?
 
     init(id: UUID = UUID(), kind: AnnotationKind, rect: CGRect,
-         style: AnnotationStyle = AnnotationStyle(), text: String = "", points: [CGPoint] = []) {
+         style: AnnotationStyle = AnnotationStyle(), text: String = "", points: [CGPoint] = [],
+         image: AnnotationImagePayload? = nil, rotation: CGFloat? = nil) {
         self.id = id
         self.kind = kind
         self.rect = rect
         self.style = style
         self.text = text
         self.points = points
+        self.image = image
+        self.rotation = rotation
     }
 
     /// A human-readable summary for the layer list.
@@ -34,6 +43,7 @@ struct AnnotationObject: Identifiable, Equatable, Codable {
         switch kind {
         case .text: return text.isEmpty ? "Text" : String(text.prefix(24))
         case .counter: return "Counter \(text)"
+        case .image: return image.map { "Image \($0.pixelWidth) × \($0.pixelHeight)" } ?? "Image"
         default: return kind.displayName
         }
     }
@@ -63,6 +73,10 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     case spotlight
     case counter
     case cursor
+    /// The eraser tool (3.3.3). Never stored as an object.
+    case eraser
+    /// A free-placed image layer (3.3.3).
+    case image
 
     var id: String { rawValue }
 
@@ -86,6 +100,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .spotlight: return "Spotlight"
         case .counter: return "Counter"
         case .cursor: return "Cursor"
+        case .eraser: return "Eraser"
+        case .image: return "Image"
         }
     }
 
@@ -109,6 +125,8 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .spotlight: return "flashlight.on.fill"
         case .counter: return "1.circle"
         case .cursor: return "cursorarrow"
+        case .eraser: return "eraser"
+        case .image: return "photo"
         }
     }
 
@@ -118,7 +136,7 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
         case .arrow, .line, .rectangle, .filledRectangle, .ellipse,
              .pixelate, .blur, .secureBlur, .redact, .spotlight, .draw, .drawHighlight, .highlighter:
             return true
-        case .move, .crop, .text, .counter, .cursor:
+        case .move, .crop, .text, .counter, .cursor, .eraser, .image:
             return false
         }
     }
@@ -130,11 +148,14 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     static var toolbarOrder: [AnnotationKind] {
         [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
          .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .secureBlur, .redact, .spotlight,
-         .counter, .cursor]
+         .counter, .cursor, .eraser, .image]
     }
 
     /// Privacy kinds (the Redact tool's styles).
     var isRedaction: Bool { self == .pixelate || self == .blur || self == .secureBlur || self == .redact }
+
+    /// Redactions that sample the pixels under them (Black Out only fills).
+    var samplesPixelsBelow: Bool { self == .pixelate || self == .blur || self == .secureBlur }
 
     /// Kinds whose exported pixels are opaque replacements that cannot be
     /// reversed (Black Out, Secure Blur). Plain Blur / Pixelate are visual only.
@@ -152,14 +173,16 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
     case move, rectangle, filledRectangle, ellipse, line, arrow, text, redact,
          spotlight, counter, draw, highlighter
     case marker
-    case crop, background
+    /// 3.3.3: the eraser follows the marker; image layers are inserted from a button.
+    case eraser
+    case crop, background, imageLayer
 
     var id: String { rawValue }
 
-    /// The segmented tool group (CleanShot's 12 + AOM marker).
+    /// The segmented tool group (CleanShot's 12 + AOM marker + eraser).
     static let segments: [AnnotationToolbarItem] = [
         .move, .rectangle, .filledRectangle, .ellipse, .line, .arrow, .text,
-        .redact, .spotlight, .counter, .draw, .highlighter, .marker,
+        .redact, .spotlight, .counter, .draw, .highlighter, .marker, .eraser,
     ]
 
     var title: String {
@@ -177,8 +200,10 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
         case .draw: return "Draw"
         case .highlighter: return "Highlighter"
         case .marker: return "Marker"
+        case .eraser: return "Eraser"
         case .crop: return "Crop"
         case .background: return "Background"
+        case .imageLayer: return "Insert Image Layer"
         }
     }
 
@@ -197,8 +222,10 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
         case .draw: return "d"
         case .highlighter: return "m"
         case .marker: return nil
+        case .eraser: return "x"
         case .crop: return "k"
         case .background: return "b"
+        case .imageLayer: return nil
         }
     }
 
@@ -222,8 +249,10 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
         case .draw: return "pencil.tip"
         case .highlighter: return "highlighter"
         case .marker: return "rectangle.inset.filled"
+        case .eraser: return "eraser"
         case .crop: return "crop"
         case .background: return "photo.artframe"
+        case .imageLayer: return "photo.on.rectangle"
         }
     }
 
@@ -243,8 +272,10 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
         case .draw: return [.draw]
         case .highlighter: return [.drawHighlight]
         case .marker: return [.highlighter]
+        case .eraser: return [.eraser]
         case .crop: return [.crop]
         case .background: return []
+        case .imageLayer: return [.image]
         }
     }
 
@@ -399,6 +430,24 @@ struct AnnotationStyle: Equatable, Codable {
     var italic: Bool?
     var textOutline: Bool?
 
+    // C03 text styles (3.3.3). Defined with their rendering in
+    // AnnotationTextStyle.swift; nil keeps the 3.3.2 look.
+    /// Explicit weight; nil uses `bold` (semibold or regular), as before.
+    var fontWeight: AnnotationFontWeight?
+    var textAlignment: AnnotationTextAlignment?
+    /// A box behind the text; nil or `.none` means no box.
+    var textBackground: AnnotationTextBackground?
+    /// Box colour, RRGGBB(AA). nil: the box uses the main colour.
+    var textBackgroundHex: String?
+    /// Glyph colour, RRGGBB(AA). nil: the main colour, or black/white over a
+    /// box drawn in the main colour.
+    var textColorHex: String?
+    /// Outline colour, RRGGBB(AA). nil: black at 55 %.
+    var textOutlineHex: String?
+    /// Outline width in percent of the font size. nil: the thin 3.3.2 edge.
+    var textOutlineWidth: CGFloat?
+    var textShadow: Bool?
+
     var resolvedColor: NSColor {
         guard let hex = customColorHex, hex.count == 6, let rgb = UInt32(hex, radix: 16) else { return color.nsColor }
         return NSColor(srgbRed: CGFloat((rgb >> 16) & 255) / 255,
@@ -407,7 +456,25 @@ struct AnnotationStyle: Equatable, Codable {
     }
 
     func resolvedFont(size: CGFloat) -> NSFont {
+        if let weight = fontWeight {
+            // 3.3.3: an explicit weight. `fontName` holds a family name from
+            // the font picker; `NSFont(name:)` alone misses most families.
+            let wantsItalic = italic == true
+            var font = fontName.flatMap { family in
+                NSFontManager.shared.font(withFamily: family, traits: wantsItalic ? .italicFontMask : [],
+                                          weight: weight.fontManagerWeight, size: size)
+                    ?? NSFont(name: family, size: size)
+            } ?? NSFont.systemFont(ofSize: size, weight: weight.nsWeight)
+            if wantsItalic, !font.fontDescriptor.symbolicTraits.contains(.italic) {
+                font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+            }
+            return font
+        }
         let base = fontName.flatMap { NSFont(name: $0, size: size) }
+            ?? fontName.flatMap { family in
+                NSFontManager.shared.font(withFamily: family, traits: [],
+                                          weight: (bold ?? true) ? 8 : 5, size: size)
+            }
             ?? NSFont.systemFont(ofSize: size, weight: (bold ?? true) ? .semibold : .regular)
         var traits: NSFontTraitMask = []
         if bold == true { traits.insert(.boldFontMask) }
@@ -824,13 +891,64 @@ struct AnnotationDocument {
         }
         context.draw(image, in: imageRect)
         let renderedObjects = objects + (draft.map { [$0] } ?? [])
-        for object in renderedObjects {
-            draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: image)
-        }
+        drawObjects(renderedObjects, in: context, imageRect: imageRect, scale: scale, base: image)
         context.restoreGState()
         context.endTransparencyLayer()
         context.restoreGState()
         return context.makeImage()
+    }
+
+    /// Draws `list` in z-order. Blur, pixelate and secure blur sample the
+    /// screenshot plus the image layers below them (3.3.3), so a redaction
+    /// over an inserted image hides that image's pixels.
+    private func drawObjects(_ list: [AnnotationObject], in context: CGContext, imageRect: CGRect,
+                             scale: CGFloat, base: CGImage) {
+        var source = base
+        var layerSinceSource = false
+        // 3.3.3: several spotlights share one dimmed layer with every cutout,
+        // instead of each dimming the others' bright areas.
+        let spotlights = list.filter { $0.kind == .spotlight }
+        var spotlightsDrawn = false
+        for (index, object) in list.enumerated() {
+            if object.kind == .image { layerSinceSource = true }
+            if layerSinceSource, object.kind.samplesPixelsBelow {
+                source = compositeForRedaction(layers: Array(list[..<index]), base: base, scale: scale)
+                layerSinceSource = false
+            }
+            if spotlights.count > 1, object.kind == .spotlight {
+                if !spotlightsDrawn {
+                    drawMergedSpotlights(spotlights, in: context, imageRect: imageRect, scale: scale)
+                    spotlightsDrawn = true
+                }
+                continue
+            }
+            draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: source)
+        }
+    }
+
+    /// Every spotlight cutout punched out of one dim layer, drawn at the lowest
+    /// spotlight's place in the z-order with the topmost spotlight's dimming.
+    private func drawMergedSpotlights(_ spotlights: [AnnotationObject], in context: CGContext,
+                                      imageRect: CGRect, scale: CGFloat) {
+        guard let lowest = spotlights.first, let topmost = spotlights.last else { return }
+        context.saveGState()
+        context.setAlpha(CGFloat(lowest.style.opacity))
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setFillColor(NSColor.black.withAlphaComponent(topmost.style.spotlightOpacity ?? 0.55).cgColor)
+        context.fill(imageRect)
+        context.setBlendMode(.clear)
+        for spotlight in spotlights {
+            let rect = CGRect(x: imageRect.minX + spotlight.rect.minX * scale,
+                              y: imageRect.maxY - spotlight.rect.maxY * scale,
+                              width: spotlight.rect.width * scale, height: spotlight.rect.height * scale)
+            if spotlight.style.spotlightShape == .ellipse {
+                context.fillEllipse(in: rect)
+            } else {
+                context.fill(rect)
+            }
+        }
+        context.endTransparencyLayer()
+        context.restoreGState()
     }
 
     /// The base image with `subset` drawn on it and no background (flattening).
@@ -847,9 +965,7 @@ struct AnnotationDocument {
         context.interpolationQuality = .high
         let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         if drawsBase { context.draw(image, in: imageRect) }
-        for object in subset {
-            draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: image)
-        }
+        drawObjects(subset, in: context, imageRect: imageRect, scale: scale, base: image)
         return context.makeImage()
     }
 
@@ -947,16 +1063,20 @@ struct AnnotationDocument {
             context.setLineWidth(object.style.thickness * scale)
             context.strokeEllipse(in: rect)
         case .line:
+            let (start, end) = contextEndpoints(of: object, imageRect: imageRect, scale: scale)
             context.setStrokeColor(color.cgColor)
             context.setLineWidth(object.style.thickness * scale)
             context.setLineCap(.round)
-            context.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            context.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            context.move(to: start)
+            context.addLine(to: end)
             context.strokePath()
         case .arrow:
-            drawArrow(object, in: context, rect: rect, color: color, scale: scale)
+            let (start, end) = contextEndpoints(of: object, imageRect: imageRect, scale: scale)
+            drawArrow(object, in: context, from: start, to: end, color: color, scale: scale)
         case .text:
-            drawText(object, in: context, rect: rect, color: color, scale: scale)
+            AnnotationTextRenderer.draw(object, in: context, rect: rect, scale: scale)
+        case .image:
+            AnnotationObject.drawImageLayer(object, in: context, rect: rect)
         case .counter:
             drawCounter(object, in: context, rect: rect, scale: scale)
         case .highlighter:
@@ -1002,17 +1122,25 @@ struct AnnotationDocument {
             context.fillPath(using: .evenOdd)
         case .cursor:
             drawCursor(in: context, rect: rect, color: color, scale: scale)
-        case .move, .crop:
+        case .move, .crop, .eraser:
             break
         }
         context.restoreGState()
     }
 
+    /// A line's or arrow's ends in context space (bottom-left origin, pixels).
+    private func contextEndpoints(of object: AnnotationObject, imageRect: CGRect,
+                                  scale: CGFloat) -> (CGPoint, CGPoint) {
+        let (start, end) = object.lineEndpoints
+        func convert(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: imageRect.minX + point.x * scale, y: imageRect.maxY - point.y * scale)
+        }
+        return (convert(start), convert(end))
+    }
+
     private func drawArrow(_ object: AnnotationObject, in context: CGContext,
-                           rect: CGRect, color: NSColor, scale: CGFloat) {
+                           from start: CGPoint, to end: CGPoint, color: NSColor, scale: CGFloat) {
         let thickness = object.style.thickness * scale
-        let start = CGPoint(x: rect.minX, y: rect.maxY)
-        let end = CGPoint(x: rect.maxX, y: rect.minY)
         let headLength = max(thickness * 3.2, 10 * scale)
         let angle = atan2(end.y - start.y, end.x - start.x)
 
@@ -1071,27 +1199,6 @@ struct AnnotationDocument {
                                         y: start.y - sin(perpendicular) * halfWidth))
             context.closePath(); context.fillPath()
         }
-    }
-
-    private func drawText(_ object: AnnotationObject, in context: CGContext,
-                          rect: CGRect, color: NSColor, scale: CGFloat) {
-        guard !object.text.isEmpty else { return }
-        let size = object.style.fontSize * scale
-        let font = object.style.resolvedFont(size: size)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: color,
-            // A matching outline keeps the text readable over a light or a dark
-            // screenshot without needing a background box.
-            .strokeColor: NSColor.black.withAlphaComponent(0.55),
-            .strokeWidth: (object.style.textOutline ?? true) ? -3.0 : 0.0
-        ]
-        let attributed = NSAttributedString(string: object.text, attributes: attributes)
-        let setter = CTFramesetterCreateWithAttributedString(attributed)
-        let path = CGPath(rect: rect, transform: nil)
-        let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), path, nil)
-        context.textMatrix = .identity
-        CTFrameDraw(frame, context)
     }
 
     private func drawCounter(_ object: AnnotationObject, in context: CGContext, rect: CGRect, scale: CGFloat) {
@@ -1397,13 +1504,20 @@ struct AnnotationBackground: Equatable, Codable {
 extension AnnotationObject {
     /// The painted extent (stroke, arrow heads, counter disc), in canvas points.
     var visualBounds: CGRect {
+        if kind == .image {
+            return AnnotationTransformGeometry.boundingBox(of: rect, rotation: resolvedRotation).insetBy(dx: -1, dy: -1)
+        }
         var bounds = rect
         if kind == .counter { bounds.size = CGSize(width: max(rect.width, 24), height: max(rect.width, 24)) }
         let outset: CGFloat
         switch kind {
         case .arrow: outset = max(style.thickness * 3.5, 12)
         case .rectangle, .ellipse, .line, .draw, .drawHighlight: outset = style.thickness + 2
-        case .text: outset = 4
+        case .text:
+            // Shadows and thick outlines (3.3.3) paint past the text box.
+            let shadow = style.textShadow == true ? style.fontSize * 0.35 : 0
+            let outline = (style.textOutlineWidth ?? 0) * style.fontSize / 200
+            outset = max(4, shadow, outline + 2)
         default: outset = 1
         }
         return bounds.insetBy(dx: -outset, dy: -outset)
@@ -1421,7 +1535,7 @@ extension AnnotationObject {
     func duplicated(offsetBy delta: CGFloat) -> AnnotationObject {
         let moved = offsetBy(dx: delta, dy: delta)
         return AnnotationObject(kind: moved.kind, rect: moved.rect, style: moved.style,
-                                text: moved.text, points: moved.points)
+                                text: moved.text, points: moved.points, image: moved.image, rotation: moved.rotation)
     }
 }
 

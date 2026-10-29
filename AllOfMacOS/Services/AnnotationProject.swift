@@ -50,6 +50,17 @@ struct AnnotationProject: Codable {
             [rect.origin.x, rect.origin.y, rect.width, rect.height].allSatisfy { $0.isFinite && abs($0) <= 1_000_000 }
                 && rect.width >= 0 && rect.height >= 0
         }
+        // 3.3.3: text styles, rotation and image layers are checked as well.
+        func validAdditions(_ object: AnnotationObject) -> Bool {
+            guard object.style.hasValidTextStyle else { return false }
+            if let rotation = object.rotation, !(rotation.isFinite && abs(rotation) <= 100) { return false }
+            if let image = object.image, !image.isValid { return false }
+            return true
+        }
+        let imageBytes = project.objects.reduce(0) { $0 + ($1.image?.pngData.count ?? 0) }
+        guard imageBytes <= 280_000_000, project.objects.allSatisfy(validAdditions) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         guard project.crop.map(validRect) ?? true,
               project.objects.allSatisfy({ object in
                   validRect(object.rect) && object.points.count <= 200_000 && object.text.utf8.count <= 1_000_000 &&
@@ -84,6 +95,17 @@ struct AnnotationProject: Codable {
         }
         document.objects = project.objects
         document.background = project.background
+        if let maximum = thumbnailMaxPixelSize {
+            // Quick Look thumbnails: decode image layers small too, under a new
+            // asset id so a full-size open in the same process never sees them.
+            let side = min(1024, max(32, maximum))
+            document.objects = document.objects.map { object in
+                guard let payload = object.image, max(payload.pixelWidth, payload.pixelHeight) > side else { return object }
+                var small = object
+                small.image = payload.downsampled(maximumSide: side)
+                return small
+            }
+        }
         if thumbnailMaxPixelSize != nil {
             let canvas = document.backgroundLayout(scale: renderScale).canvasSize
             guard canvas.width <= 4096, canvas.height <= 4096, canvas.width * canvas.height <= 4_194_304 else {
