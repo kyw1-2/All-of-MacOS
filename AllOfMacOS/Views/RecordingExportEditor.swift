@@ -2,6 +2,7 @@ import AppKit
 import AVKit
 import CoreImage
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Non-destructive MP4 trimming and short animated-GIF export from Capture History.
 struct RecordingExportEditor: View {
@@ -23,8 +24,7 @@ struct RecordingExportEditor: View {
     @State private var zoomLevel = 1.6
     @State private var focusX = 0.5
     @State private var focusY = 0.5
-    @State private var backdrop: AOMStudioBackdrop = .none
-    @State private var backdropPadding = 0.08
+    @State private var background = AOMVideoBackground()
     @State private var motionBlurRadius = 0.0
     @State private var editableCursorTrack: AOMCursorTrack?
     @State private var includeSmoothedCursor = true
@@ -324,20 +324,7 @@ struct RecordingExportEditor: View {
                     .accessibilityLabel("Remove zoom keyframe")
                 }
             }
-            HStack(spacing: 12) {
-                Picker("Background", selection: $backdrop) {
-                    ForEach(AOMStudioBackdrop.allCases) { item in
-                        Text(item.displayName).tag(item)
-                    }
-                }
-                .frame(width: 205)
-                .disabled(isExporting)
-                Text("Padding")
-                Slider(value: $backdropPadding, in: 0...0.20)
-                    .disabled(isExporting || backdrop == .none)
-                Text("\(Int(backdropPadding * 100))%")
-                    .monospacedDigit().frame(width: 35)
-            }
+            backgroundControls
             HStack(spacing: 10) {
                 Text("Zoom-transition blur").font(.caption)
                 Slider(value: $motionBlurRadius, in: 0...8)
@@ -393,15 +380,99 @@ struct RecordingExportEditor: View {
     }
 
     private var studioSettings: AOMStudioSettings {
-        AOMStudioSettings(keyframes: zoomKeyframes, backdrop: backdrop,
-                          paddingFraction: backdropPadding, motionBlurRadius: motionBlurRadius,
+        AOMStudioSettings(keyframes: zoomKeyframes, backdrop: .none,
+                          paddingFraction: 0, motionBlurRadius: motionBlurRadius,
                           cursorPoints: includeSmoothedCursor ? (editableCursorTrack?.points ?? []) : [],
                           cursorOverlaySize: cursorSize, clicks: editableCursorTrack?.clicks ?? [],
                           showClickRipples: showRipples, cursorStyle: cursorStyle,
                           keystrokes: keyEvents.filter { $0.isValid }.sorted { $0.time < $1.time }, showKeystrokes: showKeys,
                           keystrokeScale: keyScale, keystrokeY: keyY, showCamera: showCamera,
                           cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraRoundness: cameraRoundness,
-                          aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle)
+                          aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle,
+                          background: background)
+    }
+
+    // MARK: - Background (3.3.3, C05)
+
+    /// Colour, gradient, picture or desktop picture behind the video, with
+    /// padding, corners and shadow. The preview above updates as they change.
+    private var backgroundControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Background", selection: Binding(get: { background.kind }, set: { selectBackground($0) })) {
+                    ForEach(AOMVideoBackgroundKind.allCases) { Text($0.displayName).tag($0) }
+                }
+                .frame(width: 250)
+                switch background.kind {
+                case .solid:
+                    ColorPicker("Color", selection: Self.cgColor($background.color, opaque: true), supportsOpacity: false)
+                        .fixedSize()
+                case .gradient:
+                    Picker("Gradient", selection: $background.gradient) {
+                        ForEach(AOMGradientPreset.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .frame(width: 180)
+                case .image:
+                    Button("Choose Image…") { chooseBackgroundImage() }
+                    Text(background.imagePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No image chosen")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                case .wallpaper:
+                    Button("Use Current Desktop Picture") { selectBackground(.wallpaper) }
+                    Text(background.imagePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Gradient (desktop picture unreadable)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                case .none:
+                    EmptyView()
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Text("Padding")
+                Slider(value: $background.padding, in: AOMVideoBackground.paddingRange)
+                Text("Corners")
+                Slider(value: $background.cornerRadius, in: AOMVideoBackground.cornerRange)
+                Text("Shadow")
+                Slider(value: $background.shadow, in: AOMVideoBackground.shadowRange)
+            }
+            .font(.caption)
+            .disabled(isExporting || !background.isActive)
+        }
+        .disabled(isExporting)
+    }
+
+    private func selectBackground(_ kind: AOMVideoBackgroundKind) {
+        switch kind {
+        case .image:
+            if background.imagePath == nil || background.kind != .image { chooseBackgroundImage() } else { background.kind = .image }
+        case .wallpaper:
+            let path = AOMVideoBackground.currentWallpaperPath()
+            AOMStudioBackgroundImages.invalidate(path)
+            background.imagePath = path
+            background.kind = .wallpaper
+            if path == nil { status = "The desktop picture is not a readable image file; the \(background.gradient.displayName) gradient is used instead." }
+        default:
+            background.kind = kind
+        }
+    }
+
+    private func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a picture to place behind the recording"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AOMStudioBackgroundImages.invalidate(url.path)
+        background.imagePath = url.path
+        background.kind = .image
+    }
+
+    /// A ColorPicker binding over a stored sRGB colour.
+    private static func cgColor(_ color: Binding<AOMRGBAColor>, opaque: Bool = false) -> Binding<CGColor> {
+        Binding(get: { color.wrappedValue.cgColor }, set: { picked in
+            guard var converted = AOMRGBAColor(cgColor: picked) else { return }
+            if opaque { converted.alpha = 1 }
+            color.wrappedValue = converted
+        })
     }
 
     private func updatePreview() {
@@ -540,7 +611,12 @@ struct RecordingExportEditor: View {
     }
 
     private func restore(_ settings: AOMStudioSettings) {
-        zoomKeyframes = settings.keyframes; backdrop = settings.backdrop; backdropPadding = settings.paddingFraction
+        zoomKeyframes = settings.keyframes
+        // Projects saved before 3.3.3 carry a single-colour backdrop instead.
+        background = settings.background ?? AOMVideoBackground(legacy: settings.backdrop, padding: settings.paddingFraction)
+        if background.kind == .wallpaper, background.imagePath.map({ !FileManager.default.isReadableFile(atPath: $0) }) ?? true {
+            background.imagePath = AOMVideoBackground.currentWallpaperPath()
+        }
         motionBlurRadius = settings.motionBlurRadius; cursorSize = settings.cursorOverlaySize
         includeSmoothedCursor = !settings.cursorPoints.isEmpty; cursorStyle = settings.cursorStyle
         showRipples = settings.showClickRipples; keyEvents = settings.keystrokes; showKeys = settings.showKeystrokes

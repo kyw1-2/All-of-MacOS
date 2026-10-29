@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreImage
 import AppKit
 import AVFoundation
+import ImageIO
 
 enum AOMStudioBackdrop: String, Codable, CaseIterable, Identifiable {
     case none, graphite, midnight, slate
@@ -22,6 +23,147 @@ enum AOMStudioBackdrop: String, Codable, CaseIterable, Identifiable {
         case .midnight: return CIColor(red: 0.035, green: 0.07, blue: 0.16)
         case .slate: return CIColor(red: 0.16, green: 0.22, blue: 0.29)
         }
+    }
+}
+
+/// An sRGB colour kept as plain numbers, so Studio projects and settings stay
+/// readable JSON (3.3.3: video backgrounds, click and highlight colours).
+struct AOMRGBAColor: Codable, Equatable, Hashable {
+    var red: Double
+    var green: Double
+    var blue: Double
+    var alpha: Double = 1
+
+    init(red: Double, green: Double, blue: Double, alpha: Double = 1) {
+        self.red = red; self.green = green; self.blue = blue; self.alpha = alpha
+    }
+
+    private static func unit(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 0 }
+    var isValid: Bool { [red, green, blue, alpha].allSatisfy(\.isFinite) }
+    var ciColor: CIColor { ciColor(alpha: alpha) }
+    func ciColor(alpha: Double) -> CIColor {
+        CIColor(red: CGFloat(Self.unit(red)), green: CGFloat(Self.unit(green)), blue: CGFloat(Self.unit(blue)),
+                alpha: CGFloat(Self.unit(alpha)))
+    }
+    var cgColor: CGColor {
+        CGColor(srgbRed: CGFloat(Self.unit(red)), green: CGFloat(Self.unit(green)), blue: CGFloat(Self.unit(blue)),
+                alpha: CGFloat(Self.unit(alpha)))
+    }
+    /// Converts any colour (a ColorPicker's, for example) to sRGB.
+    init?(cgColor: CGColor) {
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let converted = cgColor.converted(to: srgb, intent: .defaultIntent, options: nil),
+              let parts = converted.components, parts.count >= 4 else { return nil }
+        self.init(red: Double(parts[0]), green: Double(parts[1]), blue: Double(parts[2]), alpha: Double(parts[3]))
+    }
+    /// `#RRGGBB` or `#RRGGBBAA`.
+    init?(hex: String) {
+        var text = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6 || text.count == 8, let value = UInt32(text, radix: 16) else { return nil }
+        let rgba = text.count == 6 ? (value << 8) | 0xFF : value
+        self.init(red: Double((rgba >> 24) & 0xFF) / 255, green: Double((rgba >> 16) & 0xFF) / 255,
+                  blue: Double((rgba >> 8) & 0xFF) / 255, alpha: Double(rgba & 0xFF) / 255)
+    }
+    var hex: String {
+        func byte(_ value: Double) -> Int { Int((Self.unit(value) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X%02X", byte(red), byte(green), byte(blue), byte(alpha))
+    }
+}
+
+/// CleanShot-style gradient backdrops for exported recordings (C05).
+enum AOMGradientPreset: String, Codable, CaseIterable, Identifiable {
+    case ocean, sunset, aurora, candy, forest, dusk, graphite, sand
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+    /// Drawn from the lower-left corner to the upper-right corner.
+    var colors: (start: AOMRGBAColor, end: AOMRGBAColor) {
+        switch self {
+        case .ocean: return (AOMRGBAColor(red: 0.04, green: 0.32, blue: 0.80), AOMRGBAColor(red: 0.30, green: 0.85, blue: 0.95))
+        case .sunset: return (AOMRGBAColor(red: 0.98, green: 0.36, blue: 0.29), AOMRGBAColor(red: 1.00, green: 0.78, blue: 0.35))
+        case .aurora: return (AOMRGBAColor(red: 0.15, green: 0.80, blue: 0.62), AOMRGBAColor(red: 0.45, green: 0.30, blue: 0.95))
+        case .candy: return (AOMRGBAColor(red: 0.98, green: 0.40, blue: 0.70), AOMRGBAColor(red: 0.55, green: 0.45, blue: 1.00))
+        case .forest: return (AOMRGBAColor(red: 0.07, green: 0.35, blue: 0.22), AOMRGBAColor(red: 0.55, green: 0.80, blue: 0.35))
+        case .dusk: return (AOMRGBAColor(red: 0.13, green: 0.12, blue: 0.35), AOMRGBAColor(red: 0.85, green: 0.42, blue: 0.55))
+        case .graphite: return (AOMRGBAColor(red: 0.10, green: 0.10, blue: 0.12), AOMRGBAColor(red: 0.36, green: 0.37, blue: 0.40))
+        case .sand: return (AOMRGBAColor(red: 0.93, green: 0.85, blue: 0.72), AOMRGBAColor(red: 0.80, green: 0.62, blue: 0.48))
+        }
+    }
+}
+
+enum AOMVideoBackgroundKind: String, Codable, CaseIterable, Identifiable {
+    case none, solid, gradient, image, wallpaper
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .solid: return "Color"
+        case .gradient: return "Gradient"
+        case .image: return "Image"
+        case .wallpaper: return "Desktop Picture"
+        }
+    }
+}
+
+/// The canvas an exported recording sits on (3.3.3, audit CS-45 / C05): a
+/// colour, a gradient, an image or the desktop picture, with uniform padding,
+/// rounded corners and a drop shadow. Laid out on the output canvas, so the
+/// aspect presets fill with the background instead of black bars.
+struct AOMVideoBackground: Codable, Equatable {
+    var kind: AOMVideoBackgroundKind = .none
+    var color = AOMRGBAColor(red: 0.12, green: 0.12, blue: 0.13)
+    var gradient: AOMGradientPreset = .ocean
+    /// A chosen image, or the desktop picture resolved on the main thread when
+    /// it was picked. Unreadable files fall back to `gradient`.
+    var imagePath: String?
+    /// Uniform inset on every side, as a fraction of the canvas's short side.
+    var padding: Double = 0.08
+    /// Corner radius, as a fraction of the video's short side.
+    var cornerRadius: Double = 0.04
+    /// Drop-shadow strength, 0…1.
+    var shadow: Double = 0.5
+
+    static let paddingRange = 0.0...0.3
+    static let cornerRange = 0.0...0.25
+    static let shadowRange = 0.0...1.0
+
+    var isActive: Bool { kind != .none }
+    var isValid: Bool {
+        padding.isFinite && cornerRadius.isFinite && shadow.isFinite && color.isValid
+            && (imagePath?.utf8.count ?? 0) <= 4096
+    }
+}
+
+extension AOMVideoBackground {
+    /// Missing or unknown fields fall back to their defaults, so a project
+    /// written by a later version never loses the whole edit.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decode(AOMVideoBackgroundKind.self, forKey: .kind)) ?? .none
+        color = (try? c.decode(AOMRGBAColor.self, forKey: .color)) ?? AOMRGBAColor(red: 0.12, green: 0.12, blue: 0.13)
+        gradient = (try? c.decode(AOMGradientPreset.self, forKey: .gradient)) ?? .ocean
+        imagePath = try? c.decodeIfPresent(String.self, forKey: .imagePath)
+        padding = (try? c.decode(Double.self, forKey: .padding)) ?? 0.08
+        cornerRadius = (try? c.decode(Double.self, forKey: .cornerRadius)) ?? 0.04
+        shadow = (try? c.decode(Double.self, forKey: .shadow)) ?? 0.5
+    }
+
+    /// The legacy single-colour backdrop as a background (old projects).
+    init(legacy backdrop: AOMStudioBackdrop, padding: Double) {
+        let c = backdrop.color
+        self.init(kind: backdrop == .none ? .none : .solid,
+                  color: AOMRGBAColor(red: Double(c.red), green: Double(c.green), blue: Double(c.blue)),
+                  padding: min(Self.paddingRange.upperBound, max(0, padding.isFinite ? padding : 0)),
+                  cornerRadius: 0, shadow: 0)
+    }
+
+    /// The main screen's desktop picture, when it is a plain image file.
+    @MainActor static func currentWallpaperPath() -> String? {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen), url.isFileURL else { return nil }
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), !directory.boolValue else { return nil }
+        return url.path
     }
 }
 
@@ -50,9 +192,12 @@ struct AOMStudioSettings: Codable, Equatable {
     /// Light or dark key badges. Optional so Studio projects saved before
     /// 2.3 still decode (nil draws the original dark badge).
     var keystrokeStyle: AOMKeystrokeStyle?
+    /// 3.3.3 (C05): canvas background. When set it supersedes `backdrop` and
+    /// `paddingFraction`; nil keeps the pre-3.3.3 rendering of old projects.
+    var background: AOMVideoBackground?
 
     var isActive: Bool {
-        !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0)
+        !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0) || background?.isActive == true
             || !cursorPoints.isEmpty || !clicks.isEmpty || !keystrokes.isEmpty || aspect != .source || resolution != .source
     }
 }
@@ -97,22 +242,23 @@ enum AOMStudioRenderer {
             }
         }
 
-        if settings.backdrop != .none {
-            let inset = min(0.20, max(0, settings.paddingFraction))
-            if inset > 0 {
-                let factor = CGFloat(1 - 2 * inset)
-                let t = CGAffineTransform(translationX: extent.midX * (1 - factor),
-                                          y: extent.midY * (1 - factor))
-                    .scaledBy(x: factor, y: factor)
-                let inner = result.transformed(by: t)
-                let background = CIImage(color: settings.backdrop.color).cropped(to: extent)
-                result = inner.composited(over: background).cropped(to: extent)
-            }
+        // A 3.3.3 background is laid out on the output canvas at the end; the
+        // legacy backdrop (old projects) shrinks the video in place here.
+        let legacyInset = settings.background == nil && settings.backdrop != .none
+            ? min(0.20, max(0, settings.paddingFraction)) : 0
+        if legacyInset > 0 {
+            let factor = CGFloat(1 - 2 * legacyInset)
+            let t = CGAffineTransform(translationX: extent.midX * (1 - factor),
+                                      y: extent.midY * (1 - factor))
+                .scaledBy(x: factor, y: factor)
+            let inner = result.transformed(by: t)
+            let background = CIImage(color: settings.backdrop.color).cropped(to: extent)
+            result = inner.composited(over: background).cropped(to: extent)
         }
         if settings.cursorStyle != .hidden, !settings.cursorPoints.isEmpty, let glyph = settings.cursorStyle == .arrow ? cursorGlyph : dotGlyph,
            let cursor = AOMCursorTrack(points: settings.cursorPoints).smoothedPosition(at: time) {
             let pointerSize = CGFloat(min(3, max(0.5, settings.cursorOverlaySize)))
-            let inset = settings.backdrop == .none ? 0 : min(0.2, max(0, settings.paddingFraction))
+            let inset = legacyInset
             let projected = AOMStudioTimeline.projectedPoint(cursor, focus: f, padding: inset)
             let x = extent.minX + projected.x * extent.width
             let y = extent.maxY - projected.y * extent.height
@@ -128,7 +274,7 @@ enum AOMStudioRenderer {
         if settings.showClickRipples {
             for click in AOMStudioTimeline.activeClicks(at: time, clicks: settings.clicks) {
                 let progress = (time - click.time) / 0.65
-                let inset = settings.backdrop == .none ? 0 : settings.paddingFraction
+                let inset = legacyInset
                 let point = AOMStudioTimeline.projectedPoint(CGPoint(x: click.x, y: click.y), focus: f, padding: inset)
                 let center = CIVector(x: extent.minX + point.x * extent.width, y: extent.maxY - point.y * extent.height)
                 let radius = 8 + progress * 30
@@ -167,13 +313,89 @@ enum AOMStudioRenderer {
             result = scaled.transformed(by: CGAffineTransform(translationX: extent.midX - scaled.extent.midX, y: y - scaled.extent.midY)).composited(over: result).cropped(to: extent)
         }
         let size = settings.outputSize(source: extent.size)
+        if let background = settings.background, background.isActive {
+            return onCanvas(result, size: size, background: background)
+        }
         if size != extent.size {
             let target = CGRect(origin: .zero, size: size)
             let factor = min(size.width / extent.width, size.height / extent.height)
             let scaled = result.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)).transformed(by: CGAffineTransform(scaleX: factor, y: factor))
-            result = scaled.transformed(by: CGAffineTransform(translationX: (size.width - scaled.extent.width) / 2, y: (size.height - scaled.extent.height) / 2)).composited(over: CIImage(color: settings.backdrop.color).cropped(to: target)).cropped(to: target)
+            // A 3.3.3 background of kind None letterboxes in black, whatever an old backdrop said.
+            let bars = settings.background == nil ? settings.backdrop.color : AOMStudioBackdrop.none.color
+            result = scaled.transformed(by: CGAffineTransform(translationX: (size.width - scaled.extent.width) / 2, y: (size.height - scaled.extent.height) / 2)).composited(over: CIImage(color: bars).cropped(to: target)).cropped(to: target)
         }
         return result
+    }
+
+    /// Lays the finished video (zoom, pointer, clicks, camera and keys
+    /// included) on the output canvas: background fill, uniform padding,
+    /// rounded corners and a soft drop shadow. The canvas is the output size,
+    /// so the 16:9, 4:3, 1:1 and 9:16 presets fill with the background.
+    static func onCanvas(_ video: CIImage, size: CGSize, background: AOMVideoBackground) -> CIImage {
+        let canvas = CGRect(origin: .zero, size: size)
+        let source = video.extent
+        guard source.width >= 1, source.height >= 1, !source.isInfinite, size.width >= 2, size.height >= 2 else { return video }
+        let padding = CGFloat(min(AOMVideoBackground.paddingRange.upperBound, max(0, background.padding.isFinite ? background.padding : 0)))
+            * min(size.width, size.height)
+        let available = canvas.insetBy(dx: padding, dy: padding)
+        let factor = min(available.width / source.width, available.height / source.height)
+        // Whole pixels, so the video's edges stay sharp.
+        let width = max(1, (source.width * factor).rounded()), height = max(1, (source.height * factor).rounded())
+        let card = CGRect(x: ((size.width - width) / 2).rounded(), y: ((size.height - height) / 2).rounded(),
+                          width: width, height: height)
+        let placed = video
+            .transformed(by: CGAffineTransform(translationX: -source.minX, y: -source.minY))
+            .transformed(by: CGAffineTransform(scaleX: card.width / source.width, y: card.height / source.height))
+            .transformed(by: CGAffineTransform(translationX: card.minX, y: card.minY))
+        let corner = CGFloat(min(AOMVideoBackground.cornerRange.upperBound, max(0, background.cornerRadius.isFinite ? background.cornerRadius : 0)))
+            * min(card.width, card.height)
+        var result = backgroundFill(background, canvas: canvas)
+        let strength = min(1, max(0, background.shadow.isFinite ? background.shadow : 0))
+        if strength > 0, padding > 0 {
+            let blur = max(2, min(card.width, card.height) * 0.035)
+            if let shape = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+                "inputExtent": CIVector(cgRect: card.offsetBy(dx: 0, dy: -blur * 0.6)), "inputRadius": corner,
+                "inputColor": CIColor(red: 0, green: 0, blue: 0, alpha: 0.6 * strength)])?.outputImage {
+                result = shape.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: blur])
+                    .cropped(to: canvas).composited(over: result)
+            }
+        }
+        if corner >= 0.5, let mask = CIFilter(name: "CIRoundedRectangleGenerator", parameters: [
+            "inputExtent": CIVector(cgRect: card), "inputRadius": corner, "inputColor": CIColor.white])?.outputImage {
+            result = placed.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: result,
+                                                                          kCIInputMaskImageKey: mask])
+        } else {
+            result = placed.cropped(to: card).composited(over: result)
+        }
+        return result.cropped(to: canvas)
+    }
+
+    /// The fill behind the video. An image that cannot be read falls back
+    /// to the gradient, so an export never fails over a moved wallpaper.
+    static func backgroundFill(_ background: AOMVideoBackground, canvas: CGRect) -> CIImage {
+        func gradient(_ preset: AOMGradientPreset) -> CIImage {
+            let colors = preset.colors
+            let fill = CIFilter(name: "CILinearGradient", parameters: [
+                "inputPoint0": CIVector(x: canvas.minX, y: canvas.minY), "inputPoint1": CIVector(x: canvas.maxX, y: canvas.maxY),
+                "inputColor0": colors.start.ciColor(alpha: 1), "inputColor1": colors.end.ciColor(alpha: 1)])?.outputImage
+            return (fill ?? CIImage(color: colors.start.ciColor(alpha: 1))).cropped(to: canvas)
+        }
+        switch background.kind {
+        case .none: return CIImage(color: AOMStudioBackdrop.none.color).cropped(to: canvas)
+        case .solid: return CIImage(color: background.color.ciColor(alpha: 1)).cropped(to: canvas)
+        case .gradient: return gradient(background.gradient)
+        case .image, .wallpaper:
+            guard let path = background.imagePath, let image = AOMStudioBackgroundImages.image(atPath: path) else {
+                return gradient(background.gradient)
+            }
+            // Aspect-fill, centred.
+            let scale = max(canvas.width / image.extent.width, canvas.height / image.extent.height)
+            let scaled = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+                .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            return scaled.transformed(by: CGAffineTransform(translationX: canvas.midX - scaled.extent.midX,
+                                                            y: canvas.midY - scaled.extent.midY))
+                .composited(over: CIImage(color: AOMStudioBackdrop.none.color)).cropped(to: canvas)
+        }
     }
 
     private static let dotGlyph = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: CGRect(x: 0, y: 0, width: 12, height: 12)), "inputRadius": 6, "inputColor": CIColor.white])?.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 12, height: 12))
@@ -233,9 +455,9 @@ enum AOMKeystrokeStyle: String, Codable, CaseIterable, Identifiable {
     var displayName: String { rawValue.capitalized }
 }
 enum AOMStudioAspect: String, Codable, CaseIterable {
-    case source, landscape, portrait, square
+    case source, landscape, standard, portrait, square
     var displayName: String {
-        switch self { case .source: "Original"; case .landscape: "16:9 Landscape"; case .portrait: "9:16 Portrait"; case .square: "1:1 Square" }
+        switch self { case .source: "Original"; case .landscape: "16:9 Landscape"; case .standard: "4:3 Standard"; case .portrait: "9:16 Portrait"; case .square: "1:1 Square" }
     }
 }
 enum AOMStudioResolution: String, Codable, CaseIterable {
@@ -249,11 +471,12 @@ extension AOMStudioSettings {
         let scalars = [paddingFraction, motionBlurRadius, cursorOverlaySize, keystrokeScale, keystrokeY, cameraSize, cameraX, cameraY, cameraRoundness]
         return scalars.allSatisfy { $0.isFinite } && keyframes.count <= 400 &&
             keyframes.allSatisfy { $0.time.isFinite && $0.time >= 0 && $0.magnification.isFinite && $0.focusX.isFinite && $0.focusY.isFinite } &&
+            (background?.isValid ?? true) &&
             AOMCursorTrack(points: cursorPoints, clicks: clicks, keystrokes: keystrokes).isValid
     }
     func outputSize(source: CGSize) -> CGSize {
         var ratio = source.width / max(1, source.height)
-        switch aspect { case .source: break; case .landscape: ratio = 16 / 9; case .portrait: ratio = 9 / 16; case .square: ratio = 1 }
+        switch aspect { case .source: break; case .landscape: ratio = 16 / 9; case .standard: ratio = 4 / 3; case .portrait: ratio = 9 / 16; case .square: ratio = 1 }
         let edge: Double
         switch resolution { case .source: edge = max(source.width, source.height); case .hd720: edge = 1280; case .hd1080: edge = 1920; case .uhd2160: edge = 3840 }
         return CGSize(width: max(2, floor((ratio >= 1 ? edge : edge * ratio) / 2) * 2), height: max(2, floor((ratio >= 1 ? edge / ratio : edge) / 2) * 2))
@@ -290,6 +513,44 @@ struct AOMStudioProject: Codable {
               abs(project.sourceDuration - duration) < 0.1, !project.clips.isEmpty,
               project.clips.count <= 1000, project.clips.allSatisfy({ $0.isValid(duration: duration) }) else { return nil }
         return project
+    }
+}
+
+/// Background pictures for the Studio canvas, decoded once (down-sampled to
+/// at most 4096 px) and shared by the preview and the export threads.
+enum AOMStudioBackgroundImages {
+    static let maximumPixels = 4096
+    private static let lock = NSLock()
+    private static var cache: [String: CIImage] = [:]
+    private static var unreadable: Set<String> = []
+
+    static func image(atPath path: String) -> CIImage? {
+        guard path.hasPrefix("/"), path.utf8.count <= 4096 else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        if let image = cache[path] { return image }
+        if unreadable.contains(path) { return nil }
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                        kCGImageSourceCreateThumbnailWithTransform: true,
+                                        kCGImageSourceThumbnailMaxPixelSize: maximumPixels]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let picture = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              picture.width > 0, picture.height > 0 else {
+            if unreadable.count > 64 { unreadable.removeAll() }
+            unreadable.insert(path)
+            return nil
+        }
+        let image = CIImage(cgImage: picture)
+        if cache.count >= 4 { cache.removeAll() }
+        cache[path] = image
+        return image
+    }
+
+    /// Forget a path, so a file chosen again (or replaced) is read afresh.
+    static func invalidate(_ path: String?) {
+        guard let path else { return }
+        lock.lock(); defer { lock.unlock() }
+        cache.removeValue(forKey: path)
+        unreadable.remove(path)
     }
 }
 
