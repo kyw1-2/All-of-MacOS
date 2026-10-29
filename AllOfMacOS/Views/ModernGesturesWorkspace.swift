@@ -579,6 +579,9 @@ struct ModernGesturesWorkspace: View {
                     .help(ActionTree.problem(trigger.actions) ?? "Run this workflow now")
                 }
             }
+            if trigger.valueBinding != nil, ContinuousValueBinding.supports(trigger.input) {
+                valueBindingNotice
+            }
             if rows.isEmpty {
                 Button { addAction() } label: {
                     VStack(spacing: 6) {
@@ -664,6 +667,15 @@ struct ModernGesturesWorkspace: View {
                 appState.showingAddAction = true
             }
         )
+    }
+
+    /// A value-bound trigger drives its value and never runs its steps
+    /// (SystemTriggerMonitor / TrackpadMonitor), so the steps say so.
+    private var valueBindingNotice: some View {
+        AOMNotice(.info, "Actions don't run while a value binding is on.",
+                  detail: "The input sets the bound value instead. Turn the binding off in Options to run these steps again.") {
+            Button("Show Binding") { withAnimation(AOMMotion.panel) { showOptions = true } }
+        }
     }
 
     private func optionsSection(_ trigger: Trigger) -> some View {
