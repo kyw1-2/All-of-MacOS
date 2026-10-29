@@ -2358,6 +2358,13 @@ private struct ClipboardCardView: View, Equatable {
         if let image = imagePreview?.image {
             Image(decorative: image, scale: 1).resizable().interpolation(.high).scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay {
+                    // Paste highlights matching text inside images (P04).
+                    if !searchQuery.isEmpty, let lines = entry.recognizedLines, !lines.isEmpty {
+                        ClipboardImageMatchOverlay(lines: lines, terms: ClipboardSearchQuery(searchQuery).highlightValues,
+                                                   imageSize: CGSize(width: image.width, height: image.height))
+                    }
+                }
         } else {
             Image(systemName: "photo").foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2586,6 +2593,9 @@ private struct ClipboardPreviewSheet: View {
     @State private var content: ClipboardPreviewCache.Content?
     @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var loadedVersion: UUID?
+    /// A region dragged out on an image (P04) and the text read from it.
+    @State private var regionSelection: CGRect?
+    @State private var regionText: String?
     // Paste-style rename: the title shows in the preview and edits in place
     // on double-click. The preview key handler already yields to editingTitleID.
     @State private var isEditingTitle = false
@@ -2630,7 +2640,12 @@ private struct ClipboardPreviewSheet: View {
         // returning false lets Esc cancel the edit via onExitCommand.
         if state.editingTitleID != nil { return false }
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        if event.keyCode == 53 { controller.closePreview(); return true }
+        if event.keyCode == 53 {
+            // Esc first clears a region selected on an image.
+            if regionSelection != nil { regionSelection = nil; regionText = nil; return true }
+            controller.closePreview()
+            return true
+        }
         if flags == .command, event.keyCode == 14, current.kind == .image {
             if !event.isARepeat { controller.editEntry(current) }
             return true
@@ -2668,6 +2683,12 @@ private struct ClipboardPreviewSheet: View {
             if flags == .command,
                let text = event.window?.firstResponder as? NSTextView,
                text.selectedRange().length > 0 { return false }
+            // ⌘C with a region selected on an image copies that region's text.
+            if flags == .command, regionSelection != nil, let text = regionText, !text.isEmpty {
+                do { try store.copyDerivedText(text); state.status = "Text from the selected area copied." }
+                catch { state.status = error.localizedDescription }
+                return true
+            }
             do {
                 if try store.write(entryIDs: [current.id], plainText: ClipboardPreferences.shared.isPlain(flags)) {
                     state.status = ClipboardPanelState.multiCopyStatus(count: 1)
@@ -2740,7 +2761,13 @@ private struct ClipboardPreviewSheet: View {
             Group {
                 if current.imageData != nil {
                     Group {
-                        if let image = currentContent?.image { Image(decorative: image, scale: 1).resizable().scaledToFit() }
+                        if let image = currentContent?.image {
+                            // Search matches are highlighted in the picture,
+                            // and a dragged region can be read or copied (P04).
+                            ClipboardImageInspector(entry: current, image: image, query: state.query, store: store,
+                                                    selection: $regionSelection, regionText: $regionText,
+                                                    onStatus: { state.status = $0 })
+                        }
                         else if currentContent == nil { ProgressView().controlSize(.small) }
                         else { Label("Preview unavailable", systemImage: "photo").foregroundStyle(.secondary) }
                     }.padding(12)

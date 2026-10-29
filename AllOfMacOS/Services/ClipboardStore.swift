@@ -142,7 +142,7 @@ final class ClipboardStore: ObservableObject {
     /// Set while the clipboard shelf is on screen: background results (image
     /// OCR) wait instead of re-rendering the cards under the pointer.
     var defersBackgroundUpdates = false {
-        didSet { if !defersBackgroundUpdates { applyPendingTouches() } }
+        didSet { if !defersBackgroundUpdates { applyPendingTouches(); applyPendingLayouts() } }
     }
     /// "Copied again" timestamps recorded while the shelf is open. Applying
     /// them reorders the history, so it waits until the shelf has closed.
@@ -851,7 +851,9 @@ final class ClipboardStore: ObservableObject {
         entries[index].items = [[NSPasteboard.PasteboardType.png.rawValue: data]]
         entries[index].text = nil
         entries[index].recognizedText = nil
+        entries[index].recognizedLines = nil
         entries[index].recognizedImageDigest = nil
+        pendingLayouts[entryID] = nil
         attemptedImages.remove(entryID)
         digests[entryID] = nil
         let edited = entries[index]
@@ -877,23 +879,86 @@ final class ClipboardStore: ObservableObject {
                 attemptedImages.insert(entry.id)
                 // The Capture Text engine (multi-script, CJK-aware) indexes
                 // image text, so searching Korean/Japanese/Chinese finds it.
+                // Line boxes are kept too, for highlights and region reads.
                 let digest: String = await onQueue { entry.payloadDigest }
-                let text = await TextRecognitionService.recognizeForIndexing(imageData: data)
-                let result: (String, String)? = text.map { ($0, digest) }
+                let recognition = await ClipboardImageText.recognize(imageData: data)
                 // Applying a result re-renders an open clipboard shelf; wait
                 // until it closes so browsing never stutters behind indexing.
                 while defersBackgroundUpdates, !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                 }
-                guard let result, let index = entries.firstIndex(where: { $0.id == entry.id }),
+                guard let recognition, let index = entries.firstIndex(where: { $0.id == entry.id }),
                       entries[index].items == entry.items else { continue }
                 var updated = entries[index]
-                updated.recognizedText = result.0
-                updated.recognizedImageDigest = result.1
+                updated.recognizedText = recognition.text
+                updated.recognizedLines = recognition.lines
+                updated.recognizedImageDigest = digest
                 entries[index] = updated
                 scheduleSave()
             }
         }
+    }
+
+    /// Line boxes of an image item, read now for images indexed before 3.3.3
+    /// (which kept text only). While the shelf is open the result is handed
+    /// back at once but stored only once the shelf closes, like indexing.
+    func recognizedLayout(for entryID: UUID) async -> [ClipboardOCRLine] {
+        guard let entry = entries.first(where: { $0.id == entryID }), entry.kind == .image else { return [] }
+        if let lines = entry.recognizedLines { return lines }
+        if let pending = pendingLayouts[entryID], pending.items == entry.items { return pending.recognition.lines }
+        guard let data = entry.imageData, let recognition = await ClipboardImageText.recognize(imageData: data) else { return [] }
+        guard let index = entries.firstIndex(where: { $0.id == entryID }), entries[index].items == entry.items else {
+            return recognition.lines
+        }
+        if defersBackgroundUpdates {
+            pendingLayouts[entryID] = (entry.items, recognition)
+        } else {
+            apply(recognition, to: entryID, items: entry.items)
+        }
+        return recognition.lines
+    }
+
+    private var pendingLayouts: [UUID: (items: [[String: Data]], recognition: ClipboardImageText.Recognition)] = [:]
+
+    private func apply(_ recognition: ClipboardImageText.Recognition, to entryID: UUID, items: [[String: Data]]) {
+        guard let index = entries.firstIndex(where: { $0.id == entryID }), entries[index].items == items else { return }
+        var updated = entries[index]
+        updated.recognizedLines = recognition.lines
+        if updated.recognizedText?.isEmpty != false { updated.recognizedText = recognition.text }
+        entries[index] = updated
+        scheduleSave()
+    }
+
+    private func applyPendingLayouts() {
+        guard !pendingLayouts.isEmpty else { return }
+        let pending = pendingLayouts
+        pendingLayouts.removeAll()
+        for (id, value) in pending { apply(value.recognition, to: id, items: value.items) }
+    }
+
+    /// Copies text taken from an item (a region read from its image) without
+    /// recording a new history item, like Copy Text from Image.
+    func copyDerivedText(_ text: String) throws {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw StoreError.emptySelection }
+        pasteboard.clearContents()
+        let written = pasteboard.setString(value, forType: .string)
+        lastChangeCount = pasteboard.changeCount
+        guard written else { throw StoreError.cannotWrite }
+        ClipboardAudioFeedback.copy()
+    }
+
+    /// Copies part of an image item as PNG, also without a new history item.
+    func copyDerivedImage(_ image: CGImage) throws {
+        guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw StoreError.cannotWrite
+        }
+        guard data.count <= Self.maximumEntryBytes else { throw StoreError.tooLarge }
+        pasteboard.clearContents()
+        let written = pasteboard.setData(data, forType: .png)
+        lastChangeCount = pasteboard.changeCount
+        guard written else { throw StoreError.cannotWrite }
+        ClipboardAudioFeedback.copy()
     }
 
     private func pruneDigests() {

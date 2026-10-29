@@ -526,4 +526,96 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertNil(metadata.cachedCard(for: page))
     }
 
+    // MARK: - P04 · OCR boxes, highlights and regions
+
+    func testImageTextGeometry() {
+        let lines = ClipboardImageText.normalizedLines([("Total 42", CGRect(x: 100, y: 50, width: 400, height: 40)),
+                                                        ("   ", CGRect(x: 0, y: 0, width: 10, height: 10))],
+                                                       imageSize: CGSize(width: 1_000, height: 500))
+        XCTAssertEqual(lines.map(\.text), ["Total 42"], "empty lines are dropped")
+        let box = lines[0].box
+        for (value, expected) in [(box.minX, 0.1), (box.minY, 0.1), (box.width, 0.4), (box.height, 0.08)] {
+            XCTAssertEqual(value, expected, accuracy: 1e-9)
+        }
+        let match = ClipboardImageText.matchBoxes(in: lines, terms: ["42"])
+        XCTAssertEqual(match.count, 1)
+        XCTAssertEqual(match[0].minX, 0.1 + 0.4 * 6 / 8, accuracy: 0.0001, "the match covers its share of the line")
+        XCTAssertEqual(match[0].width, 0.4 * 2 / 8, accuracy: 0.0001)
+        XCTAssertTrue(ClipboardImageText.matchBoxes(in: lines, terms: ["missing"]).isEmpty)
+        XCTAssertEqual(ClipboardImageText.text(in: CGRect(x: 0, y: 0, width: 0.6, height: 0.5), lines: lines), "Total 42")
+        XCTAssertEqual(ClipboardImageText.text(in: CGRect(x: 0.7, y: 0.7, width: 0.2, height: 0.2), lines: lines), "")
+
+        XCTAssertEqual(ClipboardImageText.pixelRect(for: CGRect(x: 0.5, y: -0.2, width: 0.9, height: 0.5), imageWidth: 200, imageHeight: 100),
+                       CGRect(x: 100, y: 0, width: 100, height: 30), "clamped to the image")
+        XCTAssertNil(ClipboardImageText.pixelRect(for: CGRect(x: 0.5, y: 0.5, width: 0.001, height: 0.001), imageWidth: 200, imageHeight: 100))
+        let fitted = ClipboardImageText.fittedRect(imageSize: CGSize(width: 200, height: 100), in: CGRect(x: 0, y: 0, width: 400, height: 400))
+        XCTAssertEqual(fitted, CGRect(x: 0, y: 100, width: 400, height: 200))
+        let unit = CGRect(x: 0.25, y: 0.5, width: 0.5, height: 0.25)
+        let view = ClipboardImageText.viewRect(for: unit, in: fitted)
+        XCTAssertEqual(ClipboardImageText.unitRect(for: view, in: fitted), unit)
+    }
+
+    func testIndexingKeepsLineBoxesAndRegionsReadOnlyTheirText() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let data = png(twoWordImage("HARBOR", "PELICAN"))
+        harness.board.clearContents()
+        XCTAssertTrue(harness.board.setData(data, forType: .png))
+        store.poll(sourceName: "Test", sourceBundleID: "test.aom333")
+        await store.finishPendingCaptures()
+        var entry = try XCTUnwrap(store.entries.first)
+        XCTAssertEqual(entry.kind, .image)
+        for _ in 0..<300 where store.entries.first?.recognizedLines == nil {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        entry = try XCTUnwrap(store.entries.first)
+        let lines = try XCTUnwrap(entry.recognizedLines, "indexing stores line boxes with the text")
+        XCTAssertTrue(entry.recognizedText?.localizedCaseInsensitiveContains("pelican") == true)
+        let pelican = ClipboardImageText.matchBoxes(in: lines, terms: ["pelican"])
+        XCTAssertFalse(pelican.isEmpty)
+        XCTAssertGreaterThan(pelican[0].midX, 0.5, "the match is boxed where the word is")
+
+        let right = await ClipboardImageText.recognizeRegion(imageData: data, region: CGRect(x: 0.55, y: 0, width: 0.45, height: 1),
+                                                             storedLines: lines)
+        XCTAssertTrue(right.localizedCaseInsensitiveContains("pelican"), right)
+        XCTAssertFalse(right.localizedCaseInsensitiveContains("harbor"), right)
+
+        // Region copies go to the (private) pasteboard without a new item.
+        let count = store.entries.count
+        try store.copyDerivedText(right)
+        XCTAssertEqual(harness.board.string(forType: .string), right.trimmingCharacters(in: .whitespacesAndNewlines))
+        let crop = try XCTUnwrap(ClipboardImageText.croppedImage(imageData: data, region: CGRect(x: 0.5, y: 0, width: 0.5, height: 1)))
+        XCTAssertEqual(crop.width, 700)
+        try store.copyDerivedImage(crop)
+        XCTAssertNotNil(harness.board.data(forType: .png))
+        store.poll(sourceName: "Test", sourceBundleID: "test.aom333")
+        await store.finishPendingCaptures()
+        XCTAssertEqual(store.entries.count, count, "derived copies are not recorded as history")
+
+        await store.flush()
+        let reopenedBoard = NSPasteboard(name: .init(harness.token + "-2"))
+        defer { reopenedBoard.releaseGlobally() }
+        let reopened = ClipboardStore(directory: harness.directory, pasteboard: reopenedBoard, defaults: harness.defaults)
+        await reopened.ready()
+        XCTAssertEqual(reopened.entries.first?.recognizedLines, lines, "line boxes are saved with the history")
+    }
+
+    func testImagesIndexedBeforeBoxesGetThemWhenPreviewed() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        var old = ClipboardEntry(title: "Image", kind: .image, sourceName: "Test", sourceBundleID: "test.aom333",
+                                 items: [[NSPasteboard.PasteboardType.png.rawValue: png(twoWordImage("HARBOR", "PELICAN"))]])
+        old.recognizedText = "HARBOR PELICAN"
+        old.recognizedImageDigest = "indexed by 3.3.2"
+        try writeArchive([old], to: harness.directory)
+        await harness.store.ready()
+        XCTAssertNil(harness.store.entries.first?.recognizedLines, "a 3.3.2 archive has no boxes")
+        let lines = await harness.store.recognizedLayout(for: old.id)
+        XCTAssertFalse(lines.isEmpty)
+        XCTAssertEqual(harness.store.entries.first?.recognizedLines, lines, "kept once read")
+        let again = await harness.store.recognizedLayout(for: old.id)
+        XCTAssertEqual(again, lines)
+    }
 }

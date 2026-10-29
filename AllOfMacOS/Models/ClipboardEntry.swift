@@ -33,6 +33,10 @@ struct ClipboardEntry: Identifiable, Codable, Equatable {
     /// Optional fields keep older clipboard archives readable. OCR stays on device.
     var recognizedText: String?
     var recognizedImageDigest: String?
+    /// Lines of `recognizedText` with their place in the image (unit boxes,
+    /// top-left origin), for highlighting matches and reading a region.
+    /// Absent for images indexed before 3.3.3 until their preview opens.
+    var recognizedLines: [ClipboardOCRLine]? = nil
     /// Set on entries created by `ClipboardStore.duplicate(entryID:)`. It marks
     /// a user-made "Copy" so a later copy of the *original* content is credited
     /// to the original during de-duplication instead of to the copy.
@@ -158,4 +162,11 @@ struct ClipboardPinboard: Identifiable, Codable, Equatable {
     var color: String = "blue"
     /// Optional for archives created before manual pinboard ordering.
     var itemOrder: [UUID]? = nil
+}
+
+/// One line of text recognised in an image item. `box` is normalised to the
+/// image (0…1) with a top-left origin, independent of any preview size.
+struct ClipboardOCRLine: Codable, Equatable {
+    var text: String
+    var box: CGRect
 }

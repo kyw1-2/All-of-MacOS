@@ -177,6 +177,9 @@ struct ClipboardDetachedPreview: View {
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
+    /// A region dragged out on an image (P04) and the text read from it.
+    @State private var regionSelection: CGRect?
+    @State private var regionText: String?
     private var current: ClipboardEntry { store.entries.first { $0.id == entry.id } ?? entry }
     var body: some View {
         VStack(spacing: 10) {
@@ -215,7 +218,8 @@ struct ClipboardDetachedPreview: View {
             } else if !current.fileURLs.isEmpty {
                 ClipboardFilesPreview(urls: current.fileURLs)
             } else if let image = content?.image {
-                Image(decorative: image, scale: 1).resizable().scaledToFit()
+                ClipboardImageInspector(entry: current, image: image, query: "", store: store,
+                                        selection: $regionSelection, regionText: $regionText)
             } else {
                 ClipboardReadOnlyTextPreview(entry: current, prepared: content?.attributedText)
             }
