@@ -325,10 +325,33 @@ struct TriggerConfigView: View {
                 }
             }
 
+            // Force Touch stage triggers (3.3.3): the stage is their only setting.
+            if part != .options, case .systemEvent(let kind) = trigger.input,
+               let stageKey = BTTInputTriggerKinds.key(for: kind) {
+                ConfigSection("Force Touch Stage", systemImage: "hand.point.up.left", expanded: true) {
+                    Picker("Stage", selection: Binding(get: { stageKey }, set: { key in
+                        if let next = BTTInputTriggerKinds.kind(for: key) { update { $0.input = .systemEvent(next) } }
+                    })) {
+                        ForEach(BTTInputTriggerKinds.options, id: \.key) { Text($0.title).tag($0.key) }
+                    }
+                }
+            }
+
             // Gesture animation preview
             if part != .options, case .trackpadGesture(let gesture) = trigger.input {
                 GesturePreviewView(gesture: gesture)
                     .frame(maxWidth: .infinity)
+            }
+            // Continuous value binding (3.3.3): MIDI CC, Pitch Bend and pressure,
+            // Force Touch stages and Scroll Up/Down can drive a value instead of
+            // running the actions. The editor renders nothing for other inputs.
+            if part != .input, ContinuousValueBinding.supports(trigger.input) {
+                ConfigSection("Value Binding", systemImage: "slider.horizontal.3", expanded: trigger.valueBinding != nil) {
+                    ContinuousValueBindingEditor(binding: Binding(
+                        get: { trigger.valueBinding },
+                        set: { value in update { $0.valueBinding = value } }),
+                        input: trigger.input)
+                }
             }
             if part != .input, case .trackpadGesture(let gesture) = trigger.input {
                 Toggle("Haptic feedback on recognition", isOn: Binding(
