@@ -501,108 +501,100 @@ struct ActionConfigView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GroupBox("Action: \(action.actionType.rawValue)") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Image(systemName: action.actionType.iconName)
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-                        Text(action.actionType.rawValue)
-                            .font(.headline)
-                    }
-
-                    Divider()
-
-                    Toggle("Enabled", isOn: Binding(get: { action.isEnabled }, set: { value in
-                        saveAction { $0.isEnabled = value }
-                    }))
-                }
-                .padding(8)
-            }
-
-            GroupBox("Name & Notes") {
-                VStack(alignment: .leading) {
+        // Groups inside the step's card, each with a hairline above (e.2).
+        VStack(alignment: .leading, spacing: 0) {
+            AOMEditorGroup("Step", symbol: action.actionType.iconName, detail: action.actionType.rawValue, rows: true) {
+                AOMToggleRow("Enabled", isOn: Binding(get: { action.isEnabled }, set: { value in
+                    saveAction { $0.isEnabled = value }
+                }))
+                AOMSettingRow("Name") {
                     TextField("Optional action name", text: stringParameter(\.label))
-                    TextField("Notes", text: stringParameter(\.notes), axis: .vertical).lineLimit(2...4)
-                }.textFieldStyle(.roundedBorder).padding(8)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
+                }
+                TextField("Notes", text: stringParameter(\.notes), axis: .vertical).lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                    .aomRowInset()
             }
 
             // Action-specific parameters
             switch action.actionType {
             case .triggerNamedTrigger:
-                GroupBox("Named Trigger to Run") {
-                    VStack(alignment: .leading) {
-                        TextField("Exact callable name", text: stringParameter(\.namedTriggerName))
-                        Menu("Choose Named Trigger") {
-                            ForEach(appState.currentPreset.triggers.filter { if case .namedTrigger = $0.input { return true }; return false }) { named in
-                                if case .namedTrigger(let name) = named.input {
-                                    Button(name + " · " + (named.appBundleID ?? "All Apps")) { saveAction { $0.parameters.namedTriggerName = name } }
-                                }
+                AOMEditorGroup("Named trigger to run",
+                               help: "Create reusable macros in Other Triggers. This step waits until the called macro finishes; recursive calls fail safely.") {
+                    TextField("Exact callable name", text: stringParameter(\.namedTriggerName))
+                        .textFieldStyle(.roundedBorder)
+                    Menu("Choose Named Trigger") {
+                        ForEach(appState.currentPreset.triggers.filter { if case .namedTrigger = $0.input { return true }; return false }) { named in
+                            if case .namedTrigger(let name) = named.input {
+                                Button(name + " · " + (named.appBundleID ?? "All Apps")) { saveAction { $0.parameters.namedTriggerName = name } }
                             }
                         }
-                        Text("Create reusable macros in Other Triggers. This step waits until the called macro finishes; recursive calls fail safely.").font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                    }
+                    .fixedSize()
                 }
             case .saveWindowLayout, .restoreWindowLayout:
-                GroupBox("Window Layout") {
-                    VStack(alignment: .leading) {
-                        TextField("Saved layout name", text: stringParameter(\.windowLayoutName))
-                        Text("Use the same name to save and restore. Only identifiable open windows on connected displays are restored.").font(.caption)
-                    }.padding(8)
+                AOMEditorGroup("Window layout",
+                               help: "Use the same name to save and restore. Only identifiable open windows on connected displays are restored.") {
+                    TextField("Saved layout name", text: stringParameter(\.windowLayoutName))
+                        .textFieldStyle(.roundedBorder)
                 }
             case .showHUD:
-                GroupBox("HUD Message") { TextField("Message", text: stringParameter(\.hudText)).padding(8) }
+                AOMEditorGroup("HUD message") {
+                    TextField("Message", text: stringParameter(\.hudText))
+                        .textFieldStyle(.roundedBorder)
+                }
             case .showCheatSheet:
-                Text("Shows or hides the bindings available to the current application.").font(.callout)
+                AOMEditorGroup("Cheat sheet") {
+                    AOMEditorNote("Shows or hides the bindings available to the current application.")
+                }
             case .actionGroup:
-                GroupBox("Group") {
-                    Text("Select this group and choose Add to Group to insert child actions. Conditions and repeat settings apply to the entire group.")
-                        .font(.callout).foregroundStyle(.secondary).padding(8)
+                AOMEditorGroup("Group") {
+                    AOMEditorNote("Choose Add Inside… in this step's menu to insert child actions. Conditions and repeat settings apply to the entire group.")
                 }
             case .setVariable:
-                GroupBox("Set Workflow Variable") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("Name (letters, numbers, underscore)", text: stringParameter(\.variableName))
-                        TextField("String value", text: stringParameter(\.variableValue))
-                        Text("Variable values are shared across triggers and persist across restarts. 128 variables maximum; values up to 512 characters. Do not store passwords.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                AOMEditorGroup("Set workflow variable",
+                               help: "Variable values are shared across triggers and persist across restarts. 128 variables maximum; values up to 512 characters.") {
+                    TextField("Name (letters, numbers, underscore)", text: stringParameter(\.variableName))
+                        .textFieldStyle(.roundedBorder)
+                    TextField("String value", text: stringParameter(\.variableValue))
+                        .textFieldStyle(.roundedBorder)
+                    AOMEditorNote("Do not store passwords.", tone: .warning)
                 }
             case .ifElse:
-                GroupBox("If / Else Condition") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("Read from", selection: Binding(get: { action.parameters.conditionKind ?? "variable" }, set: { kind in
-                            saveAction { $0.parameters.conditionKind = kind }
-                        })) {
-                            Text("Variable").tag("variable")
-                            Text("Frontmost App Bundle ID").tag("app")
-                            Text("Frontmost App Name").tag("appName")
-                            Text("Clipboard Text").tag("clipboard")
-                            Text("Focused Window Title").tag("window")
-                            Text("Pointer X (0–1)").tag("mouseX")
-                            Text("Pointer Y (0–1)").tag("mouseY")
+                AOMEditorGroup("If / Else condition",
+                               help: "Add the THEN steps with Add Inside… and the ELSE steps with Add to Else… in this step's menu. The condition is checked after the step delay.") {
+                    Picker("Read from", selection: Binding(get: { action.parameters.conditionKind ?? "variable" }, set: { kind in
+                        saveAction { $0.parameters.conditionKind = kind }
+                    })) {
+                        Text("Variable").tag("variable")
+                        Text("Frontmost App Bundle ID").tag("app")
+                        Text("Frontmost App Name").tag("appName")
+                        Text("Clipboard Text").tag("clipboard")
+                        Text("Focused Window Title").tag("window")
+                        Text("Pointer X (0–1)").tag("mouseX")
+                        Text("Pointer Y (0–1)").tag("mouseY")
+                    }
+                    if (action.parameters.conditionKind ?? "variable") == "variable" {
+                        TextField("Variable name", text: stringParameter(\.variableName))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Picker("Comparison", selection: Binding(get: { action.parameters.conditionOperator ?? "equals" }, set: { op in
+                        saveAction { $0.parameters.conditionOperator = op }
+                    })) {
+                        ForEach(WorkflowBranchCondition.operators, id: \.id) { entry in
+                            Text(entry.title).tag(entry.id)
                         }
-                        if (action.parameters.conditionKind ?? "variable") == "variable" {
-                            TextField("Variable name", text: stringParameter(\.variableName))
-                        }
-                        Picker("Comparison", selection: Binding(get: { action.parameters.conditionOperator ?? "equals" }, set: { op in
-                            saveAction { $0.parameters.conditionOperator = op }
-                        })) {
-                            ForEach(WorkflowBranchCondition.operators, id: \.id) { entry in
-                                Text(entry.title).tag(entry.id)
-                            }
-                        }
-                        TextField("Compare to", text: stringParameter(\.conditionValue))
-                        Text("THEN: \(action.parameters.children?.count ?? 0) steps   ELSE: \(action.parameters.elseChildren?.count ?? 0) steps")
-                            .font(.caption.bold())
-                        Text("Select the If/Else step in the Action Sequence panel and choose Add THEN or Add ELSE. The condition is checked after the step delay.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.textFieldStyle(.roundedBorder).padding(8)
+                    }
+                    TextField("Compare to", text: stringParameter(\.conditionValue))
+                        .textFieldStyle(.roundedBorder)
+                    AOMEditorNote("THEN: \(action.parameters.children?.count ?? 0) steps · ELSE: \(action.parameters.elseChildren?.count ?? 0) steps")
                 }
             case .customSnapWindow:
-                GroupBox("Custom Snap Area") {
-                    VStack(alignment: .leading, spacing: 10) {
+                AOMEditorGroup("Custom snap area", detail: "Percent of the visible screen, from the top left",
+                               help: "The window is moved only when this action runs. The area automatically scales across different monitor resolutions.",
+                               rows: true) {
+                    AOMSettingRow("Target display") {
                         Picker("Target display", selection: Binding(get: { action.parameters.snapDisplay ?? "current" }, set: { mode in
                             saveAction { $0.parameters.snapDisplay = mode }
                         })) {
@@ -611,40 +603,47 @@ struct ActionConfigView: View {
                             Text("Next display").tag("next")
                             Text("Display under pointer").tag("pointer")
                         }
-                        Text("Percent of visible screen area (top-left origin)")
-                            .font(.caption).foregroundStyle(.secondary)
-                        snapSetting("X", key: \.snapX, fallback: 0)
-                        snapSetting("Y", key: \.snapY, fallback: 0)
-                        snapSetting("Width", key: \.snapWidth, fallback: 0.5)
-                        snapSetting("Height", key: \.snapHeight, fallback: 1)
+                        .pickerStyle(.menu)
+                    }
+                    snapSetting("X", key: \.snapX, fallback: 0)
+                    snapSetting("Y", key: \.snapY, fallback: 0)
+                    snapSetting("Width", key: \.snapWidth, fallback: 0.5)
+                    snapSetting("Height", key: \.snapHeight, fallback: 1)
+                    VStack(alignment: .leading, spacing: AOMSpace.x3) {
                         GeometryReader { geometry in
-                            RoundedRectangle(cornerRadius: 5).stroke(.secondary.opacity(0.5))
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.accentColor.opacity(0.3))
-                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 2))
+                            let screen = RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                            let area = RoundedRectangle(cornerRadius: AOMRadius.keycap, style: .continuous)
+                            screen.fill(AOMColor.sunken)
+                            screen.strokeBorder(AOMColor.hairline, lineWidth: 1)
+                            area
+                                .fill(AOMTone.info.wash(increasedContrast: false))
+                                .overlay(area.strokeBorder(AOMColor.accent, lineWidth: 2))
                                 .frame(width: geometry.size.width * (action.parameters.snapWidth ?? 0.5),
                                        height: geometry.size.height * (action.parameters.snapHeight ?? 1))
                                 .offset(x: geometry.size.width * (action.parameters.snapX ?? 0),
                                         y: geometry.size.height * (action.parameters.snapY ?? 0))
                         }
-                        .frame(height: 110)
-                        HStack {
+                        .aspectRatio(16 / 10, contentMode: .fit)
+                        .frame(maxWidth: AOMSize.tileMin)
+                        .accessibilityHidden(true)
+                        HStack(spacing: AOMSpace.x2) {
                             Button("Left Half") { setSnap(x: 0, y: 0, width: 0.5, height: 1) }
                             Button("Right Half") { setSnap(x: 0.5, y: 0, width: 0.5, height: 1) }
                             Button("Top Third") { setSnap(x: 0, y: 0, width: 1, height: 0.333) }
                         }
-                        Text("The window is moved only when this action runs. The area automatically scales across different monitor resolutions.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                    }
+                    .aomRowInset()
                 }
             case .wait:
-                GroupBox("Wait") { timingField("Duration (ms)", key: \.waitMs, defaultValue: 250).padding(8) }
+                AOMEditorGroup("Wait", rows: true) { timingField("Duration (ms)", key: \.waitMs, defaultValue: 250) }
             case .volumeUp, .volumeDown:
-                GroupBox("Volume step") {
-                    Stepper(value: Binding(get: { action.parameters.volumeStepPercent ?? 6 },
-                                           set: { value in saveAction { $0.parameters.volumeStepPercent = value } }), in: 1...100, step: 1) {
-                        Text("\(Int(action.parameters.volumeStepPercent ?? 6)) percentage points per click")
-                    }.padding(8)
+                AOMEditorGroup("Volume step", rows: true) {
+                    AOMSettingRow("Step per click") {
+                        AOMRowStepper("Volume step", value: Binding(get: { action.parameters.volumeStepPercent ?? 6 },
+                                                                    set: { value in saveAction { $0.parameters.volumeStepPercent = value } }),
+                                      in: 1...100, step: 1,
+                                      display: "\(Int(action.parameters.volumeStepPercent ?? 6)) points")
+                    }
                 }
             case .setSoundOutput:
                 SoundOutputConfig(action: action) { name, uid in
@@ -652,319 +651,264 @@ struct ActionConfigView: View {
                 }
                 .id(action.id)
             case .typeText:
-                GroupBox("Text to Type") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        TextEditor(text: $text)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 80)
-                            .onChange(of: text) { _, newValue in saveAction { $0.parameters.text = newValue } }
-                        Stepper(value: Binding(get: { action.parameters.typingIntervalMs ?? 20 },
-                            set: { value in saveAction { $0.parameters.typingIntervalMs = value } }), in: 0...500, step: 5) {
-                            Text("Delay between characters: \(action.parameters.typingIntervalMs ?? 20) ms")
-                        }
-                        Text("Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return. Works in password fields, including macOS authorization dialogs. {{var:name}} inserts a workflow variable.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if case .keyboardShortcut(let shortcut) = trigger.input,
-                           let alias = SecureInputHotKeys.secureAlias(for: shortcut) {
-                            Label("In password fields macOS keeps \(shortcut.displayString) for typing characters, so press \(alias.displayString) there instead.",
-                                  systemImage: "lock.shield")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                AOMEditorGroup("Text to type",
+                               help: "Types one character at a time without changing your clipboard. Tabs and line breaks press Tab and Return. Works in password fields, including macOS authorization dialogs. {{var:name}} inserts a workflow variable.",
+                               rows: true) {
+                    TextEditor(text: $text)
+                        .font(AOMFont.mono)
+                        .aomTextWell()
+                        .onChange(of: text) { _, newValue in saveAction { $0.parameters.text = newValue } }
+                        .aomRowInset()
+                    AOMSettingRow("Delay between characters") {
+                        AOMRowStepper("Delay between characters", value: Binding(get: { action.parameters.typingIntervalMs ?? 20 },
+                            set: { value in saveAction { $0.parameters.typingIntervalMs = value } }), in: 0...500, step: 5,
+                                      display: "\(action.parameters.typingIntervalMs ?? 20) ms")
                     }
-                    .padding(8)
+                    if case .keyboardShortcut(let shortcut) = trigger.input,
+                       let alias = SecureInputHotKeys.secureAlias(for: shortcut) {
+                        Label("In password fields macOS keeps \(shortcut.displayString) for typing characters, so press \(alias.displayString) there instead.",
+                              systemImage: "lock.shield")
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .aomRowInset()
+                    }
                 }
 
             case .runAppleScript, .runShellScript:
-                GroupBox(action.actionType == .runAppleScript ? "AppleScript" : "Shell Script") {
+                AOMEditorGroup(action.actionType == .runAppleScript ? "AppleScript" : "Shell script",
+                               help: "Saves up to 512 output characters plus _exitCode and _timedOut status variables. Later steps can insert the output with {{var:name}}.",
+                               rows: true) {
                     TextEditor(text: $scriptContent)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 120)
+                        .font(AOMFont.mono)
+                        .aomTextWell(minHeight: AOMSize.rowDetail * 2 + AOMSpace.x4)
                         .onChange(of: scriptContent) { _, newValue in
                             saveAction { $0.parameters.scriptContent = newValue }
                         }
-                        .padding(4)
-                }
-
-                TextField("Output variable (optional, up to 55 characters)", text: stringParameter(\.scriptResultVariable))
-                Text("Saves up to 512 output characters plus _exitCode and _timedOut status variables. Later steps can insert the output with {{var:name}}.").font(.caption).foregroundStyle(.secondary)
-                GroupBox("Execution timeout") {
-                    HStack {
-                        Text("Seconds")
+                        .aomRowInset()
+                    AOMSettingRow("Output variable", detail: "Optional, up to 55 characters") {
+                        TextField("Output variable (optional, up to 55 characters)", text: stringParameter(\.scriptResultVariable))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: AOMEditorSize.rowField)
+                    }
+                    AOMSettingRow("Execution timeout", detail: "Seconds") {
                         TextField("30", value: Binding(get: { action.parameters.scriptTimeoutSeconds ?? 30 }, set: { value in
                             saveAction { $0.parameters.scriptTimeoutSeconds = min(120, max(0.1, value)) }
-                        }), format: .number).textFieldStyle(.roundedBorder)
-                    }.padding(8)
+                        }), format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: AOMEditorSize.numberField)
+                            .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Execution timeout in seconds")
+                    }
                 }
 
             case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
                  .capturePreviousArea, .captureScrolling, .captureAllDisplays, .captureText,
                  .captureTextWithLineBreaks, .captureTextWithoutLineBreaks:
-                GroupBox("Capture Options") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(ActionType.describeCaptureAction(action.actionType))
-                            .font(.callout).foregroundStyle(.secondary)
-                        if action.actionType == .captureScrolling {
-                            Text("Scrolls the window under the region and stitches the frames. Stop scrolling to finish; a diagonal or reversed scroll ends it early.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        if !ScreenCaptureService.hasPermission {
-                            Label("Screen Recording permission is required.", systemImage: "exclamationmark.triangle")
-                                .font(.caption).foregroundStyle(.orange)
+                AOMEditorGroup("Capture options",
+                               help: action.actionType == .captureScrolling
+                                   ? "Scrolls the window under the region and stitches the frames. Stop scrolling to finish; a diagonal or reversed scroll ends it early."
+                                   : nil) {
+                    AOMEditorNote(ActionType.describeCaptureAction(action.actionType))
+                    if !ScreenCaptureService.hasPermission {
+                        AOMNotice(.warning, "Screen Recording permission is required.") {
                             Button("Open System Settings") {
                                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-                            }.controlSize(.small)
+                            }
                         }
-                    }.padding(8)
+                    }
                 }
             case .captureSelfTimer:
-                GroupBox("Self-Timer") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        timingField("Delay before capture (seconds)", key: \.selfTimerSeconds, defaultValue: 5)
-                        Text("Counts down on the HUD, then opens the area selection.").font(.caption)
-                    }.padding(8)
+                AOMEditorGroup("Self-timer", help: "Counts down on the HUD, then opens the area selection.", rows: true) {
+                    timingField("Delay before capture (seconds)", key: \.selfTimerSeconds, defaultValue: 5)
                 }
             case .annotateLastCapture, .pinLastCapture, .copyLastCapture, .saveLastCapture,
                  .ocrLastCapture, .openCaptureHistory, .unpinAllCaptures, .toggleCaptureOverlay:
-                GroupBox("Most Recent Capture") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(ActionType.describeCaptureAction(action.actionType))
-                            .font(.callout).foregroundStyle(.secondary)
-                        if action.actionType == .ocrLastCapture {
-                            Toggle("Keep line breaks", isOn: boolParameter(\.ocrKeepsLineBreaks))
-                        }
-                    }.padding(8)
+                AOMEditorGroup("Most recent capture", rows: true) {
+                    AOMEditorNote(ActionType.describeCaptureAction(action.actionType))
+                        .aomRowInset()
+                    if action.actionType == .ocrLastCapture {
+                        AOMToggleRow("Keep line breaks", isOn: boolParameter(\.ocrKeepsLineBreaks))
+                    }
                 }
 
             case .openURL:
-                GroupBox("URL") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        TextField("https://...", text: $url)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: url) { _, newValue in
-                                saveAction { $0.parameters.url = newValue }
-                            }
-                        Text("{{var:name}} inserts a workflow variable, for example a script's output.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(8)
+                AOMEditorGroup("URL", help: "{{var:name}} inserts a workflow variable, for example a script's output.") {
+                    TextField("https://...", text: $url)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: url) { _, newValue in
+                            saveAction { $0.parameters.url = newValue }
+                        }
                 }
 
             case .activateApplication, .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
-                GroupBox("Application") {
-                    Button("Choose Application…") {
-                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
-                        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let selected = panel.url {
-                            applicationName = Bundle(url: selected)?.bundleIdentifier ?? selected.deletingPathExtension().lastPathComponent
-                            saveAction { $0.parameters.applicationPath = selected.path; $0.parameters.applicationName = applicationName }
-                        }
-                    }.padding(.top, 8)
-                    TextField("Application name or bundle ID", text: $applicationName)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: applicationName) { _, newValue in
-                            saveAction {
-                                if $0.parameters.applicationName != newValue { $0.parameters.applicationPath = nil }
-                                $0.parameters.applicationName = newValue
+                AOMEditorGroup("Application") {
+                    HStack(spacing: AOMSpace.x2) {
+                        TextField("Application name or bundle ID", text: $applicationName)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: applicationName) { _, newValue in
+                                saveAction {
+                                    if $0.parameters.applicationName != newValue { $0.parameters.applicationPath = nil }
+                                    $0.parameters.applicationName = newValue
+                                }
+                            }
+                        Button("Choose Application…") {
+                            let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+                            panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK, let selected = panel.url {
+                                applicationName = Bundle(url: selected)?.bundleIdentifier ?? selected.deletingPathExtension().lastPathComponent
+                                saveAction { $0.parameters.applicationPath = selected.path; $0.parameters.applicationName = applicationName }
                             }
                         }
-                        .padding(8)
+                    }
                     if action.actionType == .forceQuitApplication {
-                        Text("Leave empty to force quit the frontmost app.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
+                        AOMEditorNote("Leave empty to force quit the frontmost app.")
                     }
                 }
 
             case .sendKeyStroke:
-                TextField("Target app bundle ID (empty = focused app)", text: stringParameter(\.targetApplicationBundleID))
-                Text("A named app must already be running. Delivery uses its process ID; app support for background shortcuts varies.").font(.caption).foregroundStyle(.secondary)
-                GroupBox("Keyboard Shortcut to Send") {
-                    let monitoring = keyboardMonitor.isMonitoring
-                    VStack(spacing: 12) {
-                        // Display box
-                        ZStack {
-                            if monitoring {
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(.red)
-                                        .frame(width: 10, height: 10)
-                                        .overlay(
-                                            Circle()
-                                                .fill(.red.opacity(0.4))
-                                                .frame(width: 18, height: 18)
-                                                .scaleEffect(monitoring ? 1.3 : 1.0)
-                                                .opacity(monitoring ? 0 : 1)
-                                                .animation(AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)), value: monitoring)
-                                        )
-                                    Text("RECORDING — press any key...")
-                                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(.red)
-                                }
-                            } else if let shortcut = recordedShortcut {
-                                Text(shortcut.displayString)
-                                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                            } else {
-                                Text("No shortcut set")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .frame(height: 56)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            monitoring
-                                ? Color.red.opacity(0.08)
-                                : Color(nsColor: .textBackgroundColor)
-                        )
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(
-                                    monitoring ? Color.red : Color.gray.opacity(0.3),
-                                    lineWidth: monitoring ? 2 : 1
-                                )
-                        )
-                        .animation(AOMDesign.animation(.easeInOut(duration: 0.2)), value: monitoring)
-
-                        // Buttons
-                        HStack(spacing: 12) {
-                            if monitoring {
-                                Button(action: {
-                                    keyboardMonitor.stopRecording()
-                                }) {
-                                    HStack(spacing: 6) {
-                                        RoundedRectangle(cornerRadius: 2)
-                                            .fill(.white)
-                                            .frame(width: 10, height: 10)
-                                        Text("Stop")
-                                    }
-                                    .frame(minWidth: 100)
-                                    .padding(.vertical, 4)
-                                }
-                                .keyboardShortcut(.escape, modifiers: [])
-                                .buttonStyle(.borderedProminent)
-                                .tint(.red)
-                            } else {
-                                Button(action: {
-                                    keyboardMonitor.startRecording { shortcut in
-                                        recordedShortcut = shortcut
-                                        saveAction {
-                                            $0.parameters.shortcutKeyCode = shortcut.keyCode
-                                            $0.parameters.shortcutModifiers = shortcut.modifiers.rawValue
-                                        }
-                                    }
-                                }) {
-                                    HStack(spacing: 6) {
-                                        Circle()
-                                            .fill(.red)
-                                            .frame(width: 10, height: 10)
-                                        Text("Record Shortcut")
-                                            .lineLimit(1)
-                                            .fixedSize()
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 4)
-                                }
-                                .buttonStyle(.bordered)
-                            }
-
-                            if recordedShortcut != nil && !monitoring {
-                                Button(action: {
-                                    recordedShortcut = nil
-                                    saveAction {
-                                        $0.parameters.shortcutKeyCode = nil
-                                        $0.parameters.shortcutModifiers = nil
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "xmark.circle")
-                                        Text("Clear")
-                                    }
-                                }
-                                .buttonStyle(.borderless)
-                                .foregroundColor(.red)
-                            }
+                let monitoring = keyboardMonitor.isMonitoring
+                AOMEditorGroup("Shortcut to send") {
+                    // Display well: the recorded keys as key caps, or the recording state.
+                    Group {
+                        if monitoring {
+                            Label("Recording — press any key…", systemImage: "record.circle")
+                                .font(AOMFont.bodyEmphasis)
+                                .foregroundStyle(AOMColor.dangerText)
+                                .symbolEffect(.pulse, options: .repeating, isActive: monitoring)
+                        } else if let shortcut = recordedShortcut {
+                            AOMShortcutKeys(shortcut: shortcut)
+                        } else {
+                            Text("No shortcut set")
+                                .font(AOMFont.body)
+                                .foregroundStyle(AOMColor.textSecondary)
                         }
                     }
-                    .padding(8)
+                    .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
+                    .background(monitoring ? AOMTone.recording.wash(increasedContrast: false) : AOMColor.raised,
+                                in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                            .strokeBorder(monitoring ? AOMColor.recording : AOMColor.hairline, lineWidth: monitoring ? 2 : 1)
+                    }
+                    .aomAnimation(.quick, value: monitoring)
+
+                    // Buttons
+                    HStack(spacing: AOMSpace.x3) {
+                        if monitoring {
+                            Button(action: {
+                                keyboardMonitor.stopRecording()
+                            }) {
+                                Label("Stop", systemImage: "stop.fill")
+                                    .frame(minWidth: AOMSize.rowDetail * 2)
+                            }
+                            .keyboardShortcut(.escape, modifiers: [])
+                            .buttonStyle(.borderedProminent)
+                            .tint(AOMColor.recording)
+                        } else {
+                            Button(action: {
+                                keyboardMonitor.startRecording { shortcut in
+                                    recordedShortcut = shortcut
+                                    saveAction {
+                                        $0.parameters.shortcutKeyCode = shortcut.keyCode
+                                        $0.parameters.shortcutModifiers = shortcut.modifiers.rawValue
+                                    }
+                                }
+                            }) {
+                                Label("Record Shortcut", systemImage: "record.circle")
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if recordedShortcut != nil && !monitoring {
+                            Button(action: {
+                                recordedShortcut = nil
+                                saveAction {
+                                    $0.parameters.shortcutKeyCode = nil
+                                    $0.parameters.shortcutModifiers = nil
+                                }
+                            }) {
+                                Label("Clear", systemImage: "xmark.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(AOMColor.dangerText)
+                        }
+                    }
+                }
+                AOMEditorGroup("Target app", help: "A named app must already be running. Delivery uses its process ID; app support for background shortcuts varies.") {
+                    TextField("Target app bundle ID (empty = focused app)", text: stringParameter(\.targetApplicationBundleID))
+                        .textFieldStyle(.roundedBorder)
                 }
 
             default:
                 if ActionParameterForm.handles(action.actionType) {
                     ActionParameterForm(action: action, triggers: appState.currentPreset.triggers) { modify in saveAction(modify) }
                 } else {
-                    GroupBox("Info") {
-                        Text(action.actionType.description)
-                            .foregroundColor(.secondary)
-                            .padding(8)
+                    AOMEditorGroup("About this action") {
+                        AOMEditorNote(action.actionType.description)
                     }
                 }
             }
 
             if action.actionType.isDestructive {
-                GroupBox("Safety") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Ask for confirmation before running", isOn: Binding(
-                            get: { action.parameters.requiresConfirmation != false },
-                            set: { on in saveAction { $0.parameters.requiresConfirmation = on ? nil : false } }))
-                        if action.parameters.requiresConfirmation == false {
-                            Label("This will run without asking. \(action.actionType.rawValue) cannot be undone.", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption).foregroundStyle(.orange)
-                        }
-                    }.padding(8)
+                AOMEditorGroup("Safety", rows: true) {
+                    AOMToggleRow("Ask for confirmation before running", isOn: Binding(
+                        get: { action.parameters.requiresConfirmation != false },
+                        set: { on in saveAction { $0.parameters.requiresConfirmation = on ? nil : false } }))
+                    if action.parameters.requiresConfirmation == false {
+                        AOMEditorNote("This will run without asking. \(action.actionType.rawValue) cannot be undone.", tone: .warning)
+                            .aomRowInset()
+                    }
                 }
             }
 
-            GroupBox("Sequence Options") {
-                VStack(alignment: .leading, spacing: 10) {
-                    timingField("Before (ms)", key: \.delayBeforeMs)
-                    timingField("After (ms)", key: \.delayAfterMs)
-                    Stepper(value: Binding(get: { action.parameters.repeatCount ?? 1 }, set: { count in
+            AOMEditorGroup("Sequence options", rows: true) {
+                timingField("Before (ms)", key: \.delayBeforeMs)
+                timingField("After (ms)", key: \.delayAfterMs)
+                AOMSettingRow("Repeat") {
+                    AOMRowStepper("Repeat", value: Binding(get: { action.parameters.repeatCount ?? 1 }, set: { count in
                         saveAction { $0.parameters.repeatCount = count }
-                    }), in: 1...100) { Text("Repeat \(action.parameters.repeatCount ?? 1) time(s)") }
-                    timingField("Between repeats (ms)", key: \.repeatIntervalMs)
-                    Toggle("Continue to next step on failure", isOn: boolParameter(\.continueOnFailure))
-                    if action.actionType.category == .windowManagement {
-                        Toggle("Use the currently focused window at this step", isOn: boolParameter(\.useCurrentWindow))
-                        Text("Off: keep the window selected when the sequence began. On: use the window focused after earlier actions.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.padding(8)
+                    }), in: 1...100, display: "\(action.parameters.repeatCount ?? 1) time(s)")
+                }
+                timingField("Between repeats (ms)", key: \.repeatIntervalMs)
+                AOMToggleRow("Continue to next step on failure", isOn: boolParameter(\.continueOnFailure))
+                if action.actionType.category == .windowManagement {
+                    AOMToggleRow("Use the currently focused window at this step",
+                                 help: "Off: keep the window selected when the sequence began. On: use the window focused after earlier actions.",
+                                 isOn: boolParameter(\.useCurrentWindow))
+                }
             }
-            GroupBox("Run Only When") {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("App bundle ID (blank = any app)", text: stringParameter(\.onlyAppBundleID))
-                    TextField("Window title contains (blank = any title)", text: stringParameter(\.windowTitleContains))
-                    TextField("Window title regex (optional)", text: stringParameter(\.windowTitleRegex))
-                    optionalCondition("Battery at least (%)", key: \.minimumBatteryPercent, range: 0...100)
-                    optionalCondition("Battery at most (%)", key: \.maximumBatteryPercent, range: 0...100)
-                    optionalCondition("At least displays", key: \.minimumDisplayCount, range: 1...32)
-                    optionalCondition("At most displays", key: \.maximumDisplayCount, range: 1...32)
+            AOMEditorGroup("Run only when",
+                           help: "All enabled conditions must match. Unknown battery information skips battery-dependent steps.",
+                           rows: true) {
+                conditionField("App bundle ID", prompt: "Blank = any app", key: \.onlyAppBundleID)
+                conditionField("Window title contains", prompt: "Blank = any title", key: \.windowTitleContains)
+                conditionField("Window title regex", prompt: "Optional", key: \.windowTitleRegex)
+                optionalCondition("Battery at least (%)", key: \.minimumBatteryPercent, range: 0...100)
+                optionalCondition("Battery at most (%)", key: \.maximumBatteryPercent, range: 0...100)
+                optionalCondition("At least displays", key: \.minimumDisplayCount, range: 1...32)
+                optionalCondition("At most displays", key: \.maximumDisplayCount, range: 1...32)
+                AOMSettingRow("Power") {
                     Picker("Power", selection: stringParameter(\.powerSource)) {
                         Text("Any").tag(""); Text("AC power").tag("ac"); Text("Battery").tag("battery")
                     }
-                    Text("All enabled conditions must match. Unknown battery information skips battery-dependent steps.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.textFieldStyle(.roundedBorder).padding(8)
+                    .pickerStyle(.menu)
+                }
             }
 
-            // Test button
+            // Test button: the step's one primary action.
             Button(action: {
                 ActionExecutor.executeActions([action], fromTrackpad: trigger.input.category == .trackpad, triggerID: trigger.id)
             }) {
-                HStack {
-                    Image(systemName: "play.fill")
-                    Text("Test Action")
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                Label("Test Action", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .padding(AOMSpace.x3)
+            .overlay(alignment: .top) { AOMRowDivider(inset: 0, trailingInset: 0) }
 
-            Spacer()
+            Spacer(minLength: 0)
         }
     }
 
@@ -976,38 +920,56 @@ struct ActionConfigView: View {
     }
     private func snapSetting(_ title: String, key: WritableKeyPath<ActionParameters, Double?>,
                              fallback: Double) -> some View {
-        HStack(spacing: 8) {
-            Text(title).frame(width: 52, alignment: .leading)
-            Slider(value: Binding(get: { action.parameters[keyPath: key] ?? fallback }, set: { newValue in
-                saveAction { action in
-                    let value = min(1, max(key == \.snapWidth || key == \.snapHeight ? 0.05 : 0, newValue))
-                    action.parameters[keyPath: key] = value
-                    let x = action.parameters.snapX ?? 0, y = action.parameters.snapY ?? 0
-                    let width = action.parameters.snapWidth ?? 0.5, height = action.parameters.snapHeight ?? 1
-                    if x + width > 1 {
-                        if key == \.snapX { action.parameters.snapX = max(0, 1 - width) }
-                        else { action.parameters.snapWidth = max(0.05, 1 - x) }
+        AOMSettingRow(title) {
+            HStack(spacing: AOMSpace.x2) {
+                Slider(value: Binding(get: { action.parameters[keyPath: key] ?? fallback }, set: { newValue in
+                    saveAction { action in
+                        let value = min(1, max(key == \.snapWidth || key == \.snapHeight ? 0.05 : 0, newValue))
+                        action.parameters[keyPath: key] = value
+                        let x = action.parameters.snapX ?? 0, y = action.parameters.snapY ?? 0
+                        let width = action.parameters.snapWidth ?? 0.5, height = action.parameters.snapHeight ?? 1
+                        if x + width > 1 {
+                            if key == \.snapX { action.parameters.snapX = max(0, 1 - width) }
+                            else { action.parameters.snapWidth = max(0.05, 1 - x) }
+                        }
+                        if y + height > 1 {
+                            if key == \.snapY { action.parameters.snapY = max(0, 1 - height) }
+                            else { action.parameters.snapHeight = max(0.05, 1 - y) }
+                        }
                     }
-                    if y + height > 1 {
-                        if key == \.snapY { action.parameters.snapY = max(0, 1 - height) }
-                        else { action.parameters.snapHeight = max(0.05, 1 - y) }
-                    }
-                }
-            }), in: (key == \.snapWidth || key == \.snapHeight ? 0.05 : 0)...1, step: 0.01)
-            Text("\(Int((action.parameters[keyPath: key] ?? fallback) * 100))%")
-                .font(.caption.monospacedDigit()).frame(width: 38, alignment: .trailing)
+                }), in: (key == \.snapWidth || key == \.snapHeight ? 0.05 : 0)...1, step: 0.01)
+                    .frame(width: AOMEditorSize.rowSlider)
+                    .accessibilityLabel(title)
+                AOMRowValue("\(Int((action.parameters[keyPath: key] ?? fallback) * 100))%")
+            }
+        }
+    }
+
+    /// A text condition of Run Only When as a row.
+    private func conditionField(_ title: String, prompt: String, key: WritableKeyPath<ActionParameters, String?>) -> some View {
+        AOMSettingRow(title) {
+            TextField(prompt, text: stringParameter(key))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: AOMEditorSize.rowField)
+                .accessibilityLabel(title)
         }
     }
 
     private func optionalCondition(_ title: String, key: WritableKeyPath<ActionParameters, Int?>, range: ClosedRange<Int>) -> some View {
-        HStack {
-            Toggle(title, isOn: Binding(get: { action.parameters[keyPath: key] != nil }, set: { enabled in
-                saveAction { $0.parameters[keyPath: key] = enabled ? range.lowerBound : nil }
-            }))
-            if action.parameters[keyPath: key] != nil {
-                TextField("Value", value: Binding(get: { action.parameters[keyPath: key] ?? range.lowerBound }, set: { value in
-                    saveAction { $0.parameters[keyPath: key] = min(range.upperBound, max(range.lowerBound, value)) }
-                }), format: .number).frame(width: 55)
+        AOMSettingRow(title) {
+            HStack(spacing: AOMSpace.x2) {
+                if action.parameters[keyPath: key] != nil {
+                    TextField("Value", value: Binding(get: { action.parameters[keyPath: key] ?? range.lowerBound }, set: { value in
+                        saveAction { $0.parameters[keyPath: key] = min(range.upperBound, max(range.lowerBound, value)) }
+                    }), format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.numberField)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityLabel("\(title) value")
+                }
+                Toggle(title, isOn: Binding(get: { action.parameters[keyPath: key] != nil }, set: { enabled in
+                    saveAction { $0.parameters[keyPath: key] = enabled ? range.lowerBound : nil }
+                }))
             }
         }
     }
@@ -1018,11 +980,14 @@ struct ActionConfigView: View {
         Binding(get: { action.parameters[keyPath: key] ?? false }, set: { value in saveAction { $0.parameters[keyPath: key] = value } })
     }
     private func timingField(_ title: String, key: WritableKeyPath<ActionParameters, Int?>, defaultValue: Int = 0) -> some View {
-        HStack {
-            Text(title)
+        AOMSettingRow(title) {
             TextField("0", value: Binding(get: { action.parameters[keyPath: key] ?? defaultValue }, set: { value in
                 saveAction { $0.parameters[keyPath: key] = min(60000, max(0, value)) }
-            }), format: .number).textFieldStyle(.roundedBorder).frame(width: 100)
+            }), format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: AOMEditorSize.numberField)
+                .multilineTextAlignment(.trailing)
+                .accessibilityLabel(title)
         }
     }
     private func saveAction(_ modify: (inout TriggerAction) -> Void) {
@@ -1077,11 +1042,12 @@ struct SoundOutputConfig: View {
         _name = State(initialValue: action.parameters.audioOutputName ?? "")
     }
     var body: some View {
-        GroupBox("Sound Output") {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("Device or AirPlay room name (e.g. Bedroom)", text: Binding(
-                    get: { name }, set: { name = $0; save($0, nil) }))
-                    .textFieldStyle(.roundedBorder)
+        AOMEditorGroup("Sound output",
+                       help: "For AirPlay, enter the exact room name. Sound settings opens briefly to connect and closes after confirmation.") {
+            TextField("Device or AirPlay room name (e.g. Bedroom)", text: Binding(
+                get: { name }, set: { name = $0; save($0, nil) }))
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: AOMSpace.x2) {
                 Menu("Choose connected device") {
                     ForEach(devices.filter { $0.name != "AirPlay" }) { device in
                         Button(device.name) {
@@ -1090,11 +1056,10 @@ struct SoundOutputConfig: View {
                         }
                     }
                 }
+                .fixedSize()
                 Button("Refresh devices") { devices = AudioOutputService.devices() }
                     .controlSize(.small)
-                Text("For AirPlay, enter the exact room name. Sound settings opens briefly to connect and closes after confirmation.")
-                    .font(.caption).foregroundColor(.secondary)
-            }.padding(8)
+            }
         }
         .onAppear { devices = AudioOutputService.devices() }
     }
