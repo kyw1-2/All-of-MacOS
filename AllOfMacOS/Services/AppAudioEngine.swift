@@ -605,6 +605,7 @@ final class AppAudioEngine {
             AppAudioPreferences.overdrive(bundleID: bundleID) > 1 ||
             AppAudioPreferences.balance(bundleID: bundleID) != 0 ||
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
+            d.string(forKey: AudioUnitEffectHost.choiceKey) != nil ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
             Self.targetOutputUID(for: bundleID).map { AudioDeviceEQ.hasEQ(uid: $0) } == true ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true

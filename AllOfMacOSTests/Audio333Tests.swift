@@ -1,4 +1,5 @@
 import XCTest
+import AudioToolbox
 import CoreAudio
 @testable import AllOfMacOS
 
@@ -810,5 +811,110 @@ final class Audio333Tests: XCTestCase {
         AudioDeviceEQ.deletePreset(name: "Test Phones", defaults: defaults)
         XCTAssertNil(AudioDeviceEQ.assignment(uid: "headphones-uid", defaults: defaults), "deleting a curve unassigns it")
         XCTAssertEqual(AudioDeviceEQ.deviceGains(uid: "headphones-uid", defaults: defaults), AudioEQ.presetFlat)
+    }
+
+    // MARK: - S03: Audio Unit on the master chain
+
+    private func toneBus(frequency: Double, amplitude: Float = 0.3) -> AppAudioRenderBus {
+        let bus = AppAudioRenderBus()
+        var sample = 0
+        bus.add(id: UUID()) { frames, list in
+            let buffers = UnsafeMutableAudioBufferListPointer(list)
+            guard let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return }
+            for frame in 0..<frames {
+                let value = amplitude * Float(sin(2 * Double.pi * frequency * Double(sample) / 48000))
+                data[frame * 2] = value; data[frame * 2 + 1] = value
+                sample += 1
+            }
+        }
+        return bus
+    }
+
+    private func renderBus(_ bus: AppAudioRenderBus, seconds: Double, frames: Int = 512) -> [Float] {
+        var collected: [Float] = []
+        var output = [Float](repeating: 0, count: frames * 2)
+        for _ in 0..<Int(seconds * 48000 / Double(frames)) {
+            output.withUnsafeMutableBufferPointer { pointer in
+                var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                    mNumberChannels: 2, mDataByteSize: UInt32(pointer.count * 4), mData: pointer.baseAddress))
+                withUnsafeMutablePointer(to: &list) { bus.render(frames: frames, output: $0, allowWaiting: true) }
+            }
+            collected += stride(from: 0, to: output.count, by: 2).map { output[$0] }
+        }
+        return collected
+    }
+
+    private let lowpass = AudioUnitEffectHost.Choice(subtype: kAudioUnitSubType_LowPassFilter,
+                                                     manufacturer: kAudioUnitManufacturer_Apple, name: "AULowpass")
+    private let highpass = AudioUnitEffectHost.Choice(subtype: kAudioUnitSubType_HighPassFilter,
+                                                      manufacturer: kAudioUnitManufacturer_Apple, name: "AUHighpass")
+
+    /// Apple's AULowpass (made off the render thread) cuts a 15 kHz tone on
+    /// the master chain; swapping it in and out crossfades (no step larger
+    /// than the tone's own) and the replaced instance is released.
+    func testAHostedAudioUnitRunsOnTheMasterChainAndSwapsWithACrossfade() throws {
+        let baseline = AudioUnitEffectHost.live
+        guard let effect = AudioUnitEffectHost(choice: lowpass) else { throw XCTSkip("AULowpass is not installed") }
+        XCTAssertEqual(AudioUnitEffectHost.Choice(key: lowpass.key)?.key, "aufx:lpas:appl")
+        XCTAssertTrue(AudioUnitEffectHost.installedEffects().contains { $0.key == lowpass.key })
+        let bus = toneBus(frequency: 15000)
+        let dry = renderBus(bus, seconds: 0.2)
+        bus.setEffect(effect)
+        let wet = renderBus(bus, seconds: 0.3)
+        bus.setEffect(nil)
+        let back = renderBus(bus, seconds: 0.3)
+        let dryLevel = rms(dry[4800...]), wetLevel = rms(wet[9600...]), backLevel = rms(back[9600...])
+        XCTAssertLessThan(wetLevel, dryLevel * 0.3, "the low-pass runs on the master chain (\(wetLevel) vs \(dryLevel))")
+        XCTAssertEqual(backLevel, dryLevel, accuracy: dryLevel * 0.12, "and comes out again")
+        func worstStep(_ samples: [Float]) -> Float {
+            zip(samples, samples.dropFirst()).map { abs($1 - $0) }.max() ?? 0
+        }
+        let toneStep = worstStep(Array(dry[4800...]))
+        XCTAssertLessThanOrEqual(worstStep(Array(wet[..<4800])), toneStep * 1.05, "swapping in crossfades")
+        XCTAssertLessThanOrEqual(worstStep(Array(back[..<4800])), toneStep * 1.05, "swapping out crossfades")
+        XCTAssertEqual(effect.failedRenders, 0)
+        bus.releaseRetiredEffects()
+        XCTAssertEqual(AudioUnitEffectHost.live, baseline + 1, "only the test's own reference is left")
+    }
+
+    /// One thread renders while another swaps effects in and out: the
+    /// render thread never sees a released instance.
+    func testSwappingEffectsWhileAnotherThreadRendersIsSafe() throws {
+        guard AudioUnitEffectHost(choice: lowpass) != nil, AudioUnitEffectHost(choice: highpass) != nil else {
+            throw XCTSkip("AULowpass / AUHighpass are not installed")
+        }
+        let baseline = AudioUnitEffectHost.live
+        let bus = toneBus(frequency: 1000)
+        let running = AudioAtomicCounter(1), renders = AudioAtomicCounter()
+        let done = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            var output = [Float](repeating: 0, count: 960)
+            while running.load() == 1 {
+                output.withUnsafeMutableBufferPointer { pointer in
+                    var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                        mNumberChannels: 2, mDataByteSize: UInt32(pointer.count * 4), mData: pointer.baseAddress))
+                    withUnsafeMutablePointer(to: &list) { bus.render(frames: 480, output: $0, allowWaiting: true) }
+                }
+                renders.add()
+            }
+            done.signal()
+        }
+        thread.start()
+        for round in 0..<30 {
+            switch round % 3 {
+            case 0: bus.setEffect(AudioUnitEffectHost(choice: lowpass))
+            case 1: bus.setEffect(AudioUnitEffectHost(choice: highpass))
+            default: bus.setEffect(nil)
+            }
+            usleep(15_000)
+        }
+        bus.setEffect(nil)
+        usleep(50_000)
+        running.store(0)
+        XCTAssertEqual(done.wait(timeout: .now() + 2), .success)
+        XCTAssertGreaterThan(renders.load(), 100)
+        _ = renderBus(bus, seconds: 0.05) // the last crossfade ends
+        bus.releaseRetiredEffects()
+        XCTAssertEqual(AudioUnitEffectHost.live, baseline, "every swapped-out instance was released")
     }
 }

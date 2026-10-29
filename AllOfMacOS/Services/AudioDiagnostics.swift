@@ -51,7 +51,7 @@ enum AudioEventKind: UInt64, CaseIterable {
     case cycleGap = 1, trim, underrun, clear, dropped, limiterEngaged, limiterReleased, overload,
          reconfiguration, bufferSize, formatNotice, outputStarted, outputStopped, outputFailed,
          defaultOutputChanged, deviceListChanged, tapAttached, tapDetached, tapRewrite, outputMoved,
-         handover, mixLate, countersReset
+         handover, mixLate, countersReset, effectChanged
 
     var name: String { String(describing: self) }
 }

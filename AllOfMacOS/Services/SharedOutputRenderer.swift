@@ -57,6 +57,55 @@ final class SharedOutputRenderer {
         for output in airPlayOutputs.values { output.bus.setBoostPreset(index) }
     }
 
+    /// 3.3.3 (S03): the Audio Unit effect on every output's master chain
+    /// (nil: none), one instance per output, made here (main, never a
+    /// render thread) and swapped in lock-free with a 10 ms crossfade.
+    private(set) var masterEffect: AudioUnitEffectHost.Choice? =
+        UserDefaults.standard.string(forKey: AudioUnitEffectHost.choiceKey).flatMap { AudioUnitEffectHost.Choice(key: $0) }
+
+    private func makeMasterEffect() -> AudioUnitEffectHost? {
+        guard let masterEffect else { return nil }
+        return AudioUnitEffectHost(choice: masterEffect, sampleRate: Self.sampleRate,
+                                   state: UserDefaults.standard.data(forKey: AudioUnitEffectHost.stateKey))
+    }
+
+    private var allBuses: [AppAudioRenderBus] { graphs.values.map(\.bus) + airPlayOutputs.values.map(\.bus) }
+
+    /// Chooses the output effect (its saved state is kept only for the same
+    /// component). False if the component could not be made; nothing changes then.
+    @discardableResult
+    func setMasterEffect(_ choice: AudioUnitEffectHost.Choice?) -> Bool {
+        let defaults = UserDefaults.standard
+        if let choice {
+            guard AudioUnitEffectHost(choice: choice, sampleRate: Self.sampleRate) != nil else { return false }
+            if choice.key != masterEffect?.key { defaults.removeObject(forKey: AudioUnitEffectHost.stateKey) }
+            defaults.set(choice.key, forKey: AudioUnitEffectHost.choiceKey)
+        } else {
+            defaults.removeObject(forKey: AudioUnitEffectHost.choiceKey)
+            defaults.removeObject(forKey: AudioUnitEffectHost.stateKey)
+        }
+        masterEffect = choice
+        for bus in allBuses { bus.setEffect(makeMasterEffect()) }
+        AudioEventLog.shared.record(.effectChanged, source: "system",
+                                    detail: "output effect: \(choice.map { "\($0.name) (\($0.key))" } ?? "none")")
+        return true
+    }
+
+    /// The instance an editor shows: on the default output if it has one.
+    func masterEffectForEditing() -> AudioUnitEffectHost? {
+        let uid = AudioOutputService.currentDeviceID().map { AudioOutputService.string($0, kAudioDevicePropertyDeviceUID) }
+        if let uid, let bus = graphs[uid]?.bus ?? airPlayOutputs[uid]?.bus, let effect = bus.effect { return effect }
+        return allBuses.lazy.compactMap(\.effect).first
+    }
+
+    /// After editing `edited`: its state is saved and the other outputs get
+    /// fresh instances with it (each swapped in with the crossfade).
+    func saveMasterEffectState(from edited: AudioUnitEffectHost) {
+        guard let state = edited.state else { return }
+        UserDefaults.standard.set(state, forKey: AudioUnitEffectHost.stateKey)
+        for bus in allBuses where bus.effect !== edited { bus.setEffect(makeMasterEffect()) }
+    }
+
     private var graphs: [String: DeviceGraph] = [:]
     private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
     var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
@@ -75,6 +124,7 @@ final class SharedOutputRenderer {
             }
             output.bus.setBoostLevel(masterBoostLevel)
             output.bus.setBoostPreset(masterBoostPreset)
+            output.bus.setEffect(makeMasterEffect())
             airPlayOutputs[device.uid] = output
         }
         return airPlayOutputs[device.uid]!.state
@@ -149,6 +199,7 @@ final class SharedOutputRenderer {
         let bus = AppAudioRenderBus()
         bus.setBoostLevel(masterBoostLevel)
         bus.setBoostPreset(masterBoostPreset)
+        bus.setEffect(makeMasterEffect())
         let node = AVAudioSourceNode(format: format) { _, _, frames, buffers in
             bus.render(frames: Int(frames), output: buffers)
             return noErr
@@ -348,6 +399,119 @@ final class AppAudioRenderBus {
         return UInt64((-20 * log10(Double(gain)) * 100).rounded())
     }
 
+    // MARK: 3.3.3 (S03): a hosted Audio Unit on this output's master chain
+
+    /// The effect the control thread published (a +1 retained
+    /// `AudioUnitEffectHost` as pointer bits; 0: none). It runs after the
+    /// apps are summed and before Magic Boost and the limiter, which still
+    /// guard the output. A change crossfades over 10 ms from the previous
+    /// effect (or dry); a replaced host is released by the control thread
+    /// once the render thread has stopped using it, never on the render thread.
+    private let effectSlot = AudioAtomicCounter()
+    /// What the render thread uses: written before it starts and after it
+    /// stops using a host (previous first when a crossfade starts).
+    private let effectInUse = AudioAtomicCounter()
+    private let effectPreviousInUse = AudioAtomicCounter()
+    // Render thread only.
+    private var effectBits: UInt64 = 0
+    private var previousEffectBits: UInt64 = 0
+    private var effectFadeRemaining = 0
+    static let effectFadeFrames = 480
+    private let effectOldLeft: UnsafeMutablePointer<Float>
+    private let effectOldRight: UnsafeMutablePointer<Float>
+    /// Control threads only: hosts replaced but perhaps still in use.
+    private let retiredLock = NSLock()
+    private var retiredEffects: [UInt64] = []
+
+    /// Control thread: hosts `effect` on this output (nil: none).
+    func setEffect(_ effect: AudioUnitEffectHost?) {
+        let bits = effect.map { UInt64(UInt(bitPattern: Unmanaged.passRetained($0).toOpaque())) } ?? 0
+        var old = effectSlot.load()
+        while !effectSlot.compareExchange(expected: old, desired: bits) { old = effectSlot.load() }
+        if old != 0 {
+            retiredLock.lock(); retiredEffects.append(old); retiredLock.unlock()
+        }
+        releaseRetiredEffects()
+    }
+
+    /// The hosted effect now published (control thread).
+    var effect: AudioUnitEffectHost? {
+        let bits = effectSlot.load()
+        guard bits != 0, let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) else { return nil }
+        return Unmanaged<AudioUnitEffectHost>.fromOpaque(pointer).takeUnretainedValue()
+    }
+
+    /// Releases replaced hosts the render thread no longer uses; checks
+    /// again later while one is still in use (an idle output keeps it until
+    /// it renders again or goes away).
+    func releaseRetiredEffects(attempt: Int = 0) {
+        retiredLock.lock()
+        let current = effectInUse.load(), previous = effectPreviousInUse.load(), published = effectSlot.load()
+        let free = retiredEffects.filter { $0 != current && $0 != previous && $0 != published }
+        retiredEffects.removeAll { free.contains($0) }
+        let waiting = !retiredEffects.isEmpty
+        retiredLock.unlock()
+        for bits in free {
+            if let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) {
+                Unmanaged<AudioUnitEffectHost>.fromOpaque(pointer).release()
+            }
+        }
+        if waiting && attempt < 40 {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.releaseRetiredEffects(attempt: attempt + 1)
+            }
+        }
+    }
+
+    /// Render thread, once per buffer: takes up a newly published effect.
+    @inline(__always)
+    private func adoptEffect() {
+        let published = effectSlot.load()
+        guard published != effectBits else { return }
+        // The outgoing host is marked in use before the incoming one, so a
+        // control thread that sees the new one also sees the old one held.
+        effectPreviousInUse.store(effectBits)
+        previousEffectBits = effectBits
+        effectBits = published
+        effectInUse.store(published)
+        effectFadeRemaining = Self.effectFadeFrames
+    }
+
+    @inline(__always)
+    private static func runEffect(_ bits: UInt64, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,
+                                  frames: Int) {
+        guard bits != 0, let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) else { return }
+        Unmanaged<AudioUnitEffectHost>.fromOpaque(pointer)._withUnsafeGuaranteedRef {
+            _ = $0.process(left: left, right: right, frames: frames)
+        }
+    }
+
+    /// Render thread: the hosted effect over one chunk, in place.
+    private func processEffect(frames: Int) {
+        guard effectBits != 0 || previousEffectBits != 0 || effectFadeRemaining > 0 else { return }
+        guard effectFadeRemaining > 0 else {
+            Self.runEffect(effectBits, left: left, right: right, frames: frames)
+            return
+        }
+        // Crossfade: the previous effect (or dry) out, the new one (or dry) in.
+        memcpy(effectOldLeft, left, frames * 4); memcpy(effectOldRight, right, frames * 4)
+        Self.runEffect(previousEffectBits, left: effectOldLeft, right: effectOldRight, frames: frames)
+        Self.runEffect(effectBits, left: left, right: right, frames: frames)
+        let length = Float(Self.effectFadeFrames)
+        for index in 0..<frames {
+            let done = Self.effectFadeFrames - effectFadeRemaining + index + 1
+            let x = min(1, Float(done) / length)
+            let gain = x * x * (3 - 2 * x)
+            left[index] = effectOldLeft[index] + (left[index] - effectOldLeft[index]) * gain
+            right[index] = effectOldRight[index] + (right[index] - effectOldRight[index]) * gain
+        }
+        effectFadeRemaining = max(0, effectFadeRemaining - frames)
+        if effectFadeRemaining == 0 {
+            previousEffectBits = 0
+            effectPreviousInUse.store(0)
+        }
+    }
+
     /// Render thread: one chunk's limiter activity into episodes.
     private func noteLimiter(frames: Int) {
         let deepest = limiter.takeDeepestReduction()
@@ -406,8 +570,20 @@ final class AppAudioRenderBus {
         sum.initialize(repeating: 0, count: capacity * 2)
         left = .allocate(capacity: chunk); left.initialize(repeating: 0, count: chunk)
         right = .allocate(capacity: chunk); right.initialize(repeating: 0, count: chunk)
+        effectOldLeft = .allocate(capacity: chunk); effectOldLeft.initialize(repeating: 0, count: chunk)
+        effectOldRight = .allocate(capacity: chunk); effectOldRight.initialize(repeating: 0, count: chunk)
     }
-    deinit { scratch.deallocate(); sum.deallocate(); left.deallocate(); right.deallocate() }
+    deinit {
+        scratch.deallocate(); sum.deallocate(); left.deallocate(); right.deallocate()
+        effectOldLeft.deallocate(); effectOldRight.deallocate()
+        // Nothing renders any more: the published host and every replaced
+        // one are released here (each holds exactly one retain).
+        for bits in retiredEffects + [effectSlot.load()] where bits != 0 {
+            if let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) {
+                Unmanaged<AudioUnitEffectHost>.fromOpaque(pointer).release()
+            }
+        }
+    }
     /// No source that can still be heard: none live, and every removed one
     /// has finished its 5 ms fade (or was removed more than 0.5 s ago from an
     /// output that stopped rendering). 3.3.2 review: fading sources counted
@@ -535,12 +711,14 @@ final class AppAudioRenderBus {
             appliedReleaseBits = releaseBits
             limiter.setReleaseCoefficient(Float(bitPattern: UInt32(truncatingIfNeeded: releaseBits)))
         }
+        adoptEffect()
         var offset = 0
         while offset < frames {
             let count = min(chunk, frames - offset)
             for index in 0..<count {
                 left[index] = sum[(offset + index) * 2]; right[index] = sum[(offset + index) * 2 + 1]
             }
+            processEffect(frames: count)
             boost.process(left: left, right: right, frames: count, enabled: boostEnabled)
             limiter.process(left: left, right: right, frames: count)
             noteLimiter(frames: count)
