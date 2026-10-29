@@ -349,6 +349,7 @@ private final class UtilityHarness {
         Self.clock += 1_000
         t = Self.clock
         service.observe(points: [], timestamp: t)
+        service.cancelPending()
         service.desktop = desktop
         service.minimized = MinimizedWindowStack()
         service.cursorLocation = { CGPoint(x: 700, y: 895) }
@@ -362,14 +363,35 @@ private final class UtilityHarness {
         service.haptic = {}
         service.switchSpace = { [unowned self] in self.spaces.append($0) }
         service.dockApp = { [unowned self] in self.dockLookups += 1; return self.dockTarget }
+        // 3.3.3 seams: the empty menu bar, no Mission Control, and the delayed
+        // work (a pinch's wait for a second one, the ⌘N after an activation)
+        // run by hand with `drain()`.
+        service.menuBarSpot = { _ in .empty }
+        service.prefetchMenuBarSpot = { _ in }
+        service.missionControlWindow = { _ in nil }
+        service.schedule = { [unowned self] _, work in self.later.append(work) }
         for key in [TrackpadUtilityGestures.dockGesturesKey, TrackpadUtilityGestures.menuBarGesturesKey,
                     TrackpadUtilityGestures.spacesEnabledKey, TrackpadUtilityGestures.dockQuitEnabledKey] {
             UserDefaults.standard.removeObject(forKey: key)
         }
     }
 
+    /// Work the service scheduled for later, run by `drain()`.
+    private var later: [() -> Void] = []
+
+    /// Runs the scheduled work, and the work it schedules in turn.
+    func drain() {
+        for _ in 0..<8 where !later.isEmpty {
+            let work = later
+            later = []
+            work.forEach { $0() }
+        }
+    }
+
     func restore() {
         service.observe(points: [], timestamp: t + 10)
+        service.cancelPending()
+        later = []
         service.desktop = SystemGestureDesktop.shared
         service.minimized = MinimizedWindowStack()
         service.cursorLocation = { NSEvent.mouseLocation }
@@ -383,6 +405,10 @@ private final class UtilityHarness {
         service.haptic = { TrackpadUtilityGestures.tapHaptic() }
         service.switchSpace = { _ in }
         service.dockApp = { TrackpadUtilityGestures.shared.dockAppUnderCursor() }
+        service.menuBarSpot = { MenuBarProbe.spot(at: $0) }
+        service.prefetchMenuBarSpot = { MenuBarProbe.prefetch(at: $0) }
+        service.missionControlWindow = { TrackpadUtilityGestures.liveMissionControlWindow(at: $0) }
+        service.schedule = { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }
     }
 
     func frame(_ points: [TouchPoint], after delay: Double = 1.0 / 60) {
@@ -576,8 +602,9 @@ extension PortedFeatureTests {
                        ["raise \(d1.id)", "raise \(d2.id)", "raise \(d3.id)", "raise \(d2.id)"])
         XCTAssertEqual(harness.dockLookups - lookups, 1, "the Dock item is resolved once per gesture")
 
-        // Double tap hides the app (⇧: the others); pinch out sends ⌘N; tap,
-        // hold and lift activates it with its front window.
+        // Double tap hides the app (⇧: the others); pinch out sends ⌘N once
+        // the 0.35 s wait for a second pinch is over (3.3.3); tap, hold and
+        // lift activates it with its front window.
         desktop.log = []
         harness.doubleTap()
         harness.flags = [.shift]
@@ -586,6 +613,8 @@ extension PortedFeatureTests {
         harness.frame(two(0.5, 0.5, spread: 0.08), after: 1)
         harness.frame(two(0.5, 0.5, spread: 0.13), after: 0.05)
         harness.frame([], after: 0.05)
+        XCTAssertEqual(desktop.log, ["hide \(pid)", "hideOthers \(pid)"], "nothing yet: a second pinch may follow")
+        harness.drain()
         harness.hold()
         harness.frame([], after: 0.05)
         XCTAssertEqual(desktop.log, ["hide \(pid)", "hideOthers \(pid)", "activate \(pid)", "⌘N \(pid)",

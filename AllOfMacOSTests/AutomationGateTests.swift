@@ -119,12 +119,24 @@ final class AutomationGateTests: XCTestCase {
         XCTAssertEqual(fired, 0, "the paused frame reset the gesture; its remains do not fire after resuming")
     }
 
-    /// Dock pinch to quit, counted through the quit seam. The Dock lookup
-    /// returns the test process itself, which the counting seam never quits.
-    func testDockPinchQuitsNothingWhileAOMIsOffPausedOrPausedMidGesture() {
+    /// Dock pinch to quit, counted through the quit seam. 3.3.3: the target is
+    /// another app (AOM itself is never asked to quit: S01), and the quit
+    /// runs after the 0.35 s wait for a second pinch, so the test runs that
+    /// work by hand; it checks the pause again when it runs.
+    func testDockPinchQuitsNothingWhileAOMIsOffPausedOrPausedMidGesture() throws {
         var quits = 0
+        var later: [() -> Void] = []
+        let target = try XCTUnwrap(NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier != getpid() && $0.activationPolicy == .regular && !$0.isTerminated
+        })
         service.quitApplication = { _ in quits += 1 }
-        service.dockApp = { NSRunningApplication.current }
+        service.dockApp = { target }
+        service.schedule = { _, work in later.append(work) }
+        defer {
+            service.cancelPending()
+            service.schedule = { delay, work in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work) }
+        }
+        func drain() { let work = later; later = []; work.forEach { $0() } }
         UserDefaults.standard.set(true, forKey: TrackpadUtilityGestures.dockQuitEnabledKey)
         func pinch(pauseHalfway: Bool = false) {
             Self.clock += 10
@@ -134,12 +146,14 @@ final class AutomationGateTests: XCTestCase {
             service.observe(points: pair(0.4, 0.5), timestamp: t + 0.3)    // spread 0.10
             service.observe(points: [], timestamp: t + 0.4)
             UserDefaults.standard.set(true, forKey: AutomationGate.masterSwitchKey)
+            drain()
         }
         UserDefaults.standard.set(false, forKey: AutomationGate.masterSwitchKey)
         Self.clock += 10
         service.observe(points: pair(0.3, 0.6), timestamp: Self.clock)
         service.observe(points: pair(0.4, 0.5), timestamp: Self.clock + 0.3)
         service.observe(points: [], timestamp: Self.clock + 0.4)
+        drain()
         XCTAssertEqual(quits, 0, "switched off")
         UserDefaults.standard.set(true, forKey: AutomationGate.masterSwitchKey)
         TriggerSuppression.shared.pauseUntilResumed()
@@ -150,6 +164,9 @@ final class AutomationGateTests: XCTestCase {
         XCTAssertEqual(quits, 0, "paused mid-pinch")
         pinch()
         XCTAssertEqual(quits, 1, "on again: one pinch, one polite quit request")
+        service.dockApp = { NSRunningApplication.current }
+        pinch()
+        XCTAssertEqual(quits, 1, "never AOM itself")
     }
 
     /// Registered trackpad gestures run through `TrackpadMonitor`, which

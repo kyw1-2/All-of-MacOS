@@ -5,25 +5,37 @@ import ApplicationServices
 // AOM's own implementation; `TrackpadUtilityGestures` feeds the recognizer and
 // runs the actions through `GestureDesktop`.
 //
-// Dock, pointer over an app's icon:
+// Dock, pointer over an app's icon (3.3.3: or, with the Application Menu
+// option, over the frontmost app's own menu, its name next to the Apple menu):
 // - tap and hold, then lift: activate the app and raise its front window;
 // - swipe left / right: activate it and step through its windows (chains);
 // - swipe down: minimize the front window (⇧ Shift: all of them);
 // - swipe up: unminimize the window AOM minimized last, else one the app has
 //   (⇧: all of them);
 // - double tap: hide the app (⇧: hide the other apps);
-// - pinch out: activate it and send ⌘N; pinch in: ask it to quit.
-// Menu bar, pointer in the top band:
-// - swipe left / right: Spaces (unchanged); after tap and hold: the
-//   previous / next app;
-// - tap and hold, then lift (or scroll): the window switcher;
+// - pinch out: activate it and send ⌘N; pinch in: ask it to quit. 3.3.3:
+//   pinch in twice: minimize all its windows; pinch out twice: unminimize
+//   them; a single pinch waits 0.35 s for the second, and any pinch runs
+//   when its fingers lift at the earliest (a third finger or a 2 s rest
+//   before that takes it back);
+// - 3.3.3: each window a Dock gesture brings forward is offered to the
+//   title-bar snap (`chainWindow`), Swish's chain.
+// Menu bar, pointer in the top band (3.3.3: the empty area only; menu titles
+// and status items keep their own clicks):
+// - swipe left / right: Spaces (unchanged, anywhere in the band); after tap
+//   and hold: the previous / next app;
+// - tap and hold, then lift (or scroll): the window switcher (3.3.3 option:
+//   scrolling holds the macOS ⌘-Tab app switcher instead);
 // - double tap: unsnap the windows the title-bar snap placed on this screen
 //   (⇧: every screen);
+// - 3.3.3 option: tap: scroll the front window to the top;
 // - swipe down: minimize this screen's windows (twice or ⇧: every screen);
-// - swipe up: unminimize what that minimized, newest batch first (twice or ⇧:
-//   every screen);
+// - swipe up: unminimize every window minimized there, AOM's newest first
+//   (twice or ⇧: every screen);
 // - ⌘ Command + swipe: move this screen's snapped windows to the display that
 //   way, keeping their cells.
+// Mission Control and App Exposé (3.3.3 option), pointer on a thumbnail:
+// pinch in: close that window (twice: quit its app); swipe down: minimize it.
 
 // MARK: - Recognition (pure, unit-tested)
 
@@ -97,12 +109,16 @@ struct UtilityGestureRecognizer {
     private(set) var isHeld = false
     /// The hold-still cancel spent the touch.
     private(set) var isSpent = false
+    /// A third finger (or more) touched, or the touch was dropped while its
+    /// fingers were down: nothing acts until every finger has lifted (a
+    /// frame without contacts). 3.3.3 (S02): a 2 → 3 → 2 touch used to pinch
+    /// and swipe again once the third finger left, and a fourth finger
+    /// started a fresh touch.
+    private(set) var isWaitingForLift = false
     /// Swipes recognised in this touch.
     private(set) var swipes = 0
     private(set) var hasPinched = false
 
-    /// A third finger joined: no tap, double tap or hold release.
-    private var tainted = false
     private var startedAt: Double = 0
     private var startX: Float = 0, startY: Float = 0, startSpread: Float = 0
     private var anchorX: Float = 0, anchorY: Float = 0
@@ -117,18 +133,20 @@ struct UtilityGestureRecognizer {
     private var lastTapAt: Double?
 
     /// Feeds one contact frame of the touch's trackpad. Two contacts track
-    /// the touch, a third taints it (it keeps going, as the Space swipe did),
-    /// four or more end it silently, and none or one lift it.
+    /// the touch and one lifts it. Three or more end it silently and spend
+    /// the fingers until every one has lifted: no tap, hold, swipe or pinch
+    /// comes from them, even after the extra fingers leave (3.3.3, S02).
     mutating func feed(_ contacts: [TouchPoint], at timestamp: Double) -> Event? {
         switch contacts.count {
-        case 2: return track(contacts, at: timestamp)
-        case 3:
-            if isTouching { tainted = true }
-            return nil
-        case 0, 1: return lift(at: timestamp)
+        case 0:
+            guard !isWaitingForLift else { isWaitingForLift = false; return nil }
+            return lift(at: timestamp)
+        case 1:
+            return isWaitingForLift ? nil : lift(at: timestamp)
+        case 2:
+            return isWaitingForLift ? nil : track(contacts, at: timestamp)
         default:
-            endTouch()
-            lastTapAt = nil
+            spendUntilLift()
             return nil
         }
     }
@@ -137,6 +155,16 @@ struct UtilityGestureRecognizer {
     mutating func reset() {
         endTouch()
         lastTapAt = nil
+        isWaitingForLift = false
+    }
+
+    /// Ends the touch without an event and ignores its fingers until all of
+    /// them have lifted (a third finger; AOM paused or the screen locked
+    /// while they were down).
+    mutating func spendUntilLift() {
+        endTouch()
+        lastTapAt = nil
+        isWaitingForLift = true
     }
 
     private mutating func track(_ contacts: [TouchPoint], at t: Double) -> Event? {
@@ -171,7 +199,7 @@ struct UtilityGestureRecognizer {
             return pinch
         }
         if !hasPinched, let swipe = swipeEvent(x, y, at: t) { return swipe }
-        if !isHeld, !tainted, swipes == 0, !hasPinched, tuning.holdTime > 0, rested >= tuning.holdTime,
+        if !isHeld, swipes == 0, !hasPinched, tuning.holdTime > 0, rested >= tuning.holdTime,
            lapsedStillSince != stillSince {
             isHeld = true
             (holdX, holdY) = (x, y)
@@ -187,7 +215,6 @@ struct UtilityGestureRecognizer {
         isSpent = false
         swipes = 0
         hasPinched = false
-        tainted = false
         startedAt = t
         (startX, startY, startSpread) = (x, y, spread)
         (anchorX, anchorY) = (x, y)
@@ -202,7 +229,7 @@ struct UtilityGestureRecognizer {
     private mutating func lift(at t: Double) -> Event? {
         guard isTouching else { return nil }
         defer { endTouch() }
-        guard !isSpent, !tainted, !hasPinched, swipes == 0 else { lastTapAt = nil; return nil }
+        guard !isSpent, !hasPinched, swipes == 0 else { lastTapAt = nil; return nil }
         if isHeld {
             lastTapAt = nil
             return travelSinceHold < tuning.tapTravel ? .holdReleased : nil
@@ -222,7 +249,6 @@ struct UtilityGestureRecognizer {
         isSpent = false
         swipes = 0
         hasPinched = false
-        tainted = false
     }
 
     private func pinchEvent(spread: Float, travel: Float) -> Event? {
@@ -403,6 +429,31 @@ struct MinimizedWindowStack {
     mutating func forget(_ window: GestureWindow) {
         entries.removeAll { $0.window == window }
     }
+
+    /// The menu bar's swipe up (3.3.3, S06; Swish: "Swipe up to unminimize
+    /// all windows. Once for the current screen, twice or with the secondary
+    /// modifier for all."): every window still minimized on `screen` (nil:
+    /// on any screen). The ones AOM minimized from the menu bar come first,
+    /// newest first, then every other minimized window there (`listed`, each
+    /// with the display it was on), each once. Nothing is taken off the
+    /// stack here: a window leaves it only once it is really restored, so a
+    /// failed or skipped one stays for the next swipe. Remembered windows the
+    /// user restored some other way are dropped.
+    mutating func planMenuBarRestore(listed: [(window: GestureWindow, screen: CGRect?)], on screen: CGRect?,
+                                     isMinimized: (GestureWindow) -> Bool) -> [GestureWindow] {
+        func here(_ place: CGRect?) -> Bool { screen == nil || place == screen }
+        var seen = Set<String>()
+        var plan: [GestureWindow] = []
+        var stale: [GestureWindow] = []
+        for entry in entries where entry.source == .menuBar && here(entry.screen) && seen.insert(entry.window.id).inserted {
+            if isMinimized(entry.window) { plan.append(entry.window) } else { stale.append(entry.window) }
+        }
+        stale.forEach { forget($0) }
+        for item in listed where here(item.screen) && seen.insert(item.window.id).inserted {
+            plan.append(item.window)
+        }
+        return plan
+    }
 }
 
 /// The app order the menu bar's tap-and-hold swipe walks: the frontmost app,
@@ -521,9 +572,36 @@ protocol GestureDesktop: AnyObject {
     var snapAlmost: Bool { get }
     /// The area windows snap in on a display with this visible area.
     func snapArea(_ visible: CGRect) -> CGRect
+    // 3.3.3. Defaults below keep test doubles that predate them working.
+    /// The frontmost app (the menu bar's scroll to top acts on it).
+    func frontmostPID() -> pid_t?
+    /// Minimized standard windows of every visible regular app except AOM
+    /// and the apps AOM is paused for, each with the frame it had (nil when
+    /// the app does not say): the menu bar's swipe up restores them all.
+    func minimizedWindows() -> [(window: GestureWindow, frame: CGRect?)]
+    /// Presses the window's own close button (Mission Control's pinch in).
+    @discardableResult func close(_ window: GestureWindow) -> Bool
+    /// Closes the window switcher without switching (a third finger, a pause,
+    /// the hold-still cancel).
+    func cancelSwitcher()
+    /// The macOS app switcher (⌘-Tab), held open by AOM for one touch.
+    @discardableResult func beginAppSwitcher() -> Bool
+    @discardableResult func stepAppSwitcher(forward: Bool) -> Bool
+    func endAppSwitcher(commit: Bool)
+    /// Scrolls the app's focused window to the top (its main scroll area;
+    /// the one under the pointer's column when there are several).
+    func scrollToTop(of pid: pid_t, pointerX: CGFloat?) -> ScrollToTop.Outcome
 }
 
 extension GestureDesktop {
+    func frontmostPID() -> pid_t? { nil }
+    func minimizedWindows() -> [(window: GestureWindow, frame: CGRect?)] { [] }
+    func close(_ window: GestureWindow) -> Bool { false }
+    func cancelSwitcher() {}
+    func beginAppSwitcher() -> Bool { false }
+    func stepAppSwitcher(forward: Bool) -> Bool { false }
+    func endAppSwitcher(commit: Bool) {}
+    func scrollToTop(of pid: pid_t, pointerX: CGFloat?) -> ScrollToTop.Outcome { .failed }
     func snappedPlace(for window: GestureWindow, current: CGRect) -> SwishSnap.Place? {
         snappedCell(for: window, current: current).flatMap(SwishSnap.Place.init)
     }
@@ -568,7 +646,9 @@ final class SystemGestureDesktop: GestureDesktop {
         guard activate(pid) else { return false }
         var refused: [String] = []
         for other in NSWorkspace.shared.runningApplications
-        where other.activationPolicy == .regular && other.processIdentifier != pid && other.processIdentifier != own && !other.isHidden {
+        where other.activationPolicy == .regular && other.processIdentifier != pid && other.processIdentifier != own && !other.isHidden
+            // 3.3.3 (B03): an app AOM is paused for keeps its windows on screen.
+            && !TriggerSuppression.shared.isPaused(forApp: other.bundleIdentifier) {
             if !other.hide() { refused.append(other.localizedName ?? "?") }
         }
         if !refused.isEmpty {
@@ -577,20 +657,76 @@ final class SystemGestureDesktop: GestureDesktop {
         return refused.isEmpty
     }
 
-    /// ⌘N straight to the app's process, a moment after the activation so
-    /// the new window opens in front. Tagged so AOM's own monitors ignore it.
+    /// ⌘N straight to the app's process, tagged so AOM's own monitors ignore
+    /// it. 3.3.3 (S05): posted at once; the service waits the moment after
+    /// the activation itself, and checks again right before calling this
+    /// that AOM may still act on the app.
     func postNewWindow(to pid: pid_t) -> Bool {
         guard app(pid) != nil else { return false }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            let source = CGEventSource(stateID: .hidSystemState)
-            for down in [true, false] {
-                guard let event = CGEvent(keyboardEventSource: source, virtualKey: 45, keyDown: down) else { continue }
-                event.flags = .maskCommand
-                event.setIntegerValueField(.eventSourceUserData, value: SyntheticInput.selfTag)
-                event.postToPid(pid)
-            }
+        let source = CGEventSource(stateID: .hidSystemState)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: 45, keyDown: down) else { continue }
+            event.flags = .maskCommand
+            event.setIntegerValueField(.eventSourceUserData, value: SyntheticInput.selfTag)
+            event.postToPid(pid)
         }
         return ActionPermissions.canPostEvents
+    }
+
+    func frontmostPID() -> pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
+
+    func minimizedWindows() -> [(window: GestureWindow, frame: CGRect?)] {
+        // Bounded like `visibleWindows`: 0.5 s per request, 1 s in all.
+        let limit = AXDeadline(perRequest: timeout, budget: enumerationBudget)
+        var result: [(window: GestureWindow, frame: CGRect?)] = []
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && !app.isHidden && !app.isTerminated && app.processIdentifier != own
+            && !TriggerSuppression.shared.isPaused(forApp: app.bundleIdentifier) {
+            guard !limit.isSpent else { logBudgetSpent("minimized windows"); break }
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            var value: CFTypeRef?
+            guard limit.allow(element),
+                  AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success,
+                  let list = value as? [AXUIElement] else { continue }
+            for window in list {
+                guard limit.allow(window), AX.bool(window, kAXMinimizedAttribute) == true,
+                      limit.allow(window), AX.string(window, kAXSubroleAttribute) == kAXStandardWindowSubrole as String,
+                      limit.allow(window) else { continue }
+                // A minimized window keeps the frame it had on its display.
+                let frame = WindowManager.shared.frame(of: WindowManager.Target(window: window, pid: app.processIdentifier))
+                AXUIElementSetMessagingTimeout(window, timeout)
+                result.append((GestureWindow(element: window, pid: app.processIdentifier), frame))
+                if result.count >= 100 { return result }
+            }
+        }
+        return result
+    }
+
+    func close(_ window: GestureWindow) -> Bool {
+        guard window.pid != own, let element = window.element else { return false }
+        return MissionControlWindows.close(element)
+    }
+
+    func cancelSwitcher() {
+        guard WindowSwitcherController.shared.isShowing else { return }
+        WindowSwitcherController.shared.cancel()
+    }
+
+    func beginAppSwitcher() -> Bool {
+        // With "disable AOM while ⌘ is held" on, AOM's own ⌘ would pause the
+        // gesture that holds it: the window switcher is used instead.
+        let command = UInt(NSEvent.ModifierFlags.command.rawValue)
+        guard TriggerSuppression.shared.settings.disableWhileHoldingModifiers & command == 0 else { return false }
+        return AppSwitcherKeys.begin()
+    }
+
+    func stepAppSwitcher(forward: Bool) -> Bool { AppSwitcherKeys.step(forward: forward) }
+
+    func endAppSwitcher(commit: Bool) { AppSwitcherKeys.end(commit: commit) }
+
+    func scrollToTop(of pid: pid_t, pointerX: CGFloat?) -> ScrollToTop.Outcome {
+        guard app(pid) != nil else { return .failed }
+        return ScrollToTop.scrollFocusedWindow(of: pid, pointerX: pointerX)
     }
 
     func appCycle() -> AppCycle {
