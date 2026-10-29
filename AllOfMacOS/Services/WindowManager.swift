@@ -345,6 +345,28 @@ final class WindowManager: ObservableObject {
     /// writes are not cut short.
     func titleBarTarget(atMousePoint point: CGPoint, pid owner: pid_t, timeout: Float = 0.25,
                         budget: TimeInterval = 0.3) -> (target: Target, onTitleBar: Bool)? {
+        titleBarHit(atMousePoint: point, pid: owner, timeout: timeout, budget: budget)
+            .map { ($0.target, $0.onTitleBar) }
+    }
+
+    /// What `titleBarHit` found (3.3.3): the window, whether the element
+    /// under the pointer belongs to its title bar or toolbar, whether it lies
+    /// in a tab bar (an AXTabGroup: native window tabs, Safari, Chromium
+    /// browsers), and the tab under the pointer, if any.
+    struct TitleBarHit {
+        let target: Target
+        let onTitleBar: Bool
+        let onTabBar: Bool
+        let tab: AXUIElement?
+    }
+
+    /// `titleBarTarget`, plus the tab bar and tab (F02, F04). Each element on
+    /// the way up is read in one request (role and subrole together), so the
+    /// walk costs no more requests than before. `anywhere` (the Super
+    /// modifier's whole-window gestures) asks the hit element for its window
+    /// first, since content can sit deeper than the walk goes.
+    func titleBarHit(atMousePoint point: CGPoint, pid owner: pid_t, timeout: Float = 0.25,
+                     budget: TimeInterval = 0.3, anywhere: Bool = false) -> TitleBarHit? {
         guard owner > 0 else { return nil }
         let limit = AXDeadline(perRequest: min(timeout, 0.25), budget: budget)
         let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -353,10 +375,22 @@ final class WindowManager: ObservableObject {
         guard limit.allow(app),
               AXUIElementCopyElementAtPosition(app, Float(point.x), Float(top - point.y), &hit) == .success,
               let hit else { return nil }
-        func string(_ element: AXUIElement, _ attribute: String) -> String? {
-            guard limit.allow(element) else { return nil }
-            var value: CFTypeRef?
-            return AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success ? value as? String : nil
+        func roles(_ element: AXUIElement) -> (role: String?, subrole: String?) {
+            guard limit.allow(element) else { return (nil, nil) }
+            var values: CFArray?
+            let attributes = [kAXRoleAttribute, kAXSubroleAttribute] as CFArray
+            guard AXUIElementCopyMultipleAttributeValues(element, attributes, [], &values) == .success,
+                  let list = values as? [AnyObject], list.count == 2 else {
+                // Fall back to the role alone.
+                var value: CFTypeRef?
+                guard limit.allow(element),
+                      AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value) == .success else { return (nil, nil) }
+                return (value as? String, nil)
+            }
+            func text(_ value: AnyObject) -> String? {
+                CFGetTypeID(value) == CFStringGetTypeID() ? value as? String : nil
+            }
+            return (text(list[0]), text(list[1]))
         }
         func element(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
             guard limit.allow(element) else { return nil }
@@ -367,9 +401,20 @@ final class WindowManager: ObservableObject {
         }
         let buttonSubroles: Set<String> = [kAXCloseButtonSubrole as String, kAXMinimizeButtonSubrole as String,
                                            kAXZoomButtonSubrole as String, kAXFullScreenButtonSubrole as String]
-        func found(_ window: AXUIElement, _ pid: pid_t, _ onTitleBar: Bool) -> (target: Target, onTitleBar: Bool) {
+        var chain: [(role: String?, subrole: String?)] = []
+        var elements: [AXUIElement] = []
+        func found(_ window: AXUIElement, _ pid: pid_t, _ onTitleBar: Bool) -> TitleBarHit {
             AXUIElementSetMessagingTimeout(window, 0)
-            return (Target(window: window, pid: pid), onTitleBar)
+            let tabIndex = SwishTabs.tabIndex(chain)
+            let tab = tabIndex.map { elements[$0] }
+            if let tab { AXUIElementSetMessagingTimeout(tab, 0) }
+            let onTabBar = chain.contains { $0.role == "AXTabGroup" } || tab != nil
+            return TitleBarHit(target: Target(window: window, pid: pid), onTitleBar: onTitleBar, onTabBar: onTabBar, tab: tab)
+        }
+        if anywhere, let window = element(hit, kAXWindowAttribute) {
+            var pid: pid_t = 0
+            guard AXUIElementGetPid(window, &pid) == .success, pid > 0 else { return nil }
+            return found(window, pid, false)
         }
         var current = hit
         var onTitleBar = false
@@ -377,13 +422,15 @@ final class WindowManager: ObservableObject {
             guard !limit.isSpent else { return nil }
             var pid: pid_t = 0
             guard AXUIElementGetPid(current, &pid) == .success, pid > 0 else { return nil }
-            let role = string(current, kAXRoleAttribute)
-            if role == kAXWindowRole as String {
+            let entry = roles(current)
+            if entry.role == kAXWindowRole as String {
                 // The window itself was hit: its title bar has no element of its own.
                 return found(current, pid, onTitleBar || depth == 0)
             }
-            if role == kAXToolbarRole as String { onTitleBar = true }
-            if depth == 0, let subrole = string(current, kAXSubroleAttribute), buttonSubroles.contains(subrole) { onTitleBar = true }
+            chain.append(entry)
+            elements.append(current)
+            if entry.role == kAXToolbarRole as String { onTitleBar = true }
+            if depth == 0, let subrole = entry.subrole, buttonSubroles.contains(subrole) { onTitleBar = true }
             guard let parent = element(current, kAXParentAttribute) else {
                 // No parent chain: fall back to the element's window attribute.
                 guard let window = element(current, kAXWindowAttribute) else { return nil }
