@@ -304,19 +304,19 @@ struct QuickCommandPalette: View {
                     }
                 }
                 .padding(.horizontal, AOMSpace.m + 2)
-                .frame(height: 54)
+                .frame(height: AOMSize.rowDetail + AOMSpace.x0_5)
 
                 AOMDivider()
 
                 if items.isEmpty {
-                    VStack(spacing: 6) {
+                    VStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 26, weight: .light))
-                            .foregroundStyle(AOMTheme.textTertiary)
-                            .padding(.bottom, 4)
-                        Text("No Results for “\(query)”").font(AOMType.headline)
+                            .font(AOMFont.hero.weight(.regular))
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .padding(.bottom, AOMSpace.x1)
+                        Text("No Results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                         Text("Try an automation name, an app or a word you copied.")
-                            .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         // The empty state needs a mouse-reachable way out too.
                         Button("Clear Search") {
                             query = ""
@@ -324,7 +324,7 @@ struct QuickCommandPalette: View {
                         }
                         .controlSize(.small)
                         .buttonStyle(.borderless)
-                        .padding(.top, 6)
+                        .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -333,21 +333,20 @@ struct QuickCommandPalette: View {
                             LazyVStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                                     if !isSearching, index == 0 || items[index - 1].section != item.section {
+                                        // Sentence case, no tracking (c.2).
                                         Text(item.section.rawValue)
-                                            .font(AOMType.micro.weight(.semibold))
-                                            .textCase(.uppercase)
-                                            .tracking(0.4)
-                                            .foregroundStyle(AOMTheme.textTertiary)
-                                            .padding(.horizontal, 10)
-                                            .padding(.top, index == 0 ? 6 : 12)
-                                            .padding(.bottom, 4)
+                                            .font(AOMFont.caption.weight(.semibold))
+                                            .foregroundStyle(AOMColor.textSecondary)
+                                            .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+                                            .padding(.top, index == 0 ? AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x3)
+                                            .padding(.bottom, AOMSpace.x1)
                                             .accessibilityAddTraits(.isHeader)
                                     }
                                     row(item, selected: item.id == selected?.id)
                                         .id(item.id)
                                 }
                             }
-                            .padding(6)
+                            .padding(AOMSpace.x1 + AOMSpace.x0_5)
                         }
                         .onChange(of: selectedID) { _, id in
                             if let id { proxy.scrollTo(id, anchor: nil) }
@@ -358,9 +357,9 @@ struct QuickCommandPalette: View {
                 AOMDivider()
                 actionBar(selected)
             }
-            .frame(width: 680, height: 460)
+            .frame(width: AOMSize.paletteWidth, height: AOMFeatureSize.paletteHeight)
+            // Glass chrome draws its own shadow; nothing is added on top (c.4).
             .aomFloatingSurface(.panel, radius: AOMRadius.panel, inWindow: true)
-            .shadow(color: .black.opacity(0.22), radius: 30, y: 14)
         }
         .onAppear { isFieldFocused = true }
         .onExitCommand {
@@ -395,31 +394,32 @@ struct QuickCommandPalette: View {
             selectedID = item.id
             item.primary.run()
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AOMFont.callout.weight(.semibold))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(selected ? Color.accentColor : AOMTheme.textSecondary)
-                    .frame(width: 24, height: 24)
-                    .background(selected ? Color.accentColor.opacity(0.14) : AOMTheme.track,
-                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
+                    .frame(width: AOMIcon.hitArea - AOMSpace.x1, height: AOMIcon.hitArea - AOMSpace.x1)
+                    .background(selected ? AOMColor.accent.opacity(0.14) : AOMColor.track,
+                                in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
                 Text(item.title)
-                    .font(AOMType.body.weight(.medium))
-                    .foregroundStyle(AOMTheme.text)
+                    .font(AOMFont.body.weight(.medium))
+                    .foregroundStyle(AOMColor.text)
                     .lineLimit(1)
                 Text(item.subtitle)
-                    .font(AOMType.caption)
-                    .foregroundStyle(AOMTheme.textTertiary)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
-                Spacer(minLength: AOMSpace.xs)
+                Spacer(minLength: AOMSpace.x2)
                 if isSearching {
-                    Text(item.section.rawValue).font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                    Text(item.section.rawValue).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 }
                 if let keys = item.shortcut { AOMKeycap(text: keys) }
             }
-            .padding(.horizontal, 8)
-            .frame(height: 38)
-            .background(selected ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: AOMSize.rowStandard)
+            .background(selected ? AOMColor.accent.opacity(0.12) : .clear,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -430,10 +430,10 @@ struct QuickCommandPalette: View {
 
     /// The selected item's actions with their keys, Raycast-style.
     private func actionBar(_ item: PaletteItem?) -> some View {
-        HStack(spacing: AOMSpace.m) {
+        HStack(spacing: AOMSpace.x3) {
             Text(item?.section.rawValue ?? " ")
-                .font(AOMType.caption)
-                .foregroundStyle(AOMTheme.textTertiary)
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
             Spacer()
             if let item {
                 actionHint(item.primary.title, keys: "↩", prominent: true) { item.primary.run() }
@@ -445,17 +445,17 @@ struct QuickCommandPalette: View {
                 if isSearching { query = "" } else { close() }
             }
         }
-        .padding(.horizontal, AOMSpace.m)
-        .frame(height: 40)
-        .background(Color.primary.opacity(0.03))
+        .padding(.horizontal, AOMSpace.x3)
+        .frame(height: AOMSize.rowStandard + AOMSpace.x1)
+        .background(AOMColor.track)
     }
 
     private func actionHint(_ title: String, keys: String, prominent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 Text(title)
-                    .font(AOMType.caption.weight(prominent ? .semibold : .regular))
-                    .foregroundStyle(prominent ? AOMTheme.text : AOMTheme.textSecondary)
+                    .font(AOMFont.caption.weight(prominent ? .semibold : .regular))
+                    .foregroundStyle(prominent ? AOMColor.text : AOMColor.textSecondary)
                 AOMKeycap(text: keys)
             }
         }
