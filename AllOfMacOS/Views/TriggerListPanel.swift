@@ -828,19 +828,10 @@ struct AddTriggerSheet: View {
                 Stepper("Charge: \(eventNumber)%", value: $eventNumber, in: 1...99)
             }
             if systemEventKind == "midi" {
-                Picker("Message", selection: $midiStatus) {
-                    Text("Note On").tag(144); Text("Note Off").tag(128); Text("Control Change").tag(176)
-                }
-                .onChange(of: midiStatus) { _, status in
-                    // Keep custom ranges; the initial Note On range must also
-                    // accept zero-velocity releases when changed to Note Off.
-                    if status == 128, midiMinimum == 1, midiMaximum == 127 { midiMinimum = 0 }
-                }
-                Stepper("Channel: \(midiChannel == 0 ? "Any" : String(midiChannel))", value: $midiChannel, in: 0...16)
-                Stepper("Note / controller number: \(eventNumber)", value: $eventNumber, in: 0...127)
-                Stepper("Minimum value: \(midiMinimum)", value: $midiMinimum, in: 0...127)
-                Stepper("Maximum value: \(midiMaximum)", value: $midiMaximum, in: midiMinimum...127)
-                Text("CoreMIDI Note On/Off and Control Change from connected sources. Note On velocity zero is treated as Note Off.").font(.caption).foregroundStyle(.secondary)
+                // Every channel-voice message, "Any" number and the 14-bit
+                // Pitch Bend range (3.3.3); see BTTInputEditors.swift.
+                MIDITriggerFilterFields(status: $midiStatus, channel: $midiChannel, number: $eventNumber,
+                                        minimum: $midiMinimum, maximum: $midiMaximum)
             }
             if systemEventKind == "hid" {
                 TextField("Vendor ID (decimal)", value: $hidVendor, format: .number)
@@ -882,6 +873,7 @@ struct AddTriggerSheet: View {
         ("screensaverOn", "Screensaver starts"), ("screensaverOff", "Screensaver stops"),
         ("space", "Active Space changes"), ("audio", "Audio output changes"), ("input", "Input source changes"),
         ("clipboard", "Clipboard changes"), ("midi", "MIDI message"), ("gamepad", "Gamepad / Siri Remote control"), ("hid", "Generic HID device input")]
+        + BTTInputTriggerKinds.options.map { ($0.key, $0.title) }
 
     /// Builds the Other Triggers input. Kept separate from `addTrigger` so the
     /// validity check and the constructed value cannot drift apart.
@@ -902,6 +894,8 @@ struct AddTriggerSheet: View {
             default: return .systemEvent(.daily(hour: scheduleHour, minute: scheduleMinute))
             }
         case "event":
+            // Force Touch stage 1 / 2 (3.3.3) have no other fields.
+            if let kind = BTTInputTriggerKinds.kind(for: systemEventKind) { return .systemEvent(kind) }
             switch systemEventKind {
             case "hid": return .systemEvent(.hidInput(vendorID: hidVendor, productID: hidProduct, usagePage: hidPage, usage: hidUsage, minimumValue: hidMinimum, maximumValue: hidMaximum))
             case "midi": return .systemEvent(.midiMessage(device: eventFilter, status: midiStatus, channel: midiChannel, number: eventNumber, minimumValue: midiMinimum, maximumValue: max(midiMinimum, midiMaximum)))
@@ -967,7 +961,12 @@ struct AddTriggerSheet: View {
             return true
         case "event":
             if systemEventKind == "hid" { return (1...65535).contains(hidVendor) && (1...65535).contains(hidProduct) && (0...65535).contains(hidPage) && (0...65535).contains(hidUsage) && hidMinimum <= hidMaximum }
-            if systemEventKind == "midi" { return (0...127).contains(eventNumber) }
+            if systemEventKind == "midi" || BTTInputTriggerKinds.kind(for: systemEventKind) != nil {
+                // "Any" (-1) and the Pitch Bend range 0–16383 are valid; the
+                // model owns the rule, so the sheet and the monitor agree.
+                guard case .systemEvent(let kind) = otherTriggerInput() else { return false }
+                return TriggerValidation.systemProblem(for: kind) == nil
+            }
             if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return (1...99).contains(eventNumber) }
             if systemEventKind == "file" { return TriggerSystemPaths.normalized(eventFilter) != nil }
             if systemEventKind == "appLaunch" || systemEventKind == "appQuit" { return !systemEventAppID.isEmpty }
