@@ -33,15 +33,22 @@ enum ClipboardLinkPolicy {
 
     /// Hosts on this Mac or its network, including bare intranet names and
     /// every IP literal in a private, loopback, link-local or shared range.
-    /// IPv6 literals are treated as local.
+    /// IPv6 literals are treated as local, and so is any numeric spelling
+    /// other than a plain dotted quad (hex, octal or short forms such as
+    /// `0x7f.1` or `0177.0.0.1`, which resolvers read as 127.0.0.1).
     static func isLocal(_ host: String) -> Bool {
         let host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]."))
         if host.contains(":") { return true }
         let localSuffixes = [".localhost", ".local", ".internal", ".lan", ".home.arpa", ".intranet", ".corp"]
         if host == "localhost" || localSuffixes.contains(where: host.hasSuffix) || !host.contains(".") { return true }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        let numeric = parts.allSatisfy { part in
+            !part.isEmpty && (part.allSatisfy { $0.isASCII && $0.isNumber } || part.lowercased().hasPrefix("0x"))
+        }
+        guard numeric else { return false }
+        let canonical = parts.count == 4 && parts.allSatisfy { $0 == "0" || !$0.hasPrefix("0") }
         let numbers = parts.compactMap { Int($0) }
-        guard parts.count == 4, numbers.count == 4, numbers.allSatisfy({ (0...255).contains($0) }) else { return false }
+        guard canonical, numbers.count == 4, numbers.allSatisfy({ (0...255).contains($0) }) else { return true }
         switch (numbers[0], numbers[1]) {
         case (0, _), (10, _), (127, _), (169, 254), (192, 168): return true
         case (172, 16...31), (100, 64...127): return true

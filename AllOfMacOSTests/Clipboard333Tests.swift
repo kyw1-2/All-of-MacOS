@@ -741,6 +741,16 @@ final class Clipboard333Tests: XCTestCase {
         }
     }
 
+    func testLinkCardsRefuseNumericHostSpellings() {
+        // Resolvers read these as 127.0.0.1 or other local addresses.
+        for refused in ["http://0x7f.1/", "http://0177.0.0.1/", "http://2130706433/", "http://127.1/",
+                        "http://1.2.3.4.5/", "http://0x7f000001/"] {
+            XCTAssertNil(ClipboardLinkPolicy.fetchableURL(refused), refused)
+        }
+        XCTAssertNotNil(ClipboardLinkPolicy.fetchableURL("http://93.184.216.34/"), "a public dotted quad")
+        XCTAssertNotNil(ClipboardLinkPolicy.fetchableURL("https://123.example.com/"), "a numeric label in a name")
+    }
+
     func testLinkCardParserReadsOpenGraphAndFallbacks() throws {
         let base = try XCTUnwrap(URL(string: "https://example.com/posts/1"))
         let html = """
