@@ -71,6 +71,10 @@ struct GestureSettingsView: View {
                     LabeledContent("Pressure threshold", value: forcePressThreshold.formatted(.number.precision(.fractionLength(2))))
                     Slider(value: $forcePressThreshold, in: 0.5...1.5, step: 0.05)
                 }
+                // Force Touch stage triggers (Other Triggers) read their own
+                // pressure monitor, so this applies whether or not the
+                // Force Click switch above is on.
+                ForceTouchStageSettingsRow()
                 Text("Off by default so ordinary clicks never count as force clicks. Turn it on when you assign a Force Click trigger.")
                     .font(.caption).foregroundStyle(.secondary)
             }
