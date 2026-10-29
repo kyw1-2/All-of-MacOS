@@ -503,7 +503,7 @@ struct ActionConfigView: View {
     var body: some View {
         // Groups inside the step's card, each with a hairline above (e.2).
         VStack(alignment: .leading, spacing: 0) {
-            AOMEditorGroup("Step", symbol: action.actionType.iconName, detail: action.actionType.rawValue, rows: true) {
+            AOMEditorGroup("Step", detail: action.actionType.rawValue, rows: true) {
                 AOMToggleRow("Enabled", isOn: Binding(get: { action.isEnabled }, set: { value in
                     saveAction { $0.isEnabled = value }
                 }))
