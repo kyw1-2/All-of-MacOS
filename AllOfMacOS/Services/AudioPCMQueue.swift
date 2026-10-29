@@ -66,6 +66,11 @@ final class AudioAtomicCounter {
         while !storage.exchange(expected: old, desired: 0) { old = load() }
         return old
     }
+    /// Stores `desired` only if the value is still `expected`.
+    @discardableResult
+    func compareExchange(expected: UInt64, desired: UInt64) -> Bool {
+        storage.exchange(expected: expected, desired: desired)
+    }
 }
 
 /// Band-limited interpolation prototype (J. O. Smith's bandlimited
@@ -242,6 +247,12 @@ final class StereoPCMQueue {
     private let clears = AudioAtomicCounter()
     private let rendered = AudioAtomicCounter()
     private let trims = AudioAtomicCounter()
+    /// Frames the kernel computed (output frames, tails and trim crossfades
+    /// included): the consumer's work, for the constant-time check (3.3.3).
+    private let resampled = AudioAtomicCounter()
+    /// Where the consumer reports trims, underruns and clears with their host
+    /// time (3.3.3, A03). The consumer is its only producer.
+    private let events: AudioEventRing?
     private let correctionBits = AudioAtomicCounter(Double(0).bitPattern)
     private let targetValue = AudioAtomicCounter()
 
@@ -262,7 +273,8 @@ final class StereoPCMQueue {
     /// One output frame's kernel taps (the widest stretched window).
     private let coefficientScratch: UnsafeMutablePointer<Float>
 
-    init(capacity: Int, kernel: AudioSincKernel = .shared) {
+    init(capacity: Int, kernel: AudioSincKernel = .shared, events: AudioEventRing? = nil) {
+        self.events = events
         self.kernel = kernel
         kernelValues = kernel.values
         kernelSlopes = kernel.slopes
@@ -297,7 +309,8 @@ final class StereoPCMQueue {
                 "queuedFrames": w >= r ? w - r : 0,
                 "droppedFrames": dropped.load(), "underruns": underruns.load(),
                 "discardedFrames": discarded.load(), "clears": clears.load(),
-                "trims": trims.load(), "adaptiveTargetFrames": targetValue.load()]
+                "trims": trims.load(), "adaptiveTargetFrames": targetValue.load(),
+                "resampledFrames": resampled.load()]
     }
     var queuedFrames: Int {
         let r = read.load(), w = written.load()
@@ -366,7 +379,8 @@ final class StereoPCMQueue {
     /// stream is heard sooner without running on a thin margin for good.
     func render(into output: UnsafeMutablePointer<Float>, frames: Int, ratio: Double,
                 targetFrames: Int, driftLimit: Double = 0.002, fadeFrames: Int = 240,
-                outputRate: Double = 48000, trimFloorFrames: Int = 0, startFrames: Int? = nil) -> Int {
+                outputRate: Double = 48000, trimFloorFrames: Int = 0, startFrames: Int? = nil,
+                levelBias: Double = 0) -> Int {
         guard frames > 0, ratio.isFinite, ratio > 0 else { return 0 }
         memset(output, 0, frames * 8)
         guard frames <= Self.maximumFrames else { return 0 }
@@ -377,6 +391,7 @@ final class StereoPCMQueue {
             generation = currentGeneration
             let boundary = max(position, min(w, clearBoundary.load()))
             discarded.add(boundary - position); clears.add()
+            events?.push(.clear, value: boundary - position)
             if streaming {
                 // The held-back tail is the old stream's last audio: it fades out.
                 fadeOut(tail, frames: tailCount)
@@ -398,7 +413,8 @@ final class StereoPCMQueue {
         targetValue.store(UInt64(target))
         var available = Int(w - position)
         if streaming && limit > 0 {
-            controller.update(level: Double(available), target: Double(target), seconds: Double(frames) / max(1, outputRate),
+            controller.update(level: Double(available) + levelBias, target: Double(target),
+                              seconds: Double(frames) / max(1, outputRate),
                               inputRate: max(1, outputRate) * ratio, limit: limit)
         } else if limit == 0 {
             controller.zero()
@@ -426,6 +442,7 @@ final class StereoPCMQueue {
                 let keep = min(available, max(target, needed(wanted + tailCount)))
                 let next = w - UInt64(keep)
                 discarded.add(next - position); trims.add()
+                events?.push(.trim, value: next - position)
                 position = next
                 controller.restart()
                 if fade > 0 && tailCount > 0 {
@@ -455,6 +472,7 @@ final class StereoPCMQueue {
                 fadeOut(work + (total - min(fade, total)) * 2, frames: min(fade, total))
                 streaming = false
                 underruns.add()
+                events?.push(.underrun)
                 calmFrames = 0
                 extra = min(3 * max(2, targetFrames), extra + max(frames, targetFrames / 2))
             } else {
@@ -490,6 +508,14 @@ final class StereoPCMQueue {
     /// fade-in; stops where the kernel would read unwritten frames.
     private func produce(into destination: UnsafeMutablePointer<Float>, count: Int, written w: UInt64,
                          step: Double, span: Int, scale: Float, exact: Bool) -> Int {
+        let made = produceFrames(into: destination, count: count, written: w, step: step, span: span,
+                                 scale: scale, exact: exact)
+        if made > 0 { resampled.add(UInt64(made)) }
+        return made
+    }
+
+    private func produceFrames(into destination: UnsafeMutablePointer<Float>, count: Int, written w: UInt64,
+                               step: Double, span: Int, scale: Float, exact: Bool) -> Int {
         guard count > 0 else { return 0 }
         var made = 0
         if exact {

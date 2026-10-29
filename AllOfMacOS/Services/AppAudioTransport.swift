@@ -11,7 +11,11 @@ final class AppAudioTransport {
     /// 65 536 frames (1.4 s at 48 kHz): room for the AirPlay trim floor below
     /// (until 3.3.2 32 768, half of it).
     private let capacity = 65536
-    private let queue = StereoPCMQueue(capacity: 65536)
+    /// The consumer's event ring (3.3.3, A03): the queue's trims, underruns
+    /// and clears and the output hand-overs. Its producer is whoever holds
+    /// `renderLock`, one thread at a time.
+    let events = AudioEventRing(capacity: 64)
+    private let queue: StereoPCMQueue
     private let scratch: UnsafeMutablePointer<Float>
     private let rateBits: AudioAtomicCounter
     private let remote: AudioAtomicCounter
@@ -28,6 +32,49 @@ final class AppAudioTransport {
     /// ahead and Volume Overdrive's limiter 64, and an EQ rings down.
     static let flushFrames = 2048
 
+    /// 3.3.3 (A02): one consumer at a time. Every output's render closure
+    /// carries a consumer number; only the owner pulls from the queue and
+    /// runs the app's DSP. Until 3.3.2 an output move let the old and the new
+    /// output both pull during the old one's 5 ms fade: each heard every
+    /// other piece of the stream (about 10 ms skipped) through one DSP state
+    /// advanced by both. Now the owner renders up to the end of a 5 ms
+    /// fade-out and stops pulling; the new consumer then continues with the
+    /// next frame of the same stream, fading in. No frame is pulled twice or
+    /// skipped, and the DSP state passes from one output to the other. An
+    /// owner that has stopped rendering (its device went away) is not waited
+    /// for longer than `handoverTimeout`. The two outputs run on different
+    /// clocks (AirPlay about 2 s behind a local one), so the hand-over is a
+    /// fade-out then a fade-in of one contiguous stream, not an overlap.
+    static let handoverFadeFrames = 240
+    static let handoverTimeout: TimeInterval = 0.05
+    private let owner = AudioAtomicCounter(0)
+    private let pending = AudioAtomicCounter(0)
+    private let consumers = AudioAtomicCounter(0)
+    private let ownerRenderTick = AudioAtomicCounter()
+    private let handovers = AudioAtomicCounter()
+    private let handoverTakeovers = AudioAtomicCounter()
+    /// Frames the owner pulled through the queue and the DSP (every call).
+    private let pulledFrames = AudioAtomicCounter()
+    /// Render-thread state (under `renderLock`): frames of the owner's
+    /// fade-out still to render (-1: none), and of the new owner's fade-in.
+    private var fadeOutRemaining = -1
+    private var fadeInRemaining = 0
+
+    /// A new consumer number for an output's render closure (control thread).
+    func makeConsumer() -> UInt64 { consumers.add() }
+
+    /// The stream moves to `consumer` once the current owner has faded out
+    /// (control thread; a later call supersedes an unfinished one).
+    func beginHandover(to consumer: UInt64) {
+        guard consumer != owner.load() else { pending.store(0); return }
+        pending.store(consumer)
+    }
+
+    /// The consumer that pulls now, and completed / forced hand-overs.
+    var handoverState: (owner: UInt64, pending: UInt64, completed: UInt64, takeovers: UInt64) {
+        (owner.load(), pending.load(), handovers.load(), handoverTakeovers.load())
+    }
+
     init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
@@ -35,6 +82,7 @@ final class AppAudioTransport {
         let rate = sampleRate.isFinite && (8000...384000).contains(sampleRate) ? sampleRate : 48000
         rateBits = AudioAtomicCounter(rate.bitPattern)
         remote = AudioAtomicCounter(bufferedForAirPlay ? 1 : 0)
+        queue = StereoPCMQueue(capacity: 65536, events: events)
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
     }
@@ -112,6 +160,22 @@ final class AppAudioTransport {
         result["largestPacketFrames"] = largestPacket.load()
         result["renderContentions"] = renderContentions.load()
         result["driftCorrectionPPM"] = queue.driftCorrectionPPM
+        result["pulledFrames"] = pulledFrames.load()
+        result["handovers"] = handovers.load()
+        result["handoverTakeovers"] = handoverTakeovers.load()
+        return result
+    }
+
+    /// Monotonic counters for the event log's totals (any non-realtime thread).
+    var eventCounters: [String: UInt64] {
+        let stats = queue.statistics
+        var result: [String: UInt64] = [:]
+        for key in ["underruns", "trims", "clears", "discardedFrames", "droppedFrames"] {
+            result["app.\(key)"] = stats[key] ?? 0
+        }
+        result["app.renderContentions"] = renderContentions.load()
+        result["app.handovers"] = handovers.load()
+        result["app.handoverTakeovers"] = handoverTakeovers.load()
         return result
     }
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -144,14 +208,69 @@ final class AppAudioTransport {
         }
         peakBits.store(UInt64(peak.bitPattern)); captureTick.store(now)
     }
-    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox, allowWaiting: Bool = false) {
+    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox, allowWaiting: Bool = false,
+                consumer: UInt64 = 0) {
         for buffer in UnsafeMutableAudioBufferListPointer(output) {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
         }
         guard frames > 0, frames <= capacity else { return }
+        // Neither the owner nor the consumer taking over (an old output
+        // after a move): silence, without touching the lock.
+        if consumer != owner.load() && consumer != pending.load() { return }
         if allowWaiting { renderLock.lock() }
         else if !renderLock.tryLock() { renderContentions.add(); return }
         defer { renderLock.unlock() }
+        let now = mach_absolute_time()
+        if consumer != owner.load() {
+            // Taking over happens when the owner hands the stream over at the
+            // end of its fade-out, or here once it has stopped rendering.
+            guard consumer == pending.load() else { return }
+            let last = ownerRenderTick.load()
+            guard last == 0 || Double(now &- last) * secondsPerTick > Self.handoverTimeout else { return }
+            owner.store(consumer)
+            pending.compareExchange(expected: consumer, desired: 0)
+            fadeOutRemaining = -1
+            fadeInRemaining = Self.handoverFadeFrames
+            handoverTakeovers.add()
+            events.push(.handover, value: 1, extra: 1)
+        }
+        ownerRenderTick.store(now)
+        let next = pending.load()
+        let handingOver = next != 0 && next != consumer
+        if handingOver {
+            if fadeOutRemaining < 0 { fadeOutRemaining = Self.handoverFadeFrames }
+        } else if fadeOutRemaining >= 0 {
+            // The move was called off mid-fade: back in from where it was.
+            fadeInRemaining = Self.handoverFadeFrames - fadeOutRemaining
+            fadeOutRemaining = -1
+        }
+        let count = handingOver ? min(frames, fadeOutRemaining) : frames
+        renderStream(frames: count, output: output, mixer: mixer)
+        if handingOver {
+            Self.fade(output, frames: count, from: Self.handoverFadeFrames - fadeOutRemaining, out: true)
+            fadeOutRemaining -= count
+            guard fadeOutRemaining <= 0 else { return }
+            fadeOutRemaining = -1
+            let target = pending.load()
+            if target != 0, target != consumer, pending.compareExchange(expected: target, desired: 0) {
+                owner.store(target)
+                handovers.add()
+                events.push(.handover)
+            }
+            // The new owner (or this one, if the move was called off) starts
+            // from silence.
+            fadeInRemaining = Self.handoverFadeFrames
+        } else if fadeInRemaining > 0 {
+            let faded = min(count, fadeInRemaining)
+            Self.fade(output, frames: faded, from: Self.handoverFadeFrames - fadeInRemaining, out: false)
+            fadeInRemaining -= faded
+        }
+    }
+
+    /// The owner's pull: queue, then the app's DSP, `frames` frames.
+    private func renderStream(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox) {
+        guard frames > 0 else { return }
+        pulledFrames.add(UInt64(frames))
         let rate = Double(bitPattern: rateBits.load())
         let airPlay = remote.load() == 1
         let filled = queue.render(into: scratch, frames: frames,
@@ -176,6 +295,24 @@ final class AppAudioTransport {
         var input = AudioBufferList(mNumberBuffers: 1, mBuffers:
             AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(frames * 8), mData: scratch))
         withUnsafePointer(to: &input) { Mixer.mix(input: $0, output: output, box: mixer) }
+    }
+
+    /// In place over every buffer: the hand-over's smoothstep fade, frames
+    /// `from + 1 …` of `handoverFadeFrames` (out: 1 → 0, in: 0 → 1).
+    private static func fade(_ output: UnsafeMutablePointer<AudioBufferList>, frames: Int, from done: Int, out: Bool) {
+        guard frames > 0 else { return }
+        let length = Float(handoverFadeFrames)
+        for buffer in UnsafeMutableAudioBufferListPointer(output) {
+            let width = Int(buffer.mNumberChannels)
+            guard width > 0, let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+            let count = min(frames, Int(buffer.mDataByteSize) / (4 * width))
+            for frame in 0..<count {
+                let x = min(1, Float(done + frame + 1) / length)
+                let s = x * x * (3 - 2 * x)
+                let gain = out ? 1 - s : s
+                for channel in 0..<width { data[frame * width + channel] *= gain }
+            }
+        }
     }
 }
 

@@ -133,6 +133,8 @@ final class AppAudioEngine {
         var outputSampleRate: Double = 48000
         var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
+        /// 3.3.3 (A03): the transport's ring and counters in the event log.
+        var eventSource: AudioEventLog.Source?
         let createdAt = ProcessInfo.processInfo.systemUptime
         var watchdog = AudioActivityWatchdog()
 
@@ -219,6 +221,13 @@ final class AppAudioEngine {
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 if selector == kAudioHardwarePropertyDevices || selector == kAudioHardwarePropertyDefaultOutputDevice {
                     AudioOutputService.invalidateDeviceCache()
+                    // 3.3.3 (A03): route and device changes in the event log.
+                    if selector == kAudioHardwarePropertyDefaultOutputDevice {
+                        AudioEventLog.shared.record(.defaultOutputChanged, source: "system",
+                                                    detail: Self.defaultOutputDeviceUID() ?? "none")
+                    } else {
+                        AudioEventLog.shared.record(.deviceListChanged, source: "system")
+                    }
                 } else {
                     self?.appIdentitySnapshotAt = -.infinity
                 }
@@ -414,6 +423,7 @@ final class AppAudioEngine {
                 session.muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")
                 mixer.gain = session.gain; mixer.muted = session.muted
                 mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
+                mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: app.bundleID))
                 mixer.overdrive = AppAudioPreferences.overdrive(bundleID: app.bundleID)
                 mixer.balance = AppAudioPreferences.balance(bundleID: app.bundleID)
                 guard updateProcesses(session, ids: ids) else {
@@ -595,7 +605,9 @@ final class AppAudioEngine {
             AppAudioPreferences.overdrive(bundleID: bundleID) > 1 ||
             AppAudioPreferences.balance(bundleID: bundleID) != 0 ||
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
+            d.string(forKey: AudioUnitEffectHost.choiceKey) != nil ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
+            Self.targetOutputUID(for: bundleID).map { AudioDeviceEQ.hasEQ(uid: $0) } == true ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
     }
 
@@ -641,19 +653,45 @@ final class AppAudioEngine {
         return AudioEQ(gains: gains, sampleRate: sampleRate)
     }
 
+    /// The master EQ for a session playing to `outputUID`, with that output's
+    /// own curve as the device stage (3.3.3, parity S04).
+    static func masterEQ(sampleRate: Double = 48000, outputUID: String?) -> AudioEQ {
+        AudioEQ(gains: masterEQ(sampleRate: sampleRate).gains, sampleRate: sampleRate,
+                deviceGains: AudioDeviceEQ.deviceGains(uid: outputUID))
+    }
+
     func updateEffects() {
         let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled") ? 1 : 0
-        MainActor.assumeIsolated { SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost) }
+        let masterPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: nil))
+        MainActor.assumeIsolated {
+            SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost)
+            SharedOutputRenderer.shared.setMasterBoostPreset(masterPreset)
+        }
         for session in sessions.values {
             let mixer = session.box.takeUnretainedValue()
             mixer.setEffects(
                 app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: session.outputUID),
                 appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
+            mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: session.bundleID))
             mixer.overdrive = AppAudioPreferences.overdrive(bundleID: session.bundleID)
             mixer.balance = AppAudioPreferences.balance(bundleID: session.bundleID)
         }
         scheduleSync()
+    }
+
+    /// 3.3.3 (S06): a named Magic Boost preset for an app, or for the output
+    /// (`bundleID` nil); applied in place, no session restarts.
+    func setBoostPreset(_ id: String, bundleID: String?) {
+        AudioBoostPreset.store(id, bundleID: bundleID)
+        updateEffects()
+    }
+
+    /// 3.3.3 (S04): the EQ curve an output uses (nil: none); every session
+    /// playing to it retunes in place.
+    func setDeviceEQ(_ name: String?, uid: String) {
+        AudioDeviceEQ.assign(name, uid: uid)
+        updateEffects()
     }
 
     // MARK: - Process Hierarchy & Helpers
@@ -1117,8 +1155,9 @@ final class AppAudioEngine {
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
         let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ? 1 : 0
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: outUID),
                          appBoost: appBoost)
+        mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: bundleID))
         mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
         mixer.balance = AppAudioPreferences.balance(bundleID: bundleID)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
@@ -1162,6 +1201,12 @@ final class AppAudioEngine {
         session.outputSampleRate = SharedOutputRenderer.sampleRate
         session.transport = transport
         session.sourceToken = source
+        let eventName = "app:" + (bundleID.isEmpty ? "pid-\(pid)" : bundleID)
+        session.eventSource = AudioEventLog.shared.register(name: eventName, rings: [transport.events]) { [weak transport] in
+            transport?.eventCounters ?? [:]
+        }
+        AudioEventLog.shared.record(.tapAttached, source: eventName, value: Int64(processObjIDs.count),
+                                    detail: "pid \(pid), \(processObjIDs.count) process objects, to \(device.name)")
         return session
     }
 
@@ -1211,6 +1256,10 @@ final class AppAudioEngine {
         }
         session.processIDs = members
         session.tapRewrites += 1
+        if let events = session.eventSource {
+            AudioEventLog.shared.record(.tapRewrite, source: events.name, value: Int64(members.count),
+                                        detail: "\(previous.count) → \(members.count) process objects")
+        }
         return true
     }
 
@@ -1221,16 +1270,32 @@ final class AppAudioEngine {
         // Bridge, don't break: the new source is added before the old one is
         // removed. A failed add must leave the session playing through its
         // existing output — losing the device is what pauses every player.
+        // 3.3.3 (A02): the new output renders as its own consumer and gets
+        // the stream once the old one has faded out (no frame pulled twice,
+        // one DSP state; see AppAudioTransport.beginHandover).
+        let consumer = transport.makeConsumer()
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: device.uid, device: device,
-            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay) }) }) else { return false }
+            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay,
+                                       consumer: consumer) }) }) else { return false }
+        transport.beginHandover(to: consumer)
         if let old = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
         }
         transport.setBufferedForAirPlay(source.isAirPlay)
         mixer.usesNetworkDynamics = source.isAirPlay
+        if let events = session.eventSource {
+            AudioEventLog.shared.record(.outputMoved, source: events.name,
+                                        detail: "\(session.outputUID.isEmpty ? "none" : session.outputUID) → \(device.uid) (\(device.name))")
+        }
         session.sourceToken = source
         session.outputUID = device.uid
+        // 3.3.3 (S04): the master EQ's device stage follows the output (a
+        // headphone curve switches in or out; a 10 ms EQ crossfade inside
+        // the hand-over's fades).
+        mixer.setEffects(app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
+                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: device.uid),
+                         appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
         return true
     }
 
@@ -1290,6 +1355,11 @@ final class AppAudioEngine {
         if let source = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
             session.sourceToken = nil
+        }
+        if let events = session.eventSource {
+            AudioEventLog.shared.unregister(events)
+            session.eventSource = nil
+            AudioEventLog.shared.record(.tapDetached, source: events.name, detail: "pid \(session.pid)")
         }
         session.transport = nil
         session.box.release()
@@ -1393,6 +1463,12 @@ final class MixerBox {
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
     fileprivate let boostProcessor = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    /// 3.3.3 (S06): the app's Magic Boost preset (an index into
+    /// `AudioBoostPreset.all`); the processor takes it up lock-free.
+    var boostPreset: Int {
+        get { boostProcessor.presetIndex }
+        set { boostProcessor.setPreset(index: newValue) }
+    }
     /// Volume Overdrive. While the app plays to AirPlay (`usesNetworkDynamics`)
     /// its limiter releases like the network bus; the release switches in
     /// place (3.3.2 review: a second, preallocated processor took over with a

@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AudioToolbox
 
 /// Priority-donating lock for realtime render paths. A waiting audio thread
 /// boosts the owner instead of inverting priority like a plain mutex.
@@ -28,6 +29,58 @@ final class AudioUnfairLock {
 /// an accelerating release (up to +40 dB); a peak above 0.9 pulls the gain
 /// down by 1.5 % per sample and resets the release acceleration. Enabling or
 /// disabling crossfades dry and processed audio over 40 ms.
+/// Named Magic Boost tunings (3.3.3, parity S06: SoundSource offers only a
+/// switch; these are AOM's own). "Music" is the reference tuning above,
+/// unchanged and the default; the others trade fullness for intelligibility
+/// or a smaller dynamic range. Each sets where loud audio is held
+/// (`threshold`), how fast quiet audio comes up (`releaseScale` × the
+/// reference rate), how far (`maximumGain`), the dry share of the parallel
+/// blend and the makeup gain, and for an output also the limiter's release.
+struct AudioBoostPreset: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let summary: String
+    let threshold: Float
+    let releaseScale: Float
+    let maximumGain: Float
+    let dry: Float
+    let makeup: Float
+    /// The output limiter's release on a local output, seconds (nil: 25 ms).
+    /// A network (AirPlay) output never releases faster than its 150 ms.
+    let limiterRelease: Double?
+
+    static let music = AudioBoostPreset(id: "music", name: "Music",
+        summary: "Fuller sound; quiet passages lifted, loud ones kept from overdriving (the reference tuning).",
+        threshold: 0.9, releaseScale: 1, maximumGain: 100, dry: 0.85, makeup: 1, limiterRelease: nil)
+    static let speech = AudioBoostPreset(id: "speech", name: "Speech",
+        summary: "Quiet voices come up quickly; room noise is raised less.",
+        threshold: 0.85, releaseScale: 3, maximumGain: 20, dry: 0.6, makeup: 1.1, limiterRelease: 0.05)
+    static let movie = AudioBoostPreset(id: "movie", name: "Movie",
+        summary: "Dialogue lifted, explosions held down.",
+        threshold: 0.7, releaseScale: 2, maximumGain: 40, dry: 0.5, makeup: 1.15, limiterRelease: 0.1)
+    static let night = AudioBoostPreset(id: "night", name: "Night",
+        summary: "A small dynamic range for listening quietly.",
+        threshold: 0.45, releaseScale: 4, maximumGain: 60, dry: 0.25, makeup: 1.2, limiterRelease: 0.2)
+    static let all: [AudioBoostPreset] = [music, speech, movie, night]
+    static let defaultID = music.id
+
+    static func index(of id: String?) -> Int { all.firstIndex { $0.id == id } ?? 0 }
+    static func preset(id: String?) -> AudioBoostPreset { all[index(of: id)] }
+
+    /// Settings: the output's preset, and each app's (absent: Music).
+    static let masterKey = "AOMAudioMasterBoostPreset"
+    static func appKey(_ bundleID: String) -> String { "AOMAudioMagicBoostPreset_\(bundleID)" }
+    static func storedID(bundleID: String?, defaults: UserDefaults = .standard) -> String {
+        let key = bundleID.map(appKey) ?? masterKey
+        return preset(id: defaults.string(forKey: key)).id
+    }
+    static func store(_ id: String, bundleID: String?, defaults: UserDefaults = .standard) {
+        let key = bundleID.map(appKey) ?? masterKey
+        let preset = preset(id: id)
+        if preset.id == defaultID { defaults.removeObject(forKey: key) } else { defaults.set(preset.id, forKey: key) }
+    }
+}
+
 final class AudioMagicBoost {
     static let lookaheadFrames = 512
     static let threshold: Float = 0.9
@@ -49,15 +102,61 @@ final class AudioMagicBoost {
     private(set) var gain: Float = 1
     private var knee: Float = 1
     private(set) var mix: Float = 0
+    /// 3.3.3 (S06): the preset the control thread wants (an index into
+    /// `AudioBoostPreset.all`) and, render thread only, the one in use, read
+    /// from a table made at init (no array or allocation on the render path).
+    private let presetSlot = AudioAtomicCounter(0)
+    private var appliedPreset = 0
+    private let presetCount: Int
+    private let table: UnsafeMutablePointer<Float>
+    private static let fields = 5
+    private var threshold = AudioMagicBoost.threshold
+    private var releaseRate = AudioMagicBoost.releaseRate
+    private var maximumGain = AudioMagicBoost.maximumGain
+    /// The blend's dry share and makeup glide to a new preset's (about 20 ms)
+    /// so switching never steps the level.
+    private var dry: Float = 0.85, dryTarget: Float = 0.85
+    private var makeupGain: Float = AudioMagicBoost.makeup, makeupTarget: Float = AudioMagicBoost.makeup
+    private let glide: Float
 
     init(sampleRate: Double) {
         let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
         rateScale = Float(44100 / rate)
         fadeStep = Float(1 / (0.04 * rate))
+        glide = Float(1 / (0.02 * rate))
         delay = .allocate(capacity: Self.lookaheadFrames * 2)
         delay.initialize(repeating: 0, count: Self.lookaheadFrames * 2)
+        let presets = AudioBoostPreset.all
+        presetCount = presets.count
+        table = .allocate(capacity: presets.count * Self.fields)
+        for (index, preset) in presets.enumerated() {
+            let row = table + index * Self.fields
+            row[0] = preset.threshold; row[1] = preset.releaseScale; row[2] = preset.maximumGain
+            row[3] = preset.dry; row[4] = preset.makeup
+        }
     }
-    deinit { delay.deallocate() }
+    deinit { delay.deallocate(); table.deallocate() }
+
+    /// Control thread: the tuning to use from the next block on.
+    func setPreset(index: Int) {
+        presetSlot.store(UInt64(min(max(0, index), AudioBoostPreset.all.count - 1)))
+    }
+    var presetIndex: Int { Int(presetSlot.load()) }
+
+    /// Render thread: takes up a new preset (five loads from the table).
+    @inline(__always)
+    private func adoptPreset() {
+        let wanted = Int(presetSlot.load())
+        guard wanted != appliedPreset, wanted >= 0, wanted < presetCount else { return }
+        appliedPreset = wanted
+        let row = table + wanted * Self.fields
+        threshold = row[0]
+        releaseRate = Self.releaseRate * row[1]
+        maximumGain = row[2]
+        dryTarget = row[3]
+        makeupTarget = row[4]
+        if gain > maximumGain { gain = maximumGain }
+    }
 
     /// True while processing or crossfading; false means audio passes untouched.
     var isActive: Bool { mix > 0 || filled > 0 }
@@ -78,11 +177,13 @@ final class AudioMagicBoost {
         }
         // SoundSource releases a hundred times slower over digital silence so
         // the gain does not climb during a pause and blast the next sound.
+        adoptPreset()
         var silent = true
         for frame in 0..<frames where left[frame] != 0 || right[frame] != 0 { silent = false; break }
-        let release = Self.releaseRate * rateScale * (silent ? 0.01 : 1)
+        let release = releaseRate * rateScale * (silent ? 0.01 : 1)
         let attack = Self.attackRate * rateScale
         let capacity = Self.lookaheadFrames
+        let gliding = dry != dryTarget || makeupGain != makeupTarget
         for frame in 0..<frames {
             let inputLeft = left[frame].isFinite ? left[frame] : 0
             let inputRight = right[frame].isFinite ? right[frame] : 0
@@ -102,7 +203,12 @@ final class AudioMagicBoost {
             } else {
                 mix = max(0, mix - fadeStep)
             }
-            let wet = Self.outputGain(gain)
+            if gliding {
+                dry += max(-glide, min(glide, dryTarget - dry))
+                makeupGain += max(-glide, min(glide, makeupTarget - makeupGain))
+            }
+            // The reference blend, makeup × (gain + dry) / 2 (Music: dry 0.85).
+            let wet = makeupGain * (gain + dry) * 0.5
             left[frame] = inputLeft + (delayedLeft * wet - inputLeft) * mix
             right[frame] = inputRight + (delayedRight * wet - inputRight) * mix
         }
@@ -112,14 +218,14 @@ final class AudioMagicBoost {
     @inline(__always)
     private func detect(_ sample: Float, attack: Float, release: Float) {
         guard sample != 0 else { return }
-        if abs(sample * gain) > Self.threshold {
+        if abs(sample * gain) > threshold {
             gain = max(0.0001, gain - max(gain, 1) * attack)
             // The reference can push the knee below 1 (a brief negative
             // release); AOM floors it at 1 so release never lowers the gain.
             if knee > 1 { knee = max(1, knee - Self.kneeAttackDrop) }
         } else {
             let next = gain + release * knee
-            if next < Self.maximumGain { gain = next }
+            if next < maximumGain { gain = next }
             if knee < Self.kneeCeiling { knee += Self.kneeStep }
         }
     }
@@ -176,6 +282,16 @@ final class AudioLookaheadLimiter {
     private var firstSum: Double, secondSum: Double
     private var envelope: Float = 1
     private(set) var reduction: Float = 1
+    /// The deepest gain since the last `takeDeepestReduction` (render thread).
+    private var deepest: Float = 1
+
+    /// The lowest gain applied since the last call, then starts again (1:
+    /// the limiter did nothing). Render thread; for the event log (3.3.3).
+    func takeDeepestReduction() -> Float {
+        let value = deepest
+        deepest = 1
+        return value
+    }
 
     /// Total delay from input to output, frames.
     var latencyFrames: Int { delayLength }
@@ -284,6 +400,7 @@ final class AudioLookaheadLimiter {
             if smoothed < envelope { envelope = smoothed }
             else { envelope = min(smoothed, envelope + (smoothed - envelope) * releaseCoefficient) }
             reduction = envelope
+            if envelope < deepest { deepest = envelope }
             let delaySlot = delayIndex * 2
             let outputLeft = delay[delaySlot] * envelope
             let outputRight = delay[delaySlot + 1] * envelope
@@ -472,5 +589,207 @@ final class AudioVolumeOverdrive {
             right[frame] = dryRight[frame] + (right[frame] - dryRight[frame]) * engagement
         }
         if !engaged && engagement == 0 { current = 1; limiter.reset() }
+    }
+}
+
+// MARK: - Audio Unit hosting (3.3.3, parity S03)
+
+/// One Audio Unit effect (a v2 component: Apple's AULowpass, AUPeakLimiter,
+/// AUNBandEQ, AUDelay… or an installed third-party one) on an output's master
+/// chain. Everything that can block or allocate — finding the component,
+/// creating, configuring and initialising the instance, its state — happens
+/// on a control thread; the render thread only copies into preallocated
+/// buffers and calls AudioUnitRender. Stereo, 32-bit float, deinterleaved,
+/// at the bus's 48 kHz, at most `maximumFrames` per call.
+final class AudioUnitEffectHost {
+    struct Choice: Equatable, Hashable {
+        var type: OSType
+        var subtype: OSType
+        var manufacturer: OSType
+        var name: String = ""
+
+        /// "aufx:lpas:appl" — the settings form.
+        var key: String { [type, subtype, manufacturer].map(Self.fourCC).joined(separator: ":") }
+
+        init(type: OSType = kAudioUnitType_Effect, subtype: OSType, manufacturer: OSType, name: String = "") {
+            self.type = type; self.subtype = subtype; self.manufacturer = manufacturer; self.name = name
+        }
+
+        init?(key: String, name: String = "") {
+            let parts = key.split(separator: ":").map(String.init)
+            guard parts.count == 3, let type = Self.code(parts[0]), let subtype = Self.code(parts[1]),
+                  let manufacturer = Self.code(parts[2]) else { return nil }
+            self.init(type: type, subtype: subtype, manufacturer: manufacturer, name: name)
+        }
+
+        static func fourCC(_ value: OSType) -> String {
+            String(bytes: [24, 16, 8, 0].map { UInt8((value >> $0) & 0xFF) }, encoding: .macOSRoman) ?? "????"
+        }
+
+        static func code(_ text: String) -> OSType? {
+            let bytes = Array(text.utf8)
+            guard bytes.count == 4 else { return nil }
+            return bytes.reduce(0) { $0 << 8 | OSType($1) }
+        }
+
+        var description: AudioComponentDescription {
+            AudioComponentDescription(componentType: type, componentSubType: subtype,
+                                      componentManufacturer: manufacturer, componentFlags: 0, componentFlagsMask: 0)
+        }
+    }
+
+    /// Settings: the output effect's component key, and its saved state.
+    static let choiceKey = "AOMAudioMasterEffect"
+    static let stateKey = "AOMAudioMasterEffectState"
+
+    /// Hosts alive (tests check that swapped-out ones are released).
+    private static let liveCount = AudioAtomicCounter()
+    static var live: Int { Int(liveCount.load()) }
+
+    let choice: Choice
+    let maximumFrames: Int
+    private let unit: AudioUnit
+    /// The block to process: left then right, `maximumFrames` each.
+    private let input: UnsafeMutablePointer<Float>
+    private let list: UnsafeMutableAudioBufferListPointer
+    private var sampleTime: Double = 0
+    private var frames = 0
+    /// Render calls that failed (the block then passes dry).
+    private let failures = AudioAtomicCounter()
+    var failedRenders: UInt64 { failures.load() }
+
+    /// The effects installed on this Mac (control thread).
+    static func installedEffects() -> [Choice] {
+        var description = AudioComponentDescription(componentType: kAudioUnitType_Effect, componentSubType: 0,
+                                                    componentManufacturer: 0, componentFlags: 0, componentFlagsMask: 0)
+        var result: [Choice] = []
+        var component = AudioComponentFindNext(nil, &description)
+        while let current = component {
+            var found = AudioComponentDescription()
+            var name: Unmanaged<CFString>?
+            if AudioComponentGetDescription(current, &found) == noErr,
+               AudioComponentCopyName(current, &name) == noErr, let name {
+                result.append(Choice(type: found.componentType, subtype: found.componentSubType,
+                                     manufacturer: found.componentManufacturer, name: name.takeRetainedValue() as String))
+            }
+            component = AudioComponentFindNext(current, &description)
+        }
+        return result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Control thread. nil when the component is missing or refuses the format.
+    init?(choice: Choice, sampleRate: Double = 48000, maximumFrames: Int = 512, state: Data? = nil) {
+        var description = choice.description
+        guard let component = AudioComponentFindNext(nil, &description) else { return nil }
+        var instance: AudioUnit?
+        guard AudioComponentInstanceNew(component, &instance) == noErr, let instance else { return nil }
+        var format = AudioStreamBasicDescription(mSampleRate: sampleRate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 2,
+            mBitsPerChannel: 32, mReserved: 0)
+        var maximum = UInt32(maximumFrames)
+        let size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioUnitSetProperty(instance, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, size) == noErr,
+              AudioUnitSetProperty(instance, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &format, size) == noErr,
+              AudioUnitSetProperty(instance, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0,
+                                   &maximum, 4) == noErr else {
+            AudioComponentInstanceDispose(instance)
+            return nil
+        }
+        self.choice = choice
+        self.maximumFrames = maximumFrames
+        unit = instance
+        input = .allocate(capacity: maximumFrames * 2)
+        input.initialize(repeating: 0, count: maximumFrames * 2)
+        list = AudioBufferList.allocate(maximumBuffers: 2)
+        for index in 0..<2 {
+            list[index] = AudioBuffer(mNumberChannels: 1, mDataByteSize: 0, mData: nil)
+        }
+        Self.liveCount.add()
+        var callback = AURenderCallbackStruct(inputProc: { refCon, _, _, _, frames, data in
+            guard let data else { return noErr }
+            Unmanaged<AudioUnitEffectHost>.fromOpaque(refCon)._withUnsafeGuaranteedRef {
+                $0.provide(frames: Int(frames), into: data)
+            }
+            return noErr
+        }, inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
+        guard AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback,
+                                   UInt32(MemoryLayout<AURenderCallbackStruct>.size)) == noErr,
+              AudioUnitInitialize(unit) == noErr else { return nil }
+        if let state { restore(state) }
+    }
+
+    deinit {
+        AudioUnitUninitialize(unit)
+        AudioComponentInstanceDispose(unit)
+        input.deallocate()
+        free(list.unsafeMutablePointer)
+        Self.liveCount.add(UInt64.max) // -1
+    }
+
+    /// The instance, for an editor view (control thread only).
+    var audioUnit: AudioUnit { unit }
+
+    /// The unit's state (kAudioUnitProperty_ClassInfo) as a property list.
+    var state: Data? {
+        var info: Unmanaged<CFPropertyList>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFPropertyList>?>.size)
+        guard AudioUnitGetProperty(unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info, &size) == noErr,
+              let info else { return nil }
+        let list = info.takeRetainedValue()
+        return try? PropertyListSerialization.data(fromPropertyList: list, format: .binary, options: 0)
+    }
+
+    private func restore(_ data: Data) {
+        guard let list = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) else { return }
+        var info: CFPropertyList = list as CFPropertyList
+        _ = AudioUnitSetProperty(unit, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &info,
+                                 UInt32(MemoryLayout<CFPropertyList>.size))
+    }
+
+    /// Render thread: the unit pulls the block it is given.
+    fileprivate func provide(frames count: Int, into data: UnsafeMutablePointer<AudioBufferList>) {
+        let buffers = UnsafeMutableAudioBufferListPointer(data)
+        let copied = min(count, frames)
+        for index in 0..<buffers.count {
+            let source = input + (index == 0 ? 0 : maximumFrames)
+            if let destination = buffers[index].mData {
+                let capacity = Int(buffers[index].mDataByteSize) / 4
+                let n = min(copied, capacity)
+                memcpy(destination, source, n * 4)
+                if capacity > n { memset(destination + n * 4, 0, (capacity - n) * 4) }
+            } else {
+                buffers[index].mData = UnsafeMutableRawPointer(source)
+                buffers[index].mDataByteSize = UInt32(copied * 4)
+            }
+        }
+    }
+
+    /// Render thread, in place. On failure the block stays dry.
+    @discardableResult
+    func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames count: Int) -> Bool {
+        guard count > 0, count <= maximumFrames else { return false }
+        memcpy(input, left, count * 4)
+        memcpy(input + maximumFrames, right, count * 4)
+        frames = count
+        list[0] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(count * 4), mData: UnsafeMutableRawPointer(left))
+        list[1] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(count * 4), mData: UnsafeMutableRawPointer(right))
+        var flags = AudioUnitRenderActionFlags(rawValue: 0)
+        var stamp = AudioTimeStamp()
+        stamp.mSampleTime = sampleTime
+        stamp.mFlags = .sampleTimeValid
+        let status = AudioUnitRender(unit, &flags, &stamp, 0, UInt32(count), list.unsafeMutablePointer)
+        sampleTime += Double(count)
+        var finite = status == noErr
+        if finite {
+            for index in 0..<count where !left[index].isFinite || !right[index].isFinite { finite = false; break }
+        }
+        guard finite else {
+            memcpy(left, input, count * 4)
+            memcpy(right, input + maximumFrames, count * 4)
+            failures.add()
+            return false
+        }
+        return true
     }
 }
