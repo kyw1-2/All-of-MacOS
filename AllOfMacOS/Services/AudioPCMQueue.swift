@@ -250,6 +250,9 @@ final class StereoPCMQueue {
     /// Frames the kernel computed (output frames, tails and trim crossfades
     /// included): the consumer's work, for the constant-time check (3.3.3).
     private let resampled = AudioAtomicCounter()
+    /// Where the consumer reports trims, underruns and clears with their host
+    /// time (3.3.3, A03). The consumer is its only producer.
+    private let events: AudioEventRing?
     private let correctionBits = AudioAtomicCounter(Double(0).bitPattern)
     private let targetValue = AudioAtomicCounter()
 
@@ -270,7 +273,8 @@ final class StereoPCMQueue {
     /// One output frame's kernel taps (the widest stretched window).
     private let coefficientScratch: UnsafeMutablePointer<Float>
 
-    init(capacity: Int, kernel: AudioSincKernel = .shared) {
+    init(capacity: Int, kernel: AudioSincKernel = .shared, events: AudioEventRing? = nil) {
+        self.events = events
         self.kernel = kernel
         kernelValues = kernel.values
         kernelSlopes = kernel.slopes
@@ -387,6 +391,7 @@ final class StereoPCMQueue {
             generation = currentGeneration
             let boundary = max(position, min(w, clearBoundary.load()))
             discarded.add(boundary - position); clears.add()
+            events?.push(.clear, value: boundary - position)
             if streaming {
                 // The held-back tail is the old stream's last audio: it fades out.
                 fadeOut(tail, frames: tailCount)
@@ -437,6 +442,7 @@ final class StereoPCMQueue {
                 let keep = min(available, max(target, needed(wanted + tailCount)))
                 let next = w - UInt64(keep)
                 discarded.add(next - position); trims.add()
+                events?.push(.trim, value: next - position)
                 position = next
                 controller.restart()
                 if fade > 0 && tailCount > 0 {
@@ -466,6 +472,7 @@ final class StereoPCMQueue {
                 fadeOut(work + (total - min(fade, total)) * 2, frames: min(fade, total))
                 streaming = false
                 underruns.add()
+                events?.push(.underrun)
                 calmFrames = 0
                 extra = min(3 * max(2, targetFrames), extra + max(frames, targetFrames / 2))
             } else {

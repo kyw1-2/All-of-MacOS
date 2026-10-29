@@ -133,6 +133,8 @@ final class AppAudioEngine {
         var outputSampleRate: Double = 48000
         var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
+        /// 3.3.3 (A03): the transport's ring and counters in the event log.
+        var eventSource: AudioEventLog.Source?
         let createdAt = ProcessInfo.processInfo.systemUptime
         var watchdog = AudioActivityWatchdog()
 
@@ -219,6 +221,13 @@ final class AppAudioEngine {
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 if selector == kAudioHardwarePropertyDevices || selector == kAudioHardwarePropertyDefaultOutputDevice {
                     AudioOutputService.invalidateDeviceCache()
+                    // 3.3.3 (A03): route and device changes in the event log.
+                    if selector == kAudioHardwarePropertyDefaultOutputDevice {
+                        AudioEventLog.shared.record(.defaultOutputChanged, source: "system",
+                                                    detail: Self.defaultOutputDeviceUID() ?? "none")
+                    } else {
+                        AudioEventLog.shared.record(.deviceListChanged, source: "system")
+                    }
                 } else {
                     self?.appIdentitySnapshotAt = -.infinity
                 }
@@ -1162,6 +1171,12 @@ final class AppAudioEngine {
         session.outputSampleRate = SharedOutputRenderer.sampleRate
         session.transport = transport
         session.sourceToken = source
+        let eventName = "app:" + (bundleID.isEmpty ? "pid-\(pid)" : bundleID)
+        session.eventSource = AudioEventLog.shared.register(name: eventName, rings: [transport.events]) { [weak transport] in
+            transport?.eventCounters ?? [:]
+        }
+        AudioEventLog.shared.record(.tapAttached, source: eventName, value: Int64(processObjIDs.count),
+                                    detail: "pid \(pid), \(processObjIDs.count) process objects, to \(device.name)")
         return session
     }
 
@@ -1211,6 +1226,10 @@ final class AppAudioEngine {
         }
         session.processIDs = members
         session.tapRewrites += 1
+        if let events = session.eventSource {
+            AudioEventLog.shared.record(.tapRewrite, source: events.name, value: Int64(members.count),
+                                        detail: "\(previous.count) → \(members.count) process objects")
+        }
         return true
     }
 
@@ -1235,6 +1254,10 @@ final class AppAudioEngine {
         }
         transport.setBufferedForAirPlay(source.isAirPlay)
         mixer.usesNetworkDynamics = source.isAirPlay
+        if let events = session.eventSource {
+            AudioEventLog.shared.record(.outputMoved, source: events.name,
+                                        detail: "\(session.outputUID.isEmpty ? "none" : session.outputUID) → \(device.uid) (\(device.name))")
+        }
         session.sourceToken = source
         session.outputUID = device.uid
         return true
@@ -1296,6 +1319,11 @@ final class AppAudioEngine {
         if let source = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(source) }
             session.sourceToken = nil
+        }
+        if let events = session.eventSource {
+            AudioEventLog.shared.unregister(events)
+            session.eventSource = nil
+            AudioEventLog.shared.record(.tapDetached, source: events.name, detail: "pid \(session.pid)")
         }
         session.transport = nil
         session.box.release()

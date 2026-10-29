@@ -82,11 +82,29 @@ final class AirPlayOutputRenderer {
     /// on Wi-Fi hiccups; the PCM bridge rides those out.
     static let stallLimit: TimeInterval = 6
 
-    init(deviceID: AudioDeviceID, changed: @escaping () -> Void) {
+    init(deviceID: AudioDeviceID, uid: String = "", changed: @escaping () -> Void) {
         self.deviceID = deviceID
+        self.uid = uid
         self.queue = AirPlayDeviceQueues.queue(for: deviceID)
         self.changed = changed
         queue.async { [self] in start() }
+    }
+
+    /// The device UID, for the event log (3.3.3, A03).
+    let uid: String
+    /// Device queue only: this output's registration with the event log.
+    private var eventSource: AudioEventLog.Source?
+    private var eventName: String { "output:" + (uid.isEmpty ? String(deviceID) : uid) }
+
+    /// Counters for the event log's totals (its poller's queue).
+    private var eventCounters: [String: UInt64] {
+        var result = bridge.eventCounters
+        result["output.reconfigurations"] = reconfigurations.load()
+        result["output.ignoredFormatNotices"] = ignoredFormatNotices.load()
+        result["output.processorOverloads"] = processorOverloads.load()
+        result["output.limiterEngagements"] = bus.limiterEngagements.load()
+        if let mixer { result["output.mixLateWakes"] = mixer.timeline.lateWakes.load() }
+        return result
     }
 
     var state: State {
@@ -358,6 +376,15 @@ final class AirPlayOutputRenderer {
         let thread = AirPlayMixThread(bus: bus, bridge: bridge)
         thread.start()
         mixer = thread
+        // 3.3.3 (A03): the HAL thread's ring (gaps, bridge trims/underruns),
+        // the mix thread's (limiter, late wake-ups) and the counters.
+        eventSource = AudioEventLog.shared.register(name: eventName, rings: [bridge.events, bus.events]) { [weak self] in
+            self?.eventCounters ?? [:]
+        }
+        let usageBits = ioCycleUsageBits.load()
+        AudioEventLog.shared.record(.outputStarted, source: eventName, value: Int64(configuredFrames),
+            detail: "AirPlay \(Int(configuredRate)) Hz, \(configuredFrames)-frame IO, IO cycle usage "
+                + (usageBits == 0 ? "unread" : String(format: "%.2f", Float(bitPattern: UInt32(truncatingIfNeeded: usageBits)))))
         let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(250), leeway: .milliseconds(50))
         source.setEventHandler { [weak self] in self?.checkHealth() }
@@ -448,6 +475,7 @@ final class AirPlayOutputRenderer {
     private func processorOverloaded() {
         guard !stopped else { return }
         processorOverloads.add()
+        AudioEventLog.shared.record(.overload, source: eventName, detail: "kAudioDeviceProcessorOverload")
     }
     /// Times AOM asked again for its IO buffer after it came back smaller
     /// (device queue only; at most a few per output, so two notifiers can
@@ -491,6 +519,7 @@ final class AirPlayOutputRenderer {
             }
             configuredFrames = size
             bridge.updateDeviceFrames(Int(size))
+            AudioEventLog.shared.record(.bufferSize, source: eventName, value: Int64(size), detail: "IO buffer size changed")
             // Back to a small buffer (another client, a route change): ask
             // for the large one again, a bounded number of times.
             if size < Self.preferredIOFrames, bufferRequests < Self.maximumBufferRequests,
@@ -510,6 +539,7 @@ final class AirPlayOutputRenderer {
             case .refreshBaseline:
                 baseline = observedBaseline(unit: unit, appliedRate: configuredRate)
                 ignoredFormatNotices.add()
+                AudioEventLog.shared.record(.formatNotice, source: eventName, detail: "format notice; stream unchanged, no restart")
             case .confirmLater:
                 guard !formatRecheckPending else { return }
                 formatRecheckPending = true
@@ -597,6 +627,8 @@ final class AirPlayOutputRenderer {
         // that the unit runs the new format.
         baseline = observedBaseline(unit: unit, appliedRate: rate)
         reconfigurations.add()
+        AudioEventLog.shared.record(.reconfiguration, source: eventName, value: Int64(frames),
+                                    detail: "reconfigured in place: \(Int(rate)) Hz, \(frames)-frame IO")
         GestureLog.shared.logFromAnyThread("AirPlay output reconfigured in place: \(Int(rate)) Hz, \(frames)-frame IO",
                                            level: .noMatch)
         return true
@@ -677,6 +709,7 @@ final class AirPlayOutputRenderer {
     private func fail(_ message: String) {
         guard !stopped, !failureDelivered else { return }
         failureDelivered = true
+        AudioEventLog.shared.record(.outputFailed, source: eventName, detail: message)
         // Notify main before potentially slow HAL teardown, allowing the owner
         // to release muting taps promptly. No automatic reconnect loop.
         publish(.failed(message))
@@ -688,6 +721,12 @@ final class AirPlayOutputRenderer {
         let running = mixer
         mixer = nil
         running?.stop()
+        if let source = eventSource {
+            // The last records and counts before the rings go (3.3.3, A03).
+            AudioEventLog.shared.unregister(source)
+            eventSource = nil
+            AudioEventLog.shared.record(.outputStopped, source: eventName)
+        }
         napGuard.release()
         timer?.cancel(); timer = nil
         for entry in listeners {
@@ -718,7 +757,7 @@ final class AirPlayPCMBridge {
     static let maximumTargetFrames = 19200
     /// Seconds for a lateness-raised target to decay by about 63 %.
     static let latenessDecaySeconds = 30.0
-    private let queue = StereoPCMQueue(capacity: 96000)
+    private let queue: StereoPCMQueue
     private let outputRateBits = AudioAtomicCounter(Double(48000).bitPattern)
     private let targetValue = AudioAtomicCounter(UInt64(AirPlayPCMBridge.baseTargetFrames))
     private let deviceFramesValue = AudioAtomicCounter(128)
@@ -736,7 +775,12 @@ final class AirPlayPCMBridge {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         secondsPerTick = Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+        queue = StereoPCMQueue(capacity: 96000, events: events)
     }
+
+    /// The HAL thread's event ring (3.3.3, A03): cycle gaps, and the queue's
+    /// trims, underruns and clears; read by `AudioEventLog`.
+    let events = AudioEventRing(capacity: 64)
 
     static func target(outputRate: Double, deviceFrames: Int) -> Int {
         let rate = outputRate.isFinite && outputRate > 0 ? outputRate : 48000
@@ -810,6 +854,19 @@ final class AirPlayPCMBridge {
         let calls = costCallbacks.load()
         let mean = calls > 0 ? Double(costTotalTicks.load()) / Double(calls) : 0
         return (Double(costMaxTicks.load()) * secondsPerTick * 1e6, mean * secondsPerTick * 1e6, calls)
+    }
+
+    /// Monotonic counters for the event log's totals (any non-realtime thread).
+    var eventCounters: [String: UInt64] {
+        let stats = queue.statistics
+        var result: [String: UInt64] = [:]
+        for key in ["underruns", "trims", "clears", "discardedFrames", "droppedFrames"] {
+            result["output.\(key)"] = stats[key] ?? 0
+        }
+        result["output.deviceCycleGaps"] = cycleGaps.load()
+        result["output.deviceGapFrames"] = gapFrames.load()
+        result["output.gapFadeIns"] = gapFadeIns.load()
+        return result
     }
 
     var statistics: [String: Any] {
@@ -922,6 +979,8 @@ final class AirPlayPCMBridge {
             gapFadeIndex = 0
             gapFadeLength = max(1, Int(rate * Self.gapFadeSeconds))
             gapFadeIns.add()
+            events.push(.cycleGap, value: UInt64(min(gap, 1e9).rounded()), extra: UInt64(max(0, sampleTime)),
+                        host: entered)
         }
         if gapFadeIndex < gapFadeLength { applyGapFade(data, frames: frames) }
         if produced > 0 { audioTick.store(mach_absolute_time()) }
@@ -1436,7 +1495,11 @@ final class AirPlayMixThread {
             // realign after sleep is not scheduling lateness).
             if wake.late > 0 && !wake.realigned { bridge.noteMixLateness(nanoseconds(wake.late)) }
             let throttled = wake.late > lateWake
-            if throttled { timeline.lateWakes.add() }
+            if throttled {
+                timeline.lateWakes.add()
+                // The mix thread is the bus's only renderer: its ring's producer.
+                bus.events.push(.mixLate, value: nanoseconds(wake.late) / 1000)
+            }
             // The host can demote or restore the thread at any time (App Nap,
             // a background clamp): read it again after a late wake-up and
             // every 100 wake-ups (about once a second on time).

@@ -11,7 +11,11 @@ final class AppAudioTransport {
     /// 65 536 frames (1.4 s at 48 kHz): room for the AirPlay trim floor below
     /// (until 3.3.2 32 768, half of it).
     private let capacity = 65536
-    private let queue = StereoPCMQueue(capacity: 65536)
+    /// The consumer's event ring (3.3.3, A03): the queue's trims, underruns
+    /// and clears and the output hand-overs. Its producer is whoever holds
+    /// `renderLock`, one thread at a time.
+    let events = AudioEventRing(capacity: 64)
+    private let queue: StereoPCMQueue
     private let scratch: UnsafeMutablePointer<Float>
     private let rateBits: AudioAtomicCounter
     private let remote: AudioAtomicCounter
@@ -78,6 +82,7 @@ final class AppAudioTransport {
         let rate = sampleRate.isFinite && (8000...384000).contains(sampleRate) ? sampleRate : 48000
         rateBits = AudioAtomicCounter(rate.bitPattern)
         remote = AudioAtomicCounter(bufferedForAirPlay ? 1 : 0)
+        queue = StereoPCMQueue(capacity: 65536, events: events)
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
     }
@@ -160,6 +165,19 @@ final class AppAudioTransport {
         result["handoverTakeovers"] = handoverTakeovers.load()
         return result
     }
+
+    /// Monotonic counters for the event log's totals (any non-realtime thread).
+    var eventCounters: [String: UInt64] {
+        let stats = queue.statistics
+        var result: [String: UInt64] = [:]
+        for key in ["underruns", "trims", "clears", "discardedFrames", "droppedFrames"] {
+            result["app.\(key)"] = stats[key] ?? 0
+        }
+        result["app.renderContentions"] = renderContentions.load()
+        result["app.handovers"] = handovers.load()
+        result["app.handoverTakeovers"] = handoverTakeovers.load()
+        return result
+    }
     func capture(_ input: UnsafePointer<AudioBufferList>) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         guard let first = buffers.first, first.mNumberChannels > 0,
@@ -214,6 +232,7 @@ final class AppAudioTransport {
             fadeOutRemaining = -1
             fadeInRemaining = Self.handoverFadeFrames
             handoverTakeovers.add()
+            events.push(.handover, value: 1, extra: 1)
         }
         ownerRenderTick.store(now)
         let next = pending.load()
@@ -236,6 +255,7 @@ final class AppAudioTransport {
             if target != 0, target != consumer, pending.compareExchange(expected: target, desired: 0) {
                 owner.store(target)
                 handovers.add()
+                events.push(.handover)
             }
             // The new owner (or this one, if the move was called off) starts
             // from silence.

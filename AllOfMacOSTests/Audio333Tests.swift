@@ -351,4 +351,168 @@ final class Audio333Tests: XCTestCase {
         XCTAssertTrue(pull(transport, mixer, frames: 512, consumer: 0).allSatisfy { $0 == 0 }, "A, back late, is silent")
         XCTAssertEqual(pulled(transport), before + 480)
     }
+
+    // MARK: - A03: event log
+
+    /// A producer thread pushes as fast as it can while a reader drains:
+    /// every record read is whole (its fields belong together) and in order,
+    /// and read + lost accounts for every push.
+    func testTheEventRingHandsOverWholeRecordsWithoutLocks() {
+        let ring = AudioEventRing(capacity: 64)
+        let total: UInt64 = 200_000
+        let producer = Thread {
+            for index in 0..<total { ring.push(.cycleGap, value: index, extra: index &* 3, host: index + 1) }
+        }
+        producer.start()
+        var cursor: UInt64 = 0, read: UInt64 = 0, lost: UInt64 = 0, last: UInt64?
+        var torn = 0, disordered = 0
+        while cursor < total {
+            let result = ring.read(from: &cursor)
+            lost += result.lost
+            for record in result.records {
+                read += 1
+                if record.extra != record.value &* 3 || record.host != record.value + 1
+                    || record.kind != AudioEventKind.cycleGap.rawValue { torn += 1 }
+                if let last, record.value <= last { disordered += 1 }
+                last = record.value
+            }
+        }
+        XCTAssertEqual(torn, 0, "no record mixes two pushes")
+        XCTAssertEqual(disordered, 0)
+        XCTAssertEqual(read + lost, total, "everything is read or counted as lost")
+        XCTAssertGreaterThan(read, 0)
+    }
+
+    func testTheEventLogKeepsTheLast200EventsWithWallClockTimes() {
+        let log = AudioEventLog(polls: false)
+        for index in 0..<250 { log.record(.tapRewrite, source: "app:test", value: Int64(index), detail: "\(index)") }
+        var events = log.snapshot().events
+        XCTAssertEqual(events.count, AudioEventLog.capacity)
+        XCTAssertEqual(events.first?.detail, "50", "the oldest kept is the 51st")
+        XCTAssertEqual(events.last?.detail, "249")
+        XCTAssertEqual(events.map(\.value), (50..<250).map(Int64.init), "oldest first")
+        // A realtime record keeps the time it happened, not the time it was read.
+        let ring = AudioEventRing()
+        log.register(name: "output:test", rings: [ring])
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let halfSecond = UInt64(0.5e9 * Double(timebase.denom) / Double(timebase.numer))
+        ring.push(.cycleGap, value: 256, extra: 4096, host: mach_absolute_time() - halfSecond)
+        log.poll()
+        events = log.snapshot().events
+        guard let gap = events.last else { return XCTFail("no event") }
+        XCTAssertEqual(gap.kind, .cycleGap)
+        XCTAssertEqual(gap.source, "output:test")
+        XCTAssertEqual(gap.value, 256)
+        XCTAssertEqual(gap.time.timeIntervalSinceNow, -0.5, accuracy: 0.15)
+        XCTAssertEqual(gap.json["frames"] as? Int64, 256)
+        XCTAssertNotNil((gap.json["time"] as? String)?.range(of: #"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}"#,
+                                                              options: .regularExpression))
+    }
+
+    /// Counters outlive the outputs and sessions that produced them, and the
+    /// "since last reset" snapshot starts again at a reset.
+    func testSinceResetCountersSurviveTheOutputsThatProducedThem() {
+        let log = AudioEventLog(polls: false)
+        var first: UInt64 = 3
+        let a = log.register(name: "output:a", rings: []) { ["output.underruns": first] }
+        log.poll()
+        first = 5
+        log.unregister(a) // its last count is taken on the way out
+        XCTAssertEqual(log.snapshot().sinceReset["output.underruns"], 5)
+        var second: UInt64 = 2
+        log.register(name: "output:b", rings: []) { ["output.underruns": second] }
+        log.poll()
+        XCTAssertEqual(log.snapshot().sinceReset["output.underruns"], 7, "a recreated output adds, it does not reset")
+        log.resetCounters()
+        XCTAssertNil(log.snapshot().sinceReset["output.underruns"])
+        second = 4
+        log.poll()
+        let snapshot = log.snapshot()
+        XCTAssertEqual(snapshot.sinceReset["output.underruns"], 2)
+        XCTAssertEqual(snapshot.events.last?.kind, .countersReset)
+        XCTAssertLessThan(abs(snapshot.resetAt.timeIntervalSinceNow), 2)
+    }
+
+    /// The realtime producers' events reach the log with their sources: a
+    /// HAL gap (bridge), an output hand-over (transport), and one limiter
+    /// engagement for a loud passage, released 2 s after it ended.
+    func testRealtimeEventsReachTheLog() {
+        let log = AudioEventLog(polls: false)
+        let bridge = AirPlayPCMBridge()
+        bridge.configure(outputRate: 48000, deviceFrames: 128)
+        bridge.prime()
+        log.register(name: "output:homepod", rings: [bridge.events]) { bridge.eventCounters }
+        var phase = 0.0
+        for (index, time) in [0.0, 128, 512, 640].enumerated() {
+            push(bridge, phase: &phase, frames: 128, at: Double(index) * 0.003)
+            _ = render(bridge, frames: 128, sampleTime: time, at: Double(index) * 0.003 + 0.0001)
+        }
+        let transport = AppAudioTransport(sampleRate: 48000)
+        let mixer = MixerBox(gain: 1, muted: false)
+        log.register(name: "app:test", rings: [transport.events]) { transport.eventCounters }
+        for _ in 0..<20 {
+            capture(transport, phase: &phase, frames: 512)
+            _ = pull(transport, mixer, frames: 512, consumer: 0)
+        }
+        let next = transport.makeConsumer()
+        transport.beginHandover(to: next)
+        capture(transport, phase: &phase, frames: 512)
+        _ = pull(transport, mixer, frames: 512, consumer: 0)
+        let bus = AppAudioRenderBus()
+        log.register(name: "output:speakers", rings: [bus.events]) { ["output.limiterEngagements": bus.limiterEngagements.load()] }
+        var loud = true
+        var sample = 0
+        bus.add(id: UUID()) { frames, list in
+            let buffers = UnsafeMutableAudioBufferListPointer(list)
+            guard let data = buffers[0].mData?.assumingMemoryBound(to: Float.self) else { return }
+            for frame in 0..<frames {
+                let value: Float = loud ? Float(1.6 * sin(2 * Double.pi * 200 * Double(sample) / 48000)) : 0
+                data[frame * 2] = value; data[frame * 2 + 1] = value
+                sample += 1
+            }
+        }
+        var output = [Float](repeating: 0, count: 1024)
+        func renderBus(seconds: Double) {
+            for _ in 0..<Int(seconds * 48000 / 512) {
+                output.withUnsafeMutableBufferPointer { pointer in
+                    var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                        mNumberChannels: 2, mDataByteSize: UInt32(pointer.count * 4), mData: pointer.baseAddress))
+                    withUnsafeMutablePointer(to: &list) { bus.render(frames: 512, output: $0, allowWaiting: true) }
+                }
+            }
+        }
+        renderBus(seconds: 1)
+        loud = false
+        renderBus(seconds: 2.5)
+        log.poll()
+        let snapshot = log.snapshot()
+        let kinds = snapshot.events.map { "\($0.source) \($0.kind.name)" }
+        XCTAssertTrue(kinds.contains("output:homepod cycleGap"), "\(kinds)")
+        XCTAssertEqual(snapshot.events.first { $0.kind == .cycleGap }?.value, 256)
+        XCTAssertTrue(kinds.contains("app:test handover"), "\(kinds)")
+        XCTAssertEqual(kinds.filter { $0 == "output:speakers limiterEngaged" }.count, 1, "one loud passage, one engagement")
+        XCTAssertEqual(kinds.filter { $0 == "output:speakers limiterReleased" }.count, 1)
+        let released = snapshot.events.first { $0.kind == .limiterReleased }
+        XCTAssertGreaterThan(released?.value ?? 0, 300, "about 4 dB of reduction for a sine 4 dB over the ceiling")
+        XCTAssertEqual(snapshot.sinceReset["output.deviceCycleGaps"], 1)
+        XCTAssertEqual(snapshot.sinceReset["output.limiterEngagements"], 1)
+        XCTAssertEqual(snapshot.sinceReset["app.handovers"], 1)
+    }
+
+    func testTheDiagnosticsFileCarriesEventsAndSinceResetCounters() throws {
+        let log = AudioEventLog(polls: false)
+        log.record(.outputStarted, source: "output:test", value: 128, detail: "AirPlay 48000 Hz, 128-frame IO")
+        log.register(name: "output:test", rings: []) { ["output.deviceCycleGaps": 2] }
+        log.poll()
+        let payload = AudioDiagnostics.payload(captures: [:], outputs: ["test": ["deviceCycleGaps": UInt64(2)]], log: log)
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let events = try XCTUnwrap(decoded["events"] as? [[String: Any]])
+        XCTAssertEqual(events.first?["kind"] as? String, "outputStarted")
+        XCTAssertEqual(events.first?["detail"] as? String, "AirPlay 48000 Hz, 128-frame IO")
+        let since = try XCTUnwrap(decoded["sinceReset"] as? [String: Any])
+        XCTAssertNotNil(since["resetAt"] as? String)
+        XCTAssertEqual((since["counters"] as? [String: Any])?["output.deviceCycleGaps"] as? Int, 2)
+    }
 }

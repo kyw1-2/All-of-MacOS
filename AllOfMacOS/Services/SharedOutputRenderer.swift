@@ -25,11 +25,18 @@ final class SharedOutputRenderer {
         let deviceID: AudioDeviceID
         var observer: NSObjectProtocol?
         var failure: String?
+        /// 3.3.3 (A03): this output's ring and counters in the event log;
+        /// they go when the graph does (every removal path drops it).
+        var eventSource: AudioEventLog.Source?
         init(engine: AVAudioEngine, bus: AppAudioRenderBus, node: AVAudioSourceNode, deviceID: AudioDeviceID) {
             self.engine = engine; self.bus = bus; self.node = node; self.deviceID = deviceID
         }
         deinit {
             if let observer { NotificationCenter.default.removeObserver(observer) }
+            if let eventSource {
+                AudioEventLog.shared.unregister(eventSource)
+                AudioEventLog.shared.record(.outputStopped, source: eventSource.name)
+            }
         }
     }
     /// Output Magic Boost is a switch, as in SoundSource; 0 = off, 1 = on.
@@ -54,7 +61,7 @@ final class SharedOutputRenderer {
             old.stop(); airPlayOutputs.removeValue(forKey: device.uid)
         }
         if airPlayOutputs[device.uid] == nil {
-            let output = AirPlayOutputRenderer(deviceID: device.id) {
+            let output = AirPlayOutputRenderer(deviceID: device.id, uid: device.uid) {
                 if #available(macOS 14.2, *) { AppAudioEngine.shared.requestSync() }
             }
             output.bus.setBoostLevel(masterBoostLevel)
@@ -140,6 +147,10 @@ final class SharedOutputRenderer {
         engine.prepare()
         do { try engine.start() } catch { engine.stop(); return nil }
         let graph = DeviceGraph(engine: engine, bus: bus, node: node, deviceID: device.id)
+        graph.eventSource = AudioEventLog.shared.register(name: "output:\(uid)", rings: [bus.events]) { [weak bus] in
+            ["output.limiterEngagements": bus?.limiterEngagements.load() ?? 0]
+        }
+        AudioEventLog.shared.record(.outputStarted, source: "output:\(uid)", detail: "\(device.name), local output")
         graph.observer = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self, weak graph] _ in
@@ -305,6 +316,50 @@ final class AppAudioRenderBus {
     private let limiter: AudioLookaheadLimiter
     private let boost = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
     private let boostLevel = AudioAtomicCounter()
+    /// 3.3.3 (A03): the render thread's ring (limiter engagement; on an
+    /// AirPlay bus also the mix clock's late wake-ups) and the engagements so far.
+    let events = AudioEventRing(capacity: 32)
+    let limiterEngagements = AudioAtomicCounter()
+    /// Below this gain (−0.1 dB) the limiter counts as engaged; it counts as
+    /// released after `limiterReleaseHoldSeconds` without any reduction, so a
+    /// loud passage is one engagement, not one per peak.
+    static let limiterEngageGain: Float = 0.98855
+    static let limiterReleaseHoldSeconds = 2.0
+    // Render thread only.
+    private var limiterEngaged = false
+    private var limiterQuietFrames = 0
+    private var limiterEpisodeFrames = 0
+    private var limiterEpisodeDeepest: Float = 1
+
+    /// Centi-dB of gain reduction (render thread; no allocation).
+    private static func centiDecibels(_ gain: Float) -> UInt64 {
+        guard gain > 0, gain < 1 else { return gain >= 1 ? 0 : 99_999 }
+        return UInt64((-20 * log10(Double(gain)) * 100).rounded())
+    }
+
+    /// Render thread: one chunk's limiter activity into episodes.
+    private func noteLimiter(frames: Int) {
+        let deepest = limiter.takeDeepestReduction()
+        if deepest < Self.limiterEngageGain {
+            if !limiterEngaged {
+                limiterEngaged = true
+                limiterEpisodeFrames = 0
+                limiterEpisodeDeepest = deepest
+                limiterEngagements.add()
+                events.push(.limiterEngaged, value: Self.centiDecibels(deepest))
+            }
+            limiterEpisodeDeepest = min(limiterEpisodeDeepest, deepest)
+            limiterQuietFrames = 0
+        } else if limiterEngaged {
+            limiterQuietFrames += frames
+            if Double(limiterQuietFrames) >= Self.limiterReleaseHoldSeconds * SharedOutputRenderer.sampleRate {
+                limiterEngaged = false
+                events.push(.limiterReleased, value: Self.centiDecibels(limiterEpisodeDeepest),
+                            extra: UInt64(Double(limiterEpisodeFrames) * 1000 / SharedOutputRenderer.sampleRate))
+            }
+        }
+        if limiterEngaged { limiterEpisodeFrames += frames }
+    }
     /// Output Magic Boost switch; any level above zero is on.
     func setBoostLevel(_ level: Int) {
         boostLevel.store(level > 0 ? 1 : 0)
@@ -451,6 +506,7 @@ final class AppAudioRenderBus {
             }
             boost.process(left: left, right: right, frames: count, enabled: boostEnabled)
             limiter.process(left: left, right: right, frames: count)
+            noteLimiter(frames: count)
             for index in 0..<count {
                 sum[(offset + index) * 2] = left[index]; sum[(offset + index) * 2 + 1] = right[index]
             }

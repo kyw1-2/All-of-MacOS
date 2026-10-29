@@ -176,6 +176,16 @@ final class AudioLookaheadLimiter {
     private var firstSum: Double, secondSum: Double
     private var envelope: Float = 1
     private(set) var reduction: Float = 1
+    /// The deepest gain since the last `takeDeepestReduction` (render thread).
+    private var deepest: Float = 1
+
+    /// The lowest gain applied since the last call, then starts again (1:
+    /// the limiter did nothing). Render thread; for the event log (3.3.3).
+    func takeDeepestReduction() -> Float {
+        let value = deepest
+        deepest = 1
+        return value
+    }
 
     /// Total delay from input to output, frames.
     var latencyFrames: Int { delayLength }
@@ -284,6 +294,7 @@ final class AudioLookaheadLimiter {
             if smoothed < envelope { envelope = smoothed }
             else { envelope = min(smoothed, envelope + (smoothed - envelope) * releaseCoefficient) }
             reduction = envelope
+            if envelope < deepest { deepest = envelope }
             let delaySlot = delayIndex * 2
             let outputLeft = delay[delaySlot] * envelope
             let outputRight = delay[delaySlot + 1] * envelope
