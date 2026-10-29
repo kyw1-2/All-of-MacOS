@@ -349,6 +349,15 @@ enum SwishSnap {
                 | (flags.contains(.shift) ? Modifiers.secondary.rawValue : 0)
                 | (flags.contains(.command) ? Modifiers.screen.rawValue : 0))
         }
+
+        /// The gesture modifiers of the roles held (3.3.3, F05: the keys come
+        /// from `ModifierRoles`; Super and Tertiary do not change a gesture's
+        /// meaning, they change where it may start and the grid).
+        init(held roles: Set<ModifierRole>) {
+            self.init(rawValue: (roles.contains(.general) ? Modifiers.general.rawValue : 0)
+                | (roles.contains(.secondary) ? Modifiers.secondary.rawValue : 0)
+                | (roles.contains(.screen) ? Modifiers.screen.rawValue : 0))
+        }
     }
 
     /// What a title-bar gesture does to the window instead of moving it to a cell.
@@ -1923,6 +1932,16 @@ final class TitleBarWindowSnap {
     /// The swipe that engaged while a commit was landing.
     @MainActor private var chain = SwishChainQueue()
 
+    /// The modifier roles held as this gesture began (F05), and the options
+    /// they give it: Secondary and Tertiary unlock their grids, Secondary
+    /// almost-maximizes on a swipe up.
+    @MainActor private var heldRoles: Set<SwishSnap.ModifierRole> = []
+
+    @MainActor
+    private func gestureOptionsNow() -> SwishSnap.GestureOptions {
+        SwishSnap.effectiveOptions(Self.gestureOptions(), held: heldRoles)
+    }
+
     /// The window under the pointer for a gesture that is starting. The
     /// touch-down lookup is reused while the pointer has not moved (two
     /// resting or scrolling fingers do not move it).
@@ -1942,7 +1961,7 @@ final class TitleBarWindowSnap {
     /// completes an action waiting on the same app. False when no display
     /// holds it.
     @MainActor
-    private func adopt(_ capture: Capture) -> Bool {
+    private func adopt(_ capture: Capture, roles: Set<SwishSnap.ModifierRole>? = nil) -> Bool {
         // AOM paused for the window's app: no gesture acts on it, even while
         // another app is in front (3.3.2 review: the pause is keyed to the
         // frontmost app).
@@ -1953,11 +1972,14 @@ final class TitleBarWindowSnap {
         let area = Self.snapArea(screens[index].visible)
         targetVisible = area
         startFrame = capture.frame
-        let options = Self.gestureOptions()
+        // F05 (3.3.3): the configurable modifier roles, read as the gesture
+        // starts (a hotkey passes the roles its chord stands for).
+        heldRoles = roles ?? SwishSnap.heldRoles()
+        modifiers = SwishSnap.Modifiers(held: heldRoles)
+        let options = gestureOptionsNow()
         startPlace = history.place(key: Self.key(capture.window), current: capture.frame)
             ?? SwishSnap.place(of: capture.frame, visible: area, margin: margin,
                                grid: options.grid, almost: options.almostMaximize)
-        modifiers = SwishSnap.Modifiers(flags: NSEvent.modifierFlags)
         // Bounded (3.3.2 review): this runs on main as the swipe engages.
         fullscreen = Self.boundedIsFullscreen(capture.window)
         repeating = pending.flatMap { $0.target.pid == capture.window.pid ? $0.action : nil }
@@ -2077,6 +2099,33 @@ final class TitleBarWindowSnap {
         if named { GestureHUD.shared.show(title: "Cancelled") }
     }
 
+    /// Esc cancels the gesture on show (Swish: "Cancel gestures by pressing
+    /// Esc or resting for the specified timeout"): its preview or HUD goes, a
+    /// "twice" action still waiting is dropped, and the fingers do nothing
+    /// more until they lift. False, and the key goes on to the app, when no
+    /// gesture is on show. From `KeyboardMonitor`'s Esc handling; the
+    /// service is not built while the snap is off.
+    @MainActor
+    static func cancelOnEscape() -> Bool {
+        guard UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false else { return false }
+        return shared.escapeCancel()
+    }
+
+    @MainActor
+    private func escapeCancel() -> Bool {
+        guard SwishSnap.escapeCancels(gestureOnShow: target != nil, tabHeld: heldTab != nil,
+                                      actionWaiting: pending != nil,
+                                      motionQueued: committing && chain.queue.last?.lifted == false) else { return false }
+        heldTab = nil
+        cancelPending()
+        GestureLog.shared.logFromAnyThread("Title-bar gesture cancelled: Esc", level: .detect)
+        cancel()
+        // The recognizer drops the rest of the touch, as after a watchdog cancel.
+        cancelRequests &+= 1
+        GestureHUD.shared.show(title: "Cancelled")
+        return true
+    }
+
     /// The service gives up on its own (no frames, sleep): hide the preview,
     /// drop anything waiting, and make the recognizer drop the gesture too.
     @MainActor
@@ -2107,7 +2156,7 @@ final class TitleBarWindowSnap {
     private func plan(for stroke: SwishSnap.Stroke, target: WindowManager.Target,
                       visible: CGRect, start: CGRect) -> Plan? {
         guard let move = SwishSnap.move(at: startPlace, stroke: stroke, modifiers: modifiers,
-                                        options: Self.gestureOptions(), fullscreen: fullscreen) else { return nil }
+                                        options: gestureOptionsNow(), fullscreen: fullscreen) else { return nil }
         switch move {
         case .restore:
             return restorePlan(target: target, visible: visible, start: start)
@@ -2341,7 +2390,7 @@ final class TitleBarWindowSnap {
     @MainActor
     private func reset() {
         target = nil; targetVisible = nil; startFrame = nil; startPlace = nil; plan = nil; targetTab = nil
-        modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil
+        modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil; heldRoles = []
     }
 
     // MARK: Pinches, taps and tap-and-hold (3.3.2)
@@ -2451,7 +2500,7 @@ final class TitleBarWindowSnap {
     @MainActor
     private func doubleTapped(_ capture: Capture, option: SwishSnap.DoubleTap) {
         let options = Self.gestureOptions()
-        let held = options.modifierGestures ? SwishSnap.Modifiers(flags: NSEvent.modifierFlags) : []
+        let held = options.modifierGestures ? SwishSnap.Modifiers(held: SwishSnap.heldRoles()) : []
         guard let move = SwishSnap.doubleTapMove(option, modifiers: held) else { return }
         switch move {
         case .action(let action):
@@ -2866,45 +2915,73 @@ final class TitleBarWindowSnap {
     /// of the chosen keys swipes the front window that way. True consumes the
     /// key. Off, paused, AOM in front, or any other key: it goes on to the app.
     @MainActor
-    func handleHotKey(keyCode: UInt16, modifiers flags: NSEvent.ModifierFlags) -> Bool {
-        guard hotkeys != .off, hotkeyAllowedNow,
-              let direction = SwishSnap.hotkeyDirection(keyCode: keyCode, modifiers: flags, scheme: hotkeys),
+    func handleHotKey(keyCode: UInt16, modifiers flags: NSEvent.ModifierFlags, secureInput: Bool = false) -> Bool {
+        // Secure input (a password field) or a paused keyboard: the key goes on.
+        guard hotkeys != .off, !secureInput, hotkeyAllowedNow,
+              let command = SwishSnap.hotkeyCommand(keyCode: keyCode, modifiers: flags, scheme: hotkeys,
+                                                    center: Self.hotkeyCenter(), roles: .load(.standard)),
               let front = NSWorkspace.shared.frontmostApplication,
-              front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return false }
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              !Self.appPaused(front.processIdentifier) else { return false }
         let pid = front.processIdentifier
         // The Accessibility work runs once the tap callback has returned.
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { TitleBarWindowSnap.shared.hotkeySwipe(direction, pid: pid) }
+            MainActor.assumeIsolated { TitleBarWindowSnap.shared.hotkey(command, pid: pid) }
         }
         return true
+    }
+
+    /// The center key of the ⌃⌥ hotkeys (Swish's "Center: Esc | ⌫ | ↩"), a
+    /// `SwishSnap.HotkeyCenterKey` raw value: "escape" (default),
+    /// "backspace", "return" or "off". Only while the hotkeys are on.
+    static let hotkeyCenterKey = "AOMTitleBarSnapHotkeyCenter"
+
+    static func hotkeyCenter(_ defaults: UserDefaults = .standard) -> SwishSnap.HotkeyCenterKey {
+        defaults.string(forKey: hotkeyCenterKey).flatMap(SwishSnap.HotkeyCenterKey.init(rawValue:)) ?? .escape
     }
 
     /// The commit in flight came from a hotkey: the pointer stays where it is.
     @MainActor private var keyboardCommit = false
 
-    /// A hotkey press is a swipe on the front window: the same chaining from
-    /// its place, the same commit (`WindowManager.applySnap`) and the same
-    /// history as a title-bar swipe.
+    /// A hotkey press is a gesture on the front window: the same chaining
+    /// from its place, the same commit (`WindowManager.applySnap`) and the
+    /// same history as a title-bar swipe. ⌃⌥ belong to the chord, so the
+    /// gesture's roles are the ones the command names: none for a plain
+    /// swipe, Screen (move to the display that way), Secondary (3 × 2 grid,
+    /// up almost-maximizes); the center key restores or centres.
     @MainActor
-    private func hotkeySwipe(_ direction: SwishSnap.Direction, pid: pid_t) {
+    private func hotkey(_ command: SwishSnap.HotkeyCommand, pid: pid_t) {
         guard hotkeyAllowedNow, !committing, target == nil, pid != ProcessInfo.processInfo.processIdentifier,
+              !Self.appPaused(pid),
               let window = Self.focusedWindow(of: pid), let frame = Self.boundedFrame(of: window) else { return }
+        let roles: Set<SwishSnap.ModifierRole>
+        let direction: SwishSnap.Direction?
+        switch command {
+        case .swipe(let way): roles = []; direction = way
+        case .screen(let way): roles = [.screen]; direction = way
+        case .secondary(let way): roles = [.secondary]; direction = way
+        case .center: roles = []; direction = nil
+        }
         let capture = Capture(mouse: NSEvent.mouseLocation, window: window, frame: frame,
                               at: ProcessInfo.processInfo.systemUptime)
         // `adopt` asks whether the window is in full screen: bounded too.
         AXUIElementSetMessagingTimeout(window.window, 0.25)
-        let adopted = adopt(capture)
+        let adopted = adopt(capture, roles: roles)
         AXUIElementSetMessagingTimeout(window.window, 0)
         guard adopted, let visible = targetVisible else { reset(); return }
-        // ⌃⌥ belong to the hotkey, not to Swish's gesture modifiers, and a key
-        // never completes a half-done "twice" gesture.
-        modifiers = []
+        // A key never completes a half-done "twice" gesture.
         repeating = nil
-        guard let next = plan(for: SwishSnap.Stroke(direction), target: window, visible: visible, start: frame) else {
-            reset(); return
+        let next: Plan?
+        if let direction {
+            next = plan(for: SwishSnap.Stroke(direction), target: window, visible: visible, start: frame)
+            GestureLog.shared.logFromAnyThread("Snap hotkey \(SwishSnap.arrow(direction))", level: .detect)
+        } else {
+            // Swish: "Press the center key to center & unsnap."
+            next = restorePlan(target: window, visible: visible, start: frame)
+            GestureLog.shared.logFromAnyThread("Snap hotkey: center", level: .detect)
         }
+        guard let next else { reset(); return }
         plan = next
-        GestureLog.shared.logFromAnyThread("Snap hotkey \(SwishSnap.arrow(direction))", level: .detect)
         if let action = next.action {
             run(action, plan: next, target: window, start: frame)
             return

@@ -423,6 +423,8 @@ class KeyboardMonitor: ObservableObject {
                 if ClipboardPanelController.shared.isVisible {
                     return ClipboardPanelController.shared.handleEscape()
                 }
+                // Swish: Esc cancels the title-bar gesture on show (3.3.3).
+                if TitleBarWindowSnap.cancelOnEscape() { return true }
                 return false
             }
             if handledOverlay {
@@ -470,7 +472,8 @@ class KeyboardMonitor: ObservableObject {
                     // Swish's ⌃⌥ snap hotkeys; the defaults check keeps the
                     // service unbuilt while they are off.
                     (TitleBarWindowSnap.hotkeysWanted()
-                        && TitleBarWindowSnap.shared.handleHotKey(keyCode: keyCode, modifiers: modifiers))
+                        && TitleBarWindowSnap.shared.handleHotKey(keyCode: keyCode, modifiers: modifiers,
+                                                                  secureInput: IsSecureEventInputEnabled()))
             })
             if handled { pressed[keyCode] = [] }
             return handled

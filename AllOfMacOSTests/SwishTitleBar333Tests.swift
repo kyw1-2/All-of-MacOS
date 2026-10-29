@@ -391,3 +391,203 @@ final class SwishTitleBar333Tests: XCTestCase {
         XCTAssertTrue(TitleBarWindowSnap.tabGesturesOn(defaults))
     }
 }
+
+// MARK: - F05 modifier roles and keyboard
+
+extension SwishTitleBar333Tests {
+    private typealias Roles = SwishSnap.ModifierRoles
+    private typealias Keys = SwishSnap.ModifierKeys
+
+    private func suite(_ name: String) -> UserDefaults {
+        UserDefaults(suiteName: "aom.test.swish333.\(name).\(UUID().uuidString)")!
+    }
+
+    func testTheStandardRolesKeep332sModifiers() {
+        let roles = Roles.standard
+        XCTAssertEqual(roles.superKey, .function)
+        XCTAssertEqual(roles.general, .option)
+        XCTAssertEqual(roles.screen, .command)
+        XCTAssertEqual(roles.secondary, .shift)
+        XCTAssertEqual(roles.tertiary, .control)
+        XCTAssertTrue(roles.isValid)
+        // The 3.3.2 hard-wired mapping and the role mapping agree.
+        for flags: NSEvent.ModifierFlags in [[], .option, .shift, .command, [.option, .shift], [.command, .option]] {
+            XCTAssertEqual(SwishSnap.Modifiers(held: roles.held(flags)), SwishSnap.Modifiers(flags: flags), "\(flags)")
+        }
+        XCTAssertEqual(roles.held([.function, .capsLock, .numericPad]), [.superKey], "Caps Lock and the keypad bit are ignored")
+    }
+
+    func testRolesThatShareAKeyConflictAndAreRefused() {
+        var roles = Roles.standard
+        XCTAssertEqual(roles.conflict(setting: .superKey, to: .option)?.second, .general, "⌥ is General's")
+        XCTAssertNil(roles.conflict(setting: .superKey, to: []), "turning a role off never conflicts")
+        XCTAssertEqual(roles.conflict(setting: .superKey, to: [.control, .option, .command, .shift])?.second, .general,
+                       "the first clash is reported")
+        roles.superKey = [.control, .option]
+        XCTAssertEqual(roles.conflicts.map(\.first), [.superKey, .superKey])
+        XCTAssertFalse(roles.isValid)
+
+        let defaults = suite("roles")
+        XCTAssertFalse(Roles.save(roles, to: defaults), "a conflicting set is never written")
+        XCTAssertNil(defaults.object(forKey: SwishSnap.ModifierRole.superKey.defaultsKey))
+        // A swap with no overlap is fine: General ⌃, Tertiary ⌥.
+        var swapped = Roles.standard
+        swapped.general = .control
+        swapped.tertiary = .option
+        XCTAssertTrue(Roles.save(swapped, to: defaults))
+        XCTAssertEqual(Roles.load(defaults), swapped)
+        XCTAssertNil(Roles.loadIssue(defaults))
+        XCTAssertEqual(SwishSnap.Modifiers(held: swapped.held(.control)), .general, "⌃ now closes on a swipe down")
+        XCTAssertEqual(SwishSnap.move(at: nil, stroke: .init(.down), modifiers: .init(held: swapped.held(.control)),
+                                      options: .init()), .action(.close))
+        // A hand-edited backup that conflicts falls back to the standard set,
+        // and says why (Tertiary is still ⌥ from the swap above).
+        defaults.set(Keys.option.rawValue, forKey: SwishSnap.ModifierRole.screen.defaultsKey)
+        XCTAssertEqual(Roles.load(defaults), .standard)
+        XCTAssertEqual(Roles.loadIssue(defaults), "Screen and Tertiary share ⌥; using the standard modifiers.")
+        defaults.set(0b1110_0000, forKey: SwishSnap.ModifierRole.screen.defaultsKey)
+        XCTAssertEqual(Keys(rawValue: 0b1110_0000), [], "unknown bits are dropped")
+    }
+
+    func testSecondaryAndTertiaryUnlockTheirGridsForOneGesture() {
+        let base = SwishSnap.GestureOptions()
+        XCTAssertEqual(SwishSnap.effectiveOptions(base, held: []).grid, .twoByTwo)
+        XCTAssertEqual(SwishSnap.effectiveOptions(base, held: [.secondary]).grid, .threeByTwo)
+        XCTAssertTrue(SwishSnap.effectiveOptions(base, held: [.secondary]).almostMaximize, "⇧ up almost-maximizes")
+        XCTAssertEqual(SwishSnap.effectiveOptions(base, held: [.tertiary]).grid, .threeByThree)
+        XCTAssertEqual(SwishSnap.effectiveOptions(.init(grid: .threeByThree), held: [.secondary]).grid, .threeByThree,
+                       "secondary never shrinks 3 × 3")
+        let off = SwishSnap.GestureOptions(modifierGestures: false)
+        XCTAssertEqual(SwishSnap.effectiveOptions(off, held: [.tertiary, .secondary]), off, "modifier gestures off")
+        // ⇧ swipe up on a free window: Almost Maximize; ⌃ swipe left in 2 × 2 reaches a third with a longer swipe.
+        let secondary = SwishSnap.effectiveOptions(base, held: [.secondary])
+        XCTAssertEqual(SwishSnap.move(at: nil, stroke: .init(.up), modifiers: [.secondary], options: secondary),
+                       .place(.almostMaximize))
+        let tertiary = SwishSnap.effectiveOptions(base, held: [.tertiary])
+        XCTAssertEqual(SwishSnap.move(at: nil, stroke: .init(.left, tier: 2), modifiers: [], options: tertiary),
+                       .cell(.leftThird))
+    }
+
+    func testHotkeyCommands() {
+        func command(_ key: UInt16, _ flags: NSEvent.ModifierFlags, _ scheme: SwishSnap.HotkeyScheme = .arrows,
+                     center: SwishSnap.HotkeyCenterKey = .escape, roles: Roles = .standard) -> SwishSnap.HotkeyCommand? {
+            SwishSnap.hotkeyCommand(keyCode: key, modifiers: flags, scheme: scheme, center: center, roles: roles)
+        }
+        let chord: NSEvent.ModifierFlags = [.control, .option]
+        XCTAssertEqual(command(123, chord.union([.function, .numericPad])), .swipe(.left), "arrow keys carry fn and keypad")
+        XCTAssertEqual(command(124, chord.union(.command)), .screen(.right), "⌘: to the display that way")
+        XCTAssertEqual(command(126, chord.union(.shift)), .secondary(.up))
+        XCTAssertNil(command(126, chord.union([.shift, .command])), "both extensions: nothing")
+        XCTAssertNil(command(126, .option), "not the chord")
+        XCTAssertEqual(command(53, chord), .center, "⌃⌥Esc: center and unsnap")
+        XCTAssertNil(command(51, chord), "⌫ is not the center key chosen")
+        XCTAssertEqual(command(51, chord, center: .backspace), .center)
+        XCTAssertEqual(command(76, chord, center: .return), .center, "keypad Enter")
+        XCTAssertNil(command(53, chord, center: .off))
+        XCTAssertNil(command(53, chord.union(.command)), "the center key only with the bare chord")
+        XCTAssertNil(command(123, chord, .off), "hotkeys off")
+        XCTAssertNil(command(53, chord, .off), "the center key too")
+        // Dvorak's ,AOE are the WASD positions.
+        XCTAssertEqual(command(13, chord, .dvorak), .swipe(.up))
+        XCTAssertEqual(command(1, chord, .dvorak), .swipe(.down))
+        XCTAssertEqual(SwishSnap.HotkeyScheme.dvorak.label, ",AOE")
+        // A Screen role on ⌃ (part of the chord) cannot extend it.
+        var roles = Roles.standard
+        roles.screen = .control
+        roles.tertiary = []
+        XCTAssertNil(command(124, chord.union(.command), roles: roles))
+        // Every scheme's keys are distinct.
+        for scheme in SwishSnap.HotkeyScheme.allCases {
+            guard let keys = scheme.keyCodes else { continue }
+            XCTAssertEqual(Set([keys.left, keys.right, keys.up, keys.down]).count, 4, "\(scheme)")
+        }
+        XCTAssertEqual(TitleBarWindowSnap.hotkeyCenter(suite("center")), .escape)
+    }
+
+    func testEscapeCancelsOnlyAGestureOnShow() {
+        XCTAssertFalse(SwishSnap.escapeCancels(gestureOnShow: false, tabHeld: false, actionWaiting: false, motionQueued: false),
+                       "nothing on show: Esc goes to the app")
+        XCTAssertTrue(SwishSnap.escapeCancels(gestureOnShow: true, tabHeld: false, actionWaiting: false, motionQueued: false))
+        XCTAssertTrue(SwishSnap.escapeCancels(gestureOnShow: false, tabHeld: true, actionWaiting: false, motionQueued: false))
+        XCTAssertTrue(SwishSnap.escapeCancels(gestureOnShow: false, tabHeld: false, actionWaiting: true, motionQueued: false))
+        XCTAssertTrue(SwishSnap.escapeCancels(gestureOnShow: false, tabHeld: false, actionWaiting: false, motionQueued: true))
+    }
+}
+
+// MARK: - F02 tabs
+
+extension SwishTitleBar333Tests {
+    private typealias Entry = (role: String?, subrole: String?)
+
+    func testTheTabUnderThePointerIsFound() {
+        let closeOnSafariTab: [Entry] = [("AXButton", nil), ("AXRadioButton", "AXTabButton"), ("AXTabGroup", nil),
+                                         ("AXGroup", nil), ("AXWindow", "AXStandardWindow")]
+        XCTAssertEqual(SwishTabs.tabIndex(closeOnSafariTab), 1, "the close button's tab")
+        XCTAssertEqual(SwishTabs.tabIndex([("AXRadioButton", nil), ("AXTabGroup", nil)]), 0, "an AppKit window tab")
+        XCTAssertNil(SwishTabs.tabIndex([("AXRadioButton", nil), ("AXRadioGroup", nil)]), "a segmented control is no tab")
+        XCTAssertNil(SwishTabs.tabIndex([("AXStaticText", nil), ("AXToolbar", nil), ("AXWindow", nil)]))
+        XCTAssertNil(SwishTabs.tabIndex([("AXWindow", nil), ("AXRadioButton", "AXTabButton")]), "nothing past the window")
+    }
+
+    func testWhichAppsSupportWhichTabGestures() {
+        XCTAssertEqual(SwishTabs.family(bundleID: "com.apple.Safari"), .safari)
+        XCTAssertEqual(SwishTabs.family(bundleID: "COM.GOOGLE.CHROME"), .chromium)
+        XCTAssertEqual(SwishTabs.family(bundleID: "com.apple.finder"), .native)
+        XCTAssertEqual(SwishTabs.family(bundleID: nil), .native)
+        XCTAssertEqual(SwishTabs.family(bundleID: "com.microsoft.edgemac"), .unsupported)
+        XCTAssertEqual(SwishTabs.support(.native), .init(close: true, detach: true))
+        XCTAssertEqual(SwishTabs.support(.safari), .init(close: true, detach: true))
+        XCTAssertEqual(SwishTabs.support(.chromium), .init(close: true, detach: false))
+        XCTAssertEqual(SwishTabs.support(.firefox), .init(close: false, detach: false))
+        XCTAssertEqual(SwishTabs.gesture(pinch: .in, family: .chromium), .close)
+        XCTAssertEqual(SwishTabs.gesture(pinch: .in, family: .unsupported), .unsupported, "never the window instead")
+        XCTAssertNil(SwishTabs.gesture(pinch: .out, family: .safari), "pinch out stays full screen")
+        XCTAssertTrue(SwishTabs.canDetach(family: .native, tabCount: 2))
+        XCTAssertFalse(SwishTabs.canDetach(family: .native, tabCount: 1), "a lone tab already is its window")
+        XCTAssertFalse(SwishTabs.canDetach(family: .chromium, tabCount: 5))
+    }
+
+    func testHowATabIsClosed() {
+        let close = AppKitMenuTitles.titles(AppKitMenuTitles.closeTab).union(AppKitMenuTitles.titles(AppKitMenuTitles.close))
+        XCTAssertTrue(SwishTabs.isCloseButton(role: "AXButton", subrole: "AXCloseButton", labels: [], closeTitles: close))
+        XCTAssertTrue(SwishTabs.isCloseButton(role: "AXButton", subrole: nil, labels: ["Close (⌘W)"], closeTitles: close))
+        XCTAssertTrue(SwishTabs.isCloseButton(role: "AXButton", subrole: nil, labels: [nil, "close tab"], closeTitles: close))
+        XCTAssertFalse(SwishTabs.isCloseButton(role: "AXButton", subrole: nil, labels: ["Open"], closeTitles: close))
+        XCTAssertFalse(SwishTabs.isCloseButton(role: "AXStaticText", subrole: nil, labels: ["Close"], closeTitles: close))
+
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: true, actions: [], selected: false, windowFocused: false,
+                                             appFrontmost: false), .closeButton)
+        let chromium = "Name:close tab\nTarget:0x0\nSelector:(null)"
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: false, actions: ["AXPress", chromium], selected: false,
+                                             windowFocused: false, appFrontmost: false), .action(chromium))
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: false, actions: ["AXCustom1"], descriptions: ["Close Tab"],
+                                             selected: false, windowFocused: false, appFrontmost: false), .action("AXCustom1"))
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: false, actions: ["AXPress"], selected: true, windowFocused: true,
+                                             appFrontmost: true), .commandW, "⌘W only to that app, with that tab selected")
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: false, actions: [], selected: false, windowFocused: true,
+                                             appFrontmost: true), .none, "⌘W would close another tab")
+        XCTAssertEqual(SwishTabs.closeMethod(hasCloseButton: false, actions: [], selected: true, windowFocused: false,
+                                             appFrontmost: true), .none)
+    }
+
+    func testMenuTitlesInEveryLanguage() {
+        let table: [String: Any] = [
+            "ko": ["Move Tab to New Window": "탭을 새로운 윈도우로 이동", "Window": "윈도우"],
+            "ja": ["Move Tab to New Window": "タブを新しいウインドウに移動"],
+            "LocProvenance": ["Move Tab to New Window": "not a language"],
+        ]
+        let parsed = AppKitMenuTitles.parse(table, keys: [AppKitMenuTitles.moveTabToNewWindow, AppKitMenuTitles.window])
+        let move = parsed[AppKitMenuTitles.moveTabToNewWindow] ?? []
+        XCTAssertTrue(move.contains("Move Tab to New Window"))
+        XCTAssertTrue(move.contains("탭을 새로운 윈도우로 이동"))
+        XCTAssertTrue(move.contains("タブを新規ウインドウに移動"), "Safari's own Japanese title")
+        XCTAssertFalse(move.contains("not a language"))
+        XCTAssertTrue(AppKitMenuTitles.matches("move tab to new window…", move), "case and an ellipsis")
+        XCTAssertTrue(AppKitMenuTitles.matches(" 탭을 새로운 윈도우로 이동 ", move))
+        XCTAssertFalse(AppKitMenuTitles.matches("Move Tab", move))
+        XCTAssertFalse(AppKitMenuTitles.matches(nil, move))
+        XCTAssertEqual(AXMenuSearch.firstEnabled([("Merge All Windows", true), ("Move Tab to New Window", false),
+                                                  ("Move Tab to New Window…", true)], titles: move), 2,
+                       "a disabled item is skipped")
+    }
+}

@@ -350,4 +350,23 @@ extension SwishSnap {
         if held.contains(.secondary), grid == .twoByTwo { return .threeByTwo }
         return grid
     }
+
+    /// Pure: the gesture options while `held` roles are down: Secondary and
+    /// Tertiary unlock their grids for this gesture, and Secondary makes a
+    /// swipe up almost-maximize (Swish: "the new 'Almost Maximize' gesture by
+    /// swiping up while holding ⇧"; up again maximizes). Unchanged while
+    /// modifier gestures are off.
+    static func effectiveOptions(_ options: GestureOptions, held: Set<ModifierRole>) -> GestureOptions {
+        guard options.modifierGestures else { return options }
+        var result = options
+        result.grid = effectiveGrid(options.grid, held: held)
+        if held.contains(.secondary) { result.almostMaximize = true }
+        return result
+    }
+
+    /// The roles held now, from the saved roles (main thread: reads
+    /// `NSEvent.modifierFlags`).
+    static func heldRoles(_ defaults: UserDefaults = .standard) -> Set<ModifierRole> {
+        ModifierRoles.load(defaults).held(NSEvent.modifierFlags)
+    }
 }

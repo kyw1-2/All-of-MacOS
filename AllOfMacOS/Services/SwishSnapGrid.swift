@@ -569,15 +569,31 @@ extension SwishSnap {
     /// layouts.
     enum HotkeyScheme: String, CaseIterable {
         case off, arrows, wasd, ijkl, hjkl
+        /// Swish's ",AOE": the keys Dvorak puts at the WASD positions. Key
+        /// codes are positions, so on a Dvorak layout these are the keys
+        /// labelled , A O E (the same physical keys as WASD on QWERTY).
+        case dvorak
 
         /// Key codes for left, right, up and down; nil when off.
         var keyCodes: (left: UInt16, right: UInt16, up: UInt16, down: UInt16)? {
             switch self {
             case .off: return nil
             case .arrows: return (123, 124, 126, 125)
-            case .wasd: return (0, 2, 13, 1)        // A D W S
+            case .wasd, .dvorak: return (0, 2, 13, 1)        // A D W S (Dvorak: A E , O)
             case .ijkl: return (38, 37, 34, 40)     // J L I K
             case .hjkl: return (4, 37, 40, 38)      // H L K J (vi)
+            }
+        }
+
+        /// The keys as the settings name them.
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .arrows: return "←↑↓→"
+            case .wasd: return "WASD"
+            case .ijkl: return "IJKL"
+            case .hjkl: return "HJKL"
+            case .dvorak: return ",AOE"
             }
         }
     }
@@ -837,4 +853,12 @@ extension SwishSnap {
     /// AOM's own, never one of an app paused in AOM. The caller adds the gate
     /// of its input (`AutomationGate`) and asks again right before each write.
     static func mayWriteBackground(ownApp: Bool, appPaused: Bool) -> Bool { !ownApp && !appPaused }
+
+    /// Pure: whether Esc has a title-bar gesture to cancel (and so is
+    /// consumed): a preview or HUD on show, a tab held for detaching, a
+    /// "twice" action still waiting, or a swipe on the pad queued behind a
+    /// landing commit. Otherwise Esc goes on to the app.
+    static func escapeCancels(gestureOnShow: Bool, tabHeld: Bool, actionWaiting: Bool, motionQueued: Bool) -> Bool {
+        gestureOnShow || tabHeld || actionWaiting || motionQueued
+    }
 }
