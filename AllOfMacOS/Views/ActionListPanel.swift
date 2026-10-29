@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// One step of an automation as an opaque card: a row in the shared row
+/// style (step number, monochrome glyph, name over one line of detail, item
+/// menu, disclosure chevron), and the step's options as groups inside the
+/// same card when it is expanded.
 struct ActionCardView: View {
     let action: TriggerAction
     let index: Int
@@ -21,114 +25,99 @@ struct ActionCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Card Header
-            HStack(spacing: 8) {
-                // Step Badge
-                Text("\(index)")
-                    .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-
-                if isElse {
-                    Text("ELSE")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 4).padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
-                }
-
-                Image(systemName: action.actionType.iconName)
-                    .font(.system(size: 15, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(categoryColor)
-                    .frame(width: 32, height: 32)
-                    .background(categoryColor.opacity(0.10),
-                                in: RoundedRectangle(cornerRadius: AOMRadius.well + 1, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(action.displayName)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(action.isEnabled ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-
-
-                    }
-                    if let detail = actionDetail {
-                        Text(detail)
-                            .font(AOMType.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                Menu {
-                    Button("Change Action…", action: onChangeAction)
-                    if action.actionType.canContainChildren {
-                        Button(action.actionType == .toggleOnOff ? "Add to On…" : "Add Inside…", action: onAddInside)
-                    }
-                    if action.actionType.canContainElseChildren {
-                        Button(action.actionType == .toggleOnOff ? "Add to Off…" : "Add to Else…", action: onAddElse)
-                    }
-                    Divider()
-                    Button("Move Up", action: onMoveUp)
-                    Button("Move Down", action: onMoveDown)
-                    Button("Copy", action: onCopy)
-                    Button("Duplicate", action: onDuplicate)
-                    Button(action.isEnabled ? "Disable" : "Enable", action: onToggleEnable)
-                    Divider()
-                    Button("Delete", role: .destructive, action: onDelete)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Action options")
-                .accessibilityLabel("Options for \(action.displayName)")
-                Button(action: onToggleExpand) {
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderless)
-                .help(isExpanded ? "Hide options" : "Show options")
-                .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
-            }
-            .padding(.horizontal, AOMSpace.s)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-            .onTapGesture { onToggleExpand() }
-
+            header
             if isExpanded {
-                Divider()
-                // In-place parameter configuration view!
+                // In-place parameter configuration; its groups draw their own
+                // hairline above, so it needs no divider of its own.
                 ActionConfigView(keyboardMonitor: keyboardMonitor, trigger: trigger, action: action)
-                    .padding(16)
             }
         }
-        .aomCardStyle(.paper, padding: 0, elevated: false)
-        .padding(.leading, CGFloat(depth * 14))
-        .opacity(action.isEnabled ? 1 : 0.6)
+        .aomCard(padding: 0)
+        .padding(.leading, CGFloat(depth) * AOMSpace.x5)
+        .opacity(action.isEnabled ? 1 : 0.55)
         .animation(AOMMotion.panel, value: isExpanded)
     }
 
-    private var categoryColor: Color {
-        switch action.actionType.category {
-        case .windowManagement: return .blue
-        case .keyboardActions: return .orange
-        case .mouseActions: return .indigo
-        case .scriptExecution: return .purple
-        case .applicationControl: return .pink
-        case .systemActions: return .gray
-        case .mediaControls: return .red
-        case .screenCapture: return .orange
-        case .clipboard: return .indigo
-        case .workflow, .controlFlow: return .green
-        case .spacesMissionControl: return .cyan
-        case .utilityActions: return .teal
+    private var header: some View {
+        HStack(spacing: AOMSpace.x2) {
+            // Step number, centred under the arrows that join the cards.
+            Text("\(index)")
+                .font(AOMFont.badge.monospacedDigit())
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMIcon.row)
+                .accessibilityLabel("Step \(index)")
+
+            if isElse {
+                AOMStatusPill("Else", tone: .neutral, symbol: "arrow.triangle.branch")
+            }
+
+            Image(systemName: action.actionType.iconName)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMIcon.row)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(action.displayName)
+                    .font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(action.isEnabled ? AOMColor.text : AOMColor.textSecondary)
+                    .lineLimit(1)
+                if let detail = actionDetail {
+                    Text(detail)
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: AOMSpace.x2)
+
+            if !action.isEnabled {
+                AOMStatusPill("Off", tone: .neutral)
+            }
+
+            Menu {
+                Button("Change Action…", action: onChangeAction)
+                if action.actionType.canContainChildren {
+                    Button(action.actionType == .toggleOnOff ? "Add to On…" : "Add Inside…", action: onAddInside)
+                }
+                if action.actionType.canContainElseChildren {
+                    Button(action.actionType == .toggleOnOff ? "Add to Off…" : "Add to Else…", action: onAddElse)
+                }
+                Divider()
+                Button("Move Up", action: onMoveUp)
+                Button("Move Down", action: onMoveDown)
+                Button("Copy", action: onCopy)
+                Button("Duplicate", action: onDuplicate)
+                Button(action.isEnabled ? "Disable" : "Enable", action: onToggleEnable)
+                Divider()
+                Button("Delete", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Action options")
+            .accessibilityLabel("Options for \(action.displayName)")
+
+            Button(action: onToggleExpand) {
+                Image(systemName: "chevron.right")
+                    .imageScale(.small)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: AOMIcon.row, height: AOMIcon.row)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide options" : "Show options")
+            .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
         }
+        .padding(.horizontal, AOMSpace.rowInset)
+        .frame(minHeight: actionDetail == nil ? AOMSize.rowStandard : AOMSize.rowDetail)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggleExpand() }
     }
 
     private var actionDetail: String? {
@@ -160,42 +149,30 @@ struct ActionCardView: View {
     }
 }
 
+/// An action as a list row (the shared `AOMListRow`).
 struct ActionRow: View {
     let action: TriggerAction
 
     var body: some View {
-        HStack(spacing: 8) {
+        AOMListRow(action.displayName, detail: detail, dimmed: !action.isEnabled) {
             Image(systemName: action.actionType.iconName)
-                .frame(width: 20)
-                .foregroundColor(.accentColor)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(action.displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-
-                if (action.parameters.repeatCount ?? 1) > 1 || !(action.parameters.onlyAppBundleID ?? "").isEmpty {
-                    Text("Repeat ×\(action.parameters.repeatCount ?? 1)\((action.parameters.onlyAppBundleID ?? "").isEmpty ? "" : " · conditional")")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-                if let detail = actionDetail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
+        } trailing: {
             if !action.isEnabled {
                 Image(systemName: "eye.slash")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .accessibilityLabel("Disabled")
             }
         }
-        .padding(.vertical, 2)
-        .opacity(action.isEnabled ? 1 : 0.5)
+    }
+
+    private var detail: String? {
+        var parts: [String] = []
+        if (action.parameters.repeatCount ?? 1) > 1 || !(action.parameters.onlyAppBundleID ?? "").isEmpty {
+            parts.append("Repeat ×\(action.parameters.repeatCount ?? 1)\((action.parameters.onlyAppBundleID ?? "").isEmpty ? "" : " · conditional")")
+        }
+        if let actionDetail { parts.append(actionDetail) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var actionDetail: String? {
@@ -260,33 +237,34 @@ struct AddActionSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action Inside"))
-                    .font(.headline)
+                    .font(AOMFont.pageStatus)
+                    .foregroundStyle(AOMColor.text)
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain)
                     .help("Close without adding")
                     .accessibilityLabel("Close")
             }
-            .padding(.horizontal)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
+            .padding(.horizontal, AOMSpace.x4)
+            .padding(.top, AOMSpace.x3)
+            .padding(.bottom, AOMSpace.x2)
 
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            HStack(spacing: AOMSpace.x1) {
+                Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
                 TextField("Search actions by name or what they do…", text: $searchText)
                     .textFieldStyle(.plain)
                     .accessibilityLabel("Search actions")
                 if !searchText.isEmpty {
-                    Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                         .buttonStyle(.plain)
                         .help("Clear search")
                         .accessibilityLabel("Clear search")
                 }
             }
-            .padding(6)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-            .padding(.horizontal)
-            .padding(.bottom, 10)
+            .padding(AOMSpace.x2)
+            .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+            .padding(.horizontal, AOMSpace.x4)
+            .padding(.bottom, AOMSpace.x3)
 
             HSplitView {
                 List(selection: Binding<Section?>(get: { section }, set: { if let value = $0 { section = value; searchText = "" } })) {
@@ -297,10 +275,10 @@ struct AddActionSheet: View {
                     }
                 }
                 .listStyle(.sidebar)
-                .frame(width: 200)
+                .frame(width: AOMEditorSize.actionPickerSidebar)
 
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 3) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if !searchText.isEmpty {
                             let found = ActionSearch.results(for: searchText, in: ActionType.allCases.filter { !hidden.contains($0) })
                             if found.isEmpty {
@@ -308,22 +286,22 @@ struct AddActionSheet: View {
                             }
                             ForEach(found) { row($0, showsCategory: true) }
                         } else if section == .quick {
-                            heading("Favorite Actions")
+                            heading("Favorite actions")
                             if favorites.isEmpty { emptyNote("Click the star next to any action to keep it here.") }
                             ForEach(favorites) { row($0) }
-                            heading("Recently Used")
+                            heading("Recently used")
                             if recents.isEmpty { emptyNote("Actions you add show up here.") }
                             ForEach(recents) { row($0) }
                         } else if case .category(let category) = section {
                             ForEach(ActionType.actionsForCategory(category).filter { !hidden.contains($0) }) { row($0) }
                         }
                     }
-                    .padding(6)
+                    .padding(AOMSpace.x2)
                 }
             }
-            .frame(height: 420)
+            .frame(height: AOMEditorSize.actionPicker.height)
 
-            Divider()
+            AOMDivider()
 
             HStack {
                 if replaceActionID == nil {
@@ -332,57 +310,66 @@ struct AddActionSheet: View {
                         Button("Activate app → wait → maximize") { addTemplate([.activateApplication, .wait, .maximizeWindow], name: "Open workspace") }
                         Button("Shortcut → wait → shortcut") { addTemplate([.sendKeyStroke, .wait, .sendKeyStroke], name: "Keyboard sequence") }
                     }
+                    .fixedSize()
                     .help("Add several steps at once")
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(12)
+            .padding(AOMSpace.x3)
         }
-        .frame(width: 720)
+        .frame(width: AOMEditorSize.actionPicker.width)
     }
 
     private func sidebarRow(_ title: String, icon: String, selected: Bool) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: AOMSpace.x2) {
             Image(systemName: icon)
-                .font(.system(size: 13))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .frame(width: 18)
-            Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
+                .frame(width: AOMIcon.row)
+            Text(title).font(selected ? AOMFont.bodyEmphasis : AOMFont.body)
         }
     }
+    /// A group label in the result list: sentence case, never tracked caps (e.10).
     private func heading(_ title: String) -> some View {
-        Text(title.uppercased()).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            .padding(.horizontal, 10).padding(.top, 8).accessibilityAddTraits(.isHeader)
+        Text(title)
+            .aomSectionCaps()
+            .padding(.horizontal, AOMSpace.x3)
+            .padding(.top, AOMSpace.x3)
+            .padding(.bottom, AOMSpace.x1)
+            .accessibilityAddTraits(.isHeader)
     }
     private func emptyNote(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.vertical, 4)
+        AOMEditorNote(text)
+            .padding(.horizontal, AOMSpace.x3)
+            .padding(.vertical, AOMSpace.x1)
     }
 
     private func row(_ type: ActionType, showsCategory: Bool = false) -> some View {
         let isFavorite = favorites.contains(type)
-        return HStack(spacing: 6) {
+        return HStack(spacing: AOMSpace.x2) {
             Button { addAction(type) } label: {
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: AOMSpace.x3) {
                     Image(systemName: type.iconName)
-                        .font(.system(size: 14))
-                        .frame(width: 22)
-                        .foregroundColor(.accentColor)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(type.rawValue).font(.system(size: 13, weight: .medium))
-                        Text(type.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row)
+                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                        Text(type.rawValue).font(AOMFont.body).foregroundStyle(AOMColor.text)
+                        Text(type.description).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(2)
                         if showsCategory || !type.parameterHint.isEmpty {
                             Text([showsCategory ? type.category.rawValue : nil, type.parameterHint.isEmpty ? nil : "Options: " + type.parameterHint]
                                 .compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
                         }
                     }
                     Spacer(minLength: 0)
                 }
+                .padding(.horizontal, AOMSpace.x2)
+                .padding(.vertical, AOMSpace.x2)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(AOMRowButtonStyle())
             .accessibilityLabel(type.rawValue)
             .accessibilityHint(type.description)
 
@@ -391,14 +378,15 @@ struct AddActionSheet: View {
                 favorites = store.favorites
             } label: {
                 Image(systemName: isFavorite ? "star.fill" : "star")
-                    .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+                    .foregroundStyle(isFavorite ? AOMColor.accent : AOMColor.textSecondary)
+                    .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(isFavorite ? "Remove from Favorite Actions" : "Add to Favorite Actions")
             .accessibilityLabel(isFavorite ? "Remove \(type.rawValue) from favorites" : "Add \(type.rawValue) to favorites")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.trailing, AOMSpace.x1)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
