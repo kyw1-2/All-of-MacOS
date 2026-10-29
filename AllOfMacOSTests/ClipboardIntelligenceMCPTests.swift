@@ -66,7 +66,9 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertFalse(terminalPicks.contains(secret.id), "secrets never suggested outside password fields")
 
         let password = ClipboardDestinationContext(bundleID: "com.apple.Safari", kind: .password, isSecureInput: true)
-        XCTAssertEqual(ClipboardSuggestionRanker.rank(entries, context: password, events: [], classes: classes), [secret.id])
+        // 3.3.3 (audit PA-02): password fields and secure input get nothing,
+        // not even the secret that "fits" them.
+        XCTAssertEqual(ClipboardSuggestionRanker.rank(entries, context: password, events: [], classes: classes), [])
 
         // History: the prose item was pasted into Notes before → suggested there.
         let notes = ClipboardDestinationContext(bundleID: "com.apple.Notes", kind: .text)

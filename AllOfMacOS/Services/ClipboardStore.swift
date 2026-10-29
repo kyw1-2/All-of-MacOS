@@ -18,6 +18,18 @@ final class ClipboardStore: ObservableObject {
         var maxEntries = 1_000
         var maxBytes = 200 * 1_024 * 1_024
 
+        /// The excluded-app list as the privacy gate compares it: trimmed and
+        /// case-insensitive (audit PA-01).
+        var excludedBundleIDs: Set<String> {
+            Set(ignoredApps.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty })
+        }
+
+        /// One test for capture, suggestions, the paste log and MCP.
+        func excludes(_ bundleID: String?) -> Bool {
+            guard let id = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !id.isEmpty else { return false }
+            return excludedBundleIDs.contains(id)
+        }
+
         var bounded: Settings {
             var result = self
             // Zero means "Indefinitely" in the settings picker.
@@ -313,7 +325,7 @@ final class ClipboardStore: ObservableObject {
         let frontmost = isolated ? nil : NSWorkspace.shared.frontmostApplication
         let bundleID = sourceBundleID ?? frontmost?.bundleIdentifier
         let appName = sourceName ?? frontmost?.localizedName
-        guard !settings.ignoredApps.contains(where: { $0.caseInsensitiveCompare(bundleID ?? "") == .orderedSame }) else { return }
+        guard !settings.excludes(bundleID) else { return }
         let boardName = pasteboard.name
         let read = captureReadOverride
         let capturedAt = now()

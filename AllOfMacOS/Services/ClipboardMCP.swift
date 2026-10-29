@@ -713,7 +713,10 @@ enum ClipboardMCPHandler {
         case "get_suggestions":
             let front = NSWorkspace.shared.frontmostApplication
             let ids = ClipboardIntelligence.shared.suggestions(for: front, store: store) { _ in }
-            return ["app": front?.localizedName ?? "", "kind": ClipboardIntelligence.shared.lastContext.kind.rawValue,
+            // An excluded app or a password field is not named to the client.
+            let context = ClipboardIntelligence.shared.lastContext
+            guard !context.blocksSuggestions else { return ["app": "", "kind": ClipboardDestinationKind.unknown.rawValue, "items": [Any]()] }
+            return ["app": front?.localizedName ?? "", "kind": context.kind.rawValue,
                     "items": ids.compactMap { id in store.entries.first { $0.id == id } }.map { summary($0, store: store) }]
         default:
             throw ToolError("Unknown tool \(name).")

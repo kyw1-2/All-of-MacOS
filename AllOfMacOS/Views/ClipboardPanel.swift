@@ -621,7 +621,7 @@ final class ClipboardPanelController {
                 guard let self, self.isVisible, !self.slidingOut, self.state.suggestedIDs != ids else { return }
                 self.state.suggestedIDs = ids
             }
-            ClipboardIntelligence.shared.refineClassesWithModel(store.entries)
+            ClipboardIntelligence.shared.refineClassesWithModel(store.entries.filter { !store.settings.excludes($0.sourceBundleID) })
         }
         DispatchQueue.main.async { [weak self] in self?.store.poll() }
         let expandSearch = !state.query.isEmpty

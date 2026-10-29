@@ -111,7 +111,7 @@ struct ClipboardSettingsView: View {
                         Text("Off by default. Opening a link preview contacts the website and may consume one-time links or send tracking parameters. Preview cookies and website data are kept only in memory; JavaScript is disabled.").font(.caption).foregroundStyle(.secondary)
                         Text("History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.").font(.callout)
                         Text("Text inside copied images is indexed locally for search. Search supports phrases in quotes, type:image, from:Safari, board:Work, before:2026-01-01, after:2026-01-01 and -excluded terms.").font(.caption).foregroundStyle(.secondary)
-                        Text("Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps.").font(.caption).foregroundStyle(.secondary)
+                        Text("Clipboard data marked confidential or transient is excluded automatically. Add apps below to skip every copy from those apps. Excluded apps are also never read for suggestions — no window title, field or screen — and never receive suggestions.").font(.caption).foregroundStyle(.secondary)
                         Text("Excluded application bundle IDs, one per line").font(.caption.weight(.semibold))
                         TextEditor(text: Binding(
                             get: { store.settings.ignoredApps.joined(separator: "\n") },
