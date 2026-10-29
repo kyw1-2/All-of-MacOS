@@ -22,6 +22,14 @@ import SwiftUI
 
 // MARK: - Page
 
+/// Isolated UI previews can open a page scrolled to its end
+/// (`--aom-preview-scroll-bottom`), so long pages are reviewed in screenshots.
+enum AOMPreviewHooks {
+    static var scrollAnchor: UnitPoint? {
+        PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-scroll-bottom") ? .bottom : nil
+    }
+}
+
 /// The standard page (e.1): one vertical scroll view on the canvas, content
 /// centred at most 1120 pt wide with 20 pt margins and 24 pt between sections.
 /// The page name lives in the toolbar (`navigationTitle`), never repeated here.
@@ -46,6 +54,7 @@ struct AOMPage<Content: View>: View {
                 .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: .infinity)
         }
+        .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
         .background(AOMColor.canvas)
     }
@@ -612,7 +621,7 @@ struct AOMModuleTile<Control: View>: View {
                     }
                     .padding(.top, AOMSpace.x0_5)
                 }
-                .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
             }
             .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.cardPadding))
             .accessibilityLabel("\(module.title), \(value), \(status)")
