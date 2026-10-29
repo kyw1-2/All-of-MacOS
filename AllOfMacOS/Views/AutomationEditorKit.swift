@@ -242,4 +242,12 @@ enum AOMEditorSize {
     static let actionPickerSidebar: CGFloat = AOMSize.sidebarMin
     /// The BetterTouchTool import report's minimum (the alert accessory is 640 × 420).
     static let importReport = CGSize(width: 560, height: 360)
+    /// The activation groups sheet: minimum and ideal size; its list column.
+    static let groupsEditorMinimum = CGSize(width: 720, height: 520)
+    static let groupsEditorIdeal = CGSize(width: 780, height: 580)
+    static let groupsList: CGFloat = AOMSize.sidebarIdeal
+    /// The category menu beside the action library's search field.
+    static let libraryCategory: CGFloat = 240
+    /// The one-line gesture console.
+    static let console: ClosedRange<CGFloat> = 350...550
 }
