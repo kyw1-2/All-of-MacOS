@@ -720,3 +720,53 @@ final class BTTInput333PressureStageTests: XCTestCase {
                                  .forceTouch(stage: 2, pressure: 1), .forceTouch(stage: 0, pressure: 0)])
     }
 }
+
+// MARK: - Item 4: floating-menu slider widget (B06)
+
+final class BTTInput333FloatingWidgetTests: XCTestCase {
+    private func slider(_ binding: ContinuousValueBinding?) -> FloatingMenuDefinition {
+        var item = FloatingMenuItem(); item.kind = "slider"; item.title = "Volume"; item.valueBinding = binding
+        var menu = FloatingMenuDefinition(); menu.items = [item]
+        return menu
+    }
+
+    func testSliderItemsNeedAValidBindingAndPersist() throws {
+        XCTAssertThrowsError(try slider(nil).validate())
+        XCTAssertThrowsError(try slider(ContinuousValueBinding(outputMinimum: 0.8, outputMaximum: 0.2)).validate())
+        let good = slider(ContinuousValueBinding(target: .displayBrightness, outputMinimum: 0.2, curve: .sCurve))
+        XCTAssertNoThrow(try good.validate())
+        let suite = "AOM.SliderMenu.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try FloatingMenuStore(defaults: defaults).save(good)
+        XCTAssertEqual(FloatingMenuStore(defaults: defaults).menus, [good], "a slider menu survives a reload")
+    }
+
+    func testMenusSavedBeforeSlidersStillDecode() throws {
+        let legacy = #"[{"id":"6B1B2B4E-8E44-4C8F-9F1A-111111111111","name":"Old","columns":2,"staysOpen":false,"items":[{"id":"6B1B2B4E-8E44-4C8F-9F1A-222222222222","title":"Go","symbol":"bolt","kind":"button","variableName":"","actions":[]}]}]"#
+        let menus = try JSONDecoder().decode([FloatingMenuDefinition].self, from: Data(legacy.utf8))
+        XCTAssertEqual(menus.first?.items.first?.kind, "button")
+        XCTAssertNil(menus.first?.items.first?.valueBinding)
+        XCTAssertNoThrow(try menus[0].validate())
+    }
+
+    func testASliderStartsWhereTheTargetIs() {
+        let bindings = [ContinuousValueBinding(), ContinuousValueBinding(inputMinimum: 0.2, inputMaximum: 0.9, outputMinimum: 0.1, outputMaximum: 0.7),
+                        ContinuousValueBinding(curve: .exponential, inverted: true), ContinuousValueBinding(curve: .sCurve),
+                        ContinuousValueBinding(curve: .logarithmic)]
+        for binding in bindings {
+            for step in 0...10 {
+                let input = binding.inputMinimum + (binding.inputMaximum - binding.inputMinimum) * Double(step) / 10
+                let level = binding.output(forInput: input)
+                XCTAssertEqual(binding.input(forOutput: level), input, accuracy: 1e-6, "\(binding) at \(input)")
+            }
+        }
+    }
+
+    func testMappingChecksDoNotDependOnTheSource() {
+        XCTAssertNil(ContinuousValueBinding().mappingProblem)
+        XCTAssertNotNil(ContinuousValueBinding(inputMinimum: 1, inputMaximum: 0).mappingProblem)
+        XCTAssertNotNil(ContinuousValueBinding(outputMinimum: -0.1).mappingProblem)
+        XCTAssertEqual(ContinuousValueBinding().problem(for: .trackpadGesture(.threeFingerTap)) != nil, true)
+    }
+}

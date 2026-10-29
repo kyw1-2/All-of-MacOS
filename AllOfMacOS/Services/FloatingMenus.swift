@@ -3,13 +3,17 @@ import SwiftUI
 
 /// Native AOM format. Each item runs an ordinary action sequence, so menus use
 /// the same cancellation, validation and permissions as keyboard triggers.
+/// A "slider" item (3.3.3, B06) drives a continuous value instead: its
+/// position is the AOM value 0…1 fed through `valueBinding`.
 struct FloatingMenuItem: Codable, Hashable, Identifiable {
     var id = UUID()
     var title = "New item"
     var symbol = "bolt"
-    var kind = "button" // button, variable, clock
+    var kind = "button" // button, variable, clock, slider
     var variableName = ""
     var actions: [TriggerAction] = []
+    /// Slider items only. Optional, so archives without it still decode.
+    var valueBinding: ContinuousValueBinding? = nil
 }
 struct FloatingMenuDefinition: Codable, Hashable, Identifiable {
     var id = UUID()
@@ -26,17 +30,21 @@ struct FloatingMenuDefinition: Codable, Hashable, Identifiable {
               ["pointer", "center", "notch"].contains(placement ?? "pointer"),
               Set(items.map(\.id)).count == items.count else { throw MenuError.invalid }
         for item in items {
-            guard ["button", "clock", "variable"].contains(item.kind), item.title.count <= 500,
+            guard Self.itemKinds.contains(item.kind), item.title.count <= 500,
                   item.actions.count <= 100 else { throw MenuError.invalid }
+            if item.kind == "slider" {
+                guard let binding = item.valueBinding, binding.mappingProblem == nil else { throw MenuError.invalid }
+            }
             if ActionTree.problem(item.actions) != nil { throw MenuError.invalid }
             for action in item.actions {
                 if ActionParameterValidation.problem(for: action) != nil { throw MenuError.invalid }
             }
         }
     }
+    static let itemKinds = ["button", "clock", "variable", "slider"]
     enum MenuError: LocalizedError {
         case invalid
-        var errorDescription: String? { "Use a name, 1–6 columns, up to 100 unique items, and valid actions. Item kind must be button, clock, or variable." }
+        var errorDescription: String? { "Use a name, 1–6 columns, up to 100 unique items, and valid actions. Item kind must be button, clock, variable, or slider; a slider needs a valid value target and ranges." }
     }
 }
 
@@ -123,6 +131,7 @@ private struct FloatingMenuView: View {
                     case "variable": TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                         VStack { Text(item.title).font(.caption); Text(WorkflowVariables.value(item.variableName) ?? "—").textSelection(.enabled) }.padding()
                     }
+                    case "slider": FloatingValueSlider(item: item)
                     default: Button { run(item) } label: {
                         Label(item.title, systemImage: item.symbol).frame(maxWidth: .infinity, minHeight: 45)
                     }.buttonStyle(.bordered)
@@ -163,6 +172,10 @@ struct FloatingMenuEditor: View {
                                     TextField("Item title", text: $item.title)
                                     Picker("Kind", selection: $item.kind) {
                                         Text("Action button").tag("button"); Text("Clock").tag("clock"); Text("Variable").tag("variable")
+                                        Text("Slider").tag("slider")
+                                    }
+                                    .onChange(of: item.kind) { _, kind in
+                                        if kind == "slider", item.valueBinding == nil { item.valueBinding = ContinuousValueBinding() }
                                     }
                                     Button(role: .destructive) { draft.items.removeAll { $0.id == item.id } } label: { Image(systemName: "trash") }
                                 }
@@ -191,6 +204,7 @@ struct FloatingMenuEditor: View {
                                         }
                                     }
                                 } else if item.kind == "variable" { TextField("Variable name", text: $item.variableName) }
+                                else if item.kind == "slider" { FloatingSliderBindingFields(binding: $item.valueBinding) }
                             }
                         }
                     }
@@ -223,5 +237,76 @@ struct FloatingMenuEditor: View {
     @discardableResult private func save() -> Bool {
         do { try store.save(draft); error = ""; return true }
         catch { self.error = error.localizedDescription; return false }
+    }
+}
+
+// MARK: - Slider widget (3.3.3, B06)
+
+/// A floating-menu slider bound to a continuous action. It starts at the
+/// target's current level and writes through the same rate-limited sink as
+/// MIDI and scroll bindings, so dragging never floods the output.
+struct FloatingValueSlider: View {
+    let item: FloatingMenuItem
+    var engine: ContinuousValueEngine = .shared
+    @State private var value: Double = 0
+    @State private var level: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label(item.title, systemImage: item.symbol).font(.caption)
+                Spacer()
+                Text(level.map { "\(Int(($0 * 100).rounded())) %" } ?? "—").font(.caption).monospacedDigit()
+            }
+            Slider(value: Binding(get: { value }, set: { newValue in
+                value = newValue
+                guard let binding = item.valueBinding else { return }
+                level = engine.drive(binding, input: newValue, from: item.id) ?? level
+            }), in: 0...1)
+            .disabled(item.valueBinding == nil)
+        }
+        .padding(8)
+        .onAppear(perform: syncWithTarget)
+    }
+
+    private func syncWithTarget() {
+        guard let binding = item.valueBinding, let target = ContinuousTargetIO.resolve(binding),
+              let current = ContinuousTargetIO.currentLevel(target) else { return }
+        level = current
+        value = binding.input(forOutput: current)
+    }
+}
+
+/// Editor fields for a slider item: what it drives and how.
+struct FloatingSliderBindingFields: View {
+    @Binding var binding: ContinuousValueBinding?
+
+    var body: some View {
+        Picker("Drives", selection: field(\.target)) {
+            ForEach(ContinuousValueBinding.Target.allCases) { Text($0.title).tag($0) }
+        }
+        Text((binding ?? ContinuousValueBinding()).target.help).font(.caption).foregroundStyle(.secondary)
+        if binding?.target == .appVolume {
+            TextField("App bundle ID (empty = frontmost app)", text: field(\.appBundleID))
+        }
+        HStack {
+            Text("Range")
+            Slider(value: field(\.outputMinimum), in: 0...1)
+            Slider(value: field(\.outputMaximum), in: 0...1)
+        }
+        Picker("Curve", selection: field(\.curve)) {
+            ForEach(ContinuousValueBinding.Curve.allCases) { Text($0.title).tag($0) }
+        }
+        Toggle("Invert", isOn: field(\.inverted))
+        if let problem = binding?.mappingProblem { Text(problem).font(.caption).foregroundStyle(.red) }
+    }
+
+    private func field<T>(_ keyPath: WritableKeyPath<ContinuousValueBinding, T>) -> Binding<T> {
+        Binding(get: { (binding ?? ContinuousValueBinding())[keyPath: keyPath] },
+                set: { newValue in
+                    var next = binding ?? ContinuousValueBinding()
+                    next[keyPath: keyPath] = newValue
+                    binding = next
+                })
     }
 }

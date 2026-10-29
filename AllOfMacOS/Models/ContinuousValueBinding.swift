@@ -146,6 +146,14 @@ struct ContinuousValueBinding: Codable, Hashable {
         return curve.inverse((Self.unit(level) - outputMinimum) / span)
     }
 
+    /// The AOM value that produces `level` (inverse of `output(forInput:)`),
+    /// so an on-screen slider can start where the target is now.
+    func input(forOutput level: Double) -> Double {
+        var t = position(forOutput: level)
+        if inverted { t = 1 - t }
+        return Self.unit(inputMinimum + (inputMaximum - inputMinimum) * t)
+    }
+
     // MARK: Sources
 
     /// Inputs that produce a continuous value.
@@ -164,6 +172,12 @@ struct ContinuousValueBinding: Codable, Hashable {
         guard Self.supports(input) else {
             return "Value bindings need MIDI Control Change, Pitch Bend, Channel or Poly Pressure, a Force Touch stage, or Scroll Up/Down."
         }
+        return mappingProblem
+    }
+
+    /// Range and parameter checks that do not depend on the source (also used
+    /// by floating-menu sliders, whose source is the slider itself).
+    var mappingProblem: String? {
         let ends = [inputMinimum, inputMaximum, outputMinimum, outputMaximum]
         guard ends.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return "Ranges must lie within 0–1 (0–100 %)." }
         guard inputMinimum < inputMaximum else { return "The input range must not be empty." }
