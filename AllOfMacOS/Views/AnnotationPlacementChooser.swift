@@ -12,16 +12,22 @@ struct AnnotationPlacementRequest: Identifiable {
 }
 
 /// Sheet asking where an added image goes. Arrow keys pick a side, Return
-/// places it below (the default), Esc cancels.
+/// places it below (the default), L adds it as a free layer (3.3.3), Esc cancels.
 struct AnnotationPlacementChooser: View {
     let thumbnail: CGImage
     let choose: (AnnotationCombinePlacement?) -> Void
+    /// Adds the image as a movable layer instead of growing the canvas.
+    var chooseLayer: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 14) {
             Text("Place Screenshot").font(.headline)
-            Text("Choose which side of the current image the new screenshot goes on.")
+            Text(chooseLayer == nil
+                 ? "Choose which side of the current image the new screenshot goes on."
+                 : "Choose which side of the current image the new screenshot goes on, or add it as a layer you can move, resize and rotate.")
                 .font(.caption).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     Color.clear.frame(width: 1, height: 1)
@@ -44,13 +50,20 @@ struct AnnotationPlacementChooser: View {
                 }
             }
             HStack {
+                if let chooseLayer {
+                    Button { chooseLayer() } label: {
+                        Label("Add as Layer", systemImage: "photo.on.rectangle")
+                    }
+                    .keyboardShortcut("l", modifiers: [])
+                    .help("Add the image on top as a layer you can move, resize (⇧ keeps the ratio) and rotate (L)")
+                }
                 Spacer()
                 Button("Cancel") { choose(nil) }.keyboardShortcut(.cancelAction)
                 Button("Place Below") { choose(.bottom) }.keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: chooseLayer == nil ? 360 : 400)
     }
 
     private func button(_ placement: AnnotationCombinePlacement, key: KeyEquivalent) -> some View {
@@ -116,22 +129,29 @@ struct AnnotationDropZoneOverlay: View {
 }
 
 /// Accepts image files or image data dropped on the canvas and reports the
-/// side under the pointer while dragging.
+/// side under the pointer while dragging. Holding ⌥ while dropping adds the
+/// image as a free layer at the pointer instead (3.3.3), when `onDropLayer` is set.
 struct AnnotationCanvasDropDelegate: DropDelegate {
     static let acceptedTypes: [UTType] = [.fileURL, .image]
 
     let canvasSize: CGSize
     @Binding var placement: AnnotationCombinePlacement?
     let onDrop: (CGImage, CGFloat?, AnnotationCombinePlacement) -> Void
+    /// Image, its backing scale, and the drop location in the canvas view.
+    var onDropLayer: ((CGImage, CGFloat?, CGPoint) -> Void)? = nil
+
+    private var dropsAsLayer: Bool { onDropLayer != nil && NSEvent.modifierFlags.contains(.option) }
 
     func validateDrop(info: DropInfo) -> Bool {
         info.hasItemsConforming(to: Self.acceptedTypes)
     }
 
-    func dropEntered(info: DropInfo) { placement = AnnotationCombinePlacement.zone(for: info.location, in: canvasSize) }
+    func dropEntered(info: DropInfo) {
+        placement = dropsAsLayer ? nil : AnnotationCombinePlacement.zone(for: info.location, in: canvasSize)
+    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        placement = AnnotationCombinePlacement.zone(for: info.location, in: canvasSize)
+        placement = dropsAsLayer ? nil : AnnotationCombinePlacement.zone(for: info.location, in: canvasSize)
         return DropProposal(operation: .copy)
     }
 
@@ -139,12 +159,17 @@ struct AnnotationCanvasDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         let side = AnnotationCombinePlacement.zone(for: info.location, in: canvasSize)
+        let location = info.location
+        let layer = dropsAsLayer ? onDropLayer : nil
         placement = nil
         let handler = onDrop
+        func deliver(_ image: CGImage, _ scale: CGFloat?) {
+            if let layer { layer(image, scale, location) } else { handler(image, scale, side) }
+        }
         if let provider = info.itemProviders(for: [.fileURL]).first {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url, let entry = AnnotationEditorControllerBridge.entry(at: url) else { return }
-                DispatchQueue.main.async { handler(entry.image, entry.scale, side) }
+                DispatchQueue.main.async { deliver(entry.image, entry.scale) }
             }
             return true
         }
@@ -153,7 +178,7 @@ struct AnnotationCanvasDropDelegate: DropDelegate {
                 guard let data, data.count <= 300_000_000, let image = NSImage(data: data),
                       let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
                 let imageScale = image.size.width > 0 ? CGFloat(cgImage.width) / image.size.width : nil
-                DispatchQueue.main.async { handler(cgImage, imageScale, side) }
+                DispatchQueue.main.async { deliver(cgImage, imageScale) }
             }
             return true
         }
