@@ -68,16 +68,14 @@ struct ActionParameterForm: View {
 
     var body: some View {
         if let kind = Self.formKind(action.actionType) {
-            GroupBox(action.actionType.rawValue) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(action.actionType.description).font(.callout).foregroundStyle(.secondary)
-                    content(kind)
-                    if let problem = ActionParameterValidation.problem(for: action) {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption).foregroundStyle(.red)
-                            .accessibilityLabel("Problem: \(problem)")
-                    }
-                }.padding(8)
+            // A group inside the step's card (never a box in a card); what the
+            // action does is the group's ⓘ.
+            AOMEditorGroup(action.actionType.rawValue, help: action.actionType.description) {
+                content(kind)
+                if let problem = ActionParameterValidation.problem(for: action) {
+                    AOMEditorNote(problem, tone: .danger)
+                        .accessibilityLabel("Problem: \(problem)")
+                }
             }
         }
     }
@@ -133,7 +131,7 @@ struct ActionParameterForm: View {
             Slider(value: doubleBinding(\.levelPercent, default: isVolume ? 50 : 70), in: 0...100, step: 1) {
                 Text(isVolume ? "Volume" : "Brightness")
             } minimumValueLabel: { Text("0") } maximumValueLabel: { Text("100") }
-            Text("\(Int(p.levelPercent ?? (isVolume ? 50 : 70))) %").font(.callout.monospacedDigit())
+            Text("\(Int(p.levelPercent ?? (isVolume ? 50 : 70))) %").font(AOMFont.callout.monospacedDigit())
             footnote(isVolume ? "Unmutes the output when raising from 0."
                               : "Uses the display under the pointer. Displays without a hardware control get a software dim that never goes fully black.")
         case .appAudio:
@@ -239,7 +237,7 @@ struct ActionParameterForm: View {
     private var moveResize: some View {
         let p = action.parameters
         let percent = (p.moveResizeUnit ?? "percent") == "percent"
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Unit", selection: stringBinding(\.moveResizeUnit, default: "percent")) {
                 Text("Percent of display").tag("percent"); Text("Pixels").tag("pixels")
             }.pickerStyle(.segmented)
@@ -276,11 +274,10 @@ struct ActionParameterForm: View {
         let number = action.parameters.desktopNumber ?? 1
         let id = action.actionType.requiredHotKeyID(desktop: number)
         let key = id.flatMap { SymbolicHotKeys.hotKey(id: $0, in: SymbolicHotKeys.load()) }
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             if let key {
-                Label(key.isEnabled ? "The system shortcut for this is on." : "The system shortcut for this is OFF, so this step will do nothing.",
-                      systemImage: key.isEnabled ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(key.isEnabled ? Color.green : Color.orange)
+                AOMEditorNote(key.isEnabled ? "The system shortcut for this is on." : "The system shortcut for this is OFF, so this step will do nothing.",
+                              tone: key.isEnabled ? .success : .warning)
                 if !key.isEnabled {
                     Button("Open Keyboard Settings") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") { NSWorkspace.shared.open(url) }
@@ -293,7 +290,7 @@ struct ActionParameterForm: View {
 
     private var customClick: some View {
         let p = action.parameters
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Button", selection: intBinding(\.clickButton, default: 0)) {
                 Text("Left").tag(0); Text("Right").tag(1); Text("Middle").tag(2)
                 ForEach(3...8, id: \.self) { Text("Button \($0 + 1)").tag($0) }
@@ -321,7 +318,7 @@ struct ActionParameterForm: View {
 
     private var scroll: some View {
         let p = action.parameters
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Direction", selection: stringBinding(\.scrollDirection, default: "down")) {
                 Text("Up").tag("up"); Text("Down").tag("down"); Text("Left").tag("left"); Text("Right").tag("right")
             }.pickerStyle(.segmented)
@@ -335,13 +332,13 @@ struct ActionParameterForm: View {
             Slider(value: Binding(get: { Double(p.scrollDurationMs ?? 0) }, set: { value in save { $0.parameters.scrollDurationMs = Int(value) } }),
                    in: 0...5000, step: 50) { Text("Duration") }
             Text((p.scrollDurationMs ?? 0) == 0 ? "Instant" : "Spread over \(p.scrollDurationMs ?? 0) ms (speed)")
-                .font(.callout.monospacedDigit())
+                .font(AOMFont.callout.monospacedDigit())
         }
     }
 
     private var filePath: some View {
         let type = action.actionType
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             HStack {
                 TextField(type == .playSoundFile ? "Path to an audio file" : "Path to a file or folder", text: stringBinding(\.filePath, default: ""))
                     .textFieldStyle(.roundedBorder)
@@ -353,24 +350,24 @@ struct ActionParameterForm: View {
                 }.help("Choose a \(type == .playSoundFile ? "sound file" : "file or folder")")
             }
             if let path = action.parameters.filePath, !path.isEmpty, ExtendedActions.fileURL(path) == nil {
-                Label("Nothing exists at this path.", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                AOMEditorNote("Nothing exists at this path.", tone: .warning)
             }
             if type == .playSoundFile {
                 Slider(value: doubleBinding(\.levelPercent, default: 100), in: 0...100, step: 1) { Text("Volume") }
-                Text("Volume \(Int(action.parameters.levelPercent ?? 100)) %").font(.callout.monospacedDigit())
+                Text("Volume \(Int(action.parameters.levelPercent ?? 100)) %").font(AOMFont.callout.monospacedDigit())
             }
             footnote("A leading ~ is expanded. Missing files fail the step.")
         }
     }
 
     private var speak: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             ActionTextEditor(initial: action.parameters.text ?? "", label: "Text to speak") { value in
                 save { $0.parameters.text = value.isEmpty ? nil : value }
             }.id(action.id)
             Slider(value: doubleBinding(\.speechRate, default: Double(AVSpeechUtteranceDefaultSpeechRate)), in: 0.1...1, step: 0.05) { Text("Rate") }
             Text("Rate \(String(format: "%.2f", action.parameters.speechRate ?? Double(AVSpeechUtteranceDefaultSpeechRate)))")
-                .font(.callout.monospacedDigit())
+                .font(AOMFont.callout.monospacedDigit())
             Picker("Voice", selection: stringBinding(\.speechVoiceID, default: "")) {
                 Text("System default").tag("")
                 ForEach(AVSpeechSynthesisVoice.speechVoices().sorted { $0.name < $1.name }, id: \.identifier) { voice in
@@ -382,7 +379,7 @@ struct ActionParameterForm: View {
     }
 
     private var triggerSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             TextField("Trigger name or UUID", text: stringBinding(\.triggerSelector, default: "")).textFieldStyle(.roundedBorder)
             Menu("Choose a Trigger") {
                 ForEach(triggers.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }) { trigger in
@@ -392,9 +389,8 @@ struct ActionParameterForm: View {
             let selector = action.parameters.triggerSelector ?? ""
             let matches = triggers.filter { TriggerSelector.matches(selector, trigger: $0) }.count
             if !selector.isEmpty {
-                Label(matches == 0 ? "No trigger matches." : "\(matches) trigger(s) match.",
-                      systemImage: matches == 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                    .font(.caption).foregroundStyle(matches == 0 ? Color.orange : Color.green)
+                AOMEditorNote(matches == 0 ? "No trigger matches." : "\(matches) trigger(s) match.",
+                              tone: matches == 0 ? .warning : .success)
             }
             footnote("A UUID matches one trigger; a name matches every trigger with that name. Name triggers in their settings to make them selectable.")
         }
@@ -403,7 +399,7 @@ struct ActionParameterForm: View {
     private var waitFor: some View {
         let p = action.parameters
         let condition = p.waitCondition ?? "appRunning"
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Picker("Wait until", selection: stringBinding(\.waitCondition, default: "appRunning")) {
                 Text("An app is running").tag("appRunning"); Text("An app is frontmost").tag("appFrontmost")
                 Text("An app quits").tag("appQuit")
@@ -429,35 +425,36 @@ struct ActionParameterForm: View {
     // MARK: Controls
 
     private func footnote(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        AOMEditorNote(text)
     }
     private func timeout(default value: Double) -> some View {
         numberRow("Timeout (s)", \.scriptTimeoutSeconds, default: value, range: 0.1...120)
     }
     private func numberRow(_ title: String, _ key: WritableKeyPath<ActionParameters, Double?>, default value: Double,
                            range: ClosedRange<Double>) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
+        HStack(spacing: AOMSpace.x2) {
+            Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text)
+            Spacer(minLength: AOMSpace.x3)
             TextField("", value: Binding(get: { action.parameters[keyPath: key] ?? value },
                                          set: { new in save { $0.parameters[keyPath: key] = min(range.upperBound, max(range.lowerBound, new)) } }),
-                      format: .number).textFieldStyle(.roundedBorder).frame(width: 90).multilineTextAlignment(.trailing)
+                      format: .number).textFieldStyle(.roundedBorder).frame(width: AOMEditorSize.numberField).multilineTextAlignment(.trailing)
                 .accessibilityLabel(title)
         }
     }
     /// A number that can also be "keep current" (nil).
     private func optionalNumberRow(_ title: String, _ key: WritableKeyPath<ActionParameters, Double?>, fallback: Double,
                                    range: ClosedRange<Double>) -> some View {
-        HStack {
+        HStack(spacing: AOMSpace.x2) {
             Toggle(title, isOn: Binding(get: { action.parameters[keyPath: key] != nil },
                                         set: { on in save { $0.parameters[keyPath: key] = on ? fallback : nil } }))
             if action.parameters[keyPath: key] != nil {
                 TextField("", value: Binding(get: { action.parameters[keyPath: key] ?? fallback },
                                              set: { new in save { $0.parameters[keyPath: key] = min(range.upperBound, max(range.lowerBound, new)) } }),
-                          format: .number).textFieldStyle(.roundedBorder).frame(width: 90).multilineTextAlignment(.trailing)
+                          format: .number).textFieldStyle(.roundedBorder).frame(width: AOMEditorSize.numberField).multilineTextAlignment(.trailing)
                     .accessibilityLabel(title)
             } else {
-                Spacer(); Text("keep current").font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: AOMSpace.x3)
+                Text("keep current").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             }
         }
     }
@@ -521,8 +518,8 @@ struct ActionTextEditor: View {
     }
     var body: some View {
         TextEditor(text: $text)
-            .font(monospaced ? .system(.body, design: .monospaced) : .body)
-            .frame(minHeight: 70)
+            .font(monospaced ? AOMFont.mono : AOMFont.body)
+            .aomTextWell()
             .accessibilityLabel(label)
             .onChange(of: text) { _, value in onChange(value) }
     }
