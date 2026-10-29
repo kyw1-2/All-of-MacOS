@@ -15,7 +15,9 @@ import ApplicationServices
 // - double tap: hide the app (⇧: hide the other apps);
 // - pinch out: activate it and send ⌘N; pinch in: ask it to quit. 3.3.3:
 //   pinch in twice: minimize all its windows; pinch out twice: unminimize
-//   them; a single pinch waits 0.35 s for the second;
+//   them; a single pinch waits 0.35 s for the second, and any pinch runs
+//   when its fingers lift at the earliest (a third finger or a 2 s rest
+//   before that takes it back);
 // - 3.3.3: each window a Dock gesture brings forward is offered to the
 //   title-bar snap (`chainWindow`), Swish's chain.
 // Menu bar, pointer in the top band (3.3.3: the empty area only; menu titles
