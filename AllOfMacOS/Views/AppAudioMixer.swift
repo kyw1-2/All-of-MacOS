@@ -111,6 +111,8 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
                 self?.requestReload()
             }
         }
+        // Isolated UI previews only (a no-op otherwise); see AudioCapturePreviewHooks.
+        AudioCapturePreviewHooks.start()
     }
 
     func refresh() {
@@ -413,7 +415,9 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: AppAudioMixerView(service: self))
         if let screen = NSScreen.main {
-            let size = CGSize(width: 640, height: 700)
+            // 3.3.3: a little taller for the preset row and the output effects
+            // (they scroll with the controls), never taller than the screen.
+            let size = CGSize(width: 640, height: max(620, min(760, screen.visibleFrame.height - 48)))
             let frame = NSRect(origin: screen.visibleFrame.origin, size: size)
                 .offsetBy(dx: screen.visibleFrame.width - size.width - 24,
                           dy: (screen.visibleFrame.height - size.height) / 2)
@@ -505,6 +509,11 @@ struct AppAudioLevelMeter: View {
 
 private struct AppAudioMixerView: View {
     @ObservedObject var service: AppAudioMixerService
+    /// Natural height of the output and effect controls. They keep the top of
+    /// the panel and scroll only when the panel is too short for them and the
+    /// app list's minimum together.
+    @State private var controlsHeight: CGFloat = 0
+    private static let appListMinimum = AOMSize.rowStandard * 4
 
     var body: some View {
         VStack(spacing: 0) {
@@ -545,44 +554,78 @@ private struct AppAudioMixerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.vertical, 24)
             } else {
-                MixerOutputSection()
-                AirPlayProcessingControls(service: service).padding(12)
-                Divider()
-                MasterBoostControls(service: service)
-                    .padding(12)
-                Divider()
-                if let error = service.lastError {
-                    VStack(spacing: 6) {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                        Button("Reconnect Audio") { service.reconnectAll() }.controlSize(.small)
-                    }.padding(8)
+                ScrollView {
+                    controls
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(key: MixerControlsHeightKey.self, value: proxy.size.height)
+                        })
                 }
-                EQSection(service: service)
+                .frame(maxHeight: controlsHeight > 0 ? controlsHeight : nil)
+                .layoutPriority(1)
+                .onPreferenceChange(MixerControlsHeightKey.self) { controlsHeight = $0 }
                 Divider()
-                if service.apps.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "waveform").font(.system(size: 28)).foregroundStyle(.secondary)
-                        Text(service.isSupported ? "No app is playing audio right now."
-                                                 : "Per-app audio needs macOS 14.2 or newer.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView(showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            ForEach(service.apps) { app in
-                                AppAudioRow(app: app,
-                                            onGain: { service.setGain($0, bundleID: app.bundleID) },
-                                            onMute: { service.toggleMute(bundleID: app.bundleID) })
-                                Divider().padding(.leading, 12)
-                            }
-                        }
-                    }
-                }
+                appList
+                    .frame(minHeight: Self.appListMinimum)
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
+
+    private var controls: some View {
+        VStack(spacing: 0) {
+            MixerOutputSection()
+            AirPlayProcessingControls(service: service).padding(12)
+            Divider()
+            MasterBoostControls(service: service)
+                .padding(12)
+            Divider()
+            if let error = service.lastError {
+                VStack(spacing: 6) {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                    Button("Reconnect Audio") { service.reconnectAll() }.controlSize(.small)
+                }.padding(8)
+            }
+            EQSection(service: service)
+            // 3.3.3: per-output curves and the Audio Unit effect follow the equalizer.
+            Divider()
+            HeadphoneEQCard(style: .panel)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AOMSpace.x3)
+            Divider()
+            AudioUnitEffectCard(style: .panel)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AOMSpace.x3)
+        }
+    }
+
+    @ViewBuilder private var appList: some View {
+        if service.apps.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "waveform").font(.system(size: 28)).foregroundStyle(.secondary)
+                Text(service.isSupported ? "No app is playing audio right now."
+                                         : "Per-app audio needs macOS 14.2 or newer.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ForEach(service.apps) { app in
+                        AppAudioRow(app: app,
+                                    onGain: { service.setGain($0, bundleID: app.bundleID) },
+                                    onMute: { service.toggleMute(bundleID: app.bundleID) })
+                        Divider().padding(.leading, 12)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The mixer panel's measured control height (see `AppAudioMixerView`).
+private struct MixerControlsHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Output Magic Boost, as in SoundSource: one switch, no strength levels.
@@ -607,6 +650,9 @@ struct MasterBoostControls: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            // 3.3.3: the output's preset, under its switch and off with it.
+            AudioBoostPresetPicker(bundleID: nil)
+                .disabled(!service.allAppsBoostEnabled)
         }
         .disabled(!service.isSupported)
     }
