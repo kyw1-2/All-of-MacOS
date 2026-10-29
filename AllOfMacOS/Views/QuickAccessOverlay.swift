@@ -1082,12 +1082,15 @@ private struct QuickAccessOverlayView: View {
     private var width: CGFloat { CaptureSettings.overlaySize.panelWidth }
     private var isVideo: Bool { entry.kind == .videoRecording }
     private var compact: Bool { side < 120 }
-    private var cardShape: RoundedRectangle { RoundedRectangle(cornerRadius: 9, style: .continuous) }
+    /// Concentric inside the 12 pt card at its 4 pt inset (c.3).
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: AOMRadius.concentric(AOMRadius.card, inset: AOMSpace.x1), style: .continuous)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                cardShape.fill(Color(nsColor: .controlBackgroundColor))
+                cardShape.fill(AOMColor.raised)
                 Image(nsImage: thumbnail)
                     .resizable()
                     .interpolation(.high)
@@ -1108,17 +1111,19 @@ private struct QuickAccessOverlayView: View {
                 // Curtain: dims the capture behind the hover controls.
                 if hovered {
                     cardShape
-                        .fill(Color.black.opacity(0.46))
+                        .fill(AOMFeatureColor.mediaCurtain)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
                 if isVideo && !hovered {
                     Image(systemName: "play.circle.fill")
-                        .font(.system(size: compact ? 26 : 34)).foregroundStyle(.white.opacity(0.9))
-                        .shadow(radius: 4).allowsHitTesting(false)
+                        .font(AOMFont.hero.weight(.regular))
+                        .imageScale(compact ? .medium : .large)
+                        .foregroundStyle(AOMFeatureColor.onMedia)
+                        .shadow(color: AOMFeatureColor.onMediaShadow, radius: 4).allowsHitTesting(false)
                 }
                 hoverControls
-                    .padding(compact ? 5 : 7)
+                    .padding(compact ? AOMFeatureSize.quickAccessInsetCompact : AOMFeatureSize.quickAccessInset)
                     .opacity(hovered ? 1 : 0)
                     .allowsHitTesting(hovered)
                     .accessibilityHidden(!hovered)
@@ -1126,7 +1131,7 @@ private struct QuickAccessOverlayView: View {
             .frame(height: side)
             .clipShape(cardShape)
         }
-        .padding(4)
+        .padding(AOMSpace.x1)
         .frame(width: width)
         // The shared floating material (glass on macOS 26+), so the card
         // matches the shelf, history and HUDs.
@@ -1138,7 +1143,7 @@ private struct QuickAccessOverlayView: View {
             if state || reduceMotion {
                 hovered = state
             } else {
-                withAnimation(AOMDesign.animation(.easeOut(duration: 0.12))) { hovered = state }
+                withAnimation(AOMMotion.quick) { hovered = state }
             }
             onHoverChange(state)
         }
@@ -1197,12 +1202,13 @@ private struct QuickAccessOverlayView: View {
     private func centralButton(_ title: String, hint: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: compact ? 12 : 13, weight: .semibold))
-                .foregroundStyle(Color.black.opacity(0.85))
+                .font((compact ? AOMFont.callout : AOMFont.body).weight(.semibold))
+                .foregroundStyle(AOMFeatureColor.mediaPillText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-                .frame(width: compact ? min(70, (width - 40) / 2) : min(110, width * 0.42),
-                       height: compact ? 24 : 28)
+                .frame(width: compact ? min(AOMFeatureSize.quickAccessPillCompact, (width - AOMSpace.x10) / 2)
+                                      : min(AOMFeatureSize.quickAccessPill, width * 0.42),
+                       height: compact ? AOMIcon.hitArea - AOMSpace.x1 : AOMIcon.hitArea)
         }
         .buttonStyle(QuickAccessPillStyle())
         .accessibilityLabel(title)
@@ -1213,9 +1219,10 @@ private struct QuickAccessOverlayView: View {
                              _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: compact ? 10 : 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: compact ? 22 : 26, height: compact ? 22 : 26)
+                .font((compact ? AOMFont.badge : AOMFont.caption).weight(.semibold))
+                .foregroundStyle(AOMFeatureColor.onMedia)
+                .frame(width: compact ? AOMIcon.row + AOMSpace.x0_5 : AOMIcon.hitArea - AOMSpace.x0_5,
+                       height: compact ? AOMIcon.row + AOMSpace.x0_5 : AOMIcon.hitArea - AOMSpace.x0_5)
         }
         .buttonStyle(QuickAccessIconStyle())
         .help(hint)
@@ -1238,8 +1245,8 @@ private struct QuickAccessIconStyle: ButtonStyle {
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(Color.black.opacity(configuration.isPressed ? 0.75 : hovering ? 0.66 : 0.5), in: Circle())
-            .overlay(Circle().strokeBorder(Color.white.opacity(hovering ? 0.35 : 0.15), lineWidth: 0.5))
+            .background(AOMFeatureColor.mediaControl(pressed: configuration.isPressed, hovering: hovering), in: Circle())
+            .overlay(Circle().strokeBorder(AOMFeatureColor.mediaControlEdge(hovering: hovering), lineWidth: 0.5))
             .contentShape(Circle())
             .onHover { hovering = $0 }
     }
@@ -1250,10 +1257,10 @@ private struct QuickAccessPillStyle: ButtonStyle {
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(Color.white.opacity(configuration.isPressed ? 0.70 : hovering ? 1 : 0.90), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.white.opacity(hovering ? 0.8 : 0.25), lineWidth: 0.5))
+            .background(AOMFeatureColor.mediaPill(pressed: configuration.isPressed, hovering: hovering), in: Capsule())
+            .overlay(Capsule().strokeBorder(AOMFeatureColor.mediaPillEdge(hovering: hovering), lineWidth: 0.5))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .onHover { hovering = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
+            .aomAnimation(.quick, value: hovering)
     }
 }

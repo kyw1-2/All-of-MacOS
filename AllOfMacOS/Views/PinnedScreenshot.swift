@@ -486,19 +486,19 @@ private struct PinnedScreenshotView: View {
                 .clipShape(clipShape)
                 .overlay {
                     if interaction.bordered {
-                        clipShape.stroke(Color.primary.opacity(0.28), lineWidth: 1)
+                        clipShape.stroke(AOMFeatureColor.pinBorder, lineWidth: 1)
                     }
                 }
-                .shadow(color: interaction.hasShadow ? .black.opacity(0.32) : .clear,
+                .shadow(color: interaction.hasShadow ? AOMFeatureColor.pinShadow : .clear,
                         radius: interaction.hasShadow ? 5 : 0, y: interaction.hasShadow ? 2 : 0)
 
             if !interaction.clickThrough && isHovering { controls.transition(.opacity) }
 
             if interaction.zoomBadgeVisible {
                 Text("\(Int((interaction.zoom * 100).rounded()))%")
-                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(.regularMaterial, in: Capsule())
+                    .font(AOMFont.body.weight(.semibold).monospacedDigit())
+                    .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5).padding(.vertical, AOMSpace.x1 + 1)
+                    .aomMediaBadge(radius: AOMRadius.panel)
                     .transition(.opacity)
                     .allowsHitTesting(false)
                     .accessibilityLabel("Zoom \(Int((interaction.zoom * 100).rounded())) percent")
@@ -507,15 +507,15 @@ private struct PinnedScreenshotView: View {
         .padding(padding)
         .contentShape(Rectangle())
         .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) { isHovering = hovering }
+            withAnimation(AOMMotion.quick) { isHovering = hovering }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: interaction.zoomBadgeVisible)
+        .aomAnimation(.quick, value: interaction.zoomBadgeVisible)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Pinned screenshot")
     }
 
     private var clipShape: AnyShape {
-        interaction.rounded ? AnyShape(RoundedRectangle(cornerRadius: 9, style: .continuous)) : AnyShape(Rectangle())
+        interaction.rounded ? AnyShape(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)) : AnyShape(Rectangle())
     }
 
     private var controls: some View {
@@ -528,18 +528,18 @@ private struct PinnedScreenshotView: View {
             }
             Spacer()
         }
-        .padding(6)
+        .padding(AOMSpace.x1 + AOMSpace.x0_5)
     }
 
     private func iconButton(_ symbol: String, label: String, help: String,
                             _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(.black.opacity(0.55), in: Circle())
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5))
+                .font(AOMFont.caption.weight(.semibold))
+                .foregroundStyle(AOMFeatureColor.onMedia)
+                .frame(width: AOMIcon.hitArea - AOMSpace.x1, height: AOMIcon.hitArea - AOMSpace.x1)
+                .background(AOMFeatureColor.mediaControl(pressed: false, hovering: false), in: Circle())
+                .overlay(Circle().strokeBorder(AOMFeatureColor.mediaControlEdge(hovering: false), lineWidth: 0.5))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

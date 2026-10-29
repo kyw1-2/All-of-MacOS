@@ -92,6 +92,29 @@ enum AOMFeatureSize {
     static let numberField: CGFloat = 70
     /// Key pickers in Settings (Hyper key source, remap from / to).
     static let keyPicker: CGFloat = 170
+    /// Quick Access: the Copy / Save pills and the inset of the hover controls
+    /// (the capture overlay's hit areas; keep these exact).
+    static let quickAccessPill: CGFloat = 110
+    static let quickAccessPillCompact: CGFloat = 70
+    static let quickAccessInset: CGFloat = 7
+    static let quickAccessInsetCompact: CGFloat = 5
+    /// Capture history: the search field and the strip of filters beside it.
+    static let historySearchField: CGFloat = 190
+    static let historyFilterStrip: CGFloat = 470
+    /// The ⌘K palette's height (the width is `AOMSize.paletteWidth`).
+    static let paletteHeight: CGFloat = 460
+    /// The window switcher's thumbnails.
+    static let switcherThumbnail = CGSize(width: 176, height: 112)
+    /// The Copy Text HUD.
+    static let textHUDWidth: CGFloat = 380
+    /// The Live Touch Visualizer in the diagnostics drawer: under the console, or alone.
+    static let touchVisualizer: CGFloat = 180
+    static let touchVisualizerTall: CGFloat = 240
+    /// The recognised-text editor window's text area.
+    static let textEditorMin = CGSize(width: 360, height: 200)
+    /// The window picker sheet and its thumbnails.
+    static let windowPickerMin = CGSize(width: 520, height: 360)
+    static let windowPickerThumbnail: CGFloat = 96
 }
 
 // MARK: - Feature colours
@@ -108,6 +131,24 @@ enum AOMFeatureColor {
     /// Copied rich text keeps its own colours, so previews of it sit on a
     /// white page in both appearances, as the source app showed it.
     static let documentPage = Color.white
+
+    /// Round icon buttons over media (Quick Access, pinned screenshots): dark
+    /// plates with a light edge, readable on any picture.
+    static func mediaControl(pressed: Bool, hovering: Bool) -> Color {
+        Color.black.opacity(pressed ? 0.75 : hovering ? 0.66 : 0.5)
+    }
+    static func mediaControlEdge(hovering: Bool) -> Color { Color.white.opacity(hovering ? 0.35 : 0.15) }
+    /// Text buttons over media: light pills with dark text.
+    static func mediaPill(pressed: Bool, hovering: Bool) -> Color {
+        Color.white.opacity(pressed ? 0.70 : hovering ? 1 : 0.90)
+    }
+    static func mediaPillEdge(hovering: Bool) -> Color { Color.white.opacity(hovering ? 0.8 : 0.25) }
+    static let mediaPillText = Color.black.opacity(0.85)
+    /// The curtain over a capture while its hover controls show.
+    static let mediaCurtain = Color.black.opacity(0.46)
+    /// A pinned screenshot's optional border and shadow (the person's pin options).
+    static let pinBorder = Color.primary.opacity(0.28)
+    static let pinShadow = Color.black.opacity(0.32)
 }
 
 // MARK: - Filter chip
