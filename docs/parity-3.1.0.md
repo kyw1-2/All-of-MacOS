@@ -43,19 +43,23 @@ Stream Deck are excluded by request. The gap list came from a code audit of
 
 ## Still open
 
-Updated for 3.3.2 (checked against the code): two-finger edge swipes and
-Force Click triggers (BTT), per-app balance (SoundSource) and the Swish
-gesture set (title bar, Dock, menu bar; docs/window-snap-3.3.2.md) are done.
+Updated for 3.3.3 (checked against the code and the 3.3.3 stream notes). Done in 3.3.3:
+continuous value bindings (MIDI CC, Pitch Bend and pressure, Force Touch pressure and a
+scroll with a modifier, driving the system volume, an app's volume or the display
+brightness) and Force Touch stage triggers (BTT); Magic Boost presets, an EQ curve per
+output with AutoEQ import, and one Audio Unit effect on the output (SoundSource); opt-in
+link cards and OCR regions in image previews (Paste); text background styles, video
+backgrounds, click display options and the annotation eraser (CleanShot). The commits are
+in docs/release-3.3.3-audit-resolution.md. Done before: two-finger edge swipes and Force
+Click triggers (BTT), per-app balance (SoundSource) and the Swish gesture set (3.3.2).
 
 | Gap | Why it is still open |
 |---|---|
-| Continuous value bindings and pressure stages for trackpad gestures (BTT) | Needs a per-frame value stream and Force Touch pressure stages in the multitouch pipeline; Force Click exists only as a discrete trigger. |
-| Audio Unit hosting, headphone EQ presets and Magic Boost presets (SoundSource) | No AU host; the EQ has no per-headphone curves, and Magic Boost is a switch without presets. |
-| Link cards and OCR region search in clipboard previews (Paste) | Need opt-in network fetches and stored Vision boxes. |
-| Text background styles, video backgrounds and click display options (CleanShot) | Annotation and Studio renderer changes; recordings only have a show-clicks switch. |
+| Continuous values from trackpad pinch, rotate and swipe travel, per-finger pressure, gamepad axes and mouse drags (BTT) | The 3.3.3 bindings read MIDI, Force Touch pressure and scrolling only; the other sources would need per-frame values from their recognizers. |
+| Keyboard backlight as a binding target (BTT) | AOM has no keyboard-backlight API. |
+| Audio Unit chains, AUv3 units and per-output or per-app effects (SoundSource) | 3.3.3 hosts one v2 effect for every output, in-process, without latency compensation. |
 | Move window to Desktop N | No public API; repeated Space moves are unreliable across display layouts. |
-| Annotation eraser (CleanShot) | Annotation renderer change, not started. |
-| Floating menu submenus, searchable lists, focus-follows-mouse, Stage Manager toggle | Lower value; not started. |
+| Floating menu submenus, searchable lists, focus-follows-mouse, Stage Manager toggle | Need a menu-model and a window/Spaces design; not started (3.3.3 added slider widgets only). |
 
 ## Verification
 
