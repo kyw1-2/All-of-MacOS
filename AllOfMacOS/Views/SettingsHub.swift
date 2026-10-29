@@ -894,6 +894,9 @@ struct SettingsHubView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
+            // Isolated previews only: `--aom-preview-scroll-bottom` or
+            // `--aom-preview-scroll-fraction` open a long pane part-way down.
+            .defaultScrollAnchor(PreviewScrollAnchor.current)
             .id(isSearching ? "search" : category.id)
         }
     }

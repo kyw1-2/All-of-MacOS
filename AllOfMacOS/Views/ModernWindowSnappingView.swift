@@ -144,7 +144,7 @@ struct ModernWindowSnappingView: View {
                 .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(Self.previewScrollAnchor)
+            .defaultScrollAnchor(PreviewScrollAnchor.current)
             .aomScrollEdge()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -792,17 +792,6 @@ struct ModernWindowSnappingView: View {
     /// (`--aom-preview-expand-advanced`).
     static var previewExpandsAdvanced: Bool {
         PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-expand-advanced")
-    }
-
-    /// Isolated previews can open the page part-way down
-    /// (`--aom-preview-scroll-fraction 0.5`), so the sections between the top
-    /// and `--aom-preview-scroll-bottom` are reviewed in screenshots too.
-    static var previewScrollAnchor: UnitPoint? {
-        let args = ProcessInfo.processInfo.arguments
-        guard PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-scroll-fraction"),
-              args.indices.contains(index + 1), let fraction = Double(args[index + 1]),
-              (0...1).contains(fraction) else { return AOMPreviewHooks.scrollAnchor }
-        return UnitPoint(x: 0, y: fraction)
     }
 
     /// The preset a stored value stands for (a slider's 1.2500000000000002
