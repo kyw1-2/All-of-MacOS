@@ -48,6 +48,15 @@ struct MainWindow: View {
             }
         }
         .animation(AOMMotion.quick, value: appState.showingCommandPalette)
+        // The master switch and the diagnostics drawer, for Controls › Pause
+        // AOM and the Window menu (they left the sidebar footer in 3.3.3).
+        .focusedSceneValue(\.aomShellCommands, AOMShellCommandActions(
+            engineOn: appState.globalEnabled,
+            toggleEngine: { appState.toggleGlobalEnabled() },
+            showLog: showLog,
+            setShowLog: { showLog = $0 },
+            showTouchVisualizer: showTouchVisualizer,
+            setShowTouchVisualizer: { showTouchVisualizer = $0 }))
         .onAppear {
             // Isolated previews can open Settings for review (`--aom-preview-settings`),
             // once the main window is on screen — the way a person would.
