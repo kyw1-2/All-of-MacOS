@@ -160,10 +160,14 @@ final class ClipboardIntelligenceMCPTests: XCTestCase {
         XCTAssertEqual(store.boards.first?.color, "pink")
         XCTAssertTrue(store.entries.first { $0.id.uuidString == id }?.pinboardIDs.contains(UUID(uuidString: boardID)!) == true)
 
-        // secrets are hidden
+        // secrets are hidden: a content search never matches them (3.3.3,
+        // audit PA-03), and a metadata search lists them without content
         _ = store.createTextItem("sk-abcdefghijklmnopqrstuvwxyz123456")
         let secretSearch = try XCTUnwrap(call("search", ["query": "sk-"], store: store)["structuredContent"] as? [String: Any])
-        let secret = try XCTUnwrap((secretSearch["items"] as? [[String: Any]])?.first)
+        XCTAssertEqual((secretSearch["items"] as? [[String: Any]])?.count, 0)
+        XCTAssertEqual(secretSearch["total"] as? Int, 0)
+        let listed = try XCTUnwrap(call("search", ["query": "type:text"], store: store)["structuredContent"] as? [String: Any])
+        let secret = try XCTUnwrap((listed["items"] as? [[String: Any]])?.first { $0["title"] as? String == "Hidden secret" })
         XCTAssertFalse((secret["preview"] as? String ?? "").contains("abcdef"))
         XCTAssertEqual(call("read_item", ["id": secret["id"] as! String], store: store)["isError"] as? Bool, true)
         XCTAssertEqual(call("copy_to_clipboard", ["id": secret["id"] as! String], store: store)["isError"] as? Bool, true)

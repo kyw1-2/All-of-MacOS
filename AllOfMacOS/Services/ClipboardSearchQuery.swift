@@ -85,6 +85,10 @@ struct ClipboardSearchQuery {
             return term.excluded ? !matched : matched
         }
     }
+
+    /// True when the query matches on content (free or excluded words), not
+    /// only on metadata such as type, app, pinboard or date.
+    var hasContentTerms: Bool { terms.contains { $0.field == nil } }
 }
 
 extension ClipboardSearchQuery {

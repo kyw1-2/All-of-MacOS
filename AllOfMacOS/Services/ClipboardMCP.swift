@@ -590,21 +590,35 @@ enum ClipboardMCPHandler {
 
     private static let iso = ISO8601DateFormatter()
 
+    /// Every representation, at any length, in every kind (audit PA-03):
+    /// `itemClass` runs the outbound scanner, and its cache is keyed by the
+    /// whole content (PA-04).
     static func isSecret(_ entry: ClipboardEntry) -> Bool {
         ClipboardIntelligence.shared.itemClass(entry) == .secret
     }
 
     static func summary(_ entry: ClipboardEntry, store: ClipboardStore) -> [String: Any] {
-        let secret = isSecret(entry)
+        let preview = String(entry.previewText.prefix(240))
+        // The strings about to leave are checked once more, uncached.
+        let secret = isSecret(entry) || ClipboardSecretScanner.containsSecret(inText: entry.title)
+            || ClipboardSecretScanner.containsSecret(inText: preview)
         var item: [String: Any] = [
             "id": entry.id.uuidString, "type": entry.kind.rawValue,
             "title": secret ? "Hidden secret" : entry.title,
-            "preview": secret ? "[hidden: looks like a password, token or key]" : String(entry.previewText.prefix(240)),
+            "preview": secret ? ClipboardSecretScanner.placeholder : preview,
             "timestamp": iso.string(from: entry.lastCopiedAt),
             "pinboards": store.boards.filter { entry.pinboardIDs.contains($0.id) }.map(\.name),
         ]
         if let app = entry.sourceName ?? entry.sourceBundleID { item["app"] = app }
         return item
+    }
+
+    /// The final check of a `read_item` reply: every string in it, whole.
+    static func replyContainsSecret(_ value: [String: Any]) -> Bool {
+        for key in ["title", "preview", "content", "recognized_text"] {
+            if let text = value[key] as? String, ClipboardSecretScanner.containsSecret(inText: text) { return true }
+        }
+        return (value["files"] as? [String])?.contains(where: ClipboardSecretScanner.containsSecret(inText:)) == true
     }
 
     private static func entry(_ arguments: [String: Any], store: ClipboardStore, key: String = "id") throws -> ClipboardEntry {
@@ -633,12 +647,18 @@ enum ClipboardMCPHandler {
             let after = (arguments["after"] as? String).flatMap(iso.date(from:))
             let before = (arguments["before"] as? String).flatMap(iso.date(from:))
             let limit = min(100, max(1, arguments["limit"] as? Int ?? 20))
-            let matches = store.filtered(query: query, kind: kind, source: nil, board: boardID, since: after)
+            var matches = store.filtered(query: query, kind: kind, source: nil, board: boardID, since: after)
                 .filter { before == nil || $0.lastCopiedAt < before! }
+            // A match on a hidden item's content would tell the client what it
+            // holds, one guess at a time; such items answer metadata only.
+            if ClipboardSearchQuery(query, boards: store.boards).hasContentTerms {
+                matches.removeAll(where: isSecret)
+            }
             return ["items": matches.prefix(limit).map { summary($0, store: store) }, "total": matches.count]
         case "read_item":
             let item = try entry(arguments, store: store)
-            guard !isSecret(item) else { throw ToolError("This item looks like a password, token or key and is not shared with AI tools.") }
+            let refusal = "This item looks like a password, token or key and is not shared with AI tools."
+            guard !isSecret(item) else { throw ToolError(refusal) }
             var value = summary(item, store: store)
             if let text = item.text { value["content"] = String(text.prefix(100_000)) }
             if !item.fileURLs.isEmpty { value["files"] = item.fileURLs.map(\.path) }
@@ -648,6 +668,7 @@ enum ClipboardMCPHandler {
                 }
                 if let ocr = item.recognizedText { value["recognized_text"] = String(ocr.prefix(50_000)) }
             }
+            guard !replyContainsSecret(value) else { throw ToolError(refusal) }
             return value
         case "create_item":
             guard let content = arguments["content"] as? String, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

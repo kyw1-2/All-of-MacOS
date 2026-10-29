@@ -292,4 +292,120 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertTrue(intelligence.lastContext.blocksSuggestions)
     }
 
+    // MARK: - PA-03 · the outbound secret check has no type or length gaps
+
+    func testProbeBypassesAreAllSecretsNow() {
+        // clipboard-privacy-probe.log: long_secret, image_ocr_secret and
+        // link_token were unclassified/other/link, so MCP_isSecret was false.
+        let long = probeEntry(String(repeating: "x", count: 64_001) + "\n" + fake)
+        var picture = probeEntry("", kind: .image)
+        picture.recognizedText = fake
+        let link = probeEntry("https://example.invalid/?token=FAKEONLY0123456789", kind: .link)
+        for (name, item) in [("short_secret", probeEntry(fake)), ("long_secret", long), ("image_ocr_secret", picture), ("link_token", link)] {
+            XCTAssertEqual(ClipboardItemClassifier.classify(item), .secret, name)
+            XCTAssertTrue(ClipboardMCPHandler.isSecret(item), name)
+        }
+        XCTAssertFalse(ClipboardMCPHandler.isSecret(probeEntry("https://example.com/docs?page=2", kind: .link)), "control")
+        XCTAssertFalse(ClipboardMCPHandler.isSecret(probeEntry("A calm place for everything you copy.")), "control")
+    }
+
+    func testScannerReadsEveryRepresentationAndEncoding() throws {
+        let string = NSPasteboard.PasteboardType.string.rawValue
+        let rtf = try NSAttributedString(string: fake).data(from: NSRange(location: 0, length: fake.utf16.count),
+                                                             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        let cases: [(String, [[String: Data]])] = [
+            ("rich text only", [[string: Data("Quarterly notes".utf8), NSPasteboard.PasteboardType.rtf.rawValue: rtf]]),
+            ("UTF-16 only", [[string: Data("hello".utf8), "public.utf16-external-plain-text": fake.data(using: .utf16)!]]),
+            ("HTML character references", [[string: Data("Invoice".utf8), NSPasteboard.PasteboardType.html.rawValue:
+                Data("<p>api&#95;key&#61;sk&#x2D;SYNTHETIC0000000000000000</p>".utf8)]]),
+            ("HTML split by tags", [[NSPasteboard.PasteboardType.html.rawValue: Data("<b>sk-SYNTH</b><i>ETIC0000000000000000</i>".utf8)]]),
+            ("percent-encoded file URL", [[NSPasteboard.PasteboardType.fileURL.rawValue:
+                Data("file:///tmp/sk%2DSYNTHETIC0000000000000000.txt".utf8)]]),
+            // Types the current capture allowlist drops, as older archives hold them.
+            ("legacy type, UTF-16 without a byte-order mark", [["com.example.legacy-text": fake.data(using: .utf16LittleEndian)!]]),
+            ("legacy type past 4 MB", [["com.example.legacy-text": Data((String(repeating: "log line\n", count: 600_000) + fake).utf8)]]),
+        ]
+        for (name, items) in cases {
+            let entry = captured(items)
+            XCTAssertFalse(entry.text?.contains("sk-SYNTHETIC0000000000000000") == true, "\(name): the visible text does not show it")
+            XCTAssertTrue(ClipboardSecretScanner.containsSecret(entry), name)
+            XCTAssertEqual(ClipboardItemClassifier.classify(entry), .secret, name)
+        }
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: "sk-SYNTH\u{200B}ETIC0000000000000000"), "zero-width split")
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: "ｓｋ－ＳＹＮＴＨＥＴＩＣ００００００００００００００００"), "full-width")
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: "https://alice:hunter2pw@example.com/"), "URL password")
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: "https://bucket.example.com/a.png?X-Amz-Signature=abcdef0123456789"))
+
+        var renamed = text("Meeting notes")
+        renamed.title = "token: abcdef123456"
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(renamed), "a title is handed out too")
+        XCTAssertFalse(ClipboardSecretScanner.containsSecret(text("Meeting at 10:30")), "control")
+        XCTAssertFalse(ClipboardSecretScanner.containsSecret(captured([[NSPasteboard.PasteboardType.fileURL.rawValue:
+            Data("file:///Users/test/Documents/Report%202026.pdf".utf8)]])), "control")
+    }
+
+    func testLongClipsAreScannedWhole() {
+        // Past the 1 MB slice length, and a key right across a slice border.
+        let filler = String(repeating: "log line without credentials\n", count: 80_000)
+        XCTAssertGreaterThan(filler.utf16.count, 2 * 1_048_576)
+        XCTAssertFalse(ClipboardSecretScanner.containsSecret(inText: filler), "control")
+        let border = 1 << 20
+        let prefix = String(repeating: "a ", count: (border - 10) / 2)
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: prefix + " sk-SYNTHETIC0000000000000000 " + filler))
+        XCTAssertTrue(ClipboardSecretScanner.containsSecret(inText: filler + fake))
+    }
+
+    func testMCPWithholdsEveryProbeBypass() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        var picture = ClipboardEntry(title: "Image", kind: .image, sourceName: "Test", sourceBundleID: "test.aom333",
+                                     items: [[NSPasteboard.PasteboardType.png.rawValue: png(twoWordImage("A", "B"))]])
+        picture.recognizedText = "Screenshot\n" + fake
+        picture.recognizedImageDigest = "indexed"
+        let link = captured([[NSPasteboard.PasteboardType.string.rawValue: Data("https://example.invalid/?token=FAKEONLY0123456789".utf8)]])
+        let rich = captured([[NSPasteboard.PasteboardType.string.rawValue: Data("Quarterly notes".utf8),
+                              NSPasteboard.PasteboardType.rtf.rawValue: try NSAttributedString(string: fake).data(
+                                from: NSRange(location: 0, length: fake.utf16.count),
+                                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])]])
+        let long = captured([[NSPasteboard.PasteboardType.string.rawValue: Data((String(repeating: "x", count: 64_001) + "\n" + fake).utf8)]])
+        let plain = captured([[NSPasteboard.PasteboardType.string.rawValue: Data("Nothing secret about SYNTHETIC weather".utf8)]])
+        try writeArchive([picture, link, rich, long, plain], to: harness.directory)
+        await harness.store.ready()
+        XCTAssertEqual(harness.store.entries.count, 5)
+
+        for item in [picture, link, rich, long] {
+            XCTAssertEqual(call("read_item", ["id": item.id.uuidString], store: harness.store)["isError"] as? Bool, true, item.title)
+            XCTAssertEqual(call("copy_to_clipboard", ["id": item.id.uuidString], store: harness.store)["isError"] as? Bool, true, item.title)
+        }
+        XCTAssertEqual(call("read_item", ["id": plain.id.uuidString], store: harness.store)["isError"] as? Bool, false, "control")
+
+        // A content search never matches a hidden item, so its text cannot be
+        // probed one guess at a time; metadata searches still list it, hidden.
+        let found = try XCTUnwrap(call("search", ["query": "SYNTHETIC"], store: harness.store)["structuredContent"] as? [String: Any])
+        XCTAssertEqual((found["items"] as? [[String: Any]])?.compactMap { $0["id"] as? String }, [plain.id.uuidString])
+        XCTAssertEqual(found["total"] as? Int, 1)
+        let images = try XCTUnwrap(call("search", ["query": "type:image"], store: harness.store)["structuredContent"] as? [String: Any])
+        let hidden = try XCTUnwrap((images["items"] as? [[String: Any]])?.first)
+        XCTAssertEqual(hidden["title"] as? String, "Hidden secret")
+        XCTAssertEqual(hidden["preview"] as? String, ClipboardSecretScanner.placeholder)
+    }
+
+    func testAutomationRepliesHideCredentialsAndRefuseThemBack() {
+        let definition: [String: Any] = [
+            "name": "Sign in",
+            "actions": [["type": "typeText", "text": fake], ["type": "openURL", "url": "https://example.com/start"],
+                        ["type": "custom", "parameters": ["password": "hunter2", "count": 3]]],
+        ]
+        let redacted = ClipboardSecretScanner.redactingSecrets(in: definition)
+        XCTAssertEqual(redacted.hidden, 2)
+        let actions = (redacted.value as? [String: Any])?["actions"] as? [[String: Any]]
+        XCTAssertEqual(actions?[0]["text"] as? String, ClipboardSecretScanner.placeholder)
+        XCTAssertEqual(actions?[1]["url"] as? String, "https://example.com/start")
+        XCTAssertEqual((actions?[2]["parameters"] as? [String: Any])?["password"] as? String, ClipboardSecretScanner.placeholder)
+        XCTAssertEqual((actions?[2]["parameters"] as? [String: Any])?["count"] as? Int, 3)
+        XCTAssertEqual(AutomationMCP.redactingSecrets(definition) as? NSDictionary, redacted.value as? NSDictionary)
+        XCTAssertThrowsError(try AutomationMCP.rejectRedactedValues(redacted.value), "a placeholder never overwrites the secret")
+        XCTAssertNoThrow(try AutomationMCP.rejectRedactedValues(["name": "Plain", "actions": [["type": "beep"]]]))
+    }
+
 }
