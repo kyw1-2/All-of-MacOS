@@ -606,6 +606,7 @@ final class AppAudioEngine {
             AppAudioPreferences.balance(bundleID: bundleID) != 0 ||
             d.bool(forKey: "AOMAudioMasterBoostEnabled") ||
             Self.appEQ(bundleID: bundleID).isEnabled || Self.masterEQ().isEnabled ||
+            Self.targetOutputUID(for: bundleID).map { AudioDeviceEQ.hasEQ(uid: $0) } == true ||
             Self.targetOutputUID(for: bundleID).map { AudioOutputService.softwareGain(uid: $0) != 1 } == true
     }
 
@@ -651,9 +652,11 @@ final class AppAudioEngine {
         return AudioEQ(gains: gains, sampleRate: sampleRate)
     }
 
-    /// The master EQ for a session playing to `outputUID`.
+    /// The master EQ for a session playing to `outputUID`, with that output's
+    /// own curve as the device stage (3.3.3, parity S04).
     static func masterEQ(sampleRate: Double = 48000, outputUID: String?) -> AudioEQ {
-        masterEQ(sampleRate: sampleRate)
+        AudioEQ(gains: masterEQ(sampleRate: sampleRate).gains, sampleRate: sampleRate,
+                deviceGains: AudioDeviceEQ.deviceGains(uid: outputUID))
     }
 
     func updateEffects() {
@@ -680,6 +683,13 @@ final class AppAudioEngine {
     /// (`bundleID` nil); applied in place, no session restarts.
     func setBoostPreset(_ id: String, bundleID: String?) {
         AudioBoostPreset.store(id, bundleID: bundleID)
+        updateEffects()
+    }
+
+    /// 3.3.3 (S04): the EQ curve an output uses (nil: none); every session
+    /// playing to it retunes in place.
+    func setDeviceEQ(_ name: String?, uid: String) {
+        AudioDeviceEQ.assign(name, uid: uid)
         updateEffects()
     }
 
@@ -1279,6 +1289,12 @@ final class AppAudioEngine {
         }
         session.sourceToken = source
         session.outputUID = device.uid
+        // 3.3.3 (S04): the master EQ's device stage follows the output (a
+        // headphone curve switches in or out; a 10 ms EQ crossfade inside
+        // the hand-over's fades).
+        mixer.setEffects(app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
+                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: device.uid),
+                         appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
         return true
     }
 

@@ -703,4 +703,112 @@ final class Audio333Tests: XCTestCase {
         XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.025, preset: .speech), 0.05)
         XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.025, preset: .music), 0.025)
     }
+
+    // MARK: - S04: per-output EQ and AutoEQ import
+
+    /// A made-up file in AutoEQ's ParametricEQ.txt format (no measurement
+    /// data is shipped or copied: these numbers are invented for the test).
+    private let syntheticAutoEQ = """
+        Preamp: -5.1 dB
+        Filter 1: ON LSC Fc 105 Hz Gain 4.0 dB Q 0.70
+        Filter 2: ON PK Fc 1000 Hz Gain -3.0 dB Q 1.10
+        Filter 3: ON PK Fc 4000 Hz Gain 2.5 dB Q 1.00
+        Filter 4: ON HSC Fc 10000 Hz Gain -2.0 dB Q 0.70
+        Filter 5: OFF PK Fc 200 Hz Gain 9.0 dB Q 1.00
+        Filter 6: ON LPQ Fc 18000 Hz Q 0.71
+        """
+
+    func testAnAutoEQFileIsParsedAndFittedOntoTheTenBands() throws {
+        let profile = try AutoEQImport.parse(syntheticAutoEQ)
+        XCTAssertEqual(profile.preamp, -5.1, accuracy: 1e-9)
+        XCTAssertEqual(profile.filters, [
+            .init(type: .lowShelf, frequency: 105, gain: 4, q: 0.7),
+            .init(type: .peak, frequency: 1000, gain: -3, q: 1.1),
+            .init(type: .peak, frequency: 4000, gain: 2.5, q: 1),
+            .init(type: .highShelf, frequency: 10000, gain: -2, q: 0.7)])
+        XCTAssertEqual(profile.skipped.count, 1, "the low-pass is reported, the OFF filter ignored")
+        let fit = AutoEQImport.fit(profile)
+        XCTAssertLessThan(fit.rmsError, 0.75, "a smooth curve fits the ten bands closely (rms \(fit.rmsError) dB)")
+        XCTAssertLessThan(fit.maximumError, 2.5, "worst \(fit.maximumError) dB")
+        XCTAssertLessThan(fit.gains[5], -1, "1 kHz is cut")
+        XCTAssertGreaterThan(fit.gains[7], 0.5, "4 kHz is raised")
+        XCTAssertGreaterThan(fit.gains[1], 1, "the bass shelf is raised")
+        XCTAssertTrue(fit.gains.allSatisfy { abs($0) <= 12 })
+        print("S04 fit: \(fit.gains) rms \(String(format: "%.2f", fit.rmsError)) dB, worst \(String(format: "%.2f", fit.maximumError)) dB")
+        XCTAssertThrowsError(try AutoEQImport.parse("Preamp: -3 dB\nnot an eq file")) { error in
+            XCTAssertEqual(error as? AutoEQImport.ImportError, .noFilters)
+        }
+    }
+
+    /// A file made of AOM's own ten bands comes back as those ten gains.
+    func testTheFitRecoversACurveTheTenBandsCanPlay() throws {
+        let curve: [Float] = [3, -2, 1.5, 0, -4, 2, 0.5, -1, 3, -2.5]
+        var lines = ["Preamp: -4 dB"]
+        for (band, frequency) in AudioEQ.bandFrequencies.enumerated() {
+            let type = band == 0 ? "LSC" : band == 9 ? "HSC" : "PK"
+            lines.append("Filter \(band + 1): ON \(type) Fc \(Int(frequency)) Hz Gain \(curve[band]) dB Q 1.10")
+        }
+        let fit = AutoEQImport.fit(try AutoEQImport.parse(lines.joined(separator: "\n")))
+        // The low shelf and the 64 Hz band nearly trade places below 100 Hz,
+        // so the curve, not each slider, is what must come back.
+        for band in 0..<10 { XCTAssertEqual(fit.gains[band], curve[band], accuracy: 0.3, "band \(band)") }
+        XCTAssertLessThan(fit.rmsError, 0.1, "rms \(fit.rmsError) dB")
+        XCTAssertLessThan(fit.maximumError, 0.3, "worst \(fit.maximumError) dB")
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Test Phones ParametricEQ.txt")
+        XCTAssertEqual(AutoEQImport.presetName(for: url), "Test Phones")
+    }
+
+    /// Curves are stored by name and assigned per output UID; the master EQ
+    /// of a session on that output runs it as a second stage (both stages
+    /// in one cascade, headroom for both), and other outputs stay flat.
+    func testAnOutputsCurveIsTheMasterEQsDeviceStage() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "Audio333Tests.\(UUID().uuidString)"))
+        var curve = AudioEQ.presetFlat; curve[5] = 6
+        XCTAssertEqual(AudioDeviceEQ.savePreset(name: " Test Phones ", gains: curve, defaults: defaults), "Test Phones")
+        AudioDeviceEQ.assign("Test Phones", uid: "headphones-uid", defaults: defaults)
+        AudioDeviceEQ.assign("No Such Curve", uid: "speakers-uid", defaults: defaults)
+        XCTAssertEqual(AudioDeviceEQ.deviceGains(uid: "headphones-uid", defaults: defaults), curve)
+        XCTAssertEqual(AudioDeviceEQ.deviceGains(uid: "speakers-uid", defaults: defaults), AudioEQ.presetFlat)
+        XCTAssertFalse(AudioDeviceEQ.hasEQ(uid: "speakers-uid", defaults: defaults))
+        XCTAssertTrue(AudioDeviceEQ.presetNames(defaults: defaults).contains("Test Phones"))
+        XCTAssertTrue(AudioDeviceEQ.presetNames(defaults: defaults).contains("Bass Boost"), "built-ins can be assigned too")
+        // The device stage is audible through the app chain: a 1 kHz tone
+        // rises by the curve's 6 dB, less the headroom AOM keeps for it.
+        var master = AudioEQ.presetFlat; master[5] = 3
+        let plain = AudioEQ(gains: master), withDevice = AudioEQ(gains: master, deviceGains: curve)
+        XCTAssertEqual(withDevice.sections.count, 2)
+        XCTAssertEqual(withDevice.responseDB(at: 1000), 9, accuracy: 0.05)
+        XCTAssertLessThan(AudioEQ.headroomGain(app: AudioEQ(), master: withDevice),
+                          AudioEQ.headroomGain(app: AudioEQ(), master: plain), "headroom covers both stages")
+        func level(_ eq: AudioEQ) -> Float {
+            let mixer = MixerBox(gain: 1, muted: false)
+            mixer.setEffects(app: AudioEQ(), master: eq, appBoost: 0)
+            var phase = 0.0
+            let tone = sine(0.1, seconds: 0.5, frequency: 1000, phase: &phase)
+            var input = [Float](repeating: 0, count: 960), output = input, collected: [Float] = []
+            for block in 0..<(tone.count / 480) {
+                for frame in 0..<480 { input[frame * 2] = tone[block * 480 + frame]; input[frame * 2 + 1] = tone[block * 480 + frame] }
+                input.withUnsafeMutableBufferPointer { i in
+                    output.withUnsafeMutableBufferPointer { o in
+                        var inList = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                            mNumberChannels: 2, mDataByteSize: 3840, mData: i.baseAddress))
+                        var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                            mNumberChannels: 2, mDataByteSize: 3840, mData: o.baseAddress))
+                        withUnsafePointer(to: &inList) { inPointer in
+                            withUnsafeMutablePointer(to: &outList) { Mixer.mix(input: inPointer, output: $0, box: mixer) }
+                        }
+                    }
+                }
+                if block >= 25 { collected += stride(from: 0, to: 960, by: 2).map { output[$0] } }
+            }
+            return rms(collected[...])
+        }
+        let gainDB = 20 * log10(level(withDevice) / level(plain))
+        let headroomDB = 20 * log10(AudioEQ.headroomGain(app: AudioEQ(), master: withDevice)
+                                    / AudioEQ.headroomGain(app: AudioEQ(), master: plain))
+        XCTAssertEqual(Double(gainDB), Double(6 + headroomDB), accuracy: 0.2)
+        AudioDeviceEQ.deletePreset(name: "Test Phones", defaults: defaults)
+        XCTAssertNil(AudioDeviceEQ.assignment(uid: "headphones-uid", defaults: defaults), "deleting a curve unassigns it")
+        XCTAssertEqual(AudioDeviceEQ.deviceGains(uid: "headphones-uid", defaults: defaults), AudioEQ.presetFlat)
+    }
 }
