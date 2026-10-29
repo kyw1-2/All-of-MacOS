@@ -285,8 +285,8 @@ struct AOMSettingRow<Control: View>: View {
     var showsDivider = true
     @ViewBuilder var control: Control
 
-    init(_ title: String, detail: String? = nil, symbol: String? = nil, help: String? = nil,
-         indent: Bool = false, showsDivider: Bool = true, @ViewBuilder control: () -> Control) {
+    init(_ title: String, detail: String? = nil, symbol: String? = nil, indent: Bool = false,
+         help: String? = nil, showsDivider: Bool = true, @ViewBuilder control: () -> Control) {
         self.title = title
         self.detail = detail
         self.symbol = symbol
@@ -366,7 +366,7 @@ struct AOMToggleRow: View {
     }
 
     var body: some View {
-        AOMSettingRow(title, detail: detail, symbol: symbol, help: help, indent: indent) {
+        AOMSettingRow(title, detail: detail, symbol: symbol, indent: indent, help: help) {
             Toggle(title, isOn: $isOn)
         }
     }
