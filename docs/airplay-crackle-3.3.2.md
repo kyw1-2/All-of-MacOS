@@ -83,3 +83,96 @@ every gain stage, splice and restart on that path is AOM's.
    level); crackle that lines up with `deviceCycleGaps` is the HAL; with trims or
    underruns, buffering; with `tapRewrites`, tap membership; a 30 s rhythm would be
    the IO re-request (now only while the device runs AOM smaller).
+
+## 3.3.3 addendum
+
+Follows the main 3.3.2 audit's A01–A03 (2026-10-29). Code: audio stream commits 3ec2590 (A01),
+a9b6630 (A02), 0426a43 and 9e6732e (A03); tests in `AllOfMacOSTests/Audio333Tests.swift`
+(synthetic signals, no realtime thread). Still not listened to on a HomePod.
+
+### A01: the HomePod's 128-frame IO
+
+Read-only evidence on 2026-10-30, with 3.3.2 installed and playing:
+
+- HAL probe: the AirPlay device (id 114) runs 48 kHz (48000.00 measured) at 128 frames
+  (range 15–4096), safety offset 0, latency 0, no variable buffer sizes, and
+  `kAudioDevicePropertyIOCycleUsage` 1.0 (the default, which is also the maximum).
+- audio-health.json after about 22 h of output: `deviceCycleGaps` 92 over 30,017 frames (about
+  326 frames, 6.8 ms, each), no underruns or trims, the mix thread realtime at priority 97, no
+  late mix wakes, drift −418 ppm.
+- `log show`: for the cycles AOM logs as "skipping cycle due to overload", coreaudiod's analytics
+  give `cause SafetyViolationOccurred`, `io_buffer_size 128`, `io_cycle_usage 1`,
+  `HAL_client_IO_duration` 22,208 and 18,291 ns and no page faults. AOM's whole IO takes about
+  20 µs of the 2,667 µs cycle, so the gaps are HAL safety violations at the device's fixed IO, not
+  AOM's callback cost.
+
+What 3.3.3 changes:
+
+- Gap fade-in: after a sample-time gap the bridge fades back in from silence over 5 ms
+  (smoothstep). Nothing is skipped; the stream continues where the gap leaves it. The edge into
+  the hole cannot be shaped, because it happens before AOM can know. Counter `gapFadeIns`.
+- Callback cost, measured in the callback with two clock reads: `renderCostMaxMicros`,
+  `renderCostMeanMicros`, `renderCallbacks`, `renderCycleLoadPercent`. Work stays bounded: at
+  most one cycle plus one fade (368 frames at 128-frame IO) on an event.
+- `kAudioDeviceProcessorOverload` is listened to (`processorOverloads`, `overload` events), and
+  `ioCycleUsage` is reported, not set: a lower value would only give AOM less of the cycle.
+- Drift loop: at 2.67 ms cycles the 480-frame mix blocks against 128-frame pulls made a sawtooth
+  that aliased into a beat near 0.5 Hz (correction wobble ±20–40 ppm). `levelBias` now counts the
+  newest block as arriving over its 10 ms: the spread is 0.7–1.3 ppm without push jitter and about
+  43 ppm (0.07 cent) with 1 ms of jitter.
+- Not used: audio workgroups (marked unavailable to Swift on realtime threads; they would need a
+  C shim), hog mode, and a private aggregate device to get a larger IO size (it would add a
+  client to the HomePod and could not be tested without disturbing playback).
+
+### A02: output moves
+
+The 3.3.2 limit "during the 5 ms fade the old and new outputs both pull from the app's queue …
+a move can skip about 10 ms" no longer applies. `AppAudioTransport` has one consumer at a time:
+each output's closure carries a consumer number, and only the owner pulls. On a move the owner
+renders exactly to the end of a 5 ms fade-out and hands over; the new output continues with the
+next frame and fades in. Stale consumers render silence without taking the lock, and if the old
+output stopped rendering the new one takes over after 50 ms. The two outputs run different clocks
+(AirPlay about 2 s behind), so this is a fade-out then a fade-in of one contiguous stream, not an
+overlapping crossfade. The DSP state passes over intact. Unchanged from 3.3.2: 5 ms trim, underrun
+and clear fades, EQ changes crossfading from fresh filter state, and Boost or Overdrive switches
+crossfading signals that are not time-aligned.
+
+### A03: timestamped events
+
+- audio-health.json gains `events` (oldest first; `time` in local ISO 8601 with milliseconds,
+  `kind`, `source` as `output:<uid>`, `app:<bundle id>` or `system`, and `frames`,
+  `reductionDB`, `lateMS`, `value` or `detail`), `eventsLost`, and
+  `sinceReset {resetAt, seconds, counters}`.
+- Kinds: `cycleGap`, `trim`, `underrun`, `clear`, `dropped`, `limiterEngaged`,
+  `limiterReleased`, `overload`, `reconfiguration`, `bufferSize`, `formatNotice`,
+  `outputStarted`, `outputStopped`, `outputFailed`, `defaultOutputChanged`, `deviceListChanged`,
+  `tapAttached`, `tapDetached`, `tapRewrite`, `outputMoved`, `handover`, `mixLate`,
+  `countersReset`, `effectChanged`.
+- Realtime producers (the HAL thread, the mix thread, a transport's owner) write into lock-free,
+  preallocated rings, six atomic stores per event. A poller on a utility queue drains them every
+  250 ms into the last 200 events with wall-clock times, and folds counter deltas into totals
+  that survive output and session re-creation.
+- Reset: `defaults write com.kyw.allofmacos AOMAudioDiagnosticsResetAt -float $(date +%s)`, read
+  at the next diagnostics write (propagation to a running app is best effort); a relaunch resets
+  too. The key is a request, not a setting, so backups leave it out.
+
+### Listening test, 3.3.3
+
+Run the 3.3.2 test above with diagnostics on. In addition:
+
+1. Write down the time of every crackle, then look in `events` within a second of it: a
+   `cycleGap` points at the HAL, `trim` or `underrun` at buffering, `tapRewrite` at tap
+   membership, `limiterEngaged` at the gain stage, `outputMoved` or `handover` at a switch.
+   With 3.3.3 each `cycleGap` should sound like a short dip, not a click.
+2. Between states A–D, request a reset (above) and compare `sinceReset` instead of relaunching.
+3. Move music between the speakers, headphones and the HomePod: one short dip each time, no
+   skip or stutter.
+
+### Still open
+
+- No listening test on a HomePod yet; the overload listener and the event log have not run
+  against the live device (they need the 3.3.3 build installed).
+- The event poller runs only when `AOMAudioDiagnostics` was on when an output started; there is no
+  reset button or automation action (the API exists).
+- App queues (tap to mix clock) have the same block sawtooth; their drift loop did not get
+  `levelBias` (expected to be inaudible, not measured live).
