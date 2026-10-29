@@ -834,9 +834,10 @@ struct AddTriggerSheet: View {
             if ["wifiOn", "wifiOff", "usbOn", "usbOff", "btOn", "btOff", "midi", "gamepad"].contains(systemEventKind) {
                 AOMSettingRow("Device or SSID",
                               help: "USB, Bluetooth and MIDI match a substring; Wi-Fi matches the full SSID. Use regex:pattern for a regular expression. SSID names require Location permission.") {
-                    TextField("Device name / SSID filter (empty = any)", text: $eventFilter)
+                    TextField("Empty = any", text: $eventFilter)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: AOMEditorSize.rowField)
+                        .accessibilityLabel("Device name / SSID filter (empty = any)")
                 }
             }
             if systemEventKind == "file" {
@@ -1113,14 +1114,17 @@ struct EditTriggerSheet: View {
     @State private var colorLabel = ""
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             Text("Edit Trigger")
-                .font(.headline)
+                .font(AOMFont.pageStatus)
+                .foregroundStyle(AOMColor.text)
+                .accessibilityAddTraits(.isHeader)
 
             Text("Current: \(trigger.input.displayName)")
-                .foregroundColor(.secondary)
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.textSecondary)
 
-            Divider()
+            AOMDivider()
 
             TextField("Trigger Name", text: $triggerName)
                 .textFieldStyle(.roundedBorder)
@@ -1154,8 +1158,8 @@ struct EditTriggerSheet: View {
                          && TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trigger.requiredModifiers) != nil)))
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .padding(AOMSpace.x5)
+        .frame(width: AOMEditorSize.triggerSheet)
         .onAppear {
             triggerName = trigger.name
             notes = trigger.notes; folder = trigger.folder ?? ""; colorLabel = trigger.colorLabel ?? ""
@@ -1174,45 +1178,41 @@ struct EditTriggerSheet: View {
         switch trigger.input.category {
         case .trackpad:
             ScrollView(showsIndicators: false) {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: 0) {
                     ForEach(TrackpadGesture.allCases) { gesture in
                         let selected = selectedGesture == gesture
-                        HStack {
+                        let onAccent = AOMTheme.onAccent(AOMColor.accent)
+                        HStack(spacing: AOMSpace.x2) {
                             Image(systemName: gestureIconForEdit(gesture))
-                                .frame(width: 20)
-                                .foregroundColor(selected ? .white : .accentColor)
+                                .frame(width: AOMIcon.row)
+                                .foregroundStyle(selected ? onAccent : AOMColor.textSecondary)
                             Text(gesture.rawValue)
-                                .foregroundColor(selected ? .white : .primary)
+                                .font(AOMFont.body)
+                                .foregroundStyle(selected ? onAccent : AOMColor.text)
                             Spacer()
                             if selected {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 14))
-                                    .transition(.scale.combined(with: .opacity))
+                                    .foregroundStyle(onAccent)
+                                    .transition(.opacity)
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, AOMSpace.x2)
+                        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(selected ? Color.accentColor : Color.clear)
+                            RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                                .fill(selected ? AOMColor.accent : Color.clear)
                         )
-                        .scaleEffect(selected ? 1.02 : 1.0)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
-                                selectedGesture = gesture
-                            }
+                            withAnimation(AOMMotion.quick) { selectedGesture = gesture }
                         }
-                        .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7)), value: selected)
                     }
                 }
-                .padding(4)
+                .padding(AOMSpace.x1)
             }
-            .frame(height: 180)
-            .background(Color(nsColor: .textBackgroundColor))
-            .cornerRadius(6)
+            .frame(height: AOMEditorSize.gestureList)
+            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
         case .normalMouse:
             MouseTriggerEditor(spec: $mouseSpec, modifiers: $mouseModifiers)
@@ -1306,8 +1306,10 @@ struct MouseTriggerEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Mouse trigger:").font(.subheadline)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            Text("Mouse trigger")
+                .font(AOMFont.headline)
+                .foregroundStyle(AOMColor.text)
             Picker("Action", selection: Binding(get: { spec.kind }, set: { spec = MouseTriggerSpec(button: spec.button, kind: $0) })) {
                 Section("Press") {
                     ForEach([MouseTriggerKind.click, .doubleClick, .tripleClick, .longPress]) { Text($0.rawValue).tag($0) }
@@ -1326,8 +1328,7 @@ struct MouseTriggerEditor: View {
             }
             RequiredModifierToggles(modifiers: $modifiers)
             if let problem = TriggerValidation.problem(for: MouseTriggerEditor.input(for: spec), requiredModifiers: modifiers) {
-                Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                AOMEditorNote(problem, tone: .warning)
             }
         }
     }
@@ -1340,8 +1341,8 @@ struct RequiredModifierToggles: View {
     private static let choices: [(String, NSEvent.ModifierFlags)] = [
         ("⌃", .control), ("⌥", .option), ("⇧", .shift), ("⌘", .command), ("fn", .function)]
     var body: some View {
-        HStack(spacing: 6) {
-            Text("Required modifiers").font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            Text("Required modifiers").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             ForEach(Self.choices, id: \.0) { label, flag in
                 Toggle(label, isOn: Binding(
                     get: { modifiers & flag.rawValue != 0 },
