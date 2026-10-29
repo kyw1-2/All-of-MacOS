@@ -438,6 +438,295 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertNotEqual(ClipboardIntelligence.digest(rich), ClipboardIntelligence.digest(richEdited))
     }
 
+    // MARK: - Pinboards (Paste parity)
+
+    func testDeletingAPinboardWithItsItemsIsUndoable() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let work = store.createBoard(name: "Work"), home = store.createBoard(name: "Home")
+        let onlyWork = try XCTUnwrap(store.createTextItem("only work"))
+        let both = try XCTUnwrap(store.createTextItem("both"))
+        let loose = try XCTUnwrap(store.createTextItem("loose"))
+        store.pin(entryID: onlyWork.id, boardID: work.id)
+        store.pin(entryID: both.id, boardID: work.id)
+        store.pin(entryID: both.id, boardID: home.id)
+        XCTAssertEqual(store.itemsOnlyOnBoard(work.id), 1)
+
+        XCTAssertEqual(store.deleteBoard(id: work.id, deletingItems: true), 1)
+        XCTAssertEqual(store.boards.map(\.id), [home.id])
+        XCTAssertFalse(store.entries.contains { $0.id == onlyWork.id }, "Paste deletes a pinboard's items with it")
+        XCTAssertEqual(store.entries.first { $0.id == both.id }?.pinboardIDs, [home.id], "items on another pinboard stay")
+        XCTAssertTrue(store.entries.contains { $0.id == loose.id })
+
+        let undone = store.undoLastDeletion()
+        XCTAssertEqual(undone.boardCount, 1)
+        XCTAssertEqual(undone.entryIDs, [onlyWork.id])
+        XCTAssertEqual(store.boards.map(\.id), [work.id, home.id], "the pinboard returns to its place")
+        XCTAssertEqual(store.entries.first { $0.id == onlyWork.id }?.pinboardIDs, [work.id])
+        XCTAssertEqual(store.entries.first { $0.id == both.id }?.pinboardIDs, [work.id, home.id])
+    }
+
+    func testDeletingAPinboardButKeepingItemsNeverLosesThemSilently() async throws {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let harness = makeHarness(now: { clock })
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        store.settings.retentionDays = 1
+        let board = store.createBoard(name: "Archive")
+        let old = try XCTUnwrap(store.createTextItem("pinned long ago"))
+        store.pin(entryID: old.id, boardID: board.id)
+        clock.addTimeInterval(10 * 86_400)
+        let fresh = try XCTUnwrap(store.createTextItem("pinned today"))
+        store.pin(entryID: fresh.id, boardID: board.id)
+
+        XCTAssertEqual(store.deleteBoard(id: board.id, deletingItems: false), 0)
+        XCTAssertEqual(store.entries.first { $0.id == fresh.id }?.pinboardIDs, [], "a recent item stays in history")
+        XCTAssertFalse(store.entries.contains { $0.id == old.id }, "an item past the history limit leaves with its pinboard")
+        XCTAssertTrue(store.canUndoDeletion, "…but not silently: Undo Delete has it")
+
+        let undone = store.undoLastDeletion()
+        XCTAssertEqual(undone.boardCount, 1)
+        XCTAssertEqual(undone.entryIDs, [old.id])
+        XCTAssertEqual(store.entries.first { $0.id == old.id }?.pinboardIDs, [board.id])
+        XCTAssertEqual(store.entries.first { $0.id == fresh.id }?.pinboardIDs, [board.id])
+    }
+
+    func testUnpinningAnItemPastTheHistoryLimitIsUndoable() async throws {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let harness = makeHarness(now: { clock })
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        store.settings.retentionDays = 7
+        let board = store.createBoard(name: "Snippets")
+        let item = try XCTUnwrap(store.createTextItem("signature block"))
+        store.pin(entryID: item.id, boardID: board.id)
+        clock.addTimeInterval(30 * 86_400)
+        XCTAssertTrue(store.unpin(entryID: item.id, boardID: board.id))
+        XCTAssertFalse(store.entries.contains { $0.id == item.id })
+        XCTAssertEqual(store.undoLastDeletion().entryIDs, [item.id])
+        XCTAssertEqual(store.entries.first { $0.id == item.id }?.pinboardIDs, [board.id], "it comes back pinned")
+        XCTAssertFalse(store.unpin(entryID: UUID(), boardID: board.id))
+    }
+
+    func testOnePinboardPerItemMovesLikePasteAndSurvivesReload() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let a = store.createBoard(name: "A"), b = store.createBoard(name: "B")
+        let item = try XCTUnwrap(store.createTextItem("snippet"))
+        XCTAssertFalse(store.settings.onePinboardPerItem, "AOM's several-pinboard default is kept")
+        store.pin(entryID: item.id, boardID: a.id)
+        store.pin(entryID: item.id, boardID: b.id)
+        XCTAssertEqual(store.entries.first { $0.id == item.id }?.pinboardIDs, [a.id, b.id])
+
+        store.settings.onePinboardPerItem = true
+        store.pin(entryID: item.id, boardID: a.id)
+        XCTAssertEqual(store.entries.first { $0.id == item.id }?.pinboardIDs, [a.id], "pinning elsewhere moves the item")
+        await store.flush()
+        let reopenedBoard = NSPasteboard(name: .init(harness.token + "-2"))
+        defer { reopenedBoard.releaseGlobally() }
+        let reopened = ClipboardStore(directory: harness.directory, pasteboard: reopenedBoard, defaults: harness.defaults)
+        await reopened.ready()
+        XCTAssertTrue(reopened.settings.onePinboardPerItem)
+        XCTAssertEqual(reopened.entries.first?.pinboardIDs, [a.id])
+    }
+
+    func testOptionCopyBetweenPinboardsMakesACopyWhenItemsKeepOnePinboard() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let a = store.createBoard(name: "A"), b = store.createBoard(name: "B"), c = store.createBoard(name: "C")
+        let item = try XCTUnwrap(store.createTextItem("snippet"))
+        store.pin(entryID: item.id, boardID: a.id)
+        XCTAssertEqual(store.copy(entryID: item.id, toBoard: b.id), item.id, "several pinboards allowed: the item itself")
+        XCTAssertEqual(store.entries.first { $0.id == item.id }?.pinboardIDs, [a.id, b.id])
+
+        store.settings.onePinboardPerItem = true
+        store.pin(entryID: item.id, boardID: a.id)
+        let copied = try XCTUnwrap(store.copy(entryID: item.id, toBoard: c.id))
+        XCTAssertNotEqual(copied, item.id, "one pinboard per item: ⌥ copies instead of moving")
+        XCTAssertEqual(store.entries.first { $0.id == item.id }?.pinboardIDs, [a.id], "the original stays where it was")
+        let copy = try XCTUnwrap(store.entries.first { $0.id == copied })
+        XCTAssertEqual(copy.pinboardIDs, [c.id])
+        XCTAssertEqual(copy.title, store.entries.first { $0.id == item.id }?.title)
+        XCTAssertEqual(copy.text, "snippet")
+        XCTAssertEqual(store.copy(entryID: item.id, toBoard: a.id), item.id, "already there: nothing to copy")
+        XCTAssertEqual(store.entries.count, 2)
+    }
+
+    func testSettingsSavedByOlderVersionsStillDecode() async throws {
+        let token = "AOM333-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: token))
+        defer { defaults.removePersistentDomain(forName: token) }
+        let legacy = #"{"enabled":true,"pasteDirectly":false,"plainText":true,"retentionDays":7,"ignoredApps":["com.example.a"],"maxEntries":500,"maxBytes":1048576}"#
+        defaults.set(Data(legacy.utf8), forKey: "AOMClipboardSettings.v1")
+        let harness = Harness(token: token, directory: FileManager.default.temporaryDirectory.appendingPathComponent(token),
+                              board: NSPasteboard(name: .init(token)), defaults: defaults,
+                              store: ClipboardStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(token),
+                                                    pasteboard: NSPasteboard(name: .init(token)), defaults: defaults))
+        defer { cleanUp(harness) }
+        await harness.store.ready()
+        XCTAssertEqual(harness.store.settings.retentionDays, 7, "a missing 3.3.3 key must not reset the settings")
+        XCTAssertEqual(harness.store.settings.ignoredApps, ["com.example.a"])
+        XCTAssertFalse(harness.store.settings.pasteDirectly)
+        XCTAssertTrue(harness.store.settings.searchesAllLists)
+        XCTAssertFalse(harness.store.settings.onePinboardPerItem)
+    }
+
+    func testMCPDeletePinboardCanDeleteItsItems() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let board = store.createBoard(name: "Temp")
+        let item = try XCTUnwrap(store.createTextItem("temporary"))
+        store.pin(entryID: item.id, boardID: board.id)
+        let preview = try XCTUnwrap(call("delete_pinboard", ["pinboard_id": board.id.uuidString, "delete_items": true],
+                                         store: store)["structuredContent"] as? [String: Any])
+        XCTAssertTrue((preview["message"] as? String)?.contains("1 item(s)") == true)
+        XCTAssertEqual(store.boards.count, 1, "the preview deletes nothing")
+        let result = try XCTUnwrap(call("delete_pinboard", ["pinboard_id": board.id.uuidString, "delete_items": true, "confirm": true],
+                                        store: store)["structuredContent"] as? [String: Any])
+        XCTAssertEqual(result["deletedItems"] as? Int, 1)
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(store.canUndoDeletion)
+    }
+
+    // MARK: - Search (Paste parity)
+
+    func testSearchFromAPinboardLooksThroughEveryList() async throws {
+        let harness = makeHarness()
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        let work = store.createBoard(name: "Work"), home = store.createBoard(name: "Home")
+        let inWork = try XCTUnwrap(store.createTextItem("needle in work"))
+        let inHome = try XCTUnwrap(store.createTextItem("needle at home"))
+        let inHistory = try XCTUnwrap(store.createTextItem("needle in history"))
+        store.pin(entryID: inWork.id, boardID: work.id)
+        store.pin(entryID: inHome.id, boardID: home.id)
+
+        let state = ClipboardPanelState()
+        state.selectBoard(work.id)
+        XCTAssertEqual(state.results(in: store).map(\.id), [inWork.id], "without a search the pinboard is shown")
+        state.query = "needle"
+        XCTAssertTrue(state.searchesAllLists(in: store))
+        XCTAssertEqual(Set(state.results(in: store).map(\.id)), [inWork.id, inHome.id, inHistory.id])
+        // The off-main search path (a fresh state, so no cached results) agrees.
+        let typed = ClipboardPanelState()
+        typed.selectBoard(work.id)
+        typed.query = "needle"
+        XCTAssertTrue(typed.displayedResults(in: store).isEmpty, "the first call only starts the search")
+        await typed.finishPendingSearch()
+        XCTAssertEqual(Set(typed.displayedResults(in: store).map(\.id)), [inWork.id, inHome.id, inHistory.id])
+
+        state.query = "needle board:\"Home\""
+        XCTAssertEqual(state.results(in: store).map(\.id), [inHome.id], "a typed board: filter still narrows")
+
+        store.settings.searchesAllLists = false
+        state.query = "needle"
+        XCTAssertFalse(state.searchesAllLists(in: store))
+        XCTAssertEqual(state.results(in: store).map(\.id), [inWork.id], "the old scope is one switch away")
+    }
+
+    func testNewSearchOperators() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 29, hour: 15)))
+        func at(_ day: Int, _ hour: Int = 12) -> Date { calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour))! }
+        let board = ClipboardPinboard(name: "Work")
+        var pinned = ClipboardEntry(title: "Pinned", text: "alpha", lastCopiedAt: at(28), items: [])
+        pinned.pinboardIDs = [board.id]
+        let today = ClipboardEntry(title: "Today", text: "beta", lastCopiedAt: at(29, 9), items: [])
+        let lastWeek = ClipboardEntry(title: "Old", text: "gamma", lastCopiedAt: at(20), items: [])
+        let picture = ClipboardEntry(title: "Image", kind: .image, lastCopiedAt: at(29), items: [])
+        let all = [pinned, today, lastWeek, picture]
+        func matches(_ query: String) -> [String] {
+            let search = ClipboardSearchQuery(query, boards: [board], now: now, calendar: calendar)
+            return all.filter { search.matches($0, boards: [board]) }.map(\.title)
+        }
+        XCTAssertEqual(matches("is:pinned"), ["Pinned"])
+        XCTAssertEqual(matches("is:unpinned"), ["Today", "Old", "Image"])
+        XCTAssertEqual(matches("-is:pinned type:text"), ["Today", "Old"])
+        XCTAssertEqual(matches("pinboard:work"), matches("board:work"))
+        XCTAssertEqual(matches("on:yesterday"), ["Pinned"])
+        XCTAssertEqual(matches("on:2026-10-29"), ["Today", "Image"])
+        XCTAssertEqual(matches("on:today"), ["Today", "Image"])
+        XCTAssertEqual(matches("after:7d"), ["Pinned", "Today", "Image"])
+        XCTAssertEqual(matches("before:1w"), ["Old"])
+        XCTAssertEqual(matches("type:images"), ["Image"])
+        XCTAssertEqual(matches("type:snippets beta"), ["Today"])
+        XCTAssertEqual(matches("on:someday"), [], "an unreadable date matches nothing")
+
+        XCTAssertEqual(ClipboardSearchQuery.filterTokens(in: "is:pinned on:today type:images after:2w notes"),
+                       ["is:pinned", "on:today", "type:images", "after:2w"])
+        XCTAssertEqual(ClipboardSearchQuery.filterTokens(in: "is:pin on:to"), [], "half-typed tokens stay text")
+        XCTAssertEqual(ClipboardSearchQuery.chipFilters(in: "pinboard:Work ").map(\.field), ["board"])
+        XCTAssertTrue(ClipboardSearchQuery("type:image -draft").hasContentTerms)
+        XCTAssertFalse(ClipboardSearchQuery("type:image from:Safari is:pinned").hasContentTerms)
+    }
+
+    func testShowInOffersEveryListAnItemLivesIn() {
+        let work = ClipboardPinboard(name: "Work"), home = ClipboardPinboard(name: "Home")
+        var item = ClipboardEntry(title: "Snippet", text: "x", items: [])
+        item.pinboardIDs = [home.id]
+        let boards = [work, home]
+        XCTAssertEqual(ClipboardPanelState.showInTargets(for: item, viewing: nil, searching: true, boards: boards), [nil, home.id])
+        XCTAssertEqual(ClipboardPanelState.showInTargets(for: item, viewing: nil, searching: false, boards: boards), [home.id])
+        XCTAssertEqual(ClipboardPanelState.showInTargets(for: item, viewing: home.id, searching: false, boards: boards), [nil])
+        XCTAssertEqual(ClipboardPanelState.home(of: item, viewing: nil, searching: false, boards: boards), home.id)
+        XCTAssertNil(ClipboardPanelState.home(of: item, viewing: home.id, searching: false, boards: boards))
+        XCTAssertNil(ClipboardPanelState.home(of: ClipboardEntry(title: "Loose", items: []), viewing: work.id, searching: true, boards: boards))
+    }
+
+    // MARK: - Retention (Paste parity)
+
+    func testShorterRetentionAndStorageLimitsAskAndUndo() async throws {
+        var clock = Date(timeIntervalSince1970: 1_800_000_000)
+        let harness = makeHarness(now: { clock })
+        defer { cleanUp(harness) }
+        let store = harness.store
+        await store.ready()
+        store.settings.retentionDays = 0
+        let board = store.createBoard(name: "Keep")
+        let pinned = try XCTUnwrap(store.createTextItem("pinned and old"))
+        store.pin(entryID: pinned.id, boardID: board.id)
+        let old = try XCTUnwrap(store.createTextItem("old"))
+        clock.addTimeInterval(40 * 86_400)
+        let recent = try XCTUnwrap(store.createTextItem(String(repeating: "recent ", count: 1_000)))
+
+        XCTAssertEqual(store.itemsRemoved(byRetentionDays: 365), 0)
+        XCTAssertEqual(store.itemsRemoved(byRetentionDays: 30), 1, "only the unpinned item past the new limit")
+        store.applyRetentionDays(30)
+        XCTAssertEqual(store.settings.retentionDays, 30)
+        XCTAssertEqual(Set(store.entries.map(\.id)), [pinned.id, recent.id])
+        // A change made after the limit is not rolled back by its Undo.
+        store.settings.ignoredApps.append("com.example.added-later")
+        XCTAssertEqual(store.undoLastDeletion().entryIDs, [old.id], "unlike Paste, AOM can undo it")
+        XCTAssertEqual(store.settings.retentionDays, 0, "Undo restores the previous limit too")
+        XCTAssertTrue(store.settings.excludes("com.example.added-later"), "…and only that limit")
+
+        // 7,000 bytes of history against the smallest storage limit (1 KB).
+        XCTAssertGreaterThan(store.itemsRemoved(byMaxBytes: 1_024), 0)
+        XCTAssertEqual(store.itemsRemoved(byMaxBytes: 1_024 * 1_024 * 1_024), 0)
+        store.applyMaxBytes(1_024)
+        XCTAssertEqual(store.settings.maxBytes, 1_024)
+        XCTAssertFalse(store.entries.contains { $0.id == recent.id })
+        XCTAssertTrue(store.entries.contains { $0.id == pinned.id }, "pinned items are exempt")
+        XCTAssertTrue(store.undoLastDeletion().entryIDs.contains(recent.id))
+        XCTAssertEqual(store.settings.maxBytes, 200 * 1_024 * 1_024)
+        XCTAssertTrue(store.entries.contains { $0.id == recent.id }, "not trimmed again by the restored limit")
+        let plan = ClipboardStore.removalPlan(store.entries, limits: ClipboardStore.Settings(retentionDays: 0, maxEntries: 1), now: clock)
+        XCTAssertFalse(plan.contains(pinned.id), "pinned items are never removed by limits")
+        XCTAssertEqual(plan.count, store.entries.filter { $0.pinboardIDs.isEmpty }.count - 1)
+    }
+
     // MARK: - P03 · link cards
 
     func testLinkCardsFetchOnlySafeLinks() {

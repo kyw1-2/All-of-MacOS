@@ -17,6 +17,23 @@ final class ClipboardStore: ObservableObject {
                                      "com.bitwarden.desktop", "com.apple.keychainaccess"]
         var maxEntries = 1_000
         var maxBytes = 200 * 1_024 * 1_024
+        /// 3.3.3 options. Optional, so settings saved by older versions still
+        /// decode (a missing key must never reset the whole struct).
+        var searchAllLists: Bool?
+        var singlePinboard: Bool?
+
+        /// Paste: a search from a pinboard looks through every list, not only
+        /// the pinboard on screen. Typed `board:` filters still narrow it.
+        var searchesAllLists: Bool {
+            get { searchAllLists ?? true }
+            set { searchAllLists = newValue }
+        }
+        /// Paste: an item belongs to one pinboard; pinning it elsewhere moves
+        /// it. Off keeps AOM's behaviour, where an item can sit on several.
+        var onePinboardPerItem: Bool {
+            get { singlePinboard ?? false }
+            set { singlePinboard = newValue }
+        }
 
         /// The excluded-app list as the privacy gate compares it: trimmed and
         /// case-insensitive (audit PA-01).
@@ -158,7 +175,7 @@ final class ClipboardStore: ObservableObject {
         entries = updated
         scheduleSave()
     }
-    private var deletionHistory: [[ClipboardEntry]] = []
+    private var deletionHistory: [DeletionBatch] = []
     private var indexingTask: Task<Void, Never>?
     private var attemptedImages: Set<UUID> = []
     private let indexingQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-ocr", qos: .utility)
@@ -500,24 +517,90 @@ final class ClipboardStore: ObservableObject {
         scheduleSave()
     }
 
-    func deleteBoard(id: UUID) {
-        boards.removeAll { $0.id == id }
-        for index in entries.indices { entries[index].pinboardIDs.remove(id) }
-        trim()
+    /// Paste deletes a pinboard together with its items; AOM lets the user
+    /// choose. With `deletingItems`, items that are on no other pinboard are
+    /// deleted as well; otherwise they stay in history. Items that return to
+    /// history past its age or size limit leave too, instead of silently.
+    /// Either way one Undo Delete restores the pinboard, its place in the
+    /// list, its item order, its memberships and every deleted item.
+    /// Returns how many items were deleted.
+    @discardableResult
+    func deleteBoard(id: UUID, deletingItems: Bool = false) -> Int {
+        guard let index = boards.firstIndex(where: { $0.id == id }) else { return 0 }
+        var batch = DeletionBatch(entries: [], boards: [.init(index: index, board: boards[index])])
+        var updated = entries
+        var deleted: [ClipboardEntry] = []
+        for position in updated.indices.reversed() where updated[position].pinboardIDs.contains(id) {
+            if deletingItems && updated[position].pinboardIDs.count == 1 {
+                deleted.append(updated.remove(at: position))
+            } else {
+                batch.memberships[updated[position].id] = [id]
+                updated[position].pinboardIDs.remove(id)
+            }
+        }
+        boards.remove(at: index)
+        entries = updated
+        batch.entries = deleted.reversed() + trim(collectingRemoved: true)
+        rememberDeletion(batch)
+        pruneDigests()
         scheduleSave()
+        return deleted.count
+    }
+
+    /// Items `deleteBoard(id:deletingItems: true)` would delete: those on no
+    /// other pinboard.
+    func itemsOnlyOnBoard(_ id: UUID) -> Int {
+        entries.filter { $0.pinboardIDs == [id] }.count
     }
 
     func pin(entryID: UUID, boardID: UUID) {
         guard boards.contains(where: { $0.id == boardID }), let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
-        entries[index].pinboardIDs.insert(boardID)
+        if settings.onePinboardPerItem {
+            // Paste: one pinboard per item; pinning it elsewhere moves it.
+            guard entries[index].pinboardIDs != [boardID] else { return }
+            entries[index].pinboardIDs = [boardID]
+        } else {
+            guard !entries[index].pinboardIDs.contains(boardID) else { return }
+            entries[index].pinboardIDs.insert(boardID)
+        }
         scheduleSave()
     }
 
-    func unpin(entryID: UUID, boardID: UUID) {
-        guard let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
-        entries[index].pinboardIDs.remove(boardID)
-        trim()
+    /// Paste's ⌥-drag onto another pinboard. While each item stays on one
+    /// pinboard, the item keeps its place and a copy (same title, same
+    /// content) goes to `boardID`; otherwise the item itself is pinned there
+    /// as well. Returns the item now on `boardID`.
+    @discardableResult
+    func copy(entryID: UUID, toBoard boardID: UUID) -> UUID? {
+        guard boards.contains(where: { $0.id == boardID }),
+              let source = entries.first(where: { $0.id == entryID }) else { return nil }
+        guard settings.onePinboardPerItem, !source.pinboardIDs.isEmpty, !source.pinboardIDs.contains(boardID) else {
+            pin(entryID: entryID, boardID: boardID)
+            return entryID
+        }
+        guard let copy = duplicate(entryID: entryID),
+              let index = entries.firstIndex(where: { $0.id == copy.id }) else { return nil }
+        entries[index].title = source.title
+        entries[index].pinboardIDs = [boardID]
         scheduleSave()
+        return copy.id
+    }
+
+    /// Removes an item from one pinboard. An item that is older than the
+    /// history limit has nowhere left to live and is deleted, as in Paste,
+    /// but Undo Delete brings it back on the pinboard. Returns true when that
+    /// happened, so the caller can say so.
+    @discardableResult
+    func unpin(entryID: UUID, boardID: UUID) -> Bool {
+        guard let index = entries.firstIndex(where: { $0.id == entryID }),
+              entries[index].pinboardIDs.contains(boardID) else { return false }
+        entries[index].pinboardIDs.remove(boardID)
+        let removed = trim(collectingRemoved: true)
+        if !removed.isEmpty {
+            rememberDeletion(DeletionBatch(entries: removed, memberships: [entryID: [boardID]]))
+        }
+        scheduleSave()
+        return removed.contains { $0.id == entryID }
     }
 
     func rename(entryID: UUID, title: String) {
@@ -628,31 +711,86 @@ final class ClipboardStore: ObservableObject {
         scheduleSave()
     }
 
+    /// One Undo Delete step: items removed from history, plus pinboards
+    /// deleted with them and memberships those pinboards held on items that
+    /// stayed. Pinboards are restored before items, so restored items find
+    /// their pinboards again.
+    struct DeletionBatch {
+        struct Board { var index: Int; var board: ClipboardPinboard }
+        var entries: [ClipboardEntry]
+        var boards: [Board] = []
+        var memberships: [UUID: Set<UUID>] = [:]
+        /// A confirmed limit change. Undo puts back only that limit, and only
+        /// while it is still the value the change set, so the restored items
+        /// are not trimmed again a minute later and nothing else changed
+        /// since (excluded apps, other limits) is rolled back with them.
+        var limit: LimitChange? = nil
+        var byteCount: Int { entries.reduce(0) { $0 + $1.byteCount } }
+        var isEmpty: Bool { entries.isEmpty && boards.isEmpty }
+    }
+
+    struct LimitChange {
+        var keyPath: WritableKeyPath<Settings, Int>
+        var previous: Int
+        var applied: Int
+    }
+
+    struct UndoResult: Equatable {
+        var entryIDs: [UUID] = []
+        var boardCount = 0
+        var isEmpty: Bool { entryIDs.isEmpty && boardCount == 0 }
+    }
+
     private func rememberDeletion(_ deleted: [ClipboardEntry]) {
-        guard !deleted.isEmpty else { return }
-        deletionHistory.append(deleted)
+        rememberDeletion(DeletionBatch(entries: deleted))
+    }
+
+    private func rememberDeletion(_ batch: DeletionBatch) {
+        guard !batch.isEmpty else { return }
+        deletionHistory.append(batch)
         // Undo is session-only and bounded independently of permanent pinboards.
         while deletionHistory.count > 20 ||
-              (deletionHistory.count > 1 && deletionHistory.flatMap { $0 }.reduce(0, { $0 + $1.byteCount }) > 100 * 1_024 * 1_024) {
+              (deletionHistory.count > 1 && deletionHistory.reduce(0, { $0 + $1.byteCount }) > 100 * 1_024 * 1_024) {
             deletionHistory.removeFirst()
         }
         canUndoDeletion = true
     }
 
     @discardableResult
-    func undoDeletion() -> [UUID] {
-        guard let deleted = deletionHistory.popLast() else { return [] }
+    func undoDeletion() -> [UUID] { undoLastDeletion().entryIDs }
+
+    @discardableResult
+    func undoLastDeletion() -> UndoResult {
+        guard let batch = deletionHistory.popLast() else { return UndoResult() }
+        if let limit = batch.limit, settings[keyPath: limit.keyPath] == limit.applied, limit.applied != limit.previous {
+            settings[keyPath: limit.keyPath] = limit.previous
+        }
+        var restoredBoards = 0
+        for item in batch.boards.sorted(by: { $0.index < $1.index })
+        where !boards.contains(where: { $0.id == item.board.id }) && boards.count < 100 {
+            boards.insert(item.board, at: min(max(0, item.index), boards.count))
+            restoredBoards += 1
+        }
         let boardIDs = Set(boards.map(\.id))
         let existing = Set(entries.map(\.id))
-        let restored = deleted.filter { !existing.contains($0.id) }.map { entry -> ClipboardEntry in
+        let restored = batch.entries.filter { !existing.contains($0.id) }.map { entry -> ClipboardEntry in
             var entry = entry
+            entry.pinboardIDs.formUnion(batch.memberships[entry.id] ?? [])
             entry.pinboardIDs.formIntersection(boardIDs)
             // A restored item gets a fresh retention period, so Undo is not
             // immediately undone by the next periodic expiration pass.
             entry.lastCopiedAt = now()
             return entry
         }
-        entries.insert(contentsOf: restored, at: 0)
+        var updated = restored + entries
+        if !batch.memberships.isEmpty {
+            for index in updated.indices {
+                if let ids = batch.memberships[updated[index].id] {
+                    updated[index].pinboardIDs.formUnion(ids.intersection(boardIDs))
+                }
+            }
+        }
+        entries = updated
         canUndoDeletion = !deletionHistory.isEmpty
         let task = Task { [weak self] in
             guard let self else { return }
@@ -662,22 +800,70 @@ final class ClipboardStore: ObservableObject {
         captureTasks.append(task)
         scheduleSave()
         scheduleImageIndexing()
-        return restored.map(\.id)
+        return UndoResult(entryIDs: restored.map(\.id), boardCount: restoredBoards)
     }
 
     /// How many unpinned items a smaller item limit would delete right away
     /// (Paste's "reduce history limit" question). Pinned items never count.
     func itemsRemoved(byMaxEntries newLimit: Int) -> Int {
-        let limit = Settings(maxEntries: newLimit).bounded.maxEntries
-        return max(0, entries.filter { $0.pinboardIDs.isEmpty }.count - limit)
+        var limits = settings
+        limits.maxEntries = newLimit
+        return Self.removalPlan(entries, limits: limits.bounded, now: now()).count
     }
 
     /// Applies a new item limit; deleted items can be restored with Undo.
-    func applyMaxEntries(_ newLimit: Int) {
-        let unpinned = entries.filter { $0.pinboardIDs.isEmpty }
-        let limit = Settings(maxEntries: newLimit).bounded.maxEntries
-        if unpinned.count > limit { rememberDeletion(Array(unpinned.suffix(unpinned.count - limit))) }
-        settings.maxEntries = newLimit
+    func applyMaxEntries(_ newLimit: Int) { applyLimit(\.maxEntries, newLimit) }
+
+    /// Unpinned items a shorter Keep History would delete now. Paste asks
+    /// before applying such a change; AOM asks too, and keeps them for Undo.
+    func itemsRemoved(byRetentionDays days: Int) -> Int {
+        var limits = settings
+        limits.retentionDays = days
+        return Self.removalPlan(entries, limits: limits.bounded, now: now()).count
+    }
+
+    func applyRetentionDays(_ days: Int) { applyLimit(\.retentionDays, days) }
+
+    /// Unpinned items a smaller storage limit would delete now.
+    func itemsRemoved(byMaxBytes bytes: Int) -> Int {
+        var limits = settings
+        limits.maxBytes = bytes
+        return Self.removalPlan(entries, limits: limits.bounded, now: now()).count
+    }
+
+    func applyMaxBytes(_ bytes: Int) { applyLimit(\.maxBytes, bytes) }
+
+    /// One confirmed limit change: what it deletes goes to Undo Delete
+    /// together with the limit it replaced.
+    private func applyLimit(_ keyPath: WritableKeyPath<Settings, Int>, _ value: Int) {
+        var limits = settings
+        limits[keyPath: keyPath] = value
+        rememberDeletion(DeletionBatch(entries: entriesRemoved(by: limits),
+                                       limit: LimitChange(keyPath: keyPath, previous: settings[keyPath: keyPath], applied: value)))
+        settings[keyPath: keyPath] = value
+    }
+
+    private func entriesRemoved(by limits: Settings) -> [ClipboardEntry] {
+        let ids = Set(Self.removalPlan(entries, limits: limits.bounded, now: now()))
+        return ids.isEmpty ? [] : entries.filter { ids.contains($0.id) }
+    }
+
+    /// The unpinned items that `limits` removes, oldest-copied last: first
+    /// everything past the age limit, then the oldest of the rest until both
+    /// the item and storage limits hold. Pinned items are never included.
+    nonisolated static func removalPlan(_ entries: [ClipboardEntry], limits: Settings, now: Date) -> [UUID] {
+        var removed: [UUID] = []
+        var kept: [ClipboardEntry] = []
+        let cutoff = limits.retentionDays > 0 ? now.addingTimeInterval(-Double(limits.retentionDays) * 86_400) : nil
+        for entry in entries where entry.pinboardIDs.isEmpty {
+            if let cutoff, entry.lastCopiedAt < cutoff { removed.append(entry.id) } else { kept.append(entry) }
+        }
+        var bytes = kept.reduce(0) { $0 + $1.byteCount }
+        while kept.count > limits.maxEntries || bytes > limits.maxBytes, let oldest = kept.popLast() {
+            bytes -= oldest.byteCount
+            removed.append(oldest.id)
+        }
+        return removed
     }
 
     /// Erase History: every unpinned item goes; pinboards and pinned items stay.
@@ -785,29 +971,23 @@ final class ClipboardStore: ObservableObject {
         if pendingSave { await persist() }
     }
 
-    private func trim() {
-        let limits = settings.bounded
-        let before = entries.count
-        if limits.retentionDays > 0 {
-            let cutoff = now().addingTimeInterval(-Double(limits.retentionDays) * 86_400)
-            // Mutating the published array re-renders an open panel, so only
-            // touch it when something actually expires.
-            if entries.contains(where: { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }) {
-                entries.removeAll { $0.pinboardIDs.isEmpty && $0.lastCopiedAt < cutoff }
-            }
-        }
+    /// Applies the age, item and storage limits to unpinned history.
+    /// Explicit user actions (unpinning, deleting a pinboard) collect what
+    /// they push out so it can go to Undo Delete; periodic expiry does not.
+    @discardableResult
+    private func trim(collectingRemoved: Bool = false) -> [ClipboardEntry] {
         // Retention limits cover history only. Pinboards are explicit durable
         // collections and are never silently evicted to make room for history.
-        var unpinned = entries.filter { $0.pinboardIDs.isEmpty }
-        var bytes = unpinned.reduce(0) { $0 + $1.byteCount }
-        var removed = Set<UUID>()
-        while unpinned.count > limits.maxEntries || bytes > limits.maxBytes {
-            guard let oldest = unpinned.popLast() else { break }
-            bytes -= oldest.byteCount
-            removed.insert(oldest.id)
-        }
-        if !removed.isEmpty { entries.removeAll { removed.contains($0.id) } }
-        if entries.count != before { pruneDigests(); scheduleSave() }
+        let plan = Self.removalPlan(entries, limits: settings.bounded, now: now())
+        // Mutating the published array re-renders an open panel, so only
+        // touch it when something actually leaves.
+        guard !plan.isEmpty else { return [] }
+        let removed = Set(plan)
+        let leaving = collectingRemoved ? entries.filter { removed.contains($0.id) } : []
+        entries.removeAll { removed.contains($0.id) }
+        pruneDigests()
+        scheduleSave()
+        return leaving
     }
 
     var pinnedBytes: Int { entries.filter { !$0.pinboardIDs.isEmpty }.reduce(0) { $0 + $1.byteCount } }
@@ -1209,5 +1389,15 @@ enum ClipboardAudioFeedback {
 enum ClipboardEraseCopy {
     static func message(unpinned: Int) -> String {
         "\(unpinned) unpinned item\(unpinned == 1 ? "" : "s") will be deleted. Pinboards and pinned items are kept, and Undo Delete restores the erased items until you quit."
+    }
+}
+
+/// Shared wording for deleting a pinboard (panel, Studio).
+enum ClipboardBoardDeletionCopy {
+    static func message(onlyHere: Int) -> String {
+        guard onlyHere > 0 else {
+            return "Every item on this pinboard is also on another pinboard, so no item is deleted. Undo Delete restores the pinboard until you quit."
+        }
+        return "Like Paste, you can delete the pinboard together with the \(onlyHere) item\(onlyHere == 1 ? "" : "s") that \(onlyHere == 1 ? "is" : "are") on no other pinboard, or keep them in Clipboard History, where they follow your history limits. Undo Delete restores either choice until you quit."
     }
 }

@@ -120,16 +120,38 @@ final class ClipboardPanelState: ObservableObject {
     }
     private var resultsCache: (key: ResultsKey, value: [ClipboardEntry])?
 
+    /// A query, or a filter chosen while the search is open.
+    var isSearching: Bool {
+        !query.isEmpty || (searchExpanded && (kind != nil || source != nil || recentDays != 0))
+    }
+
+    /// The pinboard results are limited to. Paste searches every list from
+    /// any pinboard ("search looks across all of your lists rather than
+    /// filtering the one you're in"); AOM does too unless the user turned
+    /// that off. A typed `board:` filter still narrows the results.
+    func scopeBoard(in store: ClipboardStore) -> UUID? {
+        isSearching && store.settings.searchesAllLists ? nil : board
+    }
+
+    /// True while results come from every list although a pinboard is open.
+    func searchesAllLists(in store: ClipboardStore) -> Bool {
+        board != nil && scopeBoard(in: store) == nil
+    }
+
+    private func resultsKey(_ store: ClipboardStore) -> ResultsKey {
+        ResultsKey(store: ObjectIdentifier(store), revision: store.revision, query: query, kind: kind,
+                   source: source, board: scopeBoard(in: store), recentDays: recentDays,
+                   day: Calendar.current.startOfDay(for: Date()), suggested: suggestedIDs)
+    }
+
     /// Memoised per store revision and filter state: the panel, every card and
     /// the key handler ask for this many times per update.
     func results(in store: ClipboardStore) -> [ClipboardEntry] {
-        let key = ResultsKey(store: ObjectIdentifier(store), revision: store.revision, query: query, kind: kind,
-                             source: source, board: board, recentDays: recentDays,
-                             day: Calendar.current.startOfDay(for: Date()), suggested: suggestedIDs)
+        let key = resultsKey(store)
         if let resultsCache, resultsCache.key == key { return resultsCache.value }
         let range = Self.dateRange(for: recentDays)
         var value = store.filtered(query: query, kind: kind, source: source,
-                                   board: board, since: range.since)
+                                   board: key.board, since: range.since)
             .filter { range.before == nil || $0.lastCopiedAt < range.before! }
         if !suggestedIDs.isEmpty, board == nil, query.isEmpty, kind == nil, source == nil, recentDays == 0 {
             value = Self.promoting(suggestedIDs, in: value)
@@ -147,9 +169,7 @@ final class ClipboardPanelState: ObservableObject {
     /// UI-only search path. Full text matching never runs in a view body or a
     /// key handler. An obsolete search cannot restore its results/selection.
     func displayedResults(in store: ClipboardStore) -> [ClipboardEntry] {
-        let key = ResultsKey(store: ObjectIdentifier(store), revision: store.revision, query: query, kind: kind,
-            source: source, board: board, recentDays: recentDays,
-            day: Calendar.current.startOfDay(for: Date()), suggested: suggestedIDs)
+        let key = resultsKey(store)
         if query.isEmpty {
             searchTask?.cancel(); searchTask = nil; pendingSearchKey = nil
             return results(in: store)
@@ -279,6 +299,27 @@ final class ClipboardPanelState: ObservableObject {
         selected = [entryID]
         focusedID = entryID
         selectionAnchor = entryID
+        // The shelf is rebuilt for the new list first; scroll once it exists.
+        DispatchQueue.main.async { [weak self] in self?.keyboardScrollTarget = entryID }
+    }
+
+    /// Where ⌘G takes an item (Paste's "jump to where an item lives"): its
+    /// pinboard when it is pinned and not already shown there, otherwise
+    /// Clipboard History.
+    static func home(of entry: ClipboardEntry, viewing board: UUID?, searching: Bool,
+                     boards: [ClipboardPinboard]) -> UUID? {
+        let pinned = boards.map(\.id).filter(entry.pinboardIDs.contains)
+        if let board, !searching, entry.pinboardIDs.contains(board) { return nil }
+        return pinned.first
+    }
+
+    /// Paste's Show In menu: the lists an item lives in other than the one on
+    /// screen. Search results are not a list, so a search offers them all.
+    static func showInTargets(for entry: ClipboardEntry, viewing board: UUID?, searching: Bool,
+                              boards: [ClipboardPinboard]) -> [UUID?] {
+        let lists: [UUID?] = [nil] + boards.map(\.id).filter(entry.pinboardIDs.contains).map(Optional.some)
+        guard !searching else { return lists }
+        return lists.filter { $0 != board }
     }
 }
 
@@ -1023,10 +1064,17 @@ final class ClipboardPanelController {
         if event.keyCode == 53 { hide(); return true }
         if command && event.keyCode == 3 { state.searchFocusToken = UUID(); return true }
         if command && !shift && event.keyCode == 6 {
-            let restored = store.undoDeletion()
-            state.selected = Set(restored)
-            state.focusedID = restored.first
-            state.status = restored.isEmpty ? "Nothing to restore." : "Restored \(restored.count) item(s)."
+            let undone = store.undoLastDeletion()
+            state.selected = Set(undone.entryIDs)
+            state.focusedID = undone.entryIDs.first
+            if undone.isEmpty {
+                state.status = "Nothing to restore."
+            } else if undone.boardCount > 0 {
+                state.status = "Restored \(undone.boardCount) pinboard\(undone.boardCount == 1 ? "" : "s")"
+                    + (undone.entryIDs.isEmpty ? "." : " and \(undone.entryIDs.count) item(s).")
+            } else {
+                state.status = "Restored \(undone.entryIDs.count) item(s)."
+            }
             return true
         }
         if command && event.keyCode == 45 {
@@ -1061,8 +1109,10 @@ final class ClipboardPanelController {
             return true
         }
         if command && event.keyCode == 5,
-           state.selected.count == 1, let id = state.selected.first {
-            state.showIn(nil, entryID: id)
+           state.selected.count == 1, let id = state.selected.first,
+           let entry = store.entries.first(where: { $0.id == id }) {
+            state.showIn(ClipboardPanelState.home(of: entry, viewing: state.board, searching: state.isSearching,
+                                                  boards: store.boards), entryID: id)
             return true
         }
         if event.keyCode == 48 {
@@ -1203,16 +1253,16 @@ struct ClipboardPanelView: View {
             get: { boardPendingDeletion != nil },
             set: { if !$0 { boardPendingDeletion = nil } }
         )) {
-            Button("Delete", role: .destructive) {
-                if let board = boardPendingDeletion {
-                    store.deleteBoard(id: board.id)
-                    if state.board == board.id { state.selectBoard(nil) }
-                }
-                boardPendingDeletion = nil
+            let only = boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0
+            Button(only == 0 ? "Delete Pinboard" : "Delete Pinboard and \(only) Item\(only == 1 ? "" : "s")", role: .destructive) {
+                deleteBoard(deletingItems: true)
+            }
+            if only > 0 {
+                Button("Delete Pinboard, Keep Items") { deleteBoard(deletingItems: false) }
             }
             Button("Cancel", role: .cancel) { boardPendingDeletion = nil }
         } message: {
-            Text("The Pinboard will be deleted. Its items stay in Clipboard History unless they expire.")
+            Text(ClipboardBoardDeletionCopy.message(onlyHere: boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0))
         }
         .onChange(of: state.searchFocusToken) { _, _ in
             withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8)) {
@@ -1262,27 +1312,61 @@ struct ClipboardPanelView: View {
         return max(CGFloat(90), min(CGFloat(560), min(available, boardsWidth)))
     }
 
+    /// Deletes the pinboard awaiting confirmation; Undo Delete restores it.
+    private func deleteBoard(deletingItems: Bool) {
+        guard let board = boardPendingDeletion else { return }
+        let deleted = store.deleteBoard(id: board.id, deletingItems: deletingItems)
+        if state.board == board.id { state.selectBoard(nil) }
+        boardPendingDeletion = nil
+        state.status = deleted > 0
+            ? "Deleted “\(board.name)” and \(deleted) item\(deleted == 1 ? "" : "s"). Press ⌘Z to undo."
+            : "Deleted “\(board.name)”. Press ⌘Z to undo."
+    }
+
     /// Typed `type:`/`from:`/`board:` tokens become chip selections, so the
     /// chips and the query never disagree. Unknown apps or boards stay typed.
+    /// While searches cover every list, a `board:` token stays in the query:
+    /// it is the only way to narrow such a search to one pinboard.
     private func absorbChipTokens() {
         var query = state.query
         for filter in ClipboardSearchQuery.chipFilters(in: query) {
             switch filter.field {
             case "type":
-                guard let kind = ClipboardEntry.Kind(rawValue: filter.value.lowercased()) else { continue }
+                guard let kind = ClipboardSearchQuery.kind(named: filter.value) else { continue }
                 state.kind = kind
             case "from":
                 guard let source = sources.first(where: { $0.name.caseInsensitiveCompare(filter.value) == .orderedSame
                     || $0.bundleID?.caseInsensitiveCompare(filter.value) == .orderedSame }) else { continue }
                 state.source = source.filterValue
             case "board":
-                guard let board = store.boards.first(where: { $0.name.caseInsensitiveCompare(filter.value) == .orderedSame }) else { continue }
+                guard !store.settings.searchesAllLists,
+                      let board = store.boards.first(where: { $0.name.caseInsensitiveCompare(filter.value) == .orderedSame }) else { continue }
                 state.selectBoard(board.id)
             default: continue
             }
             query = ClipboardSearchQuery.removing(token: filter.token, from: query)
         }
         if query != state.query { state.query = query.isEmpty ? "" : query + " " }
+    }
+
+    /// The Filters popover's Pinboard choice. While searches cover every list
+    /// it adds or removes a `board:` filter; otherwise it opens the pinboard.
+    private func toggleBoardFilter(_ board: ClipboardPinboard) {
+        guard store.settings.searchesAllLists, state.isSearching || state.searchExpanded else {
+            state.selectBoard(state.board == board.id ? nil : board.id)
+            return
+        }
+        let token = "board:\"\(board.name)\""
+        if ClipboardSearchQuery.tokens(in: state.query).contains(token) {
+            state.query = ClipboardSearchQuery.removing(token: token, from: state.query)
+        } else {
+            state.query = ClipboardSearchQuery.inserting(token: token, into: state.query)
+        }
+    }
+
+    private func boardFilterSelected(_ board: ClipboardPinboard) -> Bool {
+        guard store.settings.searchesAllLists, state.isSearching || state.searchExpanded else { return state.board == board.id }
+        return ClipboardSearchQuery.tokens(in: state.query).contains("board:\"\(board.name)\"")
     }
 
     /// Paste-style filter chips under the search field: kind, date and the
@@ -1422,8 +1506,11 @@ struct ClipboardPanelView: View {
                         ProgressView().controlSize(.mini).help("Indexing image text…")
                     }
                     if !state.query.isEmpty || hasFilters {
-                        Text(entries.count == 1 ? "1 result" : "\(entries.count) results")
+                        Text(resultsLabel)
                             .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize()
+                            .help(state.searchesAllLists(in: store)
+                                  ? "Search looks through Clipboard History and every pinboard. Add board:Name to search one pinboard."
+                                  : "Results in the list on screen")
                     }
                     Button {
                         state.query = ""
@@ -1593,7 +1680,8 @@ struct ClipboardPanelView: View {
                 $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.entryType)
             }) else { return false }
             // Paste: dragging a card from one pinboard onto another moves it;
-            // holding ⌥ copies. Dragging out of History always adds.
+            // holding ⌥ copies (a separate copy while each item stays on one
+            // pinboard). Dragging out of History always adds.
             let sourceBoard = state.board
             let copies = NSEvent.modifierFlags.contains(.option)
             provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.entryType) {
@@ -1601,8 +1689,12 @@ struct ClipboardPanelView: View {
                 guard let data, let raw = String(data: data, encoding: .utf8),
                       let entryID = UUID(uuidString: raw) else { return }
                 Task { @MainActor in
-                    store.pin(entryID: entryID, boardID: id)
-                    if let sourceBoard, sourceBoard != id, !copies { store.unpin(entryID: entryID, boardID: sourceBoard) }
+                    if copies {
+                        store.copy(entryID: entryID, toBoard: id)
+                    } else {
+                        store.pin(entryID: entryID, boardID: id)
+                        if let sourceBoard, sourceBoard != id { store.unpin(entryID: entryID, boardID: sourceBoard) }
+                    }
                 }
             }
             return true
@@ -1610,6 +1702,11 @@ struct ClipboardPanelView: View {
     }
 
     private var hasFilters: Bool { state.kind != nil || state.source != nil || state.recentDays != 0 }
+
+    private var resultsLabel: String {
+        let count = entries.count == 1 ? "1 result" : "\(entries.count) results"
+        return state.searchesAllLists(in: store) ? count + " in all lists" : count
+    }
 
     private var filterPopover: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
@@ -1647,8 +1744,8 @@ struct ClipboardPanelView: View {
                     LazyVGrid(columns: columns, spacing: 6) {
                         ForEach(store.boards) { board in
                             filterChip(board.name, icon: nil, dot: PasteClipboardPalette.board(board.color),
-                                       selected: state.board == board.id) {
-                                state.selectBoard(state.board == board.id ? nil : board.id)
+                                       selected: boardFilterSelected(board)) {
+                                toggleBoardFilter(board)
                             }
                         }
                     }
@@ -2447,14 +2544,21 @@ private struct ClipboardCardView: View, Equatable {
         Menu(many ? "Pin \(selectionCount) Items" : (entry.pinboardIDs.isEmpty ? "Pin" : "Pinboards")) {
             ForEach(boards) { board in
                 let pinned = !many && entry.pinboardIDs.contains(board.id)
+                // One pinboard per item (Paste): pinning elsewhere moves it.
+                let moves = !many && !pinned && !entry.pinboardIDs.isEmpty && store.settings.onePinboardPerItem
                 Button {
                     let ids = targets
                     let allPinned = ids.allSatisfy { id in store.entries.first { $0.id == id }?.pinboardIDs.contains(board.id) == true }
+                    var deleted = 0
                     for id in ids {
-                        if allPinned { store.unpin(entryID: id, boardID: board.id) } else { store.pin(entryID: id, boardID: board.id) }
+                        if allPinned { deleted += store.unpin(entryID: id, boardID: board.id) ? 1 : 0 }
+                        else { store.pin(entryID: id, boardID: board.id) }
+                    }
+                    if deleted > 0 {
+                        state.status = "Removed from \(board.name). \(deleted == 1 ? "It was" : "\(deleted) items were") older than your history limit, so \(deleted == 1 ? "it was" : "they were") deleted — ⌘Z brings \(deleted == 1 ? "it" : "them") back."
                     }
                 } label: {
-                    Label { Text(pinned ? "Unpin from \(board.name)" : board.name) } icon: {
+                    Label { Text(pinned ? "Unpin from \(board.name)" : moves ? "Move to \(board.name)" : board.name) } icon: {
                         Image(nsImage: PasteClipboardPalette.swatch(board.color, selected: pinned))
                     }
                 }
@@ -2465,6 +2569,14 @@ private struct ClipboardCardView: View, Equatable {
         Divider()
         if !many {
             Button("Preview") { controller.openPreview(entry) }.keyboardShortcut(.space, modifiers: [])
+            // Paste's Show In: the lists this item lives in, other than this one.
+            let searching = state.isSearching
+            ForEach(ClipboardPanelState.showInTargets(for: entry, viewing: state.board, searching: searching, boards: boards),
+                    id: \.self) { target in
+                Button("Show in \(target.flatMap { id in boards.first { $0.id == id }?.name } ?? "Clipboard")") {
+                    state.showIn(target, entryID: entry.id)
+                }
+            }
             if !entry.fileURLs.isEmpty || entry.kind == .link {
                 Button(entry.kind == .link ? "Open Link" : "Open") { controller.openExternally(entry) }
                     .keyboardShortcut("o", modifiers: .command)

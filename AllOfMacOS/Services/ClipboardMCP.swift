@@ -556,7 +556,7 @@ enum ClipboardMCPHandler {
     private static let confirmProp: [String: Any] = ["type": "boolean", "description": "Call without it to preview; true to really delete."]
 
     static let tools: [[String: Any]] = [
-        ["name": "search", "description": "Search clipboard history and pinboards (newest first). Free text matches titles, text, image text, apps and file paths; supports quotes, -exclude, from:App, type:link|text|image|file|color, board:Name. Returns summaries; call read_item for full content.",
+        ["name": "search", "description": "Search clipboard history and pinboards (newest first). Free text matches titles, text, image text, apps and file paths; supports quotes, -exclude, from:App, type:link|text|image|file|color, board:Name (or pinboard:Name), is:pinned|unpinned, before:/after:/on: with yyyy-MM-dd, today, yesterday or 7d/2w/3m/1y. Items that look like secrets never match free text. Returns summaries; call read_item for full content.",
          "inputSchema": schema(["query": ["type": "string"], "type": ["type": "string", "enum": ["text", "link", "image", "file", "color"]],
                                 "app": ["type": "string", "description": "Source app name or bundle id."], "pinboard_id": boardProp,
                                 "after": ["type": "string", "description": "ISO-8601 lower bound."], "before": ["type": "string", "description": "ISO-8601 upper bound."],
@@ -578,9 +578,11 @@ enum ClipboardMCPHandler {
          "inputSchema": schema(["name": ["type": "string"], "color": ["type": "string", "enum": ClipboardStore.boardColors]], required: ["name"])],
         ["name": "rename_pinboard", "description": "Rename a pinboard.",
          "inputSchema": schema(["pinboard_id": boardProp, "name": ["type": "string"]], required: ["pinboard_id", "name"])],
-        ["name": "delete_pinboard", "description": "Delete a pinboard (items stay in history). Two-step with confirm.",
-         "inputSchema": schema(["pinboard_id": boardProp, "confirm": confirmProp], required: ["pinboard_id"]), "annotations": ["destructiveHint": true]],
-        ["name": "add_item_to_pinboard", "description": "Pin an item to a pinboard; pinning twice keeps it pinned once.",
+        ["name": "delete_pinboard", "description": "Delete a pinboard. Its items stay in history unless delete_items is true, which also deletes the items that are on no other pinboard (as Paste does). Two-step with confirm; the user can undo it in AOM.",
+         "inputSchema": schema(["pinboard_id": boardProp, "confirm": confirmProp,
+                                "delete_items": ["type": "boolean", "description": "Also delete the items that are only on this pinboard."]],
+                               required: ["pinboard_id"]), "annotations": ["destructiveHint": true]],
+        ["name": "add_item_to_pinboard", "description": "Pin an item to a pinboard; pinning twice keeps it pinned once. When the user keeps each item on one pinboard, this moves the item from its current pinboard.",
          "inputSchema": schema(["id": idProp, "pinboard_id": boardProp], required: ["id", "pinboard_id"])],
         ["name": "remove_item_from_pinboard", "description": "Unpin an item from a pinboard, keeping it in history.",
          "inputSchema": schema(["id": idProp, "pinboard_id": boardProp], required: ["id", "pinboard_id"])],
@@ -719,11 +721,15 @@ enum ClipboardMCPHandler {
             return ["id": target.id.uuidString, "name": store.boards.first { $0.id == target.id }?.name ?? target.name]
         case "delete_pinboard":
             let target = try board(arguments, store: store)
+            let deletingItems = arguments["delete_items"] as? Bool == true
             guard arguments["confirm"] as? Bool == true else {
-                return ["message": "This would delete pinboard \"\(target.name)\". Its items stay in history. Call again with confirm: true."]
+                let items = store.itemsOnlyOnBoard(target.id)
+                return ["message": deletingItems
+                    ? "This would delete pinboard \"\(target.name)\" and the \(items) item(s) that are on no other pinboard. Call again with confirm: true."
+                    : "This would delete pinboard \"\(target.name)\". Its items stay in history. Call again with confirm: true."]
             }
-            store.deleteBoard(id: target.id)
-            return ["deleted": target.id.uuidString]
+            let deleted = store.deleteBoard(id: target.id, deletingItems: deletingItems)
+            return ["deleted": target.id.uuidString, "deletedItems": deleted]
         case "add_item_to_pinboard", "remove_item_from_pinboard":
             let item = try entry(arguments, store: store)
             let target = try board(arguments, store: store)

@@ -3,19 +3,27 @@ import SwiftUI
 
 /// Literal and quoted terms can be combined with local metadata filters:
 /// type:image from:"Google Chrome" board:Work after:2026-01-01 -draft
+///
+/// 3.3.3 adds `pinboard:` (same as `board:`), `is:pinned` / `is:unpinned`,
+/// `on:` for a single day, relative dates (`today`, `yesterday`, `7d`, `2w`,
+/// `3m`, `1y` — the start of that day) for `before:`, `after:` and `on:`, and
+/// plural or common names for types (`images`, `links`, `url`, `files`…).
 struct ClipboardSearchQuery {
     private struct Term {
         var field: String?
         var value: String
         var excluded: Bool
         var date: Date?
+        var dayEnd: Date?
         var boardIDs: Set<UUID>?
+        var kind: ClipboardEntry.Kind?
     }
     private var terms: [Term] = []
 
     private static let tokenExpression = try? NSRegularExpression(pattern: #"(?:[^\s"]|"[^"]*")+"#)
+    static let fields: Set<String> = ["type", "from", "app", "board", "pinboard", "before", "after", "on", "is"]
 
-    init(_ query: String, boards: [ClipboardPinboard]? = nil) {
+    init(_ query: String, boards: [ClipboardPinboard]? = nil, now: Date = Date(), calendar: Calendar = .current) {
         guard !query.isEmpty else { return }
         let expression = Self.tokenExpression
         let range = NSRange(query.startIndex..., in: query)
@@ -25,27 +33,68 @@ struct ClipboardSearchQuery {
             let excluded = text.hasPrefix("-") && text.count > 1
             if excluded { text.removeFirst() }
             let split = text.split(separator: ":", maxSplits: 1).map(String.init)
-            let field = split.count == 2 && ["type", "from", "app", "board", "before", "after"].contains(split[0].lowercased())
-                ? split[0].lowercased() : nil
+            let named = split.first?.lowercased() ?? ""
+            let field = split.count == 2 && Self.fields.contains(named) ? (named == "pinboard" ? "board" : named) : nil
             let value = field == nil ? text : split[1]
-            let date = (field == "before" || field == "after") ? Self.dayFormatter.date(from: value) : nil
+            let isDate = field == "before" || field == "after" || field == "on"
+            let date = isDate ? Self.date(from: value, now: now, calendar: calendar) : nil
+            let dayEnd = field == "on" ? date.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } : nil
             let boardIDs = field == "board" ? boards.map { boards in
                 Set(boards.filter { $0.name.localizedStandardContains(value) }.map(\.id))
             } : nil
-            terms.append(Term(field: field, value: value, excluded: excluded, date: date, boardIDs: boardIDs))
+            terms.append(Term(field: field, value: value, excluded: excluded, date: date, dayEnd: dayEnd,
+                              boardIDs: boardIDs, kind: field == "type" ? Self.kind(named: value) : nil))
         }
         // Reject metadata mismatches before scanning potentially large bodies.
         terms = terms.filter { $0.field != nil } + terms.filter { $0.field == nil }
     }
 
-    private static let dayFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.isLenient = false
-        return formatter
-    }()
+    /// `type:` values, including plurals and everyday names.
+    static func kind(named raw: String) -> ClipboardEntry.Kind? {
+        let value = raw.lowercased()
+        if let kind = ClipboardEntry.Kind(rawValue: value) { return kind }
+        switch value {
+        case "texts", "txt", "string", "snippet", "snippets": return .text
+        case "links", "url", "urls", "web": return .link
+        case "images", "img", "picture", "pictures", "photo", "photos", "screenshot", "screenshots": return .image
+        case "files", "document", "documents", "doc", "docs": return .file
+        case "colors", "colour", "colours": return .color
+        default: return nil
+        }
+    }
+
+    /// yyyy-MM-dd, `today`, `yesterday`, or an amount of days, weeks, months
+    /// or years ago (`7d`, `2w`, `3m`, `1y`), as the start of that day in
+    /// `calendar` (the user's calendar and time zone by default).
+    static func date(from value: String, now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        let lower = value.lowercased()
+        let parts = lower.split(separator: "-", omittingEmptySubsequences: false)
+        if parts.count == 3, parts[0].count == 4, parts[1].count == 2, parts[2].count == 2,
+           let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) {
+            // Strict: 2026-02-30 is not quietly read as 2 March. Always the
+            // Gregorian calendar, in the given time zone, as before.
+            var gregorian = Calendar(identifier: .gregorian)
+            gregorian.timeZone = calendar.timeZone
+            let components = DateComponents(year: year, month: month, day: day)
+            guard let date = gregorian.date(from: components),
+                  gregorian.dateComponents([.year, .month, .day], from: date) == components else { return nil }
+            return date
+        }
+        let today = calendar.startOfDay(for: now)
+        switch lower {
+        case "today": return today
+        case "yesterday": return calendar.date(byAdding: .day, value: -1, to: today)
+        default: break
+        }
+        guard lower.count >= 2, let unit = lower.last, let amount = Int(lower.dropLast()), (0...3_650).contains(amount) else { return nil }
+        switch unit {
+        case "d": return calendar.date(byAdding: .day, value: -amount, to: today)
+        case "w": return calendar.date(byAdding: .day, value: -7 * amount, to: today)
+        case "m": return calendar.date(byAdding: .month, value: -amount, to: today)
+        case "y": return calendar.date(byAdding: .year, value: -amount, to: today)
+        default: return nil
+        }
+    }
 
     var isEmpty: Bool { terms.isEmpty }
 
@@ -67,7 +116,9 @@ struct ClipboardSearchQuery {
         return terms.allSatisfy { term in
             let matched: Bool
             switch term.field {
-            case "type": matched = entry.kind.rawValue.caseInsensitiveCompare(term.value) == .orderedSame
+            case "type":
+                matched = term.kind.map { entry.kind == $0 }
+                    ?? (entry.kind.rawValue.caseInsensitiveCompare(term.value) == .orderedSame)
             case "from", "app":
                 matched = [entry.sourceName ?? "", entry.sourceBundleID ?? ""].contains { $0.localizedStandardContains(term.value) }
             case "board":
@@ -76,9 +127,19 @@ struct ClipboardSearchQuery {
                 } else {
                     matched = boards.contains { entry.pinboardIDs.contains($0.id) && $0.name.localizedStandardContains(term.value) }
                 }
-            case "before", "after":
+            case "is":
+                switch term.value.lowercased() {
+                case "pinned": matched = !entry.pinboardIDs.isEmpty
+                case "unpinned": matched = entry.pinboardIDs.isEmpty
+                default: matched = false
+                }
+            case "before", "after", "on":
                 if let date = term.date {
-                    matched = term.field == "before" ? entry.lastCopiedAt < date : entry.lastCopiedAt >= date
+                    switch term.field {
+                    case "before": matched = entry.lastCopiedAt < date
+                    case "after": matched = entry.lastCopiedAt >= date
+                    default: matched = entry.lastCopiedAt >= date && entry.lastCopiedAt < (term.dayEnd ?? date)
+                    }
                 } else { matched = false }
             default: matched = Self.contains(entry, term.value)
             }
@@ -108,9 +169,10 @@ extension ClipboardSearchQuery {
             let field = pieces[0].lowercased(), value = pieces[1].replacingOccurrences(of: "\"", with: "")
             let complete: Bool
             switch field {
-            case "type": complete = ClipboardEntry.Kind(rawValue: value.lowercased()) != nil
-            case "before", "after": complete = dayFormatter.date(from: value) != nil
-            case "from", "app", "board": complete = pieces[1].contains("\"") ? (pieces[1].filter { $0 == "\"" }.count >= 2 && pieces[1].hasSuffix("\"")) : (query.last?.isWhitespace == true || index < parsed.count - 1)
+            case "type": complete = kind(named: value) != nil
+            case "before", "after", "on": complete = date(from: value) != nil
+            case "is": complete = ["pinned", "unpinned"].contains(value.lowercased())
+            case "from", "app", "board", "pinboard": complete = pieces[1].contains("\"") ? (pieces[1].filter { $0 == "\"" }.count >= 2 && pieces[1].hasSuffix("\"")) : (query.last?.isWhitespace == true || index < parsed.count - 1)
             default: complete = false
             }
             return complete && seen.insert(token).inserted
@@ -141,7 +203,8 @@ extension ClipboardSearchQuery {
             guard !token.hasPrefix("-") else { return nil }
             let pieces = token.split(separator: ":", maxSplits: 1).map(String.init)
             guard pieces.count == 2 else { return nil }
-            let field = pieces[0].lowercased() == "app" ? "from" : pieces[0].lowercased()
+            let named = pieces[0].lowercased()
+            let field = named == "app" ? "from" : named == "pinboard" ? "board" : named
             guard ["type", "from", "board"].contains(field) else { return nil }
             return (token, field, pieces[1].replacingOccurrences(of: "\"", with: ""))
         }
