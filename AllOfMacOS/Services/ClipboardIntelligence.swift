@@ -694,16 +694,39 @@ final class ClipboardIntelligence {
         return value
     }
 
-    /// Identity of an entry's classifiable content without hashing megabytes
-    /// of text on every panel open.
+    /// Identity of everything the classifier and the secret scanner read:
+    /// kind, title, text, recognised image text and every textual
+    /// representation, hashed in full (audit 2026-10-29, PA-04). The old
+    /// fingerprint of the length, first 512 and last 256 characters let a
+    /// same-length edit in the middle keep a stale "not a secret" verdict.
+    /// SipHash runs at about 1 GB/s; image bytes are read by neither check,
+    /// so only their sizes are mixed in.
     nonisolated static func digest(_ entry: ClipboardEntry) -> Int {
-        let text = entry.text ?? entry.title
         var hasher = Hasher()
         hasher.combine(entry.kind)
-        hasher.combine(text.utf8.count)
-        hasher.combine(text.prefix(512))
-        hasher.combine(text.suffix(256))
+        combine(entry.title, into: &hasher)
+        combine(entry.text, into: &hasher)
+        combine(entry.recognizedText, into: &hasher)
+        hasher.combine(entry.items.count)
+        for item in entry.items {
+            hasher.combine(item.count)
+            for type in item.keys.sorted() {
+                guard let data = item[type] else { continue }
+                combine(type, into: &hasher)
+                hasher.combine(data.count)
+                if !ClipboardSecretScanner.isBinaryImageType(type) {
+                    data.withUnsafeBytes { hasher.combine(bytes: $0) }
+                }
+            }
+        }
         return hasher.finalize()
+    }
+
+    nonisolated private static func combine(_ value: String?, into hasher: inout Hasher) {
+        guard var value else { hasher.combine(false); return }
+        hasher.combine(true)
+        hasher.combine(value.utf8.count)
+        value.withUTF8 { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
     }
 
     private var suggestionGeneration = 0

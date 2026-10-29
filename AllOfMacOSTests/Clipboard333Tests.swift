@@ -408,4 +408,34 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertNoThrow(try AutomationMCP.rejectRedactedValues(["name": "Plain", "actions": [["type": "beep"]]]))
     }
 
+    // MARK: - PA-04 · the classification cache key covers the whole content
+
+    func testMiddleEditChangesTheCacheKeyAndTheClass() {
+        // clipboard-privacy-probe.log: middle_edit_same_digest= true
+        let before = probeEntry(String(repeating: "x", count: 600) + String(repeating: "a", count: fake.utf8.count) + String(repeating: "y", count: 600))
+        var after = before
+        after.text = String(repeating: "x", count: 600) + fake + String(repeating: "y", count: 600)
+        XCTAssertEqual(before.text?.utf8.count, after.text?.utf8.count)
+        XCTAssertNotEqual(ClipboardIntelligence.digest(before), ClipboardIntelligence.digest(after))
+        XCTAssertEqual(ClipboardIntelligence.digest(before), ClipboardIntelligence.digest(before))
+
+        let intelligence = ClipboardIntelligence()
+        XCTAssertEqual(intelligence.itemClass(before), .unclassified)
+        XCTAssertEqual(intelligence.itemClass(after), .secret, "same id, new middle: re-classified, not served from the cache")
+
+        // Everything the scanner reads is part of the key.
+        var ocr = before
+        ocr.recognizedText = "Receipt"
+        var renamed = before
+        renamed.title = "Renamed"
+        XCTAssertNotEqual(ClipboardIntelligence.digest(before), ClipboardIntelligence.digest(ocr))
+        XCTAssertNotEqual(ClipboardIntelligence.digest(before), ClipboardIntelligence.digest(renamed))
+        let rich = captured([[NSPasteboard.PasteboardType.string.rawValue: Data("same".utf8),
+                              NSPasteboard.PasteboardType.html.rawValue: Data("<p>one</p>".utf8)]])
+        var richEdited = rich
+        richEdited.items = [[NSPasteboard.PasteboardType.string.rawValue: Data("same".utf8),
+                             NSPasteboard.PasteboardType.html.rawValue: Data("<p>two</p>".utf8)]]
+        XCTAssertNotEqual(ClipboardIntelligence.digest(rich), ClipboardIntelligence.digest(richEdited))
+    }
+
 }
