@@ -178,11 +178,14 @@ enum CaptureMenu {
         root.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
         let menu = NSMenu(title: root.title)
         let coordinator = CaptureCoordinator.shared
+        // 3.3.3: titled groups, as in the status menu, rather than bare separators.
+        menu.addItem(.sectionHeader(title: "Windows & Displays"))
         menu.addItem(action("Capture Active Window", "macwindow.badge.plus",
                             shortcut: shortcuts.shortcut(for: .captureWindow)) { coordinator.captureActiveWindow() })
         menu.addItem(action("Capture Window from List…", "rectangle.grid.2x2") { coordinator.captureWindowFromPicker() })
         menu.addItem(action("Capture All Displays", "display.2") { coordinator.captureAllDisplays() })
         menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Scrolling & Text"))
         menu.addItem(action("Scrolling Capture (Horizontal)", "arrow.left.and.right") {
             coordinator.captureScrollingHorizontal()
         })
@@ -204,6 +207,7 @@ enum CaptureMenu {
             coordinator.captureQRCode()
         })
         menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Recording"))
         menu.addItem(action("Record Fullscreen", "rectangle.dashed.badge.record") {
             ScreenRecordingService.shared.recordFullscreenUnderPointer()
         })
