@@ -106,6 +106,7 @@ final class AudioMagicBoost {
     /// from a table made at init (no array or allocation on the render path).
     private let presetSlot = AudioAtomicCounter(0)
     private var appliedPreset = 0
+    private let presetCount: Int
     private let table: UnsafeMutablePointer<Float>
     private static let fields = 5
     private var threshold = AudioMagicBoost.threshold
@@ -125,6 +126,7 @@ final class AudioMagicBoost {
         delay = .allocate(capacity: Self.lookaheadFrames * 2)
         delay.initialize(repeating: 0, count: Self.lookaheadFrames * 2)
         let presets = AudioBoostPreset.all
+        presetCount = presets.count
         table = .allocate(capacity: presets.count * Self.fields)
         for (index, preset) in presets.enumerated() {
             let row = table + index * Self.fields
@@ -144,7 +146,7 @@ final class AudioMagicBoost {
     @inline(__always)
     private func adoptPreset() {
         let wanted = Int(presetSlot.load())
-        guard wanted != appliedPreset, wanted >= 0, wanted < AudioBoostPreset.all.count else { return }
+        guard wanted != appliedPreset, wanted >= 0, wanted < presetCount else { return }
         appliedPreset = wanted
         let row = table + wanted * Self.fields
         threshold = row[0]

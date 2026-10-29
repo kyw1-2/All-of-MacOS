@@ -145,6 +145,8 @@ final class AudioEventLog {
     static let shared = AudioEventLog()
     static let capacity = 200
     static let pollInterval: TimeInterval = 0.25
+    /// The opt-in that writes audio-health.json (docs/airplay-crackle-3.3.2.md).
+    static let diagnosticsKey = "AOMAudioDiagnostics"
 
     struct Event: Equatable {
         var time: Date
@@ -224,7 +226,10 @@ final class AudioEventLog {
         let source = Source(name: name, rings: rings, counters: counters)
         lock.lock()
         sources[ObjectIdentifier(source)] = source
-        let start = polls && timer == nil
+        // The poller wakes only while the diagnostics file is on (it is
+        // read at an output's start); without it a source is still read
+        // once when it goes, so the totals stay whole.
+        let start = polls && timer == nil && UserDefaults.standard.bool(forKey: Self.diagnosticsKey)
         if start {
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval, leeway: .milliseconds(100))
