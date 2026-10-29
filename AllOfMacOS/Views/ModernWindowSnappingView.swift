@@ -144,7 +144,7 @@ struct ModernWindowSnappingView: View {
                 .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
+            .defaultScrollAnchor(Self.previewScrollAnchor)
             .aomScrollEdge()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -471,13 +471,15 @@ struct ModernWindowSnappingView: View {
                 Toggle("Dock gestures", isOn: $dockGestures)
             }
             .help("Two fingers on a Dock icon: tap and hold to activate the app, swipe sideways through its windows, down to minimize, up to unminimize (⇧ all), double tap to hide (⇧ the others), pinch out for ⌘N. With Tap to click on, a two-finger tap is also a right-click, so the Dock menu may open.")
+            // 3.3.3: Dock pinch twice and the app's menu, under their switch.
+            SwishDockMenuBarExtraRows.DockRows()
             AOMSettingRow("Menu-bar gestures",
                           help: "Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.") {
                 Toggle("Menu-bar gestures", isOn: $menuBarGestures)
             }
             .help("Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.")
-            // 3.3.3: Dock pinch twice, the app's menu, scroll to top, the
-            // tap-hold-scroll switcher and Mission Control gestures.
+            // 3.3.3: scroll to top and the tap-hold-scroll switcher under
+            // their switch, then Mission Control gestures.
             SwishDockMenuBarExtraRows()
         }
     }
@@ -790,6 +792,17 @@ struct ModernWindowSnappingView: View {
     /// (`--aom-preview-expand-advanced`).
     static var previewExpandsAdvanced: Bool {
         PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-expand-advanced")
+    }
+
+    /// Isolated previews can open the page part-way down
+    /// (`--aom-preview-scroll-fraction 0.5`), so the sections between the top
+    /// and `--aom-preview-scroll-bottom` are reviewed in screenshots too.
+    static var previewScrollAnchor: UnitPoint? {
+        let args = ProcessInfo.processInfo.arguments
+        guard PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-scroll-fraction"),
+              args.indices.contains(index + 1), let fraction = Double(args[index + 1]),
+              (0...1).contains(fraction) else { return AOMPreviewHooks.scrollAnchor }
+        return UnitPoint(x: 0, y: fraction)
     }
 
     /// The preset a stored value stands for (a slider's 1.2500000000000002
