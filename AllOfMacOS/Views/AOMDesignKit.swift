@@ -406,24 +406,47 @@ struct AOMScopeBar<ID: Hashable>: View {
     @Binding var selection: ID
     var accessibilityLabel: String = "Filter"
 
+    /// Full labels when they fit; then glyph-and-count chips (the selected one
+    /// keeps its title, the rest name themselves in a tooltip and to
+    /// VoiceOver); only then a sideways scroll that fades at its trailing edge,
+    /// so a cut-off chip never reads as the last one.
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: AOMSpace.x1) {
-                ForEach(items) { item in
-                    AOMScopeChip(item: item, selected: item.id == selection) { selection = item.id }
-                }
+        ViewThatFits(in: .horizontal) {
+            row(compact: false)
+            row(compact: true)
+            ScrollView(.horizontal, showsIndicators: false) {
+                row(compact: true).padding(.trailing, AOMSpace.l)
             }
-            .padding(.vertical, 1)
+            .mask {
+                LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.86),
+                                       .init(color: .clear, location: 1)],
+                               startPoint: .leading, endPoint: .trailing)
+            }
         }
-        .scrollClipDisabled()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func row(compact: Bool) -> some View {
+        HStack(spacing: AOMSpace.x1) {
+            ForEach(items) { item in
+                AOMScopeChip(item: item, selected: item.id == selection,
+                             compact: compact && item.id != selection && (item.symbol != nil || item.dot != nil)) {
+                    selection = item.id
+                }
+            }
+        }
+        .padding(.vertical, 1)
+        .fixedSize()
     }
 }
 
 private struct AOMScopeChip<ID: Hashable>: View {
     let item: AOMScopeItem<ID>
     let selected: Bool
+    /// Glyph and count only; the title moves to the tooltip.
+    var compact = false
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.colorSchemeContrast) private var contrast
@@ -441,7 +464,7 @@ private struct AOMScopeChip<ID: Hashable>: View {
                 } else if let symbol = item.symbol {
                     Image(systemName: symbol).imageScale(.small)
                 }
-                Text(item.title).lineLimit(1)
+                if !compact { Text(item.title).lineLimit(1) }
                 if let count = item.count {
                     Text("\(count)")
                         .monospacedDigit()
@@ -462,6 +485,7 @@ private struct AOMScopeChip<ID: Hashable>: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help(compact ? item.title : "")
         .onHover { hovering = $0 }
         .aomAnimation(.quick, value: hovering)
         .aomAnimation(.quick, value: selected)
