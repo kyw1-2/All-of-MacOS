@@ -332,6 +332,29 @@ final class AirPlayOutputRenderer {
                 listeners.append((address, listener))
             }
         }
+        // 3.3.3 (A01): the HAL's own word for an IO cycle that ran past its
+        // deadline (kAudioDeviceProcessorOverload, documented in
+        // AudioHardware.h; sent from the IO thread, delivered here on the
+        // device queue). Counted beside the sample-time gaps it explains.
+        var overloadAddress = AudioObjectPropertyAddress(mSelector: kAudioDeviceProcessorOverload,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        let overloadListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.processorOverloaded()
+        }
+        if AudioObjectAddPropertyListenerBlock(deviceID, &overloadAddress, queue, overloadListener) == noErr {
+            listeners.append((overloadAddress, overloadListener))
+        }
+        // The share of the IO cycle's client portion the HAL gives this
+        // process (kAudioDevicePropertyIOCycleUsage, 0…1). 1, the default,
+        // is already the most: the IO thread starts as early as it can, and
+        // a lower value would only shorten AOM's time. Read, not set.
+        var usageAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyIOCycleUsage,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var usage: Float32 = 0
+        size = 4
+        if AudioObjectGetPropertyData(deviceID, &usageAddress, 0, nil, &size, &usage) == noErr, usage.isFinite {
+            ioCycleUsageBits.store(UInt64(usage.bitPattern))
+        }
         let thread = AirPlayMixThread(bus: bus, bridge: bridge)
         thread.start()
         mixer = thread
@@ -417,6 +440,15 @@ final class AirPlayOutputRenderer {
 
     /// In-place format changes survived (diagnostics; written on the device queue).
     let reconfigurations = AudioAtomicCounter()
+    /// kAudioDeviceProcessorOverload notifications (device queue).
+    let processorOverloads = AudioAtomicCounter()
+    /// kAudioDevicePropertyIOCycleUsage read at start (Float32 bits; 0: unread).
+    private let ioCycleUsageBits = AudioAtomicCounter()
+
+    private func processorOverloaded() {
+        guard !stopped else { return }
+        processorOverloads.add()
+    }
     /// Times AOM asked again for its IO buffer after it came back smaller
     /// (device queue only; at most a few per output, so two notifiers can
     /// never ping-pong).
@@ -581,6 +613,10 @@ final class AirPlayOutputRenderer {
         // Crackle audit 3.3.2, follow-up: format notices that restarted
         // nothing, and IO-size requests the device did not keep.
         result["ignoredFormatNotices"] = ignoredFormatNotices.load()
+        // 3.3.3 (A01): the HAL's overload notices, and the cycle share it gives AOM.
+        result["processorOverloads"] = processorOverloads.load()
+        let usageBits = ioCycleUsageBits.load()
+        result["ioCycleUsage"] = usageBits == 0 ? -1 : Double(Float(bitPattern: UInt32(truncatingIfNeeded: usageBits)))
         if let report = mixer?.timeline.report() {
             // Start-up and sustained supply, separately (audit F12).
             result["mixThreadStartMS"] = report.threadStart.map { Double($0) / 1_000_000 } ?? -1
@@ -749,37 +785,116 @@ final class AirPlayPCMBridge {
     private var lastCallbackFrames = 0
     /// Cycles the HAL skipped so far (any thread).
     var deviceCycleGaps: UInt64 { cycleGaps.load() }
+
+    /// 3.3.3 (A01): after a gap the device has just played a hole (the HAL
+    /// skipped AOM's cycle; on the HomePod tested, coreaudiod reports these as
+    /// safety violations at its fixed 128-frame IO with no safety offset).
+    /// The edge into the hole happened before AOM could know of it. The way
+    /// out is shaped: the next output fades in from silence over this time
+    /// instead of resuming mid-waveform. Nothing is skipped: the stream
+    /// continues where it was, `gap` frames later.
+    static let gapFadeSeconds = 0.005
+    // HAL-callback-owned.
+    private var gapFadeIndex = 0
+    private var gapFadeLength = 0
+    private let gapFadeIns = AudioAtomicCounter()
+    /// 3.3.3 (A01): what the HAL callback costs, in host ticks: the worst
+    /// callback, the sum and the count (two clock reads and three atomic
+    /// updates per callback).
+    private let costMaxTicks = AudioAtomicCounter()
+    private let costTotalTicks = AudioAtomicCounter()
+    private let costCallbacks = AudioAtomicCounter()
+
+    /// The callback's cost so far: worst and mean, in microseconds.
+    var renderCost: (maximumMicros: Double, meanMicros: Double, callbacks: UInt64) {
+        let calls = costCallbacks.load()
+        let mean = calls > 0 ? Double(costTotalTicks.load()) / Double(calls) : 0
+        return (Double(costMaxTicks.load()) * secondsPerTick * 1e6, mean * secondsPerTick * 1e6, calls)
+    }
+
     var statistics: [String: Any] {
         var result = queue.statistics.mapValues { $0 as Any }
-        result["outputRate"] = Double(bitPattern: outputRateBits.load()); result["targetFrames"] = targetValue.load()
+        let rate = Double(bitPattern: outputRateBits.load())
+        result["outputRate"] = rate; result["targetFrames"] = targetValue.load()
         result["adaptiveTargetFrames"] = effectiveTarget.load()
         result["deviceBufferFrames"] = deviceFramesValue.load()
         result["driftCorrectionPPM"] = queue.driftCorrectionPPM
         result["deviceCycleGaps"] = cycleGaps.load()
         result["deviceGapFrames"] = gapFrames.load()
+        result["gapFadeIns"] = gapFadeIns.load()
+        let cost = renderCost
+        result["renderCallbacks"] = cost.callbacks
+        result["renderCostMaxMicros"] = (cost.maximumMicros * 10).rounded() / 10
+        result["renderCostMeanMicros"] = (cost.meanMicros * 10).rounded() / 10
+        // The share of one device cycle the callback takes on average.
+        let cycleMicros = Double(deviceFramesValue.load()) / max(1, rate) * 1e6
+        result["renderCycleLoadPercent"] = cycleMicros > 0 ? (cost.meanMicros / cycleMicros * 1000).rounded() / 10 : 0
         return result
     }
     func discard() { queue.requestClear() }
-    func push(_ input: UnsafePointer<Float>, frames: Int) {
+    /// Host ticks of the mix clock's last block and its size (3.3.3): the
+    /// HAL callback counts that block as arriving over its period.
+    private let pushTick = AudioAtomicCounter()
+    private let pushFrames = AudioAtomicCounter(UInt64(AirPlayMixThread.blockFrames))
+    func push(_ input: UnsafePointer<Float>, frames: Int, hostTime: UInt64? = nil) {
         queue.write(frames: frames) { (input[$0 * 2], input[$0 * 2 + 1]) }
+        pushFrames.store(UInt64(max(0, frames)))
+        pushTick.store(max(1, hostTime ?? mach_absolute_time()))
+    }
+
+    /// The level correction for the drift loop, in input frames: minus the
+    /// part of the newest block its period has not yet "delivered". The mix
+    /// clock writes 480 frames at once every 10 ms; read every 2.67 ms that
+    /// sawtooth aliases into a slow beat (about 0.5 Hz at a few hundred ppm
+    /// of drift) which the loop's 0.5 s filters pass, so the correction
+    /// wobbled by ±20–40 ppm (3.3.3, A01 test). Spread over its period, the
+    /// block adds no sawtooth.
+    static func levelBias(blockFrames: Double, secondsSinceBlock: Double?) -> Double {
+        guard let since = secondsSinceBlock, blockFrames > 0 else { return 0 }
+        let period = blockFrames / 48000
+        let delivered = min(1, max(0, since / period))
+        return -blockFrames * (1 - delivered)
     }
     /// Counts a gap between this cycle's sample time and where the last one
     /// ended; a jump back is a device restart, not a gap. Negative: unknown.
-    func noteCycle(sampleTime: Double, frames: Int) {
-        guard sampleTime.isFinite, sampleTime >= 0 else { return }
+    /// Returns the gap in frames (0: none).
+    @discardableResult
+    func noteCycle(sampleTime: Double, frames: Int) -> Double {
+        guard sampleTime.isFinite, sampleTime >= 0 else { return 0 }
+        var gap = 0.0
         if lastSampleTime >= 0 {
-            let gap = sampleTime - (lastSampleTime + Double(lastCallbackFrames))
-            if gap > 0.5 {
+            let jump = sampleTime - (lastSampleTime + Double(lastCallbackFrames))
+            if jump > 0.5 {
+                gap = jump
                 cycleGaps.add()
-                gapFrames.add(UInt64(min(gap, 1e9).rounded()))
+                gapFrames.add(UInt64(min(jump, 1e9).rounded()))
             }
         }
         lastSampleTime = sampleTime
         lastCallbackFrames = frames
+        return gap
     }
-    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, sampleTime: Double = -1) {
-        callbackTick.store(mach_absolute_time())
-        noteCycle(sampleTime: sampleTime, frames: frames)
+
+    /// In place over interleaved stereo: continues the fade-in after a gap.
+    private func applyGapFade(_ data: UnsafeMutablePointer<Float>, frames: Int) {
+        let length = Float(gapFadeLength)
+        var frame = 0
+        while frame < frames && gapFadeIndex < gapFadeLength {
+            gapFadeIndex += 1
+            let x = Float(gapFadeIndex) / length
+            let gain = x * x * (3 - 2 * x)
+            data[frame * 2] *= gain
+            data[frame * 2 + 1] *= gain
+            frame += 1
+        }
+    }
+
+    func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, sampleTime: Double = -1,
+                hostTime: UInt64? = nil) {
+        let entered = mach_absolute_time()
+        let now = hostTime ?? entered
+        callbackTick.store(entered)
+        let gap = noteCycle(sampleTime: sampleTime, frames: frames)
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         for buffer in buffers {
             if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
@@ -796,9 +911,24 @@ final class AirPlayPCMBridge {
         let target = Self.adaptiveTarget(base: Int(targetValue.load()), latenessFrames: latenessFrames,
                                          deviceFrames: frames, outputRate: rate)
         effectiveTarget.store(UInt64(target))
+        let lastPush = pushTick.load()
+        let bias = Self.levelBias(blockFrames: Double(pushFrames.load()),
+                                  secondsSinceBlock: lastPush == 0 ? nil : Double(now &- min(now, lastPush)) * secondsPerTick)
         let produced = queue.render(into: data, frames: frames, ratio: 48000 / rate, targetFrames: target,
-            driftLimit: 0.002, fadeFrames: Int(rate * 0.005), outputRate: rate)
+            driftLimit: 0.002, fadeFrames: Int(rate * 0.005), outputRate: rate, levelBias: bias)
+        if gap > 0 {
+            // The device just played a hole; start again from silence (a
+            // second gap during a fade starts it again: the hole was silent).
+            gapFadeIndex = 0
+            gapFadeLength = max(1, Int(rate * Self.gapFadeSeconds))
+            gapFadeIns.add()
+        }
+        if gapFadeIndex < gapFadeLength { applyGapFade(data, frames: frames) }
         if produced > 0 { audioTick.store(mach_absolute_time()) }
+        let cost = mach_absolute_time() &- entered
+        costMaxTicks.raise(to: cost)
+        costTotalTicks.add(cost)
+        costCallbacks.add()
     }
 }
 
