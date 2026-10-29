@@ -4,6 +4,7 @@ import XCTest
 
 @MainActor
 final class BTTPresetImportTests: XCTestCase {
+    typealias Group = BTTPresetImport.Entry.Group
     private func data(_ value: Any) throws -> Data { try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) }
     private func keyboard(_ actions: [[String: Any]], extras: [String: Any] = [:]) -> [String: Any] {
         var result: [String: Any] = ["BTTTriggerClass": "BTTTriggerTypeKeyboardShortcut", "BTTTriggerType": 0, "BTTTriggerName": "Example", "BTTShortcutKeyCode": 8, "BTTShortcutModifierKeys": NSEvent.ModifierFlags.command.rawValue, "BTTTriggerOnDown": 1, "BTTActionsToExecute": actions]
@@ -13,12 +14,12 @@ final class BTTPresetImportTests: XCTestCase {
         var result: [String: Any] = ["BTTPredefinedActionType": id]; result.merge(extras) { _, new in new }; return result
     }
 
-    func testKeyboardAndSixDocumentedSimpleActionsPreserveOrderAndStayDisabled() throws {
+    func testKeyboardAndSixDocumentedSimpleActionsPreserveOrderAndEnabledState() throws {
         let ids = [21, 19, 20, 24, 25, 22]
         let report = try BTTPresetImport.parse(data(keyboard(ids.map { action($0) }, extras: ["BTTTriggerOnDown": 0, "BTTEnabled": 1, "BTTEnabled2": 1])))
         XCTAssertTrue(report.skipped.isEmpty)
         let trigger = try XCTUnwrap(report.triggers.first)
-        XCTAssertFalse(trigger.isEnabled)
+        XCTAssertTrue(trigger.isEnabled, "an exact match keeps BTT's enabled state")
         XCTAssertEqual(trigger.keyboardPhase, .keyUp)
         XCTAssertEqual(trigger.actions.map(\.actionType), [.maximizeWindow, .snapWindowLeft, .snapWindowRight, .volumeUp, .volumeDown, .muteVolume])
         XCTAssertEqual(trigger.input, .keyboardShortcut(KeyboardShortcut(keyCode: 8, modifiers: .command)))
@@ -30,7 +31,7 @@ final class BTTPresetImportTests: XCTestCase {
         let trigger = try XCTUnwrap(report.triggers.first)
         XCTAssertEqual(trigger.input, .namedTrigger("Window Task"))
         XCTAssertEqual(trigger.actions.first?.parameters.namedTriggerName, "Child Task")
-        XCTAssertFalse(trigger.isEnabled)
+        XCTAssertTrue(trigger.isEnabled)
         XCTAssertTrue(report.reviewText.contains("Named-trigger calls keep their names"))
     }
 
@@ -41,14 +42,18 @@ final class BTTPresetImportTests: XCTestCase {
         XCTAssertEqual(mapped.actionType, .sendKeyStroke)
         XCTAssertEqual(mapped.parameters.shortcutKeyCode, 8)
         XCTAssertEqual(mapped.parameters.shortcutModifiers, NSEvent.ModifierFlags([.control, .option, .command]).rawValue)
-        for invalid in ["54,8", "55,58,8", "55,55,8", "55,,8", "55", "-1", "128"] {
+        for invalid in ["55,58,8", "55,55,8", "55,,8", "55", "-1", "128"] {
             let rejected = try BTTPresetImport.parse(data(keyboard([action(264, extras: ["BTTShortcutToSend": invalid])])))
             XCTAssertTrue(rejected.triggers.isEmpty, invalid)
             XCTAssertEqual(rejected.skipped.count, 1, invalid)
         }
+        // Right ⌘ (54) is valid BTT input; AOM sends the plain modifier and says so.
+        let rightCommand = try BTTPresetImport.parse(data(keyboard([action(264, extras: ["BTTShortcutToSend": "54,8"])])))
+        XCTAssertEqual(rightCommand.triggers.first?.actions.first?.parameters.shortcutModifiers, NSEvent.ModifierFlags.command.rawValue)
+        XCTAssertEqual(rightCommand.entries.first?.group, .approximate)
     }
 
-    func testAnyUnsupportedActionConditionScopeOrEventRejectsWholeTrigger() throws {
+    func testUnsupportedDetailsAreReportedInsteadOfSilentlyDropped() throws {
         let candidates = [
             keyboard([action(21), action(99999)]),
             keyboard([action(21)], extras: ["BTTConditionName": "Conditional"]),
@@ -59,9 +64,12 @@ final class BTTPresetImportTests: XCTestCase {
             keyboard([action(248, extras: ["BTTNamedTriggerToTrigger": "Child", "BTTAdditionalActionData": ["variable": "value"]])])
         ]
         let report = try BTTPresetImport.parse(data(candidates))
-        XCTAssertTrue(report.triggers.isEmpty)
-        XCTAssertEqual(report.skipped.count, candidates.count)
-        XCTAssertTrue(report.skipped.allSatisfy { !$0.reason.isEmpty })
+        let groups = report.entries.filter { $0.kind == .trigger }.map(\.group.rawValue).sorted()
+        XCTAssertEqual(groups, [Group.approximate, .approximate, .approximate, .approximate, .imported, .imported, .skipped].map(\.rawValue).sorted())
+        XCTAssertTrue(report.entries.filter { $0.group != .imported }.allSatisfy { !$0.reasons.isEmpty })
+        XCTAssertEqual(report.triggers.first { $0.appBundleID == "com.example.App" }?.isEnabled, true)
+        XCTAssertEqual(report.triggers.first { $0.minHoldMs == 500 }?.isEnabled, true)
+        XCTAssertTrue(report.triggers.filter { $0.notes.contains("•") }.allSatisfy { !$0.isEnabled }, "approximate imports are disabled")
         XCTAssertTrue(report.reviewText.contains("Skipped whole triggers"))
     }
 
@@ -71,7 +79,7 @@ final class BTTPresetImportTests: XCTestCase {
         XCTAssertEqual(report.triggers.count, 1)
         XCTAssertEqual(report.skipped.count, 1)
         XCTAssertEqual(report.skipped.first?.index, 1)
-        XCTAssertFalse(report.triggers[0].isEnabled)
+        XCTAssertTrue(report.triggers[0].isEnabled)
     }
 
     func testMalformedNumbersAndMeaningfulDefaultsFailClosed() throws {
@@ -86,7 +94,7 @@ final class BTTPresetImportTests: XCTestCase {
     func testByteCountDepthActionCountAndWrapperLimits() throws {
         XCTAssertThrowsError(try BTTPresetImport.parse(Data(repeating: 32, count: BTTPresetImport.maximumBytes + 1)))
         XCTAssertThrowsError(try BTTPresetImport.parse(Data((String(repeating: "[", count: 33) + String(repeating: "]", count: 33)).utf8)))
-        XCTAssertThrowsError(try BTTPresetImport.parse(data(Array(repeating: keyboard([action(21)]), count: 501))))
+        XCTAssertThrowsError(try BTTPresetImport.parse(data(Array(repeating: keyboard([action(21)]), count: BTTPresetImport.maximumTriggers + 1))))
         XCTAssertThrowsError(try BTTPresetImport.parse(data(["BTTTriggerConfig": keyboard([action(21)])])))
         let excessive = try BTTPresetImport.parse(data(keyboard(Array(repeating: action(21), count: 65))))
         XCTAssertTrue(excessive.triggers.isEmpty)
@@ -99,7 +107,7 @@ final class BTTPresetImportTests: XCTestCase {
         state.currentPreset.addTrigger(existing)
         let originalID = state.currentPreset.id
         var staged = try XCTUnwrap(BTTPresetImport.parse(data(keyboard([action(21)]))).triggers.first)
-        staged.isEnabled = true // The merge boundary enforces disabled staging.
+        staged.isEnabled = true // The legacy merge boundary enforces disabled staging.
         state.addDisabledBTTTriggers([staged])
         XCTAssertEqual(state.currentPreset.id, originalID)
         XCTAssertEqual(state.currentPreset.name, "Existing")
