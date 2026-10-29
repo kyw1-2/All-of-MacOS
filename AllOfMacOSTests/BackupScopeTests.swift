@@ -8,14 +8,22 @@ import XCTest
 ///
 /// The scan reads the app's sources for settings keys in the forms the app
 /// uses: `forKey: "…"`, `@AppStorage("…")`, `static let … = "…"` and key
-/// prefixes built as `"…_\(…)"` or `"…_" + …`. A key built some other way is
-/// not seen by this test.
+/// prefixes built as `"…_\(…)"` or `"…_" + …`. A key built as `"…" + name`
+/// (3.3.3's modifier roles) shows only its prefix, so its keys are listed in
+/// `builtKeys`. A key built some other way is not seen by this test.
 final class BackupScopeTests: XCTestCase {
     private static let sources: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("AllOfMacOS", isDirectory: true)
 
     /// Literals the scan sees that are not settings.
     private static let notSettings: Set<String> = ["AOMCategory_"]  // an accessibility identifier
+
+    /// The keys behind each `"…" + name` prefix the scan finds, taken from
+    /// the code that builds them. A new prefix of this form fails the scan
+    /// until its keys are listed here.
+    private static let builtKeys: [String: [String]] = [
+        "AOMTitleBarSnapModifier": SwishSnap.ModifierRole.allCases.map(\.defaultsKey)
+    ]
 
     private func scannedKeys() throws -> Set<String> {
         let patterns = [
@@ -25,6 +33,8 @@ final class BackupScopeTests: XCTestCase {
             #""((?:AOM|aom\.)[A-Za-z0-9.]*_)" *\+"#,
             #""((?:AOM|aom\.)[A-Za-z0-9.]*_)\\\("#
         ].map { try! NSRegularExpression(pattern: $0) }
+        // `"AOMTitleBarSnapModifier" + title`: a prefix without the family underscore.
+        let builtPrefix = try NSRegularExpression(pattern: #""((?:AOM|aom\.)[A-Za-z0-9.]*[A-Za-z0-9])" *\+"#)
         var keys: Set<String> = []
         let enumerator = try XCTUnwrap(FileManager.default.enumerator(at: Self.sources, includingPropertiesForKeys: nil))
         for case let url as URL in enumerator where url.pathExtension == "swift" {
@@ -34,6 +44,13 @@ final class BackupScopeTests: XCTestCase {
                 for match in pattern.matches(in: text, range: range) {
                     if let key = Range(match.range(at: 1), in: text) { keys.insert(String(text[key])) }
                 }
+            }
+            for match in builtPrefix.matches(in: text, range: range) {
+                guard let found = Range(match.range(at: 1), in: text) else { continue }
+                let prefix = String(text[found])
+                let built = try XCTUnwrap(Self.builtKeys[prefix],
+                                          "\(url.lastPathComponent) builds keys from \"\(prefix)\" + …: list them in builtKeys")
+                keys.formUnion(built)
             }
         }
         return keys
@@ -78,5 +95,25 @@ final class BackupScopeTests: XCTestCase {
         for key in ["AOMKeyRemapOwnedPairs", "AOMMCPEnabled", "AOMIntelligentClipboardReadsScreen", "AOMMaxBackups"] {
             XCTAssertFalse(PresetManager.isBackedUpSetting(key), key)
         }
+    }
+
+    /// 3.3.3's clipboard, capture, annotation and audio settings are backed
+    /// up; a diagnostics reset request and the recording devices are left out
+    /// with a reason. (The 3.3.3 gesture settings are in ProfileBackupRestoreTests.)
+    func testThe333SettingsAreBackedUpOrLeftOutForAReason() {
+        let backedUp = ["AOMClipboardLinkCards", CaptureSettings.RecordingKey.clickStyle,
+                        CaptureSettings.RecordingKey.hidesDesktopIcons, CaptureSettings.RecordingKey.scalesTo1x,
+                        AudioBoostPreset.masterKey, AudioBoostPreset.appKey("com.example.player"),
+                        AudioDeviceEQ.presetsKey, AudioDeviceEQ.assignmentsKey,
+                        AudioUnitEffectHost.choiceKey, AudioUnitEffectHost.stateKey] + AnnotationSettings.backedUpKeys
+        for key in backedUp { XCTAssertTrue(PresetManager.isBackedUpSetting(key), key) }
+        for key in AnnotationSettings.backedUpKeys { XCTAssertTrue(CaptureSettings.backedUpKeys.contains(key), key) }
+        for key in [AudioDiagnostics.resetRequestKey, CaptureSettings.RecordingKey.cameraID,
+                    CaptureSettings.RecordingKey.microphoneID] {
+            XCTAssertFalse(PresetManager.isBackedUpSetting(key), key)
+            XCTAssertFalse((PresetManager.settingsNotBackedUp[key] ?? "").isEmpty, "\(key) is left out with a reason")
+        }
+        XCTAssertTrue(PresetManager.settingsNotBackedUp[CaptureSettings.RecordingKey.cameraID]?.contains("devices") == true,
+                      "the machine-specific reason names the devices")
     }
 }
