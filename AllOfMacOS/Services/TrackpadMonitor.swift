@@ -62,6 +62,10 @@ class TrackpadMonitor {
     private var registrationGeneration = UUID()
     private var monitors: [Any] = []
     private var registeredTriggers: [Binding] = []
+    /// Scroll Up/Down triggers that drive a continuous value instead of firing.
+    private var valueBindings: [UUID: ContinuousValueBinding] = [:]
+    /// Receives scroll values of value-bound triggers; tests inject a recorder.
+    var continuousEngine: ContinuousValueEngine = .shared
     /// Long Touch hold time (seconds) per registered trigger id.
     private var longTouchDurations: [UUID: Double] = [:]
     /// Held modifiers; injectable so scroll+modifier triggers are testable.
@@ -174,11 +178,13 @@ class TrackpadMonitor {
         activationGroups = groups
         invalidateRecognition()
         longTouchDurations.removeAll()
+        valueBindings.removeAll()
         registeredTriggers = triggers.compactMap { trigger in
             guard trigger.isEnabled, case .trackpadGesture(let gesture) = trigger.input else { return nil }
             // Scroll triggers without a modifier would fire on every scroll.
             if TriggerValidation.problem(for: trigger) != nil { return nil }
             if gesture.isLongTouch { longTouchDurations[trigger.id] = Double(trigger.longTouchDurationMs) / 1000 }
+            if let binding = trigger.valueBinding { valueBindings[trigger.id] = binding }
             return (trigger.id, gesture, trigger.actions, trigger.appBundleID, trigger.suppressClick, trigger.hapticFeedback, trigger.requiredModifiers, trigger.activationGroupID)
         }
         guard systemMonitoringEnabled else { return }
@@ -1147,10 +1153,12 @@ class TrackpadMonitor {
     /// scrolling while the trigger's modifiers are held. Runs even when the raw
     /// multitouch source is active, because scrolling is not part of that stream.
     /// Direction follows the delivered delta: positive Y = Up.
-    private func processScrollTrigger(deltaX: CGFloat, deltaY: CGFloat, momentumPhase: NSEvent.Phase, timestamp: TimeInterval) {
+    private func processScrollTrigger(deltaX: CGFloat, deltaY: CGFloat, momentumPhase: NSEvent.Phase, timestamp: TimeInterval,
+                                      precise: Bool = true) {
         guard momentumPhase.isEmpty else { return }
+        driveScrollValues(deltaY: deltaY, precise: precise)
         var wanted = Set<MouseTriggerKind>()
-        for entry in applicableTriggers {
+        for entry in applicableTriggers where valueBindings[entry.id] == nil {
             if entry.gesture == .scrollUp { wanted.insert(.scrollUp) }
             if entry.gesture == .scrollDown { wanted.insert(.scrollDown) }
         }
@@ -1159,9 +1167,26 @@ class TrackpadMonitor {
         queueGesture(kind == .scrollUp ? .scrollUp : .scrollDown)
     }
 
+    /// Value-bound Scroll Up/Down: every scroll along the axis moves the value,
+    /// up for Scroll Up and down for Scroll Down, while the trigger's modifiers
+    /// are held. Momentum (inertia) is ignored, like the discrete steps.
+    private func driveScrollValues(deltaY: CGFloat, precise: Bool) {
+        guard !valueBindings.isEmpty, deltaY != 0, deltaY.isFinite, AutomationGate.isOn,
+              TriggerSuppression.shared.allows(kind: .trackpad) else { return }
+        // A mouse-wheel line counts as 10 points of trackpad travel.
+        let points = Double(deltaY) * (precise ? 1 : 10)
+        for gesture in [TrackpadGesture.scrollUp, .scrollDown] {
+            for entry in matchingTriggers(for: gesture) {
+                guard let binding = valueBindings[entry.id] else { continue }
+                let delta = points / 100 * binding.scrollSensitivity * (gesture == .scrollUp ? 1 : -1)
+                continuousEngine.nudge(binding, by: delta, from: entry.id)
+            }
+        }
+    }
+
     func processScroll(deltaX: CGFloat, deltaY: CGFloat, phase: NSEvent.Phase,
                        momentumPhase: NSEvent.Phase = [], precise: Bool = true, timestamp: TimeInterval) {
-        processScrollTrigger(deltaX: deltaX, deltaY: deltaY, momentumPhase: momentumPhase, timestamp: timestamp)
+        processScrollTrigger(deltaX: deltaX, deltaY: deltaY, momentumPhase: momentumPhase, timestamp: timestamp, precise: precise)
         guard !source.running, ProcessInfo.processInfo.systemUptime >= rawOwnedUntil else { return }
         let now = Date(timeIntervalSince1970: timestamp)
         guard precise, momentumPhase.isEmpty else { return }
@@ -1427,7 +1452,8 @@ class TrackpadMonitor {
             return
         }
 
-        let toFire = targets ?? matchingTriggers(for: gesture)
+        // Value-bound triggers never run their actions; their input drives a value.
+        let toFire = (targets ?? matchingTriggers(for: gesture)).filter { valueBindings[$0.id] == nil }
         // A two-finger gesture on a title bar the snap captured is the snap's
         // (3.3.2 review: both used to act on the same pinch or double tap).
         if !toFire.isEmpty, TitleBarWindowSnap.claimsNow(gesture) {
