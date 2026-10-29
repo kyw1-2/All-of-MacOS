@@ -16,6 +16,9 @@ import Combine
 enum SystemSignal: Equatable {
     case hid(vendorID: Int, productID: Int, usagePage: Int, usage: Int, value: Int)
     case midi(device: String, status: Int, channel: Int, number: Int, value: Int)
+    /// Force Touch pressure as AppKit reports it: stage 0 (none), 1 (click)
+    /// or 2 (deep press), and the pressure within that stage (0…1).
+    case forceTouch(stage: Int, pressure: Double)
     case gamepad(device: String, control: String, pressed: Bool)
     case willSleep, didWake
     case appActivated(bundleID: String)
@@ -41,7 +44,7 @@ enum SystemSignal: Equatable {
 /// The independent OS observers a set of triggers needs. A preset only pays for
 /// the sources its triggers actually use.
 enum SignalSource: Hashable {
-    case midi, gamepad
+    case midi, gamepad, forceTouch
     case hid(Set<GenericHIDFilter>)
     case sleepWake, appFocus, screensaver, space, battery, wifi, usb, bluetooth
     case inputSource, audioOutput, clipboard, variables, pointer
@@ -57,6 +60,7 @@ enum SignalSource: Hashable {
             case .hidInput(let vendor, let product, _, _, _, _):
                 if (1...65535).contains(vendor), (1...65535).contains(product) { hidFilters.insert(GenericHIDFilter(vendorID: vendor, productID: product)) }
             case .midiMessage: out.insert(.midi)
+            case .forceTouchStage: out.insert(.forceTouch)
             case .gamepadButton: out.insert(.gamepad)
             case .systemWillSleep, .systemDidWake: out.insert(.sleepWake)
             case .appActivated, .appDeactivated: out.insert(.appFocus)
@@ -117,6 +121,22 @@ enum SystemSignalMatcher {
         return regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
     }
 
+    /// MIDI matching for discrete triggers and value bindings alike. A
+    /// negative number matches any note, controller or program; Channel
+    /// Pressure and Pitch Bend have no number; Program Change has no value
+    /// range. Value bindings pass `checkValue: false`, because their input
+    /// range, not the trigger's value filter, decides what the value does.
+    static func midiMatches(_ kind: SystemTriggerKind, device: String, status: Int, channel: Int,
+                            number: Int, value: Int, checkValue: Bool = true) -> Bool {
+        guard case .midiMessage(let filter, let wantedStatus, let wantedChannel, let wantedNumber, let low, let high) = kind,
+              wantedStatus == status, wantedChannel == 0 || wantedChannel == channel,
+              nameMatches(filter, device) else { return false }
+        let type = MIDIMessageType(rawValue: status)
+        if type?.hasNumber ?? true, wantedNumber >= 0, wantedNumber != number { return false }
+        guard checkValue, type != .programChange else { return true }
+        return (low...max(low, high)).contains(value)
+    }
+
     /// Stateless match of a signal against a kind. Stateful kinds (battery
     /// thresholds, Wi-Fi transitions, variable changes, hover) are resolved by
     /// the monitor before it builds the signal it passes here.
@@ -125,9 +145,8 @@ enum SystemSignalMatcher {
         case (.hidInput(let vendor, let product, let page, let usage, let low, let high),
               .hid(let actualVendor, let actualProduct, let actualPage, let actualUsage, let value)):
             return vendor == actualVendor && product == actualProduct && page == actualPage && usage == actualUsage && (low...max(low, high)).contains(value)
-        case (.midiMessage(let filter, let status, let channel, let number, let low, let high),
-              .midi(let device, let actualStatus, let actualChannel, let actualNumber, let value)):
-            return nameMatches(filter, device) && status == actualStatus && (channel == 0 || channel == actualChannel) && number == actualNumber && (low...max(low, high)).contains(value)
+        case (.midiMessage, .midi(let device, let status, let channel, let number, let value)):
+            return midiMatches(kind, device: device, status: status, channel: channel, number: number, value: value)
         case (.gamepadButton(let filter, let control, let pressed), .gamepad(let device, let actualControl, let actualPressed)):
             return nameMatches(filter, device) && control == actualControl && pressed == actualPressed
         case (.systemWillSleep, .willSleep), (.systemDidWake, .didWake): return true
@@ -288,6 +307,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     private var emit: ((SystemSignal) -> Void)?
     private var hidMonitor: GenericHIDInputMonitor?
     private var midiMonitor: MIDIInputMonitor?
+    private var forceTouchMonitor: ForceTouchPressureMonitor?
     private var gamepadMonitor: GamepadInputMonitor?
     private var workspaceTokens: [NSObjectProtocol] = []
     private var distributedTokens: [NSObjectProtocol] = []
@@ -318,6 +338,8 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
                 let monitor = GenericHIDInputMonitor(filters: filters) { [weak self] in self?.send($0) }; hidMonitor = monitor; monitor.start()
             case .midi:
                 let monitor = MIDIInputMonitor { [weak self] in self?.send($0) }; midiMonitor = monitor; monitor.start()
+            case .forceTouch:
+                let monitor = ForceTouchPressureMonitor { [weak self] in self?.send($0) }; forceTouchMonitor = monitor; monitor.start()
             case .gamepad:
                 let monitor = GamepadInputMonitor { [weak self] in self?.send($0) }; gamepadMonitor = monitor; monitor.start()
             case .sleepWake: observeSleepWake()
@@ -341,6 +363,7 @@ final class LiveSystemSignalProvider: SystemSignalProvider {
     func stop() {
         hidMonitor?.stop(); hidMonitor = nil
         midiMonitor?.stop(); midiMonitor = nil
+        forceTouchMonitor?.stop(); forceTouchMonitor = nil
         gamepadMonitor?.stop(); gamepadMonitor = nil
         let workspace = NSWorkspace.shared.notificationCenter
         workspaceTokens.forEach(workspace.removeObserver); workspaceTokens.removeAll()

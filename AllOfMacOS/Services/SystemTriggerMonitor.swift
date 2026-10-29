@@ -16,10 +16,16 @@ final class SystemTriggerMonitor {
         let actions: [TriggerAction]
         let appBundleID: String?
         let activationGroupID: UUID?
+        /// Set when this entry drives a continuous value instead of firing.
+        var valueBinding: ContinuousValueBinding? = nil
     }
 
     private var entries: [Entry] = []
     private var activationGroups: [ActivationGroup] = []
+    /// Receives MIDI and Force Touch values of value-bound entries. Tests
+    /// replace it with an engine whose sink only records.
+    var continuousEngine: ContinuousValueEngine = .shared
+    private var pressureStages = PressureStageTracker()
 
     // BTT §2.6 additions. The provider supplies raw OS signals; tests pass a
     // fake so no real sleep / USB / Bluetooth / Wi-Fi is ever involved.
@@ -63,11 +69,13 @@ final class SystemTriggerMonitor {
         unregisterAll()
         activationGroups = groups
         entries = triggers.compactMap { trigger in
-            guard trigger.isEnabled, case .systemEvent(let kind) = trigger.input else { return nil }
+            guard trigger.isEnabled, case .systemEvent(let kind) = trigger.input,
+                  TriggerValidation.systemProblem(for: kind) == nil else { return nil }
             return Entry(id: trigger.id, kind: kind,
                          actions: trigger.actions,
                          appBundleID: trigger.appBundleID,
-                         activationGroupID: trigger.activationGroupID)
+                         activationGroupID: trigger.activationGroupID,
+                         valueBinding: trigger.valueBinding.flatMap { $0.problem(for: trigger.input) == nil ? $0 : nil })
         }
         guard !entries.isEmpty else { return }
 
@@ -91,6 +99,7 @@ final class SystemTriggerMonitor {
         let kinds = entries.map(\.kind)
         let needs = SignalSource.needs(for: kinds)
         tracker.reset()
+        pressureStages = PressureStageTracker()
         hover = ScreenHoverRecognizer(zones: Set(kinds.compactMap(Self.hoverZone)))
         for case .variableChanged(let name) in kinds where !name.isEmpty {
             tracker.seedVariable(name, value: WorkflowVariables.value(name))
@@ -135,6 +144,25 @@ final class SystemTriggerMonitor {
         case .pointer(let point):
             hover.move(to: point, screens: screenFrames(), now: clock())
             pollHover()
+        case .midi(let device, let status, let channel, let number, let value):
+            if let type = MIDIMessageType(rawValue: status), type.isContinuous {
+                for entry in entries where entry.valueBinding != nil &&
+                    SystemSignalMatcher.midiMatches(entry.kind, device: device, status: status, channel: channel,
+                                                    number: number, value: value, checkValue: false) {
+                    driveValue(entry, input: type.normalized(value))
+                }
+            }
+            fireMatching { SystemSignalMatcher.matches($0, signal) }
+        case .forceTouch(let stage, let pressure):
+            for entered in pressureStages.feed(stage: stage, pressure: pressure) {
+                fireMatching { if case .forceTouchStage(let wanted) = $0 { return wanted == entered }; return false }
+            }
+            // A bound stage follows the pressure while it is held.
+            for entry in entries where entry.valueBinding != nil {
+                guard case .forceTouchStage(let wanted) = entry.kind else { continue }
+                if pressureStages.isHeld(wanted) { driveValue(entry, input: pressureStages.progress(from: wanted)) }
+                else { continuousEngine.release(entry.id) }
+            }
         default:
             fireMatching { SystemSignalMatcher.matches($0, signal) }
         }
@@ -348,9 +376,23 @@ final class SystemTriggerMonitor {
     // MARK: - Firing
 
     private func fireMatching(_ predicate: (SystemTriggerKind) -> Bool) {
-        for entry in entries where predicate(entry.kind) {
+        // Value-bound entries drive their value instead (see `driveValue`).
+        for entry in entries where entry.valueBinding == nil && predicate(entry.kind) {
             fire(entry, reason: entry.kind.displayName)
         }
+    }
+
+    /// The same scoping as `fire`, plus the master switch and suppression,
+    /// which `ActionExecutor` would otherwise apply.
+    private func driveValue(_ entry: Entry, input: Double) {
+        guard let binding = entry.valueBinding, AutomationGate.isOn,
+              TriggerSuppression.shared.allows(kind: .system) else { return }
+        let allowed = TriggerResolver.resolve(
+            [entry], payload: entry.kind, frontBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            payloadOf: { $0.kind }, appBundleIDOf: { $0.appBundleID },
+            groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+        guard !allowed.isEmpty else { return }
+        continuousEngine.drive(binding, input: input, from: entry.id)
     }
 
     /// Reuses the shared resolver so a scheduled trigger honours the same

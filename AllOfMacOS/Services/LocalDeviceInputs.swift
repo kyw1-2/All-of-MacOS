@@ -1,29 +1,65 @@
 import Foundation
+import AppKit
 import CoreMIDI
 import GameController
 
-/// MIDI 1 byte-stream decoder, retaining running status and incomplete messages
-/// between packets. Realtime bytes may appear inside another message.
+/// One MIDI 1.0 channel-voice message, as AOM triggers see it.
+///
+/// `status` is the message type without the channel (see `MIDIMessageType`).
+/// `number` is the note, controller or program; channel pressure and pitch bend
+/// have none and report 0. `value` is the velocity, controller value or
+/// pressure (0…127), the program number for Program Change, or the 14-bit pitch
+/// bend (0…16383, centre 8192).
+struct MIDIInputMessage: Equatable {
+    var status: Int
+    var channel: Int
+    var number: Int
+    var value: Int
+}
+
+/// MIDI 1 byte-stream decoder for every channel-voice message: Note Off/On,
+/// Poly Pressure, Control Change, Program Change, Channel Pressure and Pitch
+/// Bend. Running status and incomplete messages are kept between packets.
+/// Realtime bytes (F8–FF) may appear anywhere, even inside another message,
+/// and change nothing. SysEx (F0…F7) and the other system-common messages are
+/// skipped and cancel running status, as the MIDI 1.0 specification requires.
 struct MIDIMessageDecoder {
     private var status: UInt8?
     private var payload: [UInt8] = []
-    mutating func consume(_ bytes: [UInt8]) -> [(status: Int, channel: Int, number: Int, value: Int)] {
-        var messages: [(Int, Int, Int, Int)] = []
+
+    /// Data bytes that follow a channel-voice status byte.
+    static func dataLength(_ type: UInt8) -> Int { type == 0xC0 || type == 0xD0 ? 1 : 2 }
+
+    mutating func consume(_ bytes: [UInt8]) -> [MIDIInputMessage] {
+        var messages: [MIDIInputMessage] = []
         for byte in bytes {
             if byte >= 0xF8 { continue }
             if byte & 0x80 != 0 {
-                payload.removeAll(); status = byte < 0xF0 ? byte : nil; continue
+                // A new status byte also ends an unfinished message or a SysEx
+                // dump that lost its F7.
+                payload.removeAll(keepingCapacity: true)
+                status = byte < 0xF0 ? byte : nil
+                continue
             }
-            guard let status else { continue }
+            guard let status else { continue } // SysEx or system-common data, or no status yet
             payload.append(byte)
             let type = status & 0xF0
-            let size = type == 0xC0 || type == 0xD0 ? 1 : 2
-            guard payload.count == size else { continue }
-            if [0x80, 0x90, 0xB0].contains(type) {
-                let normalized = type == 0x90 && payload[1] == 0 ? 0x80 : type
-                messages.append((Int(normalized), Int(status & 0x0F) + 1, Int(payload[0]), Int(payload[1])))
+            guard payload.count == Self.dataLength(type) else { continue }
+            let channel = Int(status & 0x0F) + 1
+            let first = Int(payload[0])
+            switch type {
+            case 0x90 where payload[1] == 0:
+                messages.append(MIDIInputMessage(status: 0x80, channel: channel, number: first, value: 0))
+            case 0x80, 0x90, 0xA0, 0xB0:
+                messages.append(MIDIInputMessage(status: Int(type), channel: channel, number: first, value: Int(payload[1])))
+            case 0xC0:
+                messages.append(MIDIInputMessage(status: 0xC0, channel: channel, number: first, value: first))
+            case 0xD0:
+                messages.append(MIDIInputMessage(status: 0xD0, channel: channel, number: 0, value: first))
+            default: // 0xE0: least significant 7 bits first
+                messages.append(MIDIInputMessage(status: 0xE0, channel: channel, number: 0, value: first | Int(payload[1]) << 7))
             }
-            payload.removeAll()
+            payload.removeAll(keepingCapacity: true) // running status: the status byte stays
         }
         return messages
     }
@@ -156,5 +192,45 @@ final class GamepadInputMonitor {
                 }
             }
         }
+    }
+}
+
+/// Force Touch pressure from AppKit's public pressure events
+/// (`NSEvent.EventType.pressure`), observed for other apps and inside AOM.
+/// A left-button release reports stage 0, so a press always ends even when
+/// the final pressure event is not delivered. Readings that change neither
+/// the stage nor the pressure by 1 % are dropped. Handlers run on the main
+/// queue; nothing here touches the multitouch callback thread.
+final class ForceTouchPressureMonitor {
+    private let emit: (SystemSignal) -> Void
+    private var monitors: [Any] = []
+    private var last: (stage: Int, pressure: Double)?
+    init(emit: @escaping (SystemSignal) -> Void) { self.emit = emit }
+
+    func start() {
+        guard monitors.isEmpty else { return }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.pressure, .leftMouseUp], handler: { [weak self] in self?.receive($0) }) {
+            monitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.pressure, .leftMouseUp], handler: { [weak self] event in
+            self?.receive(event); return event
+        }) { monitors.append(monitor) }
+    }
+    func stop() { monitors.forEach(NSEvent.removeMonitor); monitors.removeAll(); last = nil }
+    deinit { stop() }
+
+    private func receive(_ event: NSEvent) {
+        if event.type == .leftMouseUp { forward(stage: 0, pressure: 0); return }
+        guard event.type == .pressure else { return }
+        forward(stage: event.stage, pressure: Double(event.pressure))
+    }
+
+    /// Test seam for the filtering above.
+    func forward(stage: Int, pressure: Double) {
+        let stage = min(max(stage, 0), 2)
+        let pressure = stage == 0 ? 0 : (pressure.isFinite ? min(max(pressure, 0), 1) : 0)
+        if let last, last.stage == stage, abs(last.pressure - pressure) < 0.01 { return }
+        last = (stage, pressure)
+        emit(.forceTouch(stage: stage, pressure: pressure))
     }
 }

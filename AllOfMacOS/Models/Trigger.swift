@@ -124,17 +124,27 @@ enum SystemTriggerKind: Codable, Hashable {
     case screenEdgeHover(edge: ScreenEdge, dwellMs: Int, minDistance: Int)
     /// A workflow variable changed value ("" = any variable).
     case variableChanged(name: String)
-    /// MIDI 1 Note On/Off or Control Change. Channel 0 means any channel.
+    /// MIDI 1 channel-voice message (see `MIDIMessageType` for the filters).
+    /// Channel 0 means any channel; number -1 means any note, controller or program.
     case midiMessage(device: String, status: Int, channel: Int, number: Int, minimumValue: Int, maximumValue: Int)
     case gamepadButton(device: String, control: String, pressed: Bool)
     case hidInput(vendorID: Int, productID: Int, usagePage: Int, usage: Int, minimumValue: Int, maximumValue: Int)
+    /// Force Touch trackpad pressure reached stage 1 (the click) or stage 2
+    /// (the deep press). Fires once per press; see `PressureStageTracker`.
+    case forceTouchStage(stage: Int)
 
     static let defaultHoverDwellMs = 300
     static let defaultEdgeDistancePx = 4
 
     var displayName: String {
         switch self {
-        case .midiMessage(_, let status, let channel, let number, _, _): return "MIDI \(status == 0xB0 ? "CC" : status == 0x80 ? "Note Off" : "Note On") \(number) · channel \(channel == 0 ? "any" : String(channel))"
+        case .midiMessage(_, let status, let channel, let number, _, _):
+            let type = MIDIMessageType(rawValue: status)
+            let name = type?.shortTitle ?? String(format: "status 0x%02X", status)
+            let what = type?.numberTitle.map { number < 0 ? " · any \($0.lowercased())" : " \(number)" } ?? ""
+            return "MIDI \(name)\(what) · channel \(channel == 0 ? "any" : String(channel))"
+        case .forceTouchStage(let stage):
+            return stage == 2 ? "Force Touch stage 2 (deep press)" : "Force Touch stage \(stage) (click)"
         case .hidInput(let vendor, let product, let page, let usage, _, _): return "HID \(vendor):\(product) · \(page)/\(usage)"
         case .gamepadButton(_, let control, let pressed): return "Gamepad \(control) \(pressed ? "pressed" : "released")"
         case .daily(let h, let m): return String(format: "Every day at %02d:%02d", h, m)
@@ -177,6 +187,7 @@ enum SystemTriggerKind: Codable, Hashable {
     var symbolName: String {
         switch self {
         case .midiMessage: return "pianokeys"
+        case .forceTouchStage(let stage): return stage == 2 ? "hand.tap.fill" : "hand.tap"
         case .gamepadButton: return "gamecontroller"
         case .hidInput: return "cable.connector"
         case .daily, .weekly: return "clock"
@@ -318,6 +329,10 @@ struct Trigger: Identifiable, Codable, Hashable {
     var colorLabel: String?
     /// Display-only grouping folder name; the engine never reads it.
     var folder: String?
+    /// When set, the trigger's input drives this continuous value instead of
+    /// running its actions (MIDI CC/Pitch Bend/pressure, Force Touch stages,
+    /// Scroll Up/Down). nil keeps the ordinary discrete trigger.
+    var valueBinding: ContinuousValueBinding?
 
     var supportsHold: Bool {
         switch input {
@@ -350,6 +365,7 @@ struct Trigger: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, input, actions, isFavorite, isEnabled, appBundleID, activationGroupID, order, suppressClick, hapticFeedback, requiredModifiers, executionPolicy, keyboardPhase, repeatWhileHeld, holdDelayMs, holdIntervalMs, sequenceMaxGapMs, sequenceOrderRelevant, sequenceHoldMs, drawingSamples, drawingCertainty, drawingIgnoreDirection
         case notes, delayBeforeTriggeringMs, minHoldMs, maxHoldMs, colorLabel, folder, longTouchDurationMs
+        case valueBinding
     }
 
     init(from decoder: Decoder) throws {
@@ -384,6 +400,8 @@ struct Trigger: Identifiable, Codable, Hashable {
         longTouchDurationMs = min(max(try container.decodeIfPresent(Int.self, forKey: .longTouchDurationMs) ?? 500, 100), 5000)
         colorLabel = try container.decodeIfPresent(String.self, forKey: .colorLabel)
         folder = try container.decodeIfPresent(String.self, forKey: .folder)
+        // A binding this version cannot read is dropped, never the trigger.
+        valueBinding = (try? container.decodeIfPresent(ContinuousValueBinding.self, forKey: .valueBinding)) ?? nil
     }
 
     var displayName: String {
