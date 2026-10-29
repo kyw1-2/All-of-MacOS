@@ -50,10 +50,11 @@ enum AutomationMCP {
             return ["actions": ActionType.allCases.map { ["name": $0.rawValue, "category": $0.category.rawValue] }]
         case "automation_list_triggers":
             let triggers = ActionExecutor.registeredTriggers.filter { if case .namedTrigger = $0.input { return true }; return false }
-            return ["triggers": try object(triggers)]
+            return ["triggers": redactingSecrets(try object(triggers))]
         case "automation_save_named_trigger":
             let name = try requiredName()
             guard let actionsJSON = args["actions"] as? [[String: Any]] else { throw ClipboardMCPHandler.ToolError("actions must be a JSON array.") }
+            try rejectRedactedValues(actionsJSON)
             let data = try JSONSerialization.data(withJSONObject: actionsJSON)
             guard data.count <= 1_000_000 else { throw ClipboardMCPHandler.ToolError("Actions exceed 1 MB.") }
             let actions = try JSONDecoder().decode([TriggerAction].self, from: data)
@@ -74,7 +75,7 @@ enum AutomationMCP {
             if let failure = app.lastPresetSaveError {
                 throw ClipboardMCPHandler.ToolError("The trigger is active but could not be saved: \(failure)")
             }
-            return ["trigger": try object(trigger), "saved": true]
+            return ["trigger": redactingSecrets(try object(trigger)), "saved": true]
         case "automation_run_named_trigger":
             let name = try requiredName()
             guard ActionExecutor.registeredTriggers.contains(where: { trigger in
@@ -82,9 +83,10 @@ enum AutomationMCP {
             }) else { throw ClipboardMCPHandler.ToolError("No enabled named trigger matches this name.") }
             ActionExecutor.executeNamedTrigger(name)
             return ["queued": true, "name": name, "completion": "asynchronous; normal app and trigger conditions apply"]
-        case "automation_list_menus": return ["menus": try object(FloatingMenuStore.shared.menus)]
+        case "automation_list_menus": return ["menus": redactingSecrets(try object(FloatingMenuStore.shared.menus))]
         case "automation_save_menu":
             guard let value = args["menu"] as? [String: Any] else { throw ClipboardMCPHandler.ToolError("menu is required.") }
+            try rejectRedactedValues(value)
             let data = try JSONSerialization.data(withJSONObject: value)
             guard data.count <= 4_194_304 else { throw ClipboardMCPHandler.ToolError("Menu exceeds 4 MB.") }
             let menu = try JSONDecoder().decode(FloatingMenuDefinition.self, from: data)
@@ -216,5 +218,20 @@ enum AutomationMCP {
 
     private static func object<T: Encodable>(_ value: T) throws -> Any {
         try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+    }
+
+    // MARK: Secret blocking (audit 2026-10-29, PA-03)
+
+    /// Automation clients see trigger and menu definitions, but never a
+    /// credential typed into one: such strings come back as the placeholder.
+    static func redactingSecrets(_ value: Any) -> Any {
+        ClipboardSecretScanner.redactingSecrets(in: value).value
+    }
+
+    /// A definition read back with placeholders must not overwrite the real
+    /// secret when it is saved again.
+    static func rejectRedactedValues(_ value: Any) throws {
+        guard ClipboardSecretScanner.containsPlaceholder(value) else { return }
+        throw ClipboardMCPHandler.ToolError("This definition contains a value that AOM hid from AI tools. Edit that secret in All of MacOS instead.")
     }
 }

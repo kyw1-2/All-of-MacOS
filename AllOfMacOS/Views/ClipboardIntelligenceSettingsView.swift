@@ -35,6 +35,8 @@ struct ClipboardIntelligenceSettingsView: View {
                     .onChange(of: intelligent) { _, value in ClipboardIntelligence.shared.isEnabled = value }
                 Text("Suggests what you are about to paste, based on the field you are typing into and what you pasted there before. Suggested items appear first with ✦. Everything stays on your Mac.")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("Never in password fields or while secure keyboard entry is on: nothing is suggested, read or learned there. Apps on the excluded list are not read for suggestions either, and items that look like passwords, tokens or keys are never suggested.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Look at the destination window with the on-device model",
                        isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
                                      set: { readsScreen = $0 }))

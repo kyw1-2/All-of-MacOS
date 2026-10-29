@@ -1,0 +1,350 @@
+import AppKit
+import Foundation
+
+/// The outbound secret check (audit 2026-10-29, PA-03).
+///
+/// `ClipboardItemClassifier.classify(text:)` answers "what kind of clip is
+/// this?" for suggestions and deliberately skips most work on huge clips.
+/// This type answers "may this leave the shelf?" — for MCP replies, for
+/// copies made on behalf of AI tools and for automatic suggestions — and has
+/// none of those shortcuts:
+/// - every kind is scanned (text, link, image, file, color), not only text;
+/// - every textual representation is decoded: UTF-8 and UTF-16 text, RTF,
+///   RTFD, HTML, URLs and file URLs, plus the title and recognised image text;
+/// - percent-encoding, HTML character references, zero-width characters and
+///   compatibility forms (full-width letters) are undone before matching;
+/// - there is no length limit. Multi-megabyte forms are searched whole, in
+///   overlapping slices on several cores.
+///
+/// Base64 or encrypted blobs are not decoded: only credentials that look like
+/// credentials are recognised.
+enum ClipboardSecretScanner {
+    /// Shown instead of anything withheld from AI tools.
+    static let placeholder = "[hidden: looks like a password, token or key]"
+
+    /// Credentials recognisable anywhere inside a longer text. Every pattern
+    /// starts with a narrow literal or character set, which keeps a 20 MB log
+    /// at about a second of matching instead of several.
+    static let patterns: [NSRegularExpression] = [
+        // JSON Web Tokens.
+        #"eyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#,
+        // Provider API keys: sk-…, GitHub, Slack, AWS, Google.
+        #"sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}"#,
+        // Inline credentials: password=…, token: …, api_key=…, ?access_token=….
+        #"(?i)(?<![a-z])(?:pass(?:word|wd|code)?|pwd|secret|token|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[:=]\s*\S"#,
+        // Authorization headers.
+        #"\bBearer [A-Za-z0-9._~+/=-]{20,}|\bBasic [A-Za-z0-9+/=]{8,}"#,
+        // PEM private keys.
+        #"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED |)PRIVATE KEY-----"#,
+        // Passwords inside URLs: scheme://user:password@host.
+        #"://[^\s/?#@:]+:[^\s/?#@]+@"#,
+        // Signed or authenticated URLs: X-Amz-Signature=…, &sig=…, &session_id=….
+        #"(?i)[?&;#](?:[a-z0-9_.-]*(?:signature|credential|session_?id|auth_?key|access_?key|secret_?key)|sig|sid|auth)=[^&#\s]{6,}"#,
+    ].map { try! NSRegularExpression(pattern: $0) }
+
+    /// A lone password-like value: 12–64 characters without whitespace that
+    /// mix letters, digits and symbols. Applied only to a plain-text item's
+    /// whole text, where it is a value rather than a link or a path.
+    static let passwordShape = try! NSRegularExpression(pattern: #"^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{12,64}$"#)
+
+    // MARK: Entries
+
+    /// True when anything an item would hand out looks like a credential.
+    static func containsSecret(_ entry: ClipboardEntry) -> Bool {
+        if entry.kind == .text, let text = entry.text, looksLikePassword(text) { return true }
+        return textualForms(of: entry).contains { containsSecret(inText: $0) }
+    }
+
+    /// Whole-text password heuristic, shared with the semantic classifier.
+    static func looksLikePassword(_ raw: String) -> Bool {
+        guard raw.utf8.count <= 4_096 else { return false }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (12...64).contains(text.count), !text.contains(" ") else { return false }
+        return passwordShape.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// Every distinct text an item carries: its stored text and title, the
+    /// text recognised in its image and each textual pasteboard representation.
+    static func textualForms(of entry: ClipboardEntry) -> [String] {
+        var forms: [String] = []
+        func add(_ value: String?) {
+            guard let value, !value.isEmpty, !forms.contains(value) else { return }
+            forms.append(value)
+        }
+        add(entry.text)
+        add(entry.title)
+        add(entry.recognizedText)
+        for item in entry.items {
+            for type in item.keys.sorted() {
+                guard let data = item[type] else { continue }
+                for form in decodedRepresentation(type: type, data: data) { add(form) }
+            }
+        }
+        return forms
+    }
+
+    /// Representations that hold pixels only. Their recognised text is
+    /// scanned instead of their bytes.
+    static func isBinaryImageType(_ type: String) -> Bool {
+        imageTypes.contains(type)
+    }
+
+    private static let imageTypes: Set<String> = [
+        NSPasteboard.PasteboardType.png.rawValue, NSPasteboard.PasteboardType.tiff.rawValue,
+        "public.jpeg", "public.heic", "public.heif", "org.webmproject.webp", "com.compuserve.gif",
+    ]
+    static func decodedRepresentation(type: String, data: Data) -> [String] {
+        guard !data.isEmpty, !imageTypes.contains(type) else { return [] }
+        switch type {
+        case NSPasteboard.PasteboardType.color.rawValue:
+            return []
+        case NSPasteboard.PasteboardType.string.rawValue, NSPasteboard.PasteboardType.URL.rawValue,
+             "public.plain-text", "public.url-name":
+            return [String(decoding: data, as: UTF8.self)]
+        case NSPasteboard.PasteboardType.fileURL.rawValue:
+            // The stored form is percent-encoded; the path is not.
+            let raw = String(decoding: data, as: UTF8.self)
+            return [raw] + (URL(string: raw).map { [$0.path] } ?? [])
+        case "public.utf16-external-plain-text", "public.utf16-plain-text":
+            return [utf16Text(data)]
+        case NSPasteboard.PasteboardType.rtf.rawValue:
+            // The rendered text joins words that RTF control codes split.
+            return [attributedText(data, .rtf), String(decoding: data, as: UTF8.self)].compactMap { $0 }
+        case NSPasteboard.PasteboardType.rtfd.rawValue, "com.apple.rtfd":
+            return [attributedText(data, .rtfd)].compactMap { $0 }
+        case NSPasteboard.PasteboardType.html.rawValue:
+            let raw = String(decoding: data, as: UTF8.self)
+            return [raw, withoutMarkup(raw)]
+        default:
+            // Older archives or other writers: scan whatever reads as text,
+            // at any length (an item is at most 20 MB), as UTF-8 and, when
+            // the bytes say so (a byte-order mark, or NUL bytes that UTF-16
+            // puts between ASCII letters), as UTF-16.
+            var forms: [String] = []
+            let utf8 = String(data: data, encoding: .utf8)
+            if let utf8 { forms.append(utf8) }
+            if data.count >= 2, data.count % 2 == 0, utf8 == nil || data.contains(0) {
+                forms.append(utf16Text(data))
+            }
+            return forms
+        }
+    }
+
+    private static func utf16Text(_ data: Data) -> String {
+        let bytes = [UInt8](data.prefix(2))
+        if bytes == [0xFF, 0xFE] || bytes == [0xFE, 0xFF], let text = String(data: data, encoding: .utf16) { return text }
+        return String(data: data, encoding: .utf16LittleEndian) ?? String(decoding: data, as: UTF8.self)
+    }
+
+    private static func attributedText(_ data: Data, _ type: NSAttributedString.DocumentType) -> String? {
+        // RTF and RTFD import is safe off the main thread (HTML import is not,
+        // which is why HTML is reduced to text here instead).
+        (try? NSAttributedString(data: data, options: [.documentType: type], documentAttributes: nil))?.string
+    }
+
+    private static let markup = try! NSRegularExpression(pattern: "<[^<>]{0,4000}>")
+
+    /// Tags removed without spaces, so `sk-<b></b>abc…` reads as one token.
+    static func withoutMarkup(_ html: String) -> String {
+        markup.stringByReplacingMatches(in: html, range: NSRange(html.startIndex..., in: html), withTemplate: "")
+    }
+
+    // MARK: Text
+
+    /// True when `text`, or one of its decoded forms, contains a credential.
+    static func containsSecret(inText text: String) -> Bool {
+        variants(of: text).contains(where: matchesPattern)
+    }
+
+    /// `text` plus the forms it decodes to, two levels deep (for example a
+    /// percent-encoded character reference).
+    static func variants(of text: String) -> [String] {
+        var results = [text]
+        var frontier = [text]
+        for _ in 0..<2 where !frontier.isEmpty {
+            var next: [String] = []
+            for form in frontier {
+                for decoded in [percentDecoded(form), referenceDecoded(form), normalized(form)].compactMap({ $0 })
+                where !results.contains(decoded) {
+                    results.append(decoded)
+                    next.append(decoded)
+                }
+            }
+            frontier = next
+        }
+        return results
+    }
+
+    private static let percentEscape = try! NSRegularExpression(pattern: "%[0-9A-Fa-f]{2}")
+    private static let characterReference = try! NSRegularExpression(
+        pattern: "&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});")
+    private static let hiddenOrCompatibility = try! NSRegularExpression(
+        pattern: "[\\u00AD\\u180E\\u200B-\\u200F\\u2060-\\u2064\\uFEFF\\uFF01-\\uFF5E\\u3000]")
+    private static let hiddenCharacters = try! NSRegularExpression(
+        pattern: "[\\u00AD\\u180E\\u200B-\\u200F\\u2060-\\u2064\\uFEFF]")
+
+    private static func contains(_ expression: NSRegularExpression, in text: String) -> Bool {
+        expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// Lenient: valid `%XX` escapes are decoded, anything else is kept.
+    static func percentDecoded(_ text: String) -> String? {
+        guard contains(percentEscape, in: text) else { return nil }
+        if let strict = text.removingPercentEncoding, strict != text { return strict }
+        var output: [UInt8] = []
+        output.reserveCapacity(text.utf8.count)
+        let bytes = Array(text.utf8)
+        var index = 0
+        func hex(_ byte: UInt8) -> UInt8? {
+            switch byte {
+            case 48...57: return byte - 48
+            case 65...70: return byte - 55
+            case 97...102: return byte - 87
+            default: return nil
+            }
+        }
+        while index < bytes.count {
+            if bytes[index] == 37, index + 2 < bytes.count, let high = hex(bytes[index + 1]), let low = hex(bytes[index + 2]) {
+                output.append(high << 4 | low)
+                index += 3
+            } else {
+                output.append(bytes[index])
+                index += 1
+            }
+        }
+        let decoded = String(decoding: output, as: UTF8.self)
+        return decoded == text ? nil : decoded
+    }
+
+    /// The named references that matter for spelling a credential, plus all
+    /// numeric references.
+    private static let namedReferences: [String: String] = [
+        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": " ", "colon": ":", "equals": "=",
+        "lowbar": "_", "hyphen": "-", "dash": "-", "period": ".", "sol": "/", "quest": "?", "commat": "@",
+        "percnt": "%", "plus": "+", "num": "#", "lpar": "(", "rpar": ")", "semi": ";", "comma": ",",
+        "excl": "!", "dollar": "$", "ast": "*", "Hat": "^", "tilde": "~", "verbar": "|", "bsol": "\\",
+    ]
+
+    static func referenceDecoded(_ text: String) -> String? {
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = characterReference.matches(in: text, range: range)
+        guard !matches.isEmpty else { return nil }
+        var output = ""
+        var cursor = text.startIndex
+        for match in matches {
+            guard let found = Range(match.range, in: text) else { continue }
+            output += text[cursor..<found.lowerBound]
+            let body = text[text.index(after: found.lowerBound)..<text.index(before: found.upperBound)]
+            var replacement: String?
+            if body.hasPrefix("#x") || body.hasPrefix("#X") {
+                replacement = UInt32(body.dropFirst(2), radix: 16).flatMap(Unicode.Scalar.init).map { String(Character($0)) }
+            } else if body.hasPrefix("#") {
+                replacement = UInt32(body.dropFirst(), radix: 10).flatMap(Unicode.Scalar.init).map { String(Character($0)) }
+            } else {
+                replacement = namedReferences[String(body)]
+            }
+            output += replacement ?? String(text[found])
+            cursor = found.upperBound
+        }
+        output += text[cursor...]
+        return output == text ? nil : output
+    }
+
+    /// Removes invisible characters and folds compatibility forms (NFKC), so
+    /// `ｓｋ－…` or `sk-\u{200B}…` read like the plain key.
+    static func normalized(_ text: String) -> String? {
+        guard contains(hiddenOrCompatibility, in: text) else { return nil }
+        let visible = hiddenCharacters.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+        let folded = visible.precomposedStringWithCompatibilityMapping
+        return folded == text ? nil : folded
+    }
+
+    // MARK: Matching
+
+    /// Slices this long or longer are searched in parallel. The overlap is
+    /// longer than any credential the patterns need to see whole.
+    private static let sliceLength = 1 << 20
+    private static let sliceOverlap = 16 * 1_024
+
+    static func matchesPattern(_ text: String) -> Bool {
+        let length = text.utf16.count
+        guard length > 0 else { return false }
+        if length <= sliceLength + sliceOverlap {
+            let range = NSRange(location: 0, length: length)
+            return patterns.contains { $0.firstMatch(in: text, options: [.withTransparentBounds], range: range) != nil }
+        }
+        let starts = Array(stride(from: 0, to: length, by: sliceLength))
+        let found = FoundFlag()
+        DispatchQueue.concurrentPerform(iterations: starts.count) { index in
+            guard !found.isSet else { return }
+            let start = starts[index]
+            let range = NSRange(location: start, length: min(length - start, sliceLength + sliceOverlap))
+            for pattern in patterns where !found.isSet {
+                if pattern.firstMatch(in: text, options: [.withTransparentBounds], range: range) != nil {
+                    found.set()
+                    return
+                }
+            }
+        }
+        return found.isSet
+    }
+
+    private final class FoundFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+        func set() { lock.lock(); value = true; lock.unlock() }
+    }
+
+    // MARK: JSON replies (automation tools)
+
+    /// Key names whose string values are credentials whatever they contain.
+    static func isSensitiveKey(_ key: String) -> Bool {
+        let folded = key.lowercased().filter { $0.isLetter || $0.isNumber }
+        if ["pwd", "auth", "pin", "otp"].contains(folded) { return true }
+        return ["password", "passwd", "passcode", "secret", "token", "apikey", "privatekey", "credential", "authorization"]
+            .contains { folded.contains($0) }
+    }
+
+    /// Replaces credentials inside a JSON-like value (dictionaries, arrays and
+    /// strings) with `placeholder`. Returns the redacted value and how many
+    /// strings were hidden.
+    static func redactingSecrets(in value: Any, key: String? = nil) -> (value: Any, hidden: Int) {
+        switch value {
+        case let string as String:
+            guard !string.isEmpty else { return (string, 0) }
+            if key.map(isSensitiveKey) == true || containsSecret(inText: string) { return (placeholder, 1) }
+            return (string, 0)
+        case let dictionary as [String: Any]:
+            var output: [String: Any] = [:]
+            var hidden = 0
+            for (name, element) in dictionary {
+                let result = redactingSecrets(in: element, key: name)
+                output[name] = result.value
+                hidden += result.hidden
+            }
+            return (output, hidden)
+        case let array as [Any]:
+            var hidden = 0
+            let output = array.map { element -> Any in
+                let result = redactingSecrets(in: element, key: key)
+                hidden += result.hidden
+                return result.value
+            }
+            return (output, hidden)
+        default:
+            return (value, 0)
+        }
+    }
+
+    /// True when a value still carries `placeholder`, so a client that read a
+    /// redacted definition cannot save the placeholder over the real secret.
+    static func containsPlaceholder(_ value: Any) -> Bool {
+        switch value {
+        case let string as String: return string.contains(placeholder)
+        case let dictionary as [String: Any]: return dictionary.values.contains(where: containsPlaceholder)
+        case let array as [Any]: return array.contains(where: containsPlaceholder)
+        default: return false
+        }
+    }
+}

@@ -17,7 +17,22 @@ final class ClipboardPreferences: ObservableObject {
     }
     @Published var quickModifier: Modifier { didSet { defaults.set(quickModifier.rawValue, forKey: "AOMClipboardQuickModifier"); if quickModifier == plainModifier { plainModifier = .shift } } }
     @Published var plainModifier: Modifier { didSet { defaults.set(plainModifier.rawValue, forKey: "AOMClipboardPlainModifier") } }
-    @Published var networkPreviews: Bool { didSet { defaults.set(networkPreviews, forKey: "AOMClipboardNetworkPreviews") } }
+    @Published var networkPreviews: Bool {
+        didSet {
+            defaults.set(networkPreviews, forKey: "AOMClipboardNetworkPreviews")
+            if !networkPreviews { ClipboardLinkMetadataStore.shared.removeAll() }
+        }
+    }
+    /// Link cards look pages up for their title, site name and image (parity
+    /// gap P03). Off by default, and effective only while `networkPreviews`
+    /// is on too; turning either off forgets everything fetched.
+    @Published var linkCards: Bool {
+        didSet {
+            defaults.set(linkCards, forKey: Self.linkCardsKey)
+            if !linkCards { ClipboardLinkMetadataStore.shared.removeAll() }
+        }
+    }
+    static let linkCardsKey = "AOMClipboardLinkCards"
     @Published var showInScreenCapture: Bool { didSet { defaults.set(showInScreenCapture, forKey: "AOMClipboardShowInScreenCapture"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
     @Published var compact: Bool { didSet { defaults.set(compact, forKey: "AOMClipboardCompact"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
     static let changed = Notification.Name("AOMClipboardPresentationChanged")
@@ -26,6 +41,7 @@ final class ClipboardPreferences: ObservableObject {
         quickModifier = Modifier(rawValue: defaults.string(forKey: "AOMClipboardQuickModifier") ?? "command") ?? .command
         plainModifier = Modifier(rawValue: defaults.string(forKey: "AOMClipboardPlainModifier") ?? "shift") ?? .shift
         networkPreviews = defaults.bool(forKey: "AOMClipboardNetworkPreviews")
+        linkCards = defaults.bool(forKey: Self.linkCardsKey)
         showInScreenCapture = defaults.object(forKey: "AOMClipboardShowInScreenCapture") as? Bool ?? true
         compact = defaults.bool(forKey: "AOMClipboardCompact")
         if quickModifier == .shift { quickModifier = .command }
@@ -161,6 +177,9 @@ struct ClipboardDetachedPreview: View {
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
+    /// A region dragged out on an image (P04) and the text read from it.
+    @State private var regionSelection: CGRect?
+    @State private var regionText: String?
     private var current: ClipboardEntry { store.entries.first { $0.id == entry.id } ?? entry }
     var body: some View {
         VStack(spacing: 10) {
@@ -199,7 +218,8 @@ struct ClipboardDetachedPreview: View {
             } else if !current.fileURLs.isEmpty {
                 ClipboardFilesPreview(urls: current.fileURLs)
             } else if let image = content?.image {
-                Image(decorative: image, scale: 1).resizable().scaledToFit()
+                ClipboardImageInspector(entry: current, image: image, query: "", store: store,
+                                        selection: $regionSelection, regionText: $regionText)
             } else {
                 ClipboardReadOnlyTextPreview(entry: current, prepared: content?.attributedText)
             }

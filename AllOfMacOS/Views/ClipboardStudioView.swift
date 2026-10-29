@@ -87,6 +87,8 @@ struct ClipboardStudioView: View {
     @State private var showingRecoverConfirmation = false
     @State private var newBoardName = ""
     @State private var newBoardColor = "blue"
+    /// A pinboard awaiting the same delete-items-too choice as the shelf.
+    @State private var boardPendingDeletion: ClipboardPinboard?
     @StateObject private var toast = AOMToastModel()
 
     private let boardColors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "gray"]
@@ -164,6 +166,19 @@ struct ClipboardStudioView: View {
             .frame(minWidth: 600, idealWidth: 660, minHeight: 520, idealHeight: 600)
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .confirmationDialog("Delete “\(boardPendingDeletion?.name ?? "")”?", isPresented: Binding(
+            get: { boardPendingDeletion != nil }, set: { if !$0 { boardPendingDeletion = nil } })) {
+            let only = boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0
+            Button(only == 0 ? "Delete Pinboard" : "Delete Pinboard and \(only) Item\(only == 1 ? "" : "s")", role: .destructive) {
+                deletePendingBoard(deletingItems: true)
+            }
+            if only > 0 {
+                Button("Delete Pinboard, Keep Items") { deletePendingBoard(deletingItems: false) }
+            }
+            Button("Cancel", role: .cancel) { boardPendingDeletion = nil }
+        } message: {
+            Text(ClipboardBoardDeletionCopy.message(onlyHere: boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0))
+        }
         .confirmationDialog("Erase clipboard history?", isPresented: $showingEraseConfirmation) {
             Button("Erase History", role: .destructive) {
                 store.eraseHistory()
@@ -415,10 +430,7 @@ struct ClipboardStudioView: View {
                         search.board = search.board == board.id ? nil : board.id
                     }
                     .contextMenu {
-                        Button("Delete Pinboard…", role: .destructive) {
-                            if search.board == board.id { search.board = nil }
-                            store.deleteBoard(id: board.id)
-                        }
+                        Button("Delete Pinboard…", role: .destructive) { boardPendingDeletion = board }
                     }
                 }
                 Button {
@@ -519,15 +531,28 @@ struct ClipboardStudioView: View {
 
     private func togglePin(_ entry: ClipboardEntry, _ board: ClipboardPinboard) {
         if entry.pinboardIDs.contains(board.id) {
-            store.unpin(entryID: entry.id, boardID: board.id)
-            showToast("Unpinned from \(board.name)")
+            if store.unpin(entryID: entry.id, boardID: board.id) {
+                showToast("Unpinned from \(board.name) · It was older than your history limit, so it was deleted; Undo Delete restores it")
+            } else {
+                showToast("Unpinned from \(board.name)")
+            }
         } else {
+            let moves = store.settings.onePinboardPerItem && !entry.pinboardIDs.isEmpty
             store.pin(entryID: entry.id, boardID: board.id)
-            showToast("Pinned to \(board.name)")
+            showToast(moves ? "Moved to \(board.name)" : "Pinned to \(board.name)")
         }
     }
 
     private func showToast(_ message: String) { toast.show(message) }
+
+    private func deletePendingBoard(deletingItems: Bool) {
+        guard let board = boardPendingDeletion else { return }
+        if search.board == board.id { search.board = nil }
+        let deleted = store.deleteBoard(id: board.id, deletingItems: deletingItems)
+        boardPendingDeletion = nil
+        showToast(deleted > 0 ? "Deleted \(board.name) and \(deleted) item\(deleted == 1 ? "" : "s") · Undo Delete restores them"
+                              : "Deleted \(board.name) · Undo Delete restores it")
+    }
 
     private func colorForBoard(_ name: String) -> Color {
         switch name.lowercased() {

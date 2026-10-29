@@ -556,7 +556,7 @@ enum ClipboardMCPHandler {
     private static let confirmProp: [String: Any] = ["type": "boolean", "description": "Call without it to preview; true to really delete."]
 
     static let tools: [[String: Any]] = [
-        ["name": "search", "description": "Search clipboard history and pinboards (newest first). Free text matches titles, text, image text, apps and file paths; supports quotes, -exclude, from:App, type:link|text|image|file|color, board:Name. Returns summaries; call read_item for full content.",
+        ["name": "search", "description": "Search clipboard history and pinboards (newest first). Free text matches titles, text, image text, apps and file paths; supports quotes, -exclude, from:App, type:link|text|image|file|color, board:Name (or pinboard:Name), is:pinned|unpinned, before:/after:/on: with yyyy-MM-dd, today, yesterday or 7d/2w/3m/1y. Items that look like secrets never match free text. Returns summaries; call read_item for full content.",
          "inputSchema": schema(["query": ["type": "string"], "type": ["type": "string", "enum": ["text", "link", "image", "file", "color"]],
                                 "app": ["type": "string", "description": "Source app name or bundle id."], "pinboard_id": boardProp,
                                 "after": ["type": "string", "description": "ISO-8601 lower bound."], "before": ["type": "string", "description": "ISO-8601 upper bound."],
@@ -578,9 +578,11 @@ enum ClipboardMCPHandler {
          "inputSchema": schema(["name": ["type": "string"], "color": ["type": "string", "enum": ClipboardStore.boardColors]], required: ["name"])],
         ["name": "rename_pinboard", "description": "Rename a pinboard.",
          "inputSchema": schema(["pinboard_id": boardProp, "name": ["type": "string"]], required: ["pinboard_id", "name"])],
-        ["name": "delete_pinboard", "description": "Delete a pinboard (items stay in history). Two-step with confirm.",
-         "inputSchema": schema(["pinboard_id": boardProp, "confirm": confirmProp], required: ["pinboard_id"]), "annotations": ["destructiveHint": true]],
-        ["name": "add_item_to_pinboard", "description": "Pin an item to a pinboard; pinning twice keeps it pinned once.",
+        ["name": "delete_pinboard", "description": "Delete a pinboard. Its items stay in history unless delete_items is true, which also deletes the items that are on no other pinboard (as Paste does). Two-step with confirm; the user can undo it in AOM.",
+         "inputSchema": schema(["pinboard_id": boardProp, "confirm": confirmProp,
+                                "delete_items": ["type": "boolean", "description": "Also delete the items that are only on this pinboard."]],
+                               required: ["pinboard_id"]), "annotations": ["destructiveHint": true]],
+        ["name": "add_item_to_pinboard", "description": "Pin an item to a pinboard; pinning twice keeps it pinned once. When the user keeps each item on one pinboard, this moves the item from its current pinboard.",
          "inputSchema": schema(["id": idProp, "pinboard_id": boardProp], required: ["id", "pinboard_id"])],
         ["name": "remove_item_from_pinboard", "description": "Unpin an item from a pinboard, keeping it in history.",
          "inputSchema": schema(["id": idProp, "pinboard_id": boardProp], required: ["id", "pinboard_id"])],
@@ -590,21 +592,35 @@ enum ClipboardMCPHandler {
 
     private static let iso = ISO8601DateFormatter()
 
+    /// Every representation, at any length, in every kind (audit PA-03):
+    /// `itemClass` runs the outbound scanner, and its cache is keyed by the
+    /// whole content (PA-04).
     static func isSecret(_ entry: ClipboardEntry) -> Bool {
         ClipboardIntelligence.shared.itemClass(entry) == .secret
     }
 
     static func summary(_ entry: ClipboardEntry, store: ClipboardStore) -> [String: Any] {
-        let secret = isSecret(entry)
+        let preview = String(entry.previewText.prefix(240))
+        // The strings about to leave are checked once more, uncached.
+        let secret = isSecret(entry) || ClipboardSecretScanner.containsSecret(inText: entry.title)
+            || ClipboardSecretScanner.containsSecret(inText: preview)
         var item: [String: Any] = [
             "id": entry.id.uuidString, "type": entry.kind.rawValue,
             "title": secret ? "Hidden secret" : entry.title,
-            "preview": secret ? "[hidden: looks like a password, token or key]" : String(entry.previewText.prefix(240)),
+            "preview": secret ? ClipboardSecretScanner.placeholder : preview,
             "timestamp": iso.string(from: entry.lastCopiedAt),
             "pinboards": store.boards.filter { entry.pinboardIDs.contains($0.id) }.map(\.name),
         ]
         if let app = entry.sourceName ?? entry.sourceBundleID { item["app"] = app }
         return item
+    }
+
+    /// The final check of a `read_item` reply: every string in it, whole.
+    static func replyContainsSecret(_ value: [String: Any]) -> Bool {
+        for key in ["title", "preview", "content", "recognized_text"] {
+            if let text = value[key] as? String, ClipboardSecretScanner.containsSecret(inText: text) { return true }
+        }
+        return (value["files"] as? [String])?.contains(where: ClipboardSecretScanner.containsSecret(inText:)) == true
     }
 
     private static func entry(_ arguments: [String: Any], store: ClipboardStore, key: String = "id") throws -> ClipboardEntry {
@@ -633,12 +649,18 @@ enum ClipboardMCPHandler {
             let after = (arguments["after"] as? String).flatMap(iso.date(from:))
             let before = (arguments["before"] as? String).flatMap(iso.date(from:))
             let limit = min(100, max(1, arguments["limit"] as? Int ?? 20))
-            let matches = store.filtered(query: query, kind: kind, source: nil, board: boardID, since: after)
+            var matches = store.filtered(query: query, kind: kind, source: nil, board: boardID, since: after)
                 .filter { before == nil || $0.lastCopiedAt < before! }
+            // A match on a hidden item's content would tell the client what it
+            // holds, one guess at a time; such items answer metadata only.
+            if ClipboardSearchQuery(query, boards: store.boards).hasContentTerms {
+                matches.removeAll(where: isSecret)
+            }
             return ["items": matches.prefix(limit).map { summary($0, store: store) }, "total": matches.count]
         case "read_item":
             let item = try entry(arguments, store: store)
-            guard !isSecret(item) else { throw ToolError("This item looks like a password, token or key and is not shared with AI tools.") }
+            let refusal = "This item looks like a password, token or key and is not shared with AI tools."
+            guard !isSecret(item) else { throw ToolError(refusal) }
             var value = summary(item, store: store)
             if let text = item.text { value["content"] = String(text.prefix(100_000)) }
             if !item.fileURLs.isEmpty { value["files"] = item.fileURLs.map(\.path) }
@@ -648,6 +670,7 @@ enum ClipboardMCPHandler {
                 }
                 if let ocr = item.recognizedText { value["recognized_text"] = String(ocr.prefix(50_000)) }
             }
+            guard !replyContainsSecret(value) else { throw ToolError(refusal) }
             return value
         case "create_item":
             guard let content = arguments["content"] as? String, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -698,11 +721,15 @@ enum ClipboardMCPHandler {
             return ["id": target.id.uuidString, "name": store.boards.first { $0.id == target.id }?.name ?? target.name]
         case "delete_pinboard":
             let target = try board(arguments, store: store)
+            let deletingItems = arguments["delete_items"] as? Bool == true
             guard arguments["confirm"] as? Bool == true else {
-                return ["message": "This would delete pinboard \"\(target.name)\". Its items stay in history. Call again with confirm: true."]
+                let items = store.itemsOnlyOnBoard(target.id)
+                return ["message": deletingItems
+                    ? "This would delete pinboard \"\(target.name)\" and the \(items) item(s) that are on no other pinboard. Call again with confirm: true."
+                    : "This would delete pinboard \"\(target.name)\". Its items stay in history. Call again with confirm: true."]
             }
-            store.deleteBoard(id: target.id)
-            return ["deleted": target.id.uuidString]
+            let deleted = store.deleteBoard(id: target.id, deletingItems: deletingItems)
+            return ["deleted": target.id.uuidString, "deletedItems": deleted]
         case "add_item_to_pinboard", "remove_item_from_pinboard":
             let item = try entry(arguments, store: store)
             let target = try board(arguments, store: store)
@@ -713,7 +740,10 @@ enum ClipboardMCPHandler {
         case "get_suggestions":
             let front = NSWorkspace.shared.frontmostApplication
             let ids = ClipboardIntelligence.shared.suggestions(for: front, store: store) { _ in }
-            return ["app": front?.localizedName ?? "", "kind": ClipboardIntelligence.shared.lastContext.kind.rawValue,
+            // An excluded app or a password field is not named to the client.
+            let context = ClipboardIntelligence.shared.lastContext
+            guard !context.blocksSuggestions else { return ["app": "", "kind": ClipboardDestinationKind.unknown.rawValue, "items": [Any]()] }
+            return ["app": front?.localizedName ?? "", "kind": context.kind.rawValue,
                     "items": ids.compactMap { id in store.entries.first { $0.id == id } }.map { summary($0, store: store) }]
         default:
             throw ToolError("Unknown tool \(name).")

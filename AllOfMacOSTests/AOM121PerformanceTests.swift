@@ -92,9 +92,15 @@ final class AOM121PerformanceTests: XCTestCase {
         edited.text = long + "x"
         XCTAssertEqual(ClipboardIntelligence.digest(entry), ClipboardIntelligence.digest(entry))
         XCTAssertNotEqual(ClipboardIntelligence.digest(entry), ClipboardIntelligence.digest(edited))
+        // 3.3.3 (audit PA-04): the key covers the whole clip, so a same-length
+        // edit in the middle is a new key; hashing 2 MB stays in milliseconds.
+        var middle = entry
+        middle.text = String(long.prefix(1_000_000)) + "xyz " + String(long.dropFirst(1_000_004))
+        XCTAssertEqual(middle.text?.utf8.count, long.utf8.count)
+        XCTAssertNotEqual(ClipboardIntelligence.digest(entry), ClipboardIntelligence.digest(middle))
         let start = Date()
-        for _ in 0..<200 { _ = ClipboardIntelligence.digest(entry) }
-        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5, "Digest must not hash the whole clip")
+        for _ in 0..<50 { _ = ClipboardIntelligence.digest(entry) }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5, "Hashing a 2 MB clip must stay cheap")
     }
 
     func testHugeClipsSkipExpensiveClassification() {
