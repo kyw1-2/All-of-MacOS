@@ -33,24 +33,27 @@ struct ClipboardStackView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                Text("Paste Stack").font(.system(size: 13, weight: .bold))
+                Text("Paste Stack").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                 HStack {
                     Button { controller.stopStack() } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(.secondary)
-                            .frame(width: 16, height: 16)
+                        Image(systemName: "xmark.circle.fill").font(AOMFont.section.weight(.regular))
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .frame(width: AOMIcon.row, height: AOMIcon.row)
                     }
                     .help("Close Paste Stack").accessibilityLabel("Close Paste Stack")
                     Spacer()
                     Button { state.stackReversed.toggle() } label: {
                         Image(systemName: state.stackReversed ? "arrow.up.square" : "arrow.down.square")
-                            .font(.system(size: 14)).foregroundStyle(.secondary).frame(width: 16, height: 16)
+                            .font(AOMFont.section.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
+                            .frame(width: AOMIcon.row, height: AOMIcon.row)
+                            .contentTransition(.symbolEffect(.replace))
                     }
                     .help(state.stackReversed ? "Pasting newest first — click for oldest first"
                                               : "Pasting oldest first — click for newest first")
                     .accessibilityLabel("Paste Order")
                 }.buttonStyle(.plain)
             }
-            .padding(.horizontal, 8).frame(height: 32)
+            .padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard)
             if orderedRows.isEmpty {
                 AOMEmptyState("Stack Is Empty", systemImage: "doc.on.clipboard",
                               message: "Copy items to add them. ⌘V pastes them in order.") {
@@ -62,44 +65,45 @@ struct ClipboardStackView: View {
                         delegate?.showMainWindow()
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, AOMSpace.x4)
             } else {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(orderedRows.enumerated()), id: \.element.position) { ordinal, row in
                             stackRow(row.entry, position: row.position, ordinal: ordinal)
-                            if ordinal < orderedRows.count - 1 { Divider().padding(.leading, 52) }
+                            if ordinal < orderedRows.count - 1 {
+                                AOMRowDivider(inset: AOMSpace.x2 + AOMIcon.headerBadge + AOMSpace.x2, trailingInset: AOMSpace.x2)
+                            }
                         }
-                    }.padding(.horizontal, 6)
+                    }.padding(.horizontal, AOMSpace.x1)
                 }
             }
             if !state.status.isEmpty {
-                Text(state.status).font(AOMType.caption).foregroundStyle(.secondary).lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 4)
+                Text(state.status).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AOMSpace.x3).padding(.vertical, AOMSpace.x1)
             }
-            Divider().opacity(0.5)
-            HStack(spacing: 7) {
+            AOMDivider()
+            HStack(spacing: AOMSpace.x2) {
                 Button { state.stackMode.toggle() } label: {
-                    HStack(spacing: 5) {
-                        Circle().fill(state.stackMode ? AOMTheme.positive : Color.secondary).frame(width: 6, height: 6)
-                        Text(state.stackMode ? "Collecting" : "Paused")
-                    }
+                    AOMStatusPill(state.stackMode ? "Collecting" : "Paused", tone: state.stackMode ? .success : .neutral)
                 }
-                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                .buttonStyle(.plain)
                 .help(state.stackMode ? "New copies are added to the stack" : "New copies are not added")
                 Spacer()
                 Button("Paste Next") { controller.pasteNext() }
                     .controlSize(.small).disabled(orderedRows.isEmpty)
+                    .aomGlassButton(prominent: !orderedRows.isEmpty)
                     .help("Paste the next item (⌘V in the destination does the same)")
-            }.padding(.horizontal, 10).frame(height: 36)
+            }.padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard + AOMSpace.x1)
         }
         .onChange(of: state.stack.count) { _, _ in controller.fitStackPanel() }
-        .frame(width: 264)
+        .frame(width: AOMFeatureSize.stackPanelWidth)
         .aomFloatingSurface(.panel, radius: AOMRadius.panel)
     }
 
     private func stackRow(_ entry: ClipboardEntry, position index: Int, ordinal: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AOMSpace.x2) {
             Group {
                 if let data = entry.imageData, let image = NSImage(data: data) {
                     Image(nsImage: image).resizable().scaledToFill()
@@ -108,28 +112,31 @@ struct ClipboardStackView: View {
                 } else if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
                     Image(nsImage: icon).resizable().scaledToFit()
                 } else {
-                    Image(systemName: entry.kind == .link ? "link" : "doc.text").foregroundStyle(.secondary)
+                    Image(systemName: entry.kind == .link ? "link" : "doc.text").foregroundStyle(AOMColor.textSecondary)
                 }
             }
-            .frame(width: 32, height: 32).clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: AOMIcon.headerBadge, height: AOMIcon.headerBadge)
+            .clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
             .overlay(alignment: .topLeading) {
                 if ordinal == 0 {
-                    Circle().fill(Color.accentColor).frame(width: 8, height: 8).offset(x: -3, y: -3)
+                    Circle().fill(AOMColor.accent).frame(width: AOMSpace.x2, height: AOMSpace.x2)
+                        .offset(x: -AOMSpace.x0_5 - 1, y: -AOMSpace.x0_5 - 1)
                         .accessibilityLabel("Next")
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.previewText.isEmpty ? entry.title : entry.previewText)
-                    .font(.system(size: 12, weight: ordinal == 0 ? .semibold : .regular)).lineLimit(1)
-                Text(entry.sourceName ?? entry.kind.displayName).font(AOMType.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .font(ordinal == 0 ? AOMFont.callout.weight(.semibold) : AOMFont.callout)
+                    .foregroundStyle(AOMColor.text).lineLimit(1)
+                Text(entry.sourceName ?? entry.kind.displayName).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
             Button { if state.stack.indices.contains(index) { state.stack.remove(at: index) } } label: {
-                Image(systemName: "minus.circle").foregroundStyle(.tertiary)
-                    .frame(width: 22, height: 22).contentShape(Rectangle())
+                Image(systemName: "minus.circle").foregroundStyle(AOMColor.textSecondary)
+                    .frame(width: AOMIcon.row + AOMSpace.x0_5, height: AOMIcon.row + AOMSpace.x0_5).contentShape(Rectangle())
             }.buttonStyle(.plain).help("Remove from Stack").accessibilityLabel("Remove from Stack")
         }
-        .padding(.horizontal, 6).frame(height: 44)
+        .padding(.horizontal, AOMSpace.x2).frame(height: AOMSize.rowDouble)
         .contentShape(Rectangle())
         .onDrag {
             let provider = NSItemProvider()

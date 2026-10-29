@@ -21,9 +21,9 @@ struct ClipboardLinkCardContent: View {
     private struct LoadKey: Equatable { let version: UUID; let fetches: Bool }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: compact ? AOMSpace.x1 : AOMSpace.x2) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
                     .fill(accent.opacity(0.12))
                 if let image {
                     Image(decorative: image, scale: 1).resizable().interpolation(.high).scaledToFill()
@@ -31,21 +31,23 @@ struct ClipboardLinkCardContent: View {
                         .clipped()
                 } else {
                     Image(systemName: "safari")
-                        .font(.system(size: compact ? 22 : 34, weight: .light))
+                        .font(compact ? AOMFont.pageStatus.weight(.regular) : AOMFont.title.weight(.regular))
+                        .imageScale(compact ? .medium : .large)
                         .foregroundStyle(accent)
                 }
             }
-            .frame(maxWidth: .infinity).frame(height: compact ? 44 : side * 0.36)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(maxWidth: .infinity).frame(height: compact ? AOMSpace.x10 + AOMSpace.x1 : side * 0.36)
+            .clipShape(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
             Text(userTitled ? title : (card?.title ?? title))
-                .font(.system(size: compact ? 11 : 13, weight: .semibold))
+                .font(compact ? AOMFont.caption.weight(.semibold) : AOMFont.headline)
+                .foregroundStyle(AOMColor.text)
                 .lineLimit(2)
             if !compact, let site = card?.siteName, site.caseInsensitiveCompare(card?.title ?? "") != .orderedSame {
-                Text(site).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                Text(site).font(AOMFont.caption.weight(.medium)).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
             }
             Text(entry.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? entry.previewText)
-                .font(.system(size: compact ? 10 : 11))
-                .foregroundStyle(Color.accentColor)
+                .font(compact ? AOMFont.badge : AOMFont.caption)
+                .foregroundStyle(AOMColor.accent)
                 .lineLimit(card?.siteName == nil ? 2 : 1).truncationMode(.middle)
             Spacer(minLength: 0)
         }
