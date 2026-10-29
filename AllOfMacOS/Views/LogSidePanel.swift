@@ -12,26 +12,31 @@ struct LogSidePanel: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "terminal.fill")
-                    .foregroundStyle(.green)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .accessibilityHidden(true)
                 Text("Console")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AOMFont.callout.weight(.semibold))
+                    .foregroundStyle(AOMColor.text)
                 Spacer()
                 Button(action: { GestureLog.shared.entries.removeAll() }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Clear the console")
                 .accessibilityLabel("Clear console")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.background.opacity(0.28))
+            .padding(.horizontal, AOMSpace.x3)
+            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+            .background(AOMColor.surface)
 
-            Divider()
+            AOMDivider()
 
             // Log entries
             ScrollViewReader { proxy in
@@ -45,24 +50,21 @@ struct LogSidePanel: View {
                             .frame(height: 1)
                             .id("bottom")
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, AOMSpace.x1)
                 }
                 .onChange(of: entries.count) { _, _ in
                     DispatchQueue.main.async {
-                        withAnimation(AOMDesign.animation(.easeOut(duration: 0.15))) {
+                        withAnimation(AOMMotion.quick) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
                 }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-        .overlay(
-            Rectangle()
-                .frame(width: 1)
-                .foregroundStyle(Color(nsColor: .separatorColor)),
-            alignment: .leading
-        )
+        .background(AOMColor.canvas)
+        .overlay(alignment: .leading) {
+            AOMDivider(axis: .vertical)
+        }
     }
 }
 
@@ -77,28 +79,28 @@ private struct LogEntryRow: View {
     }()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 4) {
+        HStack(alignment: .top, spacing: AOMSpace.x1) {
             Circle()
                 .fill(colorForLevel(entry.level))
-                .frame(width: 6, height: 6)
-                .padding(.top, 4)
+                .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                .padding(.top, AOMSpace.x1)
                 .overlay(
                     Circle()
                         .stroke(colorForLevel(entry.level).opacity(ripple ? 0 : 0.6), lineWidth: 1.5)
-                        .frame(width: ripple ? 20 : 6, height: ripple ? 20 : 6)
+                        .frame(width: ripple ? AOMIcon.row : AOMIcon.dot, height: ripple ? AOMIcon.row : AOMIcon.dot)
                         .opacity(entry.level == .fire ? 1 : 0)
                 )
 
             Text(Self.timeFormatter.string(from: entry.timestamp))
-                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                .foregroundStyle(AOMColor.textSecondary)
 
             Text(entry.message)
                 .foregroundStyle(colorForLevel(entry.level))
                 .textSelection(.enabled)
         }
-        .font(.system(size: 10.5, design: .monospaced))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
+        .font(AOMFont.mono)
+        .padding(.horizontal, AOMSpace.x2)
+        .padding(.vertical, AOMSpace.x0_5)
         .background(
             entry.level == .fire
                 ? colorForLevel(entry.level).opacity(ripple ? 0 : 0.08)

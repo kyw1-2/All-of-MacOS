@@ -12,42 +12,50 @@ struct DiagnosticDrawerView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack(spacing: 8) {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "terminal.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.green)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .accessibilityHidden(true)
                 Text("Diagnostics")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(AOMFont.headline)
+                    .foregroundStyle(AOMColor.text)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
 
                 Button {
                     openDetachedWindow()
                 } label: {
                     Image(systemName: "arrow.up.forward.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Detach into floating window")
+                .accessibilityLabel("Detach into floating window")
 
                 Button {
-                    withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.85))) {
+                    withAnimation(AOMMotion.panel) {
                         showLog = false
                         showTouchVisualizer = false
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        .font(AOMFont.caption.weight(.semibold))
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Close diagnostics panel")
+                .accessibilityLabel("Close diagnostics panel")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(.background.opacity(0.5))
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMSize.rowStandard)
 
-            Divider()
+            AOMDivider()
 
             if showLog {
                 LogSidePanel(entries: gestureLog.entries)
@@ -55,41 +63,41 @@ struct DiagnosticDrawerView: View {
             }
 
             if showTouchVisualizer {
-                if showLog { Divider() }
-                VStack(spacing: 4) {
+                if showLog { AOMDivider() }
+                VStack(spacing: AOMSpace.x1) {
                     HStack {
                         Image(systemName: "hand.point.up.braille.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.cyan)
+                            .font(AOMFont.badge)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .accessibilityHidden(true)
                         Text("Live Touch Visualizer")
-                            .font(.caption2.weight(.medium))
-                            .foregroundColor(.secondary)
+                            .font(AOMFont.caption.weight(.medium))
+                            .foregroundStyle(AOMColor.textSecondary)
                         Spacer()
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 6)
+                    .padding(.horizontal, AOMSpace.x2)
+                    .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
 
                     LiveTouchView()
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
+                        .padding(.horizontal, AOMSpace.x2)
+                        .padding(.bottom, AOMSpace.x2)
                 }
-                .frame(height: showLog ? 180 : 240)
-                .background(.background.opacity(0.30))
+                .frame(height: showLog ? AOMFeatureSize.touchVisualizer : AOMFeatureSize.touchVisualizerTall)
+                .background(AOMColor.surface)
             }
         }
-        .frame(width: 270)
-        .background(.regularMaterial)
-        .overlay(
-            Rectangle()
-                .fill(Color.primary.opacity(0.08))
-                .frame(width: 0.5),
-            alignment: .leading
-        )
+        // The shell gives the drawer its width (AOMSize.drawerWidth); it is an
+        // inspector, so it is opaque content with a hairline edge (c.4).
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AOMColor.canvas)
+        .overlay(alignment: .leading) {
+            AOMDivider(axis: .vertical)
+        }
     }
 
     private func openDetachedWindow() {
-        withAnimation(AOMDesign.animation(.default)) {
+        withAnimation(AOMMotion.panel) {
             showLog = false
             showTouchVisualizer = false
         }
@@ -131,23 +139,23 @@ private struct DetachedDiagnosticsView: View {
 
             Divider()
 
-            VStack(spacing: 4) {
+            VStack(spacing: AOMSpace.x1) {
                 HStack {
                     Text("Live Touch Visualizer")
-                        .font(.caption2.weight(.medium))
-                        .foregroundColor(.secondary)
+                        .font(AOMFont.caption.weight(.medium))
+                        .foregroundStyle(AOMColor.textSecondary)
                     Spacer()
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 4)
+                .padding(.horizontal, AOMSpace.x2)
+                .padding(.top, AOMSpace.x1)
 
                 LiveTouchView()
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, AOMSpace.x2)
+                    .padding(.bottom, AOMSpace.x2)
             }
-            .frame(height: 180)
-            .background(.background.opacity(0.30))
+            .frame(height: AOMFeatureSize.touchVisualizer)
+            .background(AOMColor.surface)
         }
         .frame(minWidth: 280, minHeight: 400)
     }
