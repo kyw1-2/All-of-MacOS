@@ -3,6 +3,11 @@ import SwiftUI
 /// The complete action catalog is browsable without first guessing a trigger.
 /// Configuration creates a disabled draft, so opening a feature never executes
 /// a destructive or input-producing action in the currently focused app.
+///
+/// Hosted inside the "All Actions" section card on System Tools, so it shows
+/// no title of its own: one line of scope, the filter, then one row per action
+/// in the shared row style (glyph, name with an ⓘ for its options, one line
+/// of what it does, Configure… at the trailing edge).
 struct ActionLibraryView: View {
     @EnvironmentObject var appState: AppState
     @State private var query = ""
@@ -15,36 +20,60 @@ struct ActionLibraryView: View {
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("All Actions").font(.title2.bold())
-            Text("Browse every built-in capability and configure it as an automation. New drafts stay off until you enable them.")
-                .font(.callout).foregroundStyle(.secondary)
-            HStack {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            AOMEditorNote("Browse every built-in capability and configure it as an automation. New drafts stay off until you enable them.")
+            HStack(spacing: AOMSpace.x2) {
                 TextField("Search actions, descriptions and parameters", text: $query).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $category) {
                     Text("All Categories").tag(ActionCategory?.none)
                     ForEach(ActionCategory.allCases, id: \.self) { Text($0.rawValue).tag(ActionCategory?.some($0)) }
-                }.frame(maxWidth: 240)
+                }
+                .labelsHidden()
+                .frame(maxWidth: AOMEditorSize.libraryCategory)
             }
-            Text("\(actions.count) actions").font(.caption).foregroundStyle(.secondary)
+            Text("\(actions.count) actions")
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
+                .monospacedDigit()
             LazyVStack(spacing: 0) {
-                ForEach(actions, id: \.self) { type in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: type.iconName).font(.title3).frame(width: 28)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(type.rawValue).font(.headline)
-                            Text(type.description).font(.callout).foregroundStyle(.secondary)
-                            if !type.parameterHint.isEmpty {
-                                Text(type.parameterHint).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Button("Configure…") { appState.createDraft(for: type) }
-                    }
-                    .padding(.vertical, 12)
-                    Divider()
+                ForEach(Array(actions.enumerated()), id: \.element) { index, type in
+                    row(type, showsDivider: index > 0)
                 }
             }
+        }
+    }
+
+    private func row(_ type: ActionType, showsDivider: Bool) -> some View {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
+            Image(systemName: type.iconName)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMIcon.row)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                HStack(spacing: AOMSpace.x1) {
+                    Text(type.rawValue)
+                        .font(AOMFont.body)
+                        .foregroundStyle(AOMColor.text)
+                        .lineLimit(1)
+                    if !type.parameterHint.isEmpty {
+                        AOMInfoButton("Options: " + type.parameterHint, topic: type.rawValue)
+                    }
+                }
+                Text(type.description)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: AOMSpace.x3)
+            Button("Configure…") { appState.createDraft(for: type) }
+        }
+        .padding(.vertical, AOMSpace.x2)
+        .frame(minHeight: AOMSize.rowDetail)
+        .overlay(alignment: .top) {
+            if showsDivider { AOMRowDivider(inset: AOMIcon.row + AOMSpace.x3, trailingInset: 0) }
         }
     }
 }
