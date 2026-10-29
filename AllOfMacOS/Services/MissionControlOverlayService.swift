@@ -2,12 +2,20 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
-/// Mission Control Plus parity: when Mission Control is open, poll the Dock's
-/// AX tree for the window tiles and float a small ✕ button panel over each —
-/// clicking one AX-raises the tile's source window and closes it (⌘W path),
-/// so quitting an app from Mission Control takes one click. Escape or MC
-/// ending tears the overlays down. Mechanism verified against Mission Control
-/// Plus 1.24 (ExposeController.performTimerBasedUpdate + CloseButtonWindow).
+/// Mission Control Plus parity: when Mission Control is open, poll its AX
+/// tree for the window thumbnails and float a small ✕ button panel over each
+/// — clicking one closes the thumbnail's window with its own close button, so
+/// closing windows from Mission Control takes one click. Mission Control
+/// ending tears the overlays down. Mechanism after Mission Control Plus 1.24
+/// (ExposeController.performTimerBasedUpdate + CloseButtonWindow).
+///
+/// 3.3.3: the thumbnails come from `MissionControlWindows` (WindowManager's
+/// tree on macOS 27, the Dock's before), and the window behind a thumbnail is
+/// found by its app and title. Until 3.3.2 the window was looked up among the
+/// windows of the process `AXUIElementGetPid` reported for the thumbnail,
+/// which is the process that draws Mission Control, so the ✕ never found it.
+/// A click also checks AOM's switch, its pause, the lock and the window app's
+/// own pause, and never closes one of AOM's windows.
 @MainActor
 final class MissionControlOverlayService: ObservableObject {
     static let shared = MissionControlOverlayService()
@@ -16,20 +24,20 @@ final class MissionControlOverlayService: ObservableObject {
 
     @Published private(set) var isMissionControlActive = false
     private var pollTimer: Timer?
-    private var tiles: [(panel: NSPanel, element: AXUIElement, pid: pid_t, windowTitle: String?)] = []
+    private var tiles: [(panel: NSPanel, thumbnail: MissionControlThumbnail)] = []
     private let probeQueue = DispatchQueue(label: "com.kyw.allofmacos.mission-control-probe", qos: .utility)
     private var probeInFlight = false
     private var generation = 0
-    private struct TileSnapshot: @unchecked Sendable {
-        let element: AXUIElement
-        let frame: CGRect
-        let pid: pid_t
-        let title: String?
+    private struct Snapshot: @unchecked Sendable {
+        let thumbnails: [MissionControlThumbnail]?
     }
 
     var isEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
     }
+
+    /// Whether the poller runs, so `isMissionControlActive` is current.
+    var isPolling: Bool { pollTimer != nil }
 
     func start() {
         guard pollTimer == nil else { return }
@@ -48,7 +56,7 @@ final class MissionControlOverlayService: ObservableObject {
     // MARK: - Poll
 
     private func poll() {
-        guard isEnabled, !ScreenLock.isLocked else {
+        guard isEnabled, AutomationGate.isOn, !ScreenLock.isLocked else {
             generation += 1
             if isMissionControlActive || !tiles.isEmpty { teardown() }
             return
@@ -57,15 +65,15 @@ final class MissionControlOverlayService: ObservableObject {
         probeInFlight = true
         let requestGeneration = generation
         probeQueue.async { [weak self] in
-            let snapshot = Self.captureSnapshot()
+            let snapshot = Snapshot(thumbnails: MissionControlWindows.liveThumbnails())
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.probeInFlight = false
                 guard self.pollTimer != nil, self.generation == requestGeneration,
-                      self.isEnabled, !ScreenLock.isLocked else { return }
-                if let snapshot {
+                      self.isEnabled, AutomationGate.isOn, !ScreenLock.isLocked else { return }
+                if let thumbnails = snapshot.thumbnails {
                     if !self.isMissionControlActive { self.isMissionControlActive = true }
-                    self.rebuildTiles(snapshot)
+                    self.rebuildTiles(thumbnails)
                 } else if self.isMissionControlActive || !self.tiles.isEmpty {
                     self.teardown()
                 }
@@ -73,65 +81,34 @@ final class MissionControlOverlayService: ObservableObject {
         }
     }
 
-    nonisolated private static func captureSnapshot() -> [TileSnapshot]? {
-        guard let window = missionControlWindow() else { return nil }
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXChildrenAttribute as CFString, &value) == .success,
-              let children = value as? [AXUIElement] else { return [] }
-        return children.compactMap { element in
-            guard let rect = frame(of: element), rect.width > 120, rect.height > 90 else { return nil }
-            var pid: pid_t = 0
-            AXUIElementGetPid(element, &pid)
-            var title: CFTypeRef?
-            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
-            return TileSnapshot(element: element, frame: rect, pid: pid, title: title as? String)
-        }
-    }
-
-    /// The Dock owns Mission Control's fullscreen AX window.
-    nonisolated private static func missionControlWindow() -> AXUIElement? {
-        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return nil }
-        let ref = AXUIElementCreateApplication(dock.processIdentifier)
-        AXUIElementSetMessagingTimeout(ref, 0.1)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(ref, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return nil }
-        for window in windows {
-            var subrole: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole)
-            // Mission Control's surface is a fullscreen (non-utility) window.
-            if (subrole as? String) == "AXFullscreen" { return window }
-        }
-        return nil
-    }
-
     // MARK: - Tiles
 
-    private func rebuildTiles(_ snapshot: [TileSnapshot]) {
+    private func rebuildTiles(_ thumbnails: [MissionControlThumbnail]) {
         let top = NSScreen.screens.first?.frame.maxY ?? 0
-        for (index, tile) in snapshot.enumerated() {
-            let frame = CGRect(x: tile.frame.minX, y: top - tile.frame.maxY,
-                               width: tile.frame.width, height: tile.frame.height)
+        // Thumbnails too small for a button keep none (as in 3.3.2).
+        let shown = thumbnails.filter { $0.frame.width > 120 && $0.frame.height > 90 }
+        for (index, thumbnail) in shown.enumerated() {
+            let frame = CGRect(x: thumbnail.frame.minX, y: top - thumbnail.frame.maxY,
+                               width: thumbnail.frame.width, height: thumbnail.frame.height)
             if index < tiles.count {
                 let old = tiles[index]
-                if CFEqual(old.element, tile.element), old.pid == tile.pid, old.windowTitle == tile.title {
+                if old.thumbnail.identifier == thumbnail.identifier, old.thumbnail.title == thumbnail.title {
                     if old.panel.frame != frame { old.panel.setFrame(frame, display: true) }
+                    tiles[index].thumbnail = thumbnail
                     continue
                 }
-                // A new window can occupy the same tile index. Its close action
-                // must not keep the previous window captured in a closure.
+                // Another window can take the same place. Its ✕ must not keep
+                // the previous window captured in a closure.
                 old.panel.orderOut(nil)
-                if let panel = makeCloseButton(frame: frame, tile: tile.element, pid: tile.pid, title: tile.title) {
-                    tiles[index] = (panel, tile.element, tile.pid, tile.title)
-                }
-            } else if let panel = makeCloseButton(frame: frame, tile: tile.element, pid: tile.pid, title: tile.title) {
-                tiles.append((panel, tile.element, tile.pid, tile.title))
+                tiles[index] = (makeCloseButton(frame: frame, thumbnail: thumbnail), thumbnail)
+            } else {
+                tiles.append((makeCloseButton(frame: frame, thumbnail: thumbnail), thumbnail))
             }
         }
-        while tiles.count > snapshot.count { tiles.removeLast().panel.orderOut(nil) }
+        while tiles.count > shown.count { tiles.removeLast().panel.orderOut(nil) }
     }
 
-    private func makeCloseButton(frame: CGRect, tile: AXUIElement, pid: pid_t, title: String?) -> NSPanel? {
+    private func makeCloseButton(frame: CGRect, thumbnail: MissionControlThumbnail) -> NSPanel {
         let panel = NSPanel(contentRect: frame,
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -145,40 +122,27 @@ final class MissionControlOverlayService: ObservableObject {
                 panel?.backgroundColor = NSColor.black.withAlphaComponent(hovering ? 0.001 : 0)
             },
             onClose: { [weak self] in
-                self?.closeTile(tile: tile, pid: pid, title: title)
+                self?.closeTile(thumbnail)
             }))
         panel.orderFrontRegardless()
         return panel
     }
 
-    /// Closing from Mission Control: raise the source window first (so the
-    /// close lands on the right target) then press its AX close button.
-    private func closeTile(tile: AXUIElement, pid: pid_t, title: String?) {
-        guard pid > 0, let title, !title.isEmpty else { return }
-        var windows: CFTypeRef?
-        let ref = AXUIElementCreateApplication(pid)
-        guard AXUIElementCopyAttributeValue(ref, kAXWindowsAttribute as CFString, &windows) == .success,
-              let list = windows as? [AXUIElement] else { return }
-        let matches = list.filter { window in
-            var t: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &t)
-            return (t as? String) == title
+    /// The ✕: the one window the thumbnail stands for (its app and title,
+    /// never a guess), closed with its own close button, so the app may ask
+    /// to save.
+    private func closeTile(_ thumbnail: MissionControlThumbnail) {
+        guard AutomationGate.isOn, !TriggerSuppression.shared.isPaused, !ScreenLock.isLocked else { return }
+        guard let target = MissionControlWindows.window(for: thumbnail) else {
+            GestureLog.shared.logFromAnyThread("Mission Control: no single window matches \"\(thumbnail.title ?? "?")\"",
+                                               level: .error)
+            return
         }
-        // An unresolved/duplicate title is not permission to close the first
-        // unrelated window belonging to this process.
-        guard matches.count == 1, let match = matches.first else { return }
-        AXUIElementPerformAction(match, kAXRaiseAction as CFString)
-        NSRunningApplication(processIdentifier: pid)?.activate(options: [])
-        var buttons: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(match, kAXChildrenAttribute as CFString, &buttons) == .success,
-              let children = buttons as? [AXUIElement] else { return }
-        for child in children {
-            var subrole: CFTypeRef?
-            AXUIElementCopyAttributeValue(child, kAXSubroleAttribute as CFString, &subrole)
-            if (subrole as? String) == kAXCloseButtonSubrole as String {
-                AXUIElementPerformAction(child, kAXPressAction as CFString)
-                return
-            }
+        guard target.pid != ProcessInfo.processInfo.processIdentifier,
+              !TriggerSuppression.shared.isPaused(forApp: NSRunningApplication(processIdentifier: target.pid)?.bundleIdentifier)
+        else { return }
+        if !MissionControlWindows.close(target.element) {
+            GestureLog.shared.logFromAnyThread("Mission Control: the window has no close button", level: .error)
         }
     }
 
@@ -186,21 +150,6 @@ final class MissionControlOverlayService: ObservableObject {
         if isMissionControlActive { isMissionControlActive = false }
         for tile in tiles { tile.panel.orderOut(nil) }
         tiles.removeAll()
-    }
-
-    nonisolated private static func frame(of element: AXUIElement) -> CGRect? {
-        var p: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &p) == .success,
-              let p, CFGetTypeID(p) == AXValueGetTypeID() else { return nil }
-        var origin = CGPoint.zero
-        _ = AXValueGetValue(p as! AXValue, .cgPoint, &origin)
-        var s: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &s) == .success,
-              let s, CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
-        var size = CGSize.zero
-        _ = AXValueGetValue(s as! AXValue, .cgSize, &size)
-        // AX top-left based; keep in AX space for tile matching, flip at the UI edge.
-        return CGRect(origin: origin, size: size)
     }
 }
 

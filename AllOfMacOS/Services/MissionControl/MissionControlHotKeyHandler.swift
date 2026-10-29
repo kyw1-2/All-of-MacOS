@@ -3,24 +3,36 @@ import AppKit
 import Carbon
 
 /// Intercepts single-key shortcuts while Mission Control is open (Mission Control Plus parity).
-/// Supported actions on window/tile under cursor:
+/// Supported actions on the window whose thumbnail is under the cursor:
 /// - 'W': Close window
 /// - 'Shift+W': Close all windows of the application
 /// - 'M': Minimize window
 /// - 'H': Hide application
+///
+/// 3.3.3: the window is the one behind the thumbnail (`MissionControlWindows`:
+/// its app and title, never a guess). Until 3.3.2 the system-wide hit-test
+/// found Mission Control's own surface (or AOM's ✕ panel), ⇧W asked that
+/// process to quit, and nothing checked AOM's pause. Now the keys act only
+/// with the hotkeys setting on, AOM on and not paused, the screen unlocked,
+/// never on AOM's own windows and never on an app AOM is paused for; a key
+/// that does nothing reaches Mission Control as usual.
 @MainActor
 final class MissionControlHotKeyHandler {
     static let shared = MissionControlHotKeyHandler()
+
+    static let enabledKey = "AOMMissionControlHotkeys"
 
     private var eventMonitor: Any?
 
     init() {}
 
+    /// The hotkeys setting, read where it is written (Settings write the key).
+    static var isEnabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
+
     func start() {
         guard eventMonitor == nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, MissionControlConfiguration.shared.enableHotkeys,
-                  MissionControlOverlayService.shared.isMissionControlActive else {
+            guard let self, MissionControlOverlayService.shared.isMissionControlActive else {
                 return event
             }
             if self.handleKey(event) {
@@ -59,38 +71,26 @@ final class MissionControlHotKeyHandler {
     }
 
     private func act(character: String, shift isShift: Bool, cursor: CGPoint) -> Bool {
+        guard ["w", "m", "h"].contains(character), Self.isEnabled, AutomationGate.isOn,
+              !TriggerSuppression.shared.isPaused, !ScreenLock.isLocked,
+              let thumbnail = MissionControlWindows.thumbnail(at: cursor),
+              let target = MissionControlWindows.window(for: thumbnail),
+              target.pid != ProcessInfo.processInfo.processIdentifier,
+              let app = NSRunningApplication(processIdentifier: target.pid), !app.isTerminated,
+              !TriggerSuppression.shared.isPaused(forApp: app.bundleIdentifier) else { return false }
         switch character {
         case "w":
-            if isShift {
-                // Close all windows of the app under cursor
-                if let target = WindowManager.shared.captureTarget(atMousePoint: cursor),
-                   let app = NSRunningApplication(processIdentifier: target.pid) {
-                    app.terminate()
-                    return true
-                }
-            } else {
-                // Close single window under cursor
-                if let target = WindowManager.shared.captureTarget(atMousePoint: cursor) {
-                    WindowManager.shared.execute(.closeWindow, target: target, completion: { _ in })
-                    return true
-                }
-            }
+            // ⇧W closes every window of the app with its close buttons (each
+            // may ask to save); it never quits the app.
+            if isShift { return MissionControlWindows.closeAllWindows(of: target.pid) > 0 }
+            return MissionControlWindows.close(target.element)
         case "m":
-            // Minimize window under cursor
-            if let target = WindowManager.shared.captureTarget(atMousePoint: cursor) {
-                WindowManager.shared.execute(.minimizeWindow, target: target, completion: { _ in })
-                return true
-            }
+            AXUIElementSetMessagingTimeout(target.element, 0.5)
+            return AXUIElementSetAttributeValue(target.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
         case "h":
-            // Hide application under cursor
-            if let target = WindowManager.shared.captureTarget(atMousePoint: cursor),
-               let app = NSRunningApplication(processIdentifier: target.pid) {
-                app.hide()
-                return true
-            }
+            return app.hide()
         default:
-            break
+            return false
         }
-        return false
     }
 }
