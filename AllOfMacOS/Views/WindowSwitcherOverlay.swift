@@ -278,18 +278,16 @@ private struct WindowSwitcherView: View {
                             .id(index)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, AOMSpace.x0_5)
             }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: controller.selectedIndex)
+            .aomAnimation(.quick, value: controller.selectedIndex)
             .onChange(of: controller.selectedIndex) { _, newIndex in
                 proxy.scrollTo(newIndex, anchor: .center)
             }
         }
-        .padding(12)
+        .padding(AOMSpace.x3)
+        // Glass chrome draws its own edge and shadow; nothing is added on top (c.4).
         .aomFloatingSurface(.panel, radius: AOMRadius.panel)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5))
-        .shadow(radius: 18, y: 6)
     }
 }
 
@@ -298,30 +296,34 @@ private struct WindowSwitcherCard: View {
     let isSelected: Bool
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: AOMSpace.x1) {
             ZStack {
                 if let thumbnail = item.thumbnail {
                     Image(decorative: thumbnail, scale: 1).resizable().scaledToFit()
                 } else if let icon = item.icon {
-                    Image(nsImage: icon).resizable().scaledToFit().padding(22)
+                    Image(nsImage: icon).resizable().scaledToFit().padding(AOMSpace.x5 + AOMSpace.x0_5)
                 } else {
-                    Image(systemName: "macwindow").font(.system(size: 30)).foregroundStyle(.secondary)
+                    Image(systemName: "macwindow").font(AOMFont.title.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                 }
             }
-            .frame(width: 176, height: 112)
-            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-            HStack(spacing: 4) {
-                if let icon = item.icon { Image(nsImage: icon).resizable().frame(width: 14, height: 14) }
+            .frame(width: AOMFeatureSize.switcherThumbnail.width, height: AOMFeatureSize.switcherThumbnail.height)
+            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.concentric(AOMRadius.card, inset: AOMSpace.x1 + AOMSpace.x0_5),
+                                                             style: .continuous))
+            HStack(spacing: AOMSpace.x1) {
+                if let icon = item.icon {
+                    Image(nsImage: icon).resizable().frame(width: AOMFeatureSize.chipIcon, height: AOMFeatureSize.chipIcon)
+                }
                 Text(item.title.isEmpty ? item.appName : item.title)
-                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                    .font(isSelected ? AOMFont.badge.weight(.semibold) : AOMFont.badge.weight(.regular))
+                    .foregroundStyle(AOMColor.text)
                     .lineLimit(1).truncationMode(.middle)
             }
-            .frame(width: 176)
+            .frame(width: AOMFeatureSize.switcherThumbnail.width)
         }
-        .padding(6)
-        .background(isSelected ? Color.accentColor.opacity(0.18) : .clear,
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 1.5))
+        .padding(AOMSpace.x1 + AOMSpace.x0_5)
+        .background(isSelected ? AOMColor.accent.opacity(0.18) : .clear,
+                    in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+            .strokeBorder(isSelected ? AOMColor.accent : .clear, lineWidth: 1.5))
     }
 }

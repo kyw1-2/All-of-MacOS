@@ -6,22 +6,16 @@ struct UpdateBadgeView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
     }
 
+    /// A quiet version chip: the version is metadata, so it reads like a
+    /// keycap, not like a coloured call to action.
     var body: some View {
         Text("v\(currentVersion)")
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(
-                        .linearGradient(
-                            colors: [.blue, .purple],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            )
+            .font(AOMFont.badge.weight(.semibold).monospacedDigit())
+            .foregroundStyle(AOMColor.textSecondary)
+            .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
+            .padding(.vertical, AOMSpace.x0_5)
+            .background(AOMColor.track, in: Capsule())
+            .overlay(Capsule().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
             .help("All of MacOS v\(currentVersion) (Custom Build)")
     }
 }
