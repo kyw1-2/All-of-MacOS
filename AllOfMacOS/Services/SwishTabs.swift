@@ -593,6 +593,26 @@ enum NativeTiling {
                      topEdgeDrag: read("EnableTopTilingByEdgeDrag"))
     }
 
+    /// Pure: Swish's mirror of System Settings › Desktop & Dock › Windows
+    /// ("Drag Windows to Edge: Enabled | Top only | Sides only | Off"), from
+    /// "Drag windows to screen edges to tile" (`edgeDrag`) and "Drag windows
+    /// to menu bar to fill screen" (`topEdgeDrag`). Read-only: AOM never
+    /// writes com.apple.WindowManager.
+    static func dragToEdgeLabel(_ options: SystemOptions) -> String {
+        switch (options.edgeDrag, options.topEdgeDrag) {
+        case (true, true): return "Enabled"
+        case (false, true): return "Top only"
+        case (true, false): return "Sides only"
+        case (false, false): return "Off"
+        }
+    }
+
+    /// Pure: the settings line about the system's tile margins ("Grid
+    /// Spacing 8 px" in Swish's popover).
+    static func marginsLabel(_ options: SystemOptions) -> String {
+        options.margins ? "\(Int(margin)) pt" : "Off"
+    }
+
     /// The Move & Resize item macOS offers for a place: the halves, the
     /// quarters and Fill for maximize; nil for anything else (thirds, sixths,
     /// ninths, centre, almost maximize), which AOM's own engine snaps.

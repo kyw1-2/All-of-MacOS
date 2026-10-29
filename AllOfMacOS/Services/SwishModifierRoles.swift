@@ -364,6 +364,13 @@ extension SwishSnap {
         return result
     }
 
+    /// Pure (X35): drag to unsnap applies to this drag unless the Secondary
+    /// role's keys are held ("Use the secondary modifier to temporarily
+    /// disable Drag to Unsnap").
+    static func dragUnsnapApplies(enabled: Bool, held: Set<ModifierRole>) -> Bool {
+        enabled && !held.contains(.secondary)
+    }
+
     /// The roles held now, from the saved roles (main thread: reads
     /// `NSEvent.modifierFlags`).
     static func heldRoles(_ defaults: UserDefaults = .standard) -> Set<ModifierRole> {

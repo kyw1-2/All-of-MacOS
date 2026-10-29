@@ -1495,6 +1495,17 @@ final class TitleBarWindowSnap {
     /// Swish waits for the displays to settle before re-snapping.
     static let resnapDelay: Double = 1.5
 
+    /// Swish's "External Display Timeout" (3.3.3, X38): seconds to wait for
+    /// the displays to settle before re-snapping, 0.5…10, default 1.5; 0
+    /// turns re-snapping off ("turn it off entirely by setting it to zero").
+    static let resnapDelayKey = "AOMTitleBarSnapResnapDelay"
+
+    static func resnapDelaySeconds(_ defaults: UserDefaults = .standard) -> Double {
+        guard let value = defaults.object(forKey: resnapDelayKey) as? Double, value.isFinite else { return resnapDelay }
+        guard value > 0 else { return 0 }
+        return min(max(value, 0.5), 10)
+    }
+
     static func grid(_ defaults: UserDefaults = .standard) -> SwishSnap.Grid {
         if let raw = defaults.string(forKey: gridKey), let grid = SwishSnap.Grid(rawValue: raw) { return grid }
         return defaults.object(forKey: thirdsKey) as? Bool == true ? .threeByTwo : .twoByTwo
@@ -1518,7 +1529,7 @@ final class TitleBarWindowSnap {
     }
 
     static func resnapOn(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: resnapKey) as? Bool ?? true
+        (defaults.object(forKey: resnapKey) as? Bool ?? true) && resnapDelaySeconds(defaults) > 0
     }
 
     static func resizeAdjacentOn(_ defaults: UserDefaults = .standard) -> Bool {
@@ -1690,8 +1701,7 @@ final class TitleBarWindowSnap {
     /// swipes in one touch).
     @MainActor private var spaceMoveInFlight = false
     @MainActor private var queuedSpaceMove: (action: SwishSnap.WindowAction, target: WindowManager.Target, start: CGRect)?
-    /// The tab under the pointer when the touch landed, and the gesture's (F02).
-    @MainActor private var prefetchedTab: AXUIElement?
+    /// The tab under the pointer for the gesture on show (F02).
     @MainActor private var targetTab: AXUIElement?
 
     /// One left-button press: where it went down (top-left coordinates), the
@@ -2145,6 +2155,7 @@ final class TitleBarWindowSnap {
         plan = next
         // The second ⌥ swipe down on the app quits it: the first one's close no longer waits.
         if next?.action == .quitApp, repeating == .close { cancelPending() }
+        tooltipDirection = stroke.direction
         present(next)
     }
 
@@ -2162,6 +2173,11 @@ final class TitleBarWindowSnap {
             return restorePlan(target: target, visible: visible, start: start)
         case .cell, .place:
             let place = move.destination ?? .center
+            // F06: macOS tiles halves, quarters and Fill itself; preview its frame.
+            if Self.nativeTilingWanted,
+               let native = NativeTiling.previewFrame(place: place, visible: visible, options: NativeTiling.systemOptions()) {
+                return Plan(place: place, rect: native)
+            }
             return Plan(place: place, rect: SwishSnap.targetFrame(place: place, visible: visible, margin: margin))
         case .action(.close):
             // ⌥ swipe down twice quits (Swish): the second swipe on an app
@@ -2209,8 +2225,14 @@ final class TitleBarWindowSnap {
             guard let plan else { hideOwnPreview(); return }
             guard visuals else { return }
             overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop), restoring: plan.place == nil)
+            // Swish's tooltip beside the pointer: where the window goes (3.3.3).
+            if Self.tooltipOn() {
+                SwishGestureTooltip.shared.show(SwishSnap.tooltipText(direction: tooltipDirection, place: plan.place),
+                                                near: NSEvent.mouseLocation, speed: Self.animationSpeed())
+            }
             return
         }
+        hideTooltip()
         if case .screen = action, !plan.rect.isNull, visuals {
             overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop))
         } else {
@@ -2246,6 +2268,11 @@ final class TitleBarWindowSnap {
             run(action, plan: plan, target: target, start: start)
             return
         }
+        // F06: Swish's "Native Window Tiling" for what macOS can tile.
+        if Self.nativeTilingWanted, let place = plan.place, let key = NativeTiling.menuKey(for: place) {
+            commitNative(key: key, place: place, rect: plan.rect, target: target, anchorVisible: visible, start: start)
+            return
+        }
         commitFrame(plan.rect, target: target, anchorVisible: visible, start: start,
                     restoring: plan.place == nil, place: plan.place)
     }
@@ -2265,6 +2292,48 @@ final class TitleBarWindowSnap {
             MainActor.assumeIsolated {
                 TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: key,
                                                        start: start, restoring: restoring, place: place)
+            }
+        }
+    }
+
+    /// Whether this snap goes through macOS's own tiling (F06): the option is
+    /// on and the system has Window › Move & Resize (macOS 15 and later; on
+    /// macOS 14 AOM's own engine snaps without first searching the menu).
+    @MainActor private static var nativeTilingWanted: Bool {
+        guard nativeTilingOn() else { return false }
+        if #available(macOS 15, *) { return true }
+        return false
+    }
+
+    /// Native tiling (F06): the app's own Window › Move & Resize item tiles
+    /// the window; where it has none, AOM's engine snaps it (Swish: "Otherwise,
+    /// Swish will fall back to its own snapping engine"), unless the pause
+    /// came on meanwhile. The commit stays in flight until the tile has been
+    /// read back, so chained swipes wait for it as for any commit.
+    @MainActor
+    private func commitNative(key: String, place: SwishSnap.Place, rect: CGRect, target: WindowManager.Target,
+                              anchorVisible visible: CGRect, start: CGRect) {
+        committing = true
+        let windowKey = Self.key(target)
+        NativeTiling.tile(target, key: key, mayContinue: {
+            TitleBarWindowSnap.shared.allowedNow && !Self.appPaused(target.pid)
+        }) { pressed in
+            let service = TitleBarWindowSnap.shared
+            guard pressed else {
+                guard service.allowedNow, !Self.appPaused(target.pid) else {
+                    service.finishCommit(nil, target: target, key: windowKey, start: start, restoring: false, place: place)
+                    return
+                }
+                service.commitFrame(rect, target: target, anchorVisible: visible, start: start, restoring: false, place: place)
+                return
+            }
+            // macOS animates the tile; read where the window landed once it has.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                MainActor.assumeIsolated {
+                    let actual = Self.boundedFrame(of: target) ?? rect
+                    TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: windowKey, start: start,
+                                                           restoring: false, place: place)
+                }
             }
         }
     }
@@ -2385,12 +2454,23 @@ final class TitleBarWindowSnap {
     @MainActor
     private func hideOwnPreview() {
         if overlay.isShowing { overlay.hide() }
+        hideTooltip()
+    }
+
+    /// The direction of the swipe on show, for the tooltip's arrow.
+    @MainActor private var tooltipDirection: SwishSnap.Direction?
+
+    @MainActor
+    private func hideTooltip() {
+        if SwishGestureTooltip.shared.isShowing { SwishGestureTooltip.shared.hide(speed: Self.animationSpeed()) }
     }
 
     @MainActor
     private func reset() {
         target = nil; targetVisible = nil; startFrame = nil; startPlace = nil; plan = nil; targetTab = nil
         modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil; heldRoles = []
+        tooltipDirection = nil
+        hideTooltip()
     }
 
     // MARK: Pinches, taps and tap-and-hold (3.3.2)
@@ -3061,7 +3141,10 @@ final class TitleBarWindowSnap {
             guard var state = drag else { return }
             if !state.probed {
                 state.probed = true
-                if Self.dragUnsnapOn(), mouseAllowedNow { state.unsnap = unsnapCandidate(at: state.down, pointer: point) }
+                // Swish: "Use the secondary modifier to temporarily disable Drag to Unsnap."
+                if SwishSnap.dragUnsnapApplies(enabled: Self.dragUnsnapOn(), held: SwishSnap.heldRoles()), mouseAllowedNow {
+                    state.unsnap = unsnapCandidate(at: state.down, pointer: point)
+                }
             }
             if let candidate = state.unsnap {
                 let now = ProcessInfo.processInfo.systemUptime
@@ -3220,7 +3303,7 @@ final class TitleBarWindowSnap {
         resnapWork?.cancel()
         let item = DispatchWorkItem { MainActor.assumeIsolated { TitleBarWindowSnap.shared.resnap() } }
         resnapWork = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resnapDelay, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, Self.resnapDelaySeconds()), execute: item)
     }
 
     /// The history windows still at the frame AOM snapped them to: bounded

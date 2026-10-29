@@ -862,3 +862,53 @@ extension SwishSnap {
         gestureOnShow || tabHeld || actionWaiting || motionQueued
     }
 }
+
+// MARK: - Tooltip text (3.3.3, Swish's tooltips)
+
+extension SwishSnap {
+    /// Pure: what a place is called in the gesture tooltip.
+    static func placeName(_ place: Place) -> String {
+        switch place {
+        case .center: return "Center"
+        case .almostMaximize: return "Almost Maximize"
+        case .grid(let cell):
+            if let layout = cell.layout {
+                switch layout {
+                case .maximize: return "Maximize"
+                case .leftHalf: return "Left Half"
+                case .rightHalf: return "Right Half"
+                case .topHalf: return "Top Half"
+                case .bottomHalf: return "Bottom Half"
+                case .topLeft: return "Top Left"
+                case .topRight: return "Top Right"
+                case .bottomLeft: return "Bottom Left"
+                case .bottomRight: return "Bottom Right"
+                case .leftThird: return "Left Third"
+                case .centerThird: return "Center Third"
+                case .rightThird: return "Right Third"
+                case .leftTwoThirds: return "Left Two Thirds"
+                case .rightTwoThirds: return "Right Two Thirds"
+                case .center: return "Center"
+                case .nextDisplay: return "Next Display"
+                }
+            }
+            let row = cell.rows == 1 || cell.rowSpan == cell.rows ? ""
+                : cell.row == 0 ? "Top " : cell.row + cell.rowSpan == cell.rows ? "Bottom " : "Middle "
+            let column = cell.columns == 1 || cell.columnSpan == cell.columns ? ""
+                : cell.column == 0 ? "Left " : cell.column + cell.columnSpan == cell.columns ? "Right " : "Center "
+            let unit = cell.columns == 1 || cell.rows == 1 ? "Third" : cell.rows == 3 && cell.columns == 3 ? "Ninth" : "Sixth"
+            let count = cell.columnSpan * cell.rowSpan
+            let size = count == 1 ? unit : "\(count) \(unit)s"
+            return "\(row)\(column)\(size)".trimmingCharacters(in: .whitespaces)
+        }
+    }
+
+    /// Pure: the tooltip for a snap on show: the swipe's arrow and where the
+    /// window goes ("← Left Half"); "Restore" when it goes back to its frame
+    /// from before the snap (place nil).
+    static func tooltipText(direction: Direction?, place: Place?) -> String {
+        let name = place.map(placeName) ?? "Restore"
+        guard let direction else { return name }
+        return "\(arrow(direction)) \(name)"
+    }
+}

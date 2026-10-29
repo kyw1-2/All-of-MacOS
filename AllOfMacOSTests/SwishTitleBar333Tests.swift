@@ -591,3 +591,81 @@ extension SwishTitleBar333Tests {
                        "a disabled item is skipped")
     }
 }
+
+// MARK: - F06 native tiling, restore and grid details, the tooltip
+
+extension SwishTitleBar333Tests {
+    func testNativeTilingReadsTheSystemOptionsOnly() {
+        let unset = NativeTiling.parse(margins: nil, edgeDrag: nil, topEdgeDrag: nil)
+        XCTAssertEqual(unset, .init(margins: true, edgeDrag: true, topEdgeDrag: true), "missing keys: macOS's defaults")
+        let mixed = NativeTiling.parse(margins: NSNumber(value: 0), edgeDrag: true, topEdgeDrag: NSNumber(value: false))
+        XCTAssertEqual(mixed, .init(margins: false, edgeDrag: true, topEdgeDrag: false))
+        XCTAssertEqual(NativeTiling.dragToEdgeLabel(.init(margins: true, edgeDrag: true, topEdgeDrag: true)), "Enabled")
+        XCTAssertEqual(NativeTiling.dragToEdgeLabel(.init(margins: true, edgeDrag: false, topEdgeDrag: true)), "Top only")
+        XCTAssertEqual(NativeTiling.dragToEdgeLabel(.init(margins: true, edgeDrag: true, topEdgeDrag: false)), "Sides only")
+        XCTAssertEqual(NativeTiling.dragToEdgeLabel(.init(margins: true, edgeDrag: false, topEdgeDrag: false)), "Off")
+        XCTAssertEqual(NativeTiling.marginsLabel(unset), "8 pt")
+        XCTAssertEqual(NativeTiling.marginsLabel(mixed), "Off")
+        let defaults = UserDefaults(suiteName: "aom.test.swish333.native.\(UUID().uuidString)")!
+        XCTAssertFalse(TitleBarWindowSnap.nativeTilingOn(defaults), "off by default")
+    }
+
+    func testOnlyHalvesQuartersAndFillTileNatively() {
+        XCTAssertEqual(NativeTiling.menuKey(for: SwishSnap.Place(.leftHalf)!), AppKitMenuTitles.left)
+        XCTAssertEqual(NativeTiling.menuKey(for: SwishSnap.Place(.bottomRight)!), AppKitMenuTitles.bottomRight)
+        XCTAssertEqual(NativeTiling.menuKey(for: SwishSnap.Place(.maximize)!), AppKitMenuTitles.fill)
+        XCTAssertNil(NativeTiling.menuKey(for: SwishSnap.Place(.leftThird)!), "3 × 2 stays AOM's")
+        XCTAssertNil(NativeTiling.menuKey(for: .grid(.sixth(0, 0))))
+        XCTAssertNil(NativeTiling.menuKey(for: .center))
+        XCTAssertNil(NativeTiling.menuKey(for: .almostMaximize))
+
+        let visible = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let on = NativeTiling.SystemOptions(margins: true, edgeDrag: true, topEdgeDrag: true)
+        XCTAssertEqual(NativeTiling.previewFrame(place: SwishSnap.Place(.leftHalf)!, visible: visible, options: on),
+                       CGRect(x: 8, y: 8, width: 488, height: 784), "8 pt at the display edges, 4 pt each side of a shared edge")
+        var off = on; off.margins = false
+        XCTAssertEqual(NativeTiling.previewFrame(place: SwishSnap.Place(.leftHalf)!, visible: visible, options: off),
+                       CGRect(x: 0, y: 0, width: 500, height: 800))
+        XCTAssertNil(NativeTiling.previewFrame(place: SwishSnap.Place(.leftThird)!, visible: visible, options: on))
+    }
+
+    func testTheExternalDisplayTimeoutAndDragUnsnapOverride() {
+        let defaults = UserDefaults(suiteName: "aom.test.swish333.resnap.\(UUID().uuidString)")!
+        XCTAssertEqual(TitleBarWindowSnap.resnapDelaySeconds(defaults), 1.5)
+        XCTAssertTrue(TitleBarWindowSnap.resnapOn(defaults))
+        defaults.set(0.0, forKey: TitleBarWindowSnap.resnapDelayKey)
+        XCTAssertFalse(TitleBarWindowSnap.resnapOn(defaults), "0 turns re-snapping off")
+        defaults.set(0.1, forKey: TitleBarWindowSnap.resnapDelayKey)
+        XCTAssertEqual(TitleBarWindowSnap.resnapDelaySeconds(defaults), 0.5)
+        defaults.set(30.0, forKey: TitleBarWindowSnap.resnapDelayKey)
+        XCTAssertEqual(TitleBarWindowSnap.resnapDelaySeconds(defaults), 10)
+
+        XCTAssertTrue(SwishSnap.dragUnsnapApplies(enabled: true, held: []))
+        XCTAssertFalse(SwishSnap.dragUnsnapApplies(enabled: true, held: [.secondary]), "⇧ held: this drag keeps the size")
+        XCTAssertTrue(SwishSnap.dragUnsnapApplies(enabled: true, held: [.general]))
+        XCTAssertFalse(SwishSnap.dragUnsnapApplies(enabled: false, held: []))
+    }
+
+    func testTooltipTexts() {
+        XCTAssertEqual(SwishSnap.tooltipText(direction: .left, place: SwishSnap.Place(.leftHalf)),
+                       "\(SwishSnap.arrow(.left)) Left Half")
+        XCTAssertEqual(SwishSnap.tooltipText(direction: nil, place: nil), "Restore")
+        XCTAssertEqual(SwishSnap.placeName(.almostMaximize), "Almost Maximize")
+        XCTAssertEqual(SwishSnap.placeName(.grid(.sixth(0, 0))), "Top Left Sixth")
+        XCTAssertEqual(SwishSnap.placeName(.grid(.sixth(1, 1))), "Bottom Center Sixth")
+        XCTAssertEqual(SwishSnap.placeName(.grid(.sixth(0, 0, columnSpan: 2))), "Top Left 2 Sixths")
+        XCTAssertEqual(SwishSnap.placeName(.grid(.ninth(1, 1))), "Middle Center Ninth")
+        XCTAssertEqual(SwishSnap.placeName(.grid(.ninth(0, 0, columnSpan: 2, rowSpan: 2))), "Top Left 4 Ninths")
+        let defaults = UserDefaults(suiteName: "aom.test.swish333.tooltip.\(UUID().uuidString)")!
+        XCTAssertTrue(TitleBarWindowSnap.tooltipOn(defaults), "on by default, with a switch to turn it off")
+
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = NSSize(width: 80, height: 24)
+        XCTAssertEqual(SwishGestureTooltip.frame(size: size, pointer: NSPoint(x: 100, y: 500), screen: screen).origin,
+                       NSPoint(x: 114, y: 454), "below and right of the pointer")
+        XCTAssertEqual(SwishGestureTooltip.frame(size: size, pointer: NSPoint(x: 1430, y: 500), screen: screen).origin.x,
+                       1336, "flips left at the right edge")
+        XCTAssertEqual(SwishGestureTooltip.frame(size: size, pointer: NSPoint(x: 100, y: 10), screen: screen).origin.y,
+                       32, "flips up at the bottom")
+    }
+}
