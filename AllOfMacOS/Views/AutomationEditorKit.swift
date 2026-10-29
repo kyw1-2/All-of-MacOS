@@ -233,6 +233,10 @@ enum AOMEditorSize {
     static let triggerSheet: CGFloat = AOMSize.editorMinimum
     /// The new-trigger sheet while it shows the drawing recorder.
     static let drawingSheet: CGFloat = 540
+    /// The drawing recorder inside the new-trigger sheet.
+    static let drawingComposer: CGFloat = 510
+    /// The gesture list inside the trigger sheets.
+    static let gestureList: CGFloat = 200
     /// The action picker sheet and its category column.
     static let actionPicker = CGSize(width: 720, height: 420)
     static let actionPickerSidebar: CGFloat = AOMSize.sidebarMin
