@@ -7,46 +7,38 @@ struct ConfigurationPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                Text("Configuration")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            AOMSectionTitle("Configuration")
+                .padding(.horizontal, AOMSpace.x3)
+                .padding(.vertical, AOMSpace.x2)
 
-            Divider()
+            AOMDivider()
 
             ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
+                VStack(spacing: AOMSpace.x4) {
+                    // The editors are groups inside one card (AOMSection hides
+                    // the first group's hairline).
                     if let action = appState.selectedAction, let trigger = appState.selectedTrigger {
-                        ActionConfigView(keyboardMonitor: appState.keyboardMonitor, trigger: trigger, action: action)
-                            .id(action.id)
+                        AOMSection {
+                            ActionConfigView(keyboardMonitor: appState.keyboardMonitor, trigger: trigger, action: action)
+                                .id(action.id)
+                        }
                     } else if let trigger = appState.selectedTrigger {
-                        TriggerConfigView(trigger: trigger).id(trigger.id)
+                        AOMSection {
+                            TriggerConfigView(trigger: trigger).id(trigger.id)
+                        }
                     } else {
                         emptyState
                     }
                 }
-                .padding(16)
+                .padding(AOMSpace.x4)
             }
         }
-        .background(.background.opacity(0.22))
+        .background(AOMColor.canvas)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 44))
-                .foregroundColor(.secondary)
-            Text("Select a trigger or action to configure")
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        AOMEmptyState("Nothing Selected", systemImage: "slider.horizontal.3",
+                      message: "Select a trigger or action to configure.")
     }
 }
 
@@ -56,50 +48,36 @@ struct ConfigurationPanel: View {
 /// Everything the trigger does not use is hidden, and the sections that remain
 /// open by default are the ones a user changes while tuning a gesture; the rest
 /// start closed so the panel stays readable.
+///
+/// Drawn as a group inside the editor's card (`AOMEditorGroup`, e.2: never a
+/// card in a card): a hairline above, a monochrome symbol, the title,
+/// "Advanced" as its detail, an ⓘ for the explanation and a disclosure
+/// chevron. Pass `rows: true` when the content is `AOMSettingRow`s.
 struct ConfigSection<Content: View>: View {
     let title: String
     let systemImage: String
     var isAdvanced: Bool = false
+    var help: String?
+    var rows = false
     @State private var expanded: Bool
     @ViewBuilder var content: () -> Content
 
-    init(_ title: String, systemImage: String, isAdvanced: Bool = false,
+    init(_ title: String, systemImage: String, isAdvanced: Bool = false, help: String? = nil, rows: Bool = false,
          expanded: Bool = false, @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.systemImage = systemImage
         self.isAdvanced = isAdvanced
+        self.help = help
+        self.rows = rows
         self.content = content
         _expanded = State(initialValue: expanded)
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 10) { content() }
-                .padding(.top, 8)
-                .padding(.leading, 2)
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(isAdvanced ? AOMTheme.textSecondary : Color.accentColor)
-                    .frame(width: 16)
-                Text(title)
-                    .font(AOMType.headline)
-                if isAdvanced {
-                    Text("Advanced")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(AOMTheme.textSecondary)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(AOMTheme.track, in: Capsule())
-                }
-            }
+        AOMEditorGroup(title, symbol: systemImage, detail: isAdvanced ? "Advanced" : nil, help: help,
+                       rows: rows, isExpanded: $expanded) {
+            content()
         }
-        // An inset well inside the editor card, not a second card: one
-        // surface level, as in System Settings' grouped rows.
-        .padding(.horizontal, AOMSpace.s)
-        .padding(.vertical, 10)
-        .background(AOMTheme.cardAlt.opacity(0.6), in: RoundedRectangle(cornerRadius: AOMRadius.tile, style: .continuous))
     }
 }
 
@@ -128,57 +106,63 @@ struct TriggerConfigView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // Groups draw their own hairline above, so they stack with no gap
+        // (e.2: groups inside a card, never a card in a card).
+        VStack(alignment: .leading, spacing: 0) {
             if part == .all {
-            ConfigSection("Trigger", systemImage: "cursorarrow.click", expanded: true) {
-                TextField("Name", text: $name)
-                    .textFieldStyle(.roundedBorder)
+                ConfigSection("Trigger", systemImage: "cursorarrow.click", rows: true, expanded: true) {
+                    AOMSettingRow("Name") {
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: AOMEditorSize.rowField)
+                    }
                     .onChange(of: name) { _, newValue in
                         var updated = trigger
                         updated.name = newValue
                         appState.updateTrigger(updated)
                     }
-                Toggle("Enabled", isOn: $isEnabled)
-                    .onChange(of: isEnabled) { _, newValue in
-                        var updated = trigger
-                        updated.isEnabled = newValue
-                        appState.updateTrigger(updated)
-                    }
-            }
+                    AOMToggleRow("Enabled", isOn: $isEnabled)
+                        .onChange(of: isEnabled) { _, newValue in
+                            var updated = trigger
+                            updated.isEnabled = newValue
+                            appState.updateTrigger(updated)
+                        }
+                }
 
-            ConfigSection("Activation Scope", systemImage: "square.stack.3d.up", expanded: true) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Picker("Apply to", selection: Binding<String>(
-                        get: {
-                            if let id = trigger.activationGroupID { return "group:" + id.uuidString }
-                            return trigger.appBundleID.map { "app:" + $0 } ?? "global"
-                        },
-                        set: { value in
-                            update { trigger in
-                                if value.hasPrefix("group:"), let id = UUID(uuidString: String(value.dropFirst(6))) {
-                                    trigger.activationGroupID = id
-                                    trigger.appBundleID = nil
-                                } else {
-                                    trigger.activationGroupID = nil
-                                    trigger.appBundleID = value == "global" ? nil : String(value.dropFirst(4))
+                ConfigSection("Activation scope", systemImage: "square.stack.3d.up",
+                              help: "App-specific overrides group bindings; groups override global bindings.",
+                              rows: true, expanded: true) {
+                    AOMSettingRow("Apply to") {
+                        Picker("Apply to", selection: Binding<String>(
+                            get: {
+                                if let id = trigger.activationGroupID { return "group:" + id.uuidString }
+                                return trigger.appBundleID.map { "app:" + $0 } ?? "global"
+                            },
+                            set: { value in
+                                update { trigger in
+                                    if value.hasPrefix("group:"), let id = UUID(uuidString: String(value.dropFirst(6))) {
+                                        trigger.activationGroupID = id
+                                        trigger.appBundleID = nil
+                                    } else {
+                                        trigger.activationGroupID = nil
+                                        trigger.appBundleID = value == "global" ? nil : String(value.dropFirst(4))
+                                    }
                                 }
                             }
-                        }
-                    )) {
-                        Text("All Apps").tag("global")
-                        ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { target in
-                            if let bundleID = target.bundleID {
-                                Text(target.name).tag("app:" + bundleID)
+                        )) {
+                            Text("All Apps").tag("global")
+                            ForEach(appState.currentPreset.appTargets.filter { !$0.isGlobal }) { target in
+                                if let bundleID = target.bundleID {
+                                    Text(target.name).tag("app:" + bundleID)
+                                }
+                            }
+                            ForEach(appState.currentPreset.activationGroups) { group in
+                                Text("Group: " + group.name).tag("group:" + group.id.uuidString)
                             }
                         }
-                        ForEach(appState.currentPreset.activationGroups) { group in
-                            Text("Group: " + group.name).tag("group:" + group.id.uuidString)
-                        }
+                        .pickerStyle(.menu)
                     }
-                    Text("App-specific overrides group bindings; groups override global bindings.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.padding(8)
-            }
+                }
             }
 
             if part != .options, case .drawingPattern = trigger.input {
@@ -192,11 +176,14 @@ struct TriggerConfigView: View {
                 }.id(trigger.id)
             }
             if part != .options, case .keySequence(let strokes) = trigger.input {
-                ConfigSection("Key Sequence", systemImage: "keyboard.badge.ellipsis", expanded: true) {
-                    VStack(alignment: .leading, spacing: 9) {
+                ConfigSection("Key sequence", systemImage: "keyboard.badge.ellipsis",
+                              help: "Sequences observe physical key events and do not suppress ordinary typing.",
+                              rows: true, expanded: true) {
+                    VStack(alignment: .leading, spacing: AOMSpace.x2) {
                         Text(strokes.map(\.displayName).joined(separator: " → "))
-                            .font(.system(.body, design: .monospaced))
-                        HStack {
+                            .font(AOMFont.mono)
+                            .foregroundStyle(AOMColor.text)
+                        HStack(spacing: AOMSpace.x2) {
                             Button("Record Next Key") {
                                 appState.keyboardMonitor.startRecording { shortcut in
                                     if strokes.count < 6 {
@@ -208,131 +195,152 @@ struct TriggerConfigView: View {
                                 if strokes.count > 1 { update { $0.input = .keySequence(Array(strokes.dropLast())) } }
                             }.disabled(strokes.count <= 1)
                         }
-                        // Per-stroke optionality, following BTT's BTTKEYRequired.
-                        if strokes.count > 1 {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text("Required strokes").font(.caption).foregroundStyle(.secondary)
-                                ForEach(Array(strokes.enumerated()), id: \.offset) { index, stroke in
-                                    Toggle(isOn: Binding(
-                                        get: { stroke.isRequired },
-                                        set: { required in
-                                            var next = strokes
-                                            next[index].isRequired = required
-                                            update { $0.input = .keySequence(next) }
-                                        })) {
-                                            Text("\(index + 1). \(stroke.displayName)")
-                                                .font(.system(.caption, design: .monospaced))
-                                                .foregroundStyle(stroke.isRequired ? .primary : .secondary)
-                                        }
-                                        .toggleStyle(.checkbox)
-                                }
-                            }
-                            Toggle("Order matters", isOn: triggerBinding(\.sequenceOrderRelevant))
-                                .help("Off accepts the required strokes in any order.")
-                            if !strokes.contains(where: \.isRequired) {
-                                Label("Every stroke is optional, so this sequence never matches.",
-                                      systemImage: "exclamationmark.triangle")
-                                    .font(.caption2).foregroundStyle(.orange)
+                    }
+                    .aomRowInset()
+                    // Per-stroke optionality, following BTT's BTTKEYRequired.
+                    if strokes.count > 1 {
+                        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                            Text("Required strokes").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            ForEach(Array(strokes.enumerated()), id: \.offset) { index, stroke in
+                                Toggle(isOn: Binding(
+                                    get: { stroke.isRequired },
+                                    set: { required in
+                                        var next = strokes
+                                        next[index].isRequired = required
+                                        update { $0.input = .keySequence(next) }
+                                    })) {
+                                        Text("\(index + 1). \(stroke.displayName)")
+                                            .font(AOMFont.mono)
+                                            .foregroundStyle(stroke.isRequired ? AOMColor.text : AOMColor.textSecondary)
+                                    }
+                                    .toggleStyle(.checkbox)
                             }
                         }
-                        Stepper("Maximum gap: \(trigger.sequenceMaxGapMs) ms", value: triggerBinding(\.sequenceMaxGapMs), in: 100...2000, step: 50)
-                        if strokes.count == 1 {
-                            Toggle("Fire when held", isOn: Binding(get: { trigger.sequenceHoldMs > 0 }, set: { enabled in
-                                update { $0.sequenceHoldMs = enabled ? 600 : 0 }
-                            }))
-                            if trigger.sequenceHoldMs > 0 {
-                                Stepper("Hold for \(trigger.sequenceHoldMs) ms", value: triggerBinding(\.sequenceHoldMs), in: 300...5000, step: 100)
+                        .aomRowInset()
+                        AOMToggleRow("Order matters", help: "Off accepts the required strokes in any order.",
+                                     isOn: triggerBinding(\.sequenceOrderRelevant))
+                            .help("Off accepts the required strokes in any order.")
+                        if !strokes.contains(where: \.isRequired) {
+                            AOMEditorNote("Every stroke is optional, so this sequence never matches.", tone: .warning)
+                                .aomRowInset()
+                        }
+                    }
+                    AOMSettingRow("Maximum gap") {
+                        AOMRowStepper("Maximum gap", value: triggerBinding(\.sequenceMaxGapMs), in: 100...2000, step: 50,
+                                      display: "\(trigger.sequenceMaxGapMs) ms")
+                    }
+                    if strokes.count == 1 {
+                        AOMToggleRow("Fire when held", isOn: Binding(get: { trigger.sequenceHoldMs > 0 }, set: { enabled in
+                            update { $0.sequenceHoldMs = enabled ? 600 : 0 }
+                        }))
+                        if trigger.sequenceHoldMs > 0 {
+                            AOMSettingRow("Hold for", indent: true) {
+                                AOMRowStepper("Hold for", value: triggerBinding(\.sequenceHoldMs), in: 300...5000, step: 100,
+                                              display: "\(trigger.sequenceHoldMs) ms")
                             }
                         }
-                        Text("Sequences observe physical key events and do not suppress ordinary typing.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                    }
                 }
             }
             if part != .options, case .keyboardShortcut = trigger.input {
-                ConfigSection("Keyboard Shortcut", systemImage: "command.square", expanded: true) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button("Record Replacement Shortcut") {
-                            appState.keyboardMonitor.startRecording { shortcut in update { $0.input = .keyboardShortcut(shortcut) } }
-                        }
-                        Text("Press the new shortcut after clicking Record. Escape cancels recording.").font(.caption).foregroundStyle(.secondary)
-                    }.padding(8)
+                ConfigSection("Keyboard shortcut", systemImage: "command.square",
+                              help: "Press the new shortcut after clicking Record. Escape cancels recording.", expanded: true) {
+                    Button("Record Replacement Shortcut") {
+                        appState.keyboardMonitor.startRecording { shortcut in update { $0.input = .keyboardShortcut(shortcut) } }
+                    }
                 }
             }
             if part != .input {
-            ConfigSection("Execution", systemImage: "play.circle", isAdvanced: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Picker("When already running", selection: triggerBinding(\.executionPolicy)) {
-                        ForEach(ExecutionPolicy.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ConfigSection("Execution", systemImage: "play.circle", isAdvanced: true,
+                              help: "What happens when the automation fires again before it has finished, and for keys, when it fires and whether it repeats while held.",
+                              rows: true) {
+                    AOMSettingRow("When already running") {
+                        Picker("When already running", selection: triggerBinding(\.executionPolicy)) {
+                            ForEach(ExecutionPolicy.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.menu)
                     }
                     if case .keyboardShortcut = trigger.input {
-                        Picker("Fire on", selection: triggerBinding(\.keyboardPhase)) {
-                            ForEach(KeyboardPhase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        AOMSettingRow("Fire on") {
+                            Picker("Fire on", selection: triggerBinding(\.keyboardPhase)) {
+                                ForEach(KeyboardPhase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.menu)
                         }
                     }
                     if trigger.supportsHold && trigger.keyboardPhase == .keyDown {
-                        Toggle("Repeat while held", isOn: triggerBinding(\.repeatWhileHeld))
+                        AOMToggleRow("Repeat while held",
+                                     help: "Stops when released, modifiers change, or another app gains focus. Each iteration waits for the previous one.",
+                                     isOn: triggerBinding(\.repeatWhileHeld))
                         if trigger.repeatWhileHeld {
-                            Stepper("Initial delay: \(trigger.holdDelayMs) ms", value: triggerBinding(\.holdDelayMs), in: 100...5000, step: 50)
-                            Stepper("Repeat interval: \(trigger.holdIntervalMs) ms", value: triggerBinding(\.holdIntervalMs), in: 50...5000, step: 50)
-                            Text("Stops when released, modifiers change, or another app gains focus. Each iteration waits for the previous one.").font(.caption).foregroundStyle(.secondary)
+                            AOMSettingRow("Initial delay", indent: true) {
+                                AOMRowStepper("Initial delay", value: triggerBinding(\.holdDelayMs), in: 100...5000, step: 50,
+                                              display: "\(trigger.holdDelayMs) ms")
+                            }
+                            AOMSettingRow("Repeat interval", indent: true) {
+                                AOMRowStepper("Repeat interval", value: triggerBinding(\.holdIntervalMs), in: 50...5000, step: 50,
+                                              display: "\(trigger.holdIntervalMs) ms")
+                            }
                         }
                     }
-                }.padding(8)
-            }
+                }
             }
             if part != .input, trigger.input.category == .trackpad || trigger.input.category == .normalMouse {
-                ConfigSection("Required Modifiers", systemImage: "command", isAdvanced: true) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Match exact modifiers", isOn: Binding(get: { trigger.requiredModifiers != nil }, set: { value in
-                            update { $0.requiredModifiers = value ? 0 : nil }
-                        }))
-                        if trigger.requiredModifiers != nil {
-                            HStack {
+                ConfigSection("Required modifiers", systemImage: "command", isAdvanced: true,
+                              help: "With exact matching, the trigger fires only while exactly these modifier keys are held. None selected means no modifiers; Caps Lock is ignored.",
+                              rows: true) {
+                    AOMToggleRow("Match exact modifiers",
+                                 detail: trigger.requiredModifiers == nil ? "Any modifiers (legacy behavior)" : nil,
+                                 isOn: Binding(get: { trigger.requiredModifiers != nil }, set: { value in
+                        update { $0.requiredModifiers = value ? 0 : nil }
+                    }))
+                    if trigger.requiredModifiers != nil {
+                        AOMSettingRow("Modifiers", detail: "None selected means no modifiers", indent: true) {
+                            HStack(spacing: AOMSpace.x1) {
                                 modifierToggle("⌃", .control); modifierToggle("⌥", .option)
                                 modifierToggle("⇧", .shift); modifierToggle("⌘", .command); modifierToggle("fn", .function)
                             }
-                            Text("None selected means no modifiers. Caps Lock is ignored.").font(.caption).foregroundStyle(.secondary)
-                        } else { Text("Any modifiers (legacy behavior)").font(.caption).foregroundStyle(.secondary) }
-                    }.padding(8)
+                        }
+                    }
                 }
             }
             if part != .options, case .namedTrigger(let currentName) = trigger.input {
-                ConfigSection("Named Trigger", systemImage: "arrow.triangle.branch") {
+                ConfigSection("Named trigger", systemImage: "arrow.triangle.branch",
+                              help: "Other automations run this one with the Run Named Trigger action, by this exact name.") {
                     TextField("Callable name", text: Binding(get: { currentName }, set: { value in update { $0.input = .namedTrigger(value) } }))
-                        .textFieldStyle(.roundedBorder).padding(8)
+                        .textFieldStyle(.roundedBorder)
                 }
             }
 
-
             // Click suppression for mouse buttons and click-based trackpad gestures
             if part != .input, isClickBasedTrigger(trigger) {
-                ConfigSection("Click Suppression", systemImage: "hand.raised", expanded: true) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Suppress click pass-through", isOn: Binding(
-                            get: { trigger.suppressClick },
-                            set: { newValue in
-                                var updated = trigger
-                                updated.suppressClick = newValue
-                                appState.updateTrigger(updated)
-                            }
-                        ))
-                        Text("When enabled, the click will not be sent to the foreground application — only the mapped actions will fire.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(8)
+                ConfigSection("Click suppression", systemImage: "hand.raised",
+                              help: "When enabled, the click will not be sent to the foreground application — only the mapped actions will fire.",
+                              rows: true, expanded: true) {
+                    AOMToggleRow("Suppress click pass-through", isOn: Binding(
+                        get: { trigger.suppressClick },
+                        set: { newValue in
+                            var updated = trigger
+                            updated.suppressClick = newValue
+                            appState.updateTrigger(updated)
+                        }
+                    ))
                 }
             }
 
             // Force Touch stage triggers (3.3.3): the stage is their only setting.
             if part != .options, case .systemEvent(let kind) = trigger.input,
                let stageKey = BTTInputTriggerKinds.key(for: kind) {
-                ConfigSection("Force Touch Stage", systemImage: "hand.point.up.left", expanded: true) {
-                    Picker("Stage", selection: Binding(get: { stageKey }, set: { key in
-                        if let next = BTTInputTriggerKinds.kind(for: key) { update { $0.input = .systemEvent(next) } }
-                    })) {
-                        ForEach(BTTInputTriggerKinds.options, id: \.key) { Text($0.title).tag($0.key) }
+                ConfigSection("Force Touch stage", systemImage: "hand.point.up.left",
+                              help: "Stage 1 fires on the click, stage 2 on the deep press, once per press. Stage 2 needs Force Click and haptic feedback turned on in Trackpad settings.",
+                              rows: true, expanded: true) {
+                    AOMSettingRow("Stage") {
+                        Picker("Stage", selection: Binding(get: { stageKey }, set: { key in
+                            if let next = BTTInputTriggerKinds.kind(for: key) { update { $0.input = .systemEvent(next) } }
+                        })) {
+                            ForEach(BTTInputTriggerKinds.options, id: \.key) { Text($0.title).tag($0.key) }
+                        }
+                        .pickerStyle(.menu)
                     }
                 }
             }
@@ -341,12 +349,16 @@ struct TriggerConfigView: View {
             if part != .options, case .trackpadGesture(let gesture) = trigger.input {
                 GesturePreviewView(gesture: gesture)
                     .frame(maxWidth: .infinity)
+                    .padding(AOMSpace.x3)
+                    .overlay(alignment: .top) { AOMRowDivider(inset: 0, trailingInset: 0) }
             }
             // Continuous value binding (3.3.3): MIDI CC, Pitch Bend and pressure,
             // Force Touch stages and Scroll Up/Down can drive a value instead of
             // running the actions. The editor renders nothing for other inputs.
             if part != .input, ContinuousValueBinding.supports(trigger.input) {
-                ConfigSection("Value Binding", systemImage: "slider.horizontal.3", expanded: trigger.valueBinding != nil) {
+                ConfigSection("Value binding", systemImage: "slider.horizontal.3",
+                              help: "Lets this input set the system volume, an app's volume or the display brightness directly instead of running its actions.",
+                              rows: true, expanded: trigger.valueBinding != nil) {
                     ContinuousValueBindingEditor(binding: Binding(
                         get: { trigger.valueBinding },
                         set: { value in update { $0.valueBinding = value } }),
@@ -354,35 +366,27 @@ struct TriggerConfigView: View {
                 }
             }
             if part != .input, case .trackpadGesture(let gesture) = trigger.input {
-                Toggle("Haptic feedback on recognition", isOn: Binding(
-                    get: { trigger.hapticFeedback },
-                    set: { value in var updated = trigger; updated.hapticFeedback = value; appState.updateTrigger(updated) }
-                )).padding(.horizontal, 8)
+                ConfigSection("Feedback", systemImage: "waveform", rows: true, expanded: true) {
+                    AOMToggleRow("Haptic feedback on recognition", isOn: Binding(
+                        get: { trigger.hapticFeedback },
+                        set: { value in var updated = trigger; updated.hapticFeedback = value; appState.updateTrigger(updated) }
+                    ))
+                }
 
                 // TipTap sensitivity slider
                 if gesture == .tipTapLeft || gesture == .tipTapRight || gesture == .tipTapMiddle {
-                    ConfigSection("TipTap Sensitivity", systemImage: "hand.tap", expanded: true) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Min. rest time:")
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(tipTapMinRestTime * 1000)) ms")
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.accentColor)
-                            }
-                            Slider(value: $tipTapMinRestTime, in: 0.02...0.4, step: 0.01)
-                            HStack {
-                                Text("Sensitive")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("Fewer false positives")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                    ConfigSection("TipTap sensitivity", systemImage: "hand.tap",
+                                  help: "How long the resting finger must be down before a tap counts. Shorter is more sensitive; longer gives fewer false positives.",
+                                  rows: true, expanded: true) {
+                        AOMSettingRow("Minimum rest time") {
+                            HStack(spacing: AOMSpace.x2) {
+                                Slider(value: $tipTapMinRestTime, in: 0.02...0.4, step: 0.01)
+                                    .frame(width: AOMEditorSize.rowSlider)
+                                    .accessibilityLabel("Minimum rest time")
+                                    .accessibilityValue("\(Int(tipTapMinRestTime * 1000)) ms")
+                                AOMRowValue("\(Int(tipTapMinRestTime * 1000)) ms")
                             }
                         }
-                        .padding(8)
                     }
                 }
 
@@ -390,41 +394,27 @@ struct TriggerConfigView: View {
                 if [.circleClockwise, .circleCounterClockwise, .drawTriangle,
                     .leftEdgeSlideUp, .leftEdgeSlideDown, .rightEdgeSlideUp, .rightEdgeSlideDown]
                     .contains(gesture) {
-                    ConfigSection("Mouse Suppression", systemImage: "cursorarrow.slash", isAdvanced: true) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Suppress mouse while drawing", isOn: $suppressMouseDuringDrawing)
-                            Text("Disables mouse movement during drawings and edge sliders to prevent accidental clicks.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(8)
+                    ConfigSection("Mouse suppression", systemImage: "cursorarrow.slash", isAdvanced: true,
+                                  help: "Disables mouse movement during drawings and edge sliders to prevent accidental clicks.",
+                                  rows: true) {
+                        AOMToggleRow("Suppress mouse while drawing", isOn: $suppressMouseDuringDrawing)
                     }
                 }
 
                 // Press-drag sensitivity slider
                 if gesture == .twoFingerPressDragLeft || gesture == .twoFingerPressDragRight {
-                    ConfigSection("Press-Drag Sensitivity", systemImage: "hand.draw", expanded: true) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Min. drag distance:")
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(pressDragThreshold)) pt")
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.accentColor)
-                            }
-                            Slider(value: $pressDragThreshold, in: 10...600, step: 10)
-                            HStack {
-                                Text("Sensitive")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("Long swipe")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
+                    ConfigSection("Press-drag sensitivity", systemImage: "hand.draw",
+                                  help: "How far you drag after pressing before the gesture counts. Shorter is more sensitive; longer needs a long swipe.",
+                                  rows: true, expanded: true) {
+                        AOMSettingRow("Minimum drag distance") {
+                            HStack(spacing: AOMSpace.x2) {
+                                Slider(value: $pressDragThreshold, in: 10...600, step: 10)
+                                    .frame(width: AOMEditorSize.rowSlider)
+                                    .accessibilityLabel("Minimum drag distance")
+                                    .accessibilityValue("\(Int(pressDragThreshold)) pt")
+                                AOMRowValue("\(Int(pressDragThreshold)) pt")
                             }
                         }
-                        .padding(8)
                     }
                 }
 
@@ -434,11 +424,9 @@ struct TriggerConfigView: View {
                     .oneFingerSwipeLeftOnTopEdge, .oneFingerSwipeRightOnTopEdge,
                     .oneFingerSwipeLeftOnBottomEdge, .oneFingerSwipeRightOnBottomEdge]
                     .contains(gesture) {
-                    ConfigSection("Edge Swipe", systemImage: "rectangle.portrait.and.arrow.right", isAdvanced: true) {
-                        Text("The swipe must start within 12% of the edge and travel about a tenth of the pad. "
-                             + "A swipe that begins on the body of the trackpad is not an edge swipe.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                    ConfigSection("Edge swipe", systemImage: "rectangle.portrait.and.arrow.right", isAdvanced: true) {
+                        AOMEditorNote("The swipe must start within 12% of the edge and travel about a tenth of the pad. "
+                                      + "A swipe that begins on the body of the trackpad is not an edge swipe.")
                     }
                 }
                 if [.twoFingerSwipeUp, .twoFingerSwipeDown, .twoFingerSwipeLeft, .twoFingerSwipeRight,
@@ -1056,37 +1044,25 @@ struct SwipeVelocityConfig: View {
     }
 
     var body: some View {
-        ConfigSection("Swipe Sensitivity", systemImage: "speedometer", expanded: true) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Min. velocity:")
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("\(Int(velocity)) pt/s")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.accentColor)
+        ConfigSection("Swipe sensitivity", systemImage: "speedometer",
+                      help: "Higher values require a faster flick, avoiding conflicts with normal scrolling. Use Global Default removes this swipe's own value.",
+                      rows: true, expanded: true) {
+            AOMSettingRow("Minimum velocity") {
+                HStack(spacing: AOMSpace.x2) {
+                    Slider(value: Binding(get: { velocity }, set: {
+                        velocity = $0; UserDefaults.standard.set($0, forKey: defaultsKey)
+                    }), in: 50...2000, step: 50)
+                        .frame(width: AOMEditorSize.rowSlider)
+                        .accessibilityLabel("Minimum velocity")
+                        .accessibilityValue("\(Int(velocity)) pt/s")
+                    AOMRowValue("\(Int(velocity)) pt/s")
                 }
-                Slider(value: Binding(get: { velocity }, set: {
-                    velocity = $0; UserDefaults.standard.set($0, forKey: defaultsKey)
-                }), in: 50...2000, step: 50)
-                HStack {
-                    Text("Any swipe")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Text("Fast flick only")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                Button("Use Global Default") {
-                    UserDefaults.standard.removeObject(forKey: defaultsKey)
-                    velocity = GestureSensitivity.velocity(for: gesture)
-                }
-                Text("Higher values require a faster flick, avoiding conflicts with normal scrolling.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
-            .padding(8)
+            Button("Use Global Default") {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+                velocity = GestureSensitivity.velocity(for: gesture)
+            }
+            .aomRowInset()
         }
     }
 }
