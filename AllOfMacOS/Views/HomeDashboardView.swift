@@ -36,8 +36,11 @@ struct AOMHomeView: View {
     @State private var titleBarSnapOn = false
     @State private var outputDevice: String?
     @State private var runStates: [UUID: AOMRunState] = [:]
-    /// Session-only: "Skip for Now" on the setup checklist, dismissed suggestions.
-    @State private var setupSkipped = false
+    /// "Skip for Now" on the setup checklist lives in scene storage, not
+    /// @State: the page is rebuilt on every tab switch, and a skipped setup
+    /// must not come back when you return to Workspace. Dismissed suggestions
+    /// stay session-only.
+    @SceneStorage("workspace.setupSkipped") private var setupSkipped = false
     @State private var dismissedSuggestions: Set<String> = []
     @State private var showsAllAttention = false
 
