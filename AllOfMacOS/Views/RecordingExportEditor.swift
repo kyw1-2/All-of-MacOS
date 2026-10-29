@@ -37,6 +37,9 @@ struct RecordingExportEditor: View {
     @State private var outputResolution: AOMStudioResolution = .source
     @State private var cursorStyle: AOMStudioCursorStyle = .arrow
     @State private var showRipples = true
+    @State private var clickStyle = AOMClickStyle.legacy
+    @State private var highlightOn = false
+    @State private var highlight = AOMCursorHighlight()
     @State private var showKeys = true
     @State private var keyScale = 1.0
     @State private var keyY = 0.9
@@ -227,6 +230,9 @@ struct RecordingExportEditor: View {
                     restore(project.settings)
                     muteAudio = project.muteAudio
                     status = "Recovered saved Studio project."
+                } else {
+                    // Start from what the recording's Presentation showed.
+                    restore(AOMStudioSettings.recordingDefaults(track: editableCursorTrack))
                 }
                 updatePreview()
             } catch {
@@ -349,6 +355,11 @@ struct RecordingExportEditor: View {
                 Picker("Cursor", selection: $cursorStyle) { ForEach(AOMStudioCursorStyle.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
                 Toggle("Click ripples", isOn: $showRipples)
             }
+            if editableCursorTrack?.pointerInVideo == true {
+                Text("The system pointer is already in this video; the cursor track adds only the highlight.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            clickAndHighlightControls
             if !keyEvents.isEmpty {
                 Toggle("Shortcut layer", isOn: $showKeys)
                 HStack { Text("Size"); Slider(value: $keyScale, in: 0.5...2); Text("Vertical position"); Slider(value: $keyY, in: 0...1) }
@@ -389,7 +400,39 @@ struct RecordingExportEditor: View {
                           keystrokeScale: keyScale, keystrokeY: keyY, showCamera: showCamera,
                           cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraRoundness: cameraRoundness,
                           aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle,
-                          background: background)
+                          background: background, clickStyle: clickStyle,
+                          cursorHighlight: highlightOn ? highlight : nil)
+    }
+
+    // MARK: - Click marks and cursor highlight (3.3.3, C06)
+
+    private var clickAndHighlightControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Picker("Click style", selection: $clickStyle.shape) {
+                    ForEach(AOMClickRingStyle.allCases) { Text($0.displayName).tag($0) }
+                }
+                .frame(width: 220)
+                ColorPicker("Left click", selection: Self.cgColor($clickStyle.leftColor)).fixedSize()
+                ColorPicker("Right click", selection: Self.cgColor($clickStyle.rightColor)).fixedSize()
+            }
+            HStack(spacing: 8) {
+                Text("Click size")
+                Slider(value: $clickStyle.size, in: AOMClickStyle.sizeRange)
+                Text("Duration")
+                Slider(value: $clickStyle.duration, in: AOMClickStyle.durationRange)
+                Text(String(format: "%.2f s", clickStyle.duration)).monospacedDigit().frame(width: 52)
+            }
+            .font(.caption)
+            HStack(spacing: 10) {
+                Toggle("Cursor highlight", isOn: $highlightOn)
+                ColorPicker("Color", selection: Self.cgColor($highlight.color)).fixedSize().disabled(!highlightOn)
+                Text("Size").font(.caption)
+                Slider(value: $highlight.size, in: AOMCursorHighlight.sizeRange).disabled(!highlightOn)
+            }
+            .disabled(editableCursorTrack?.points.isEmpty ?? true)
+        }
+        .disabled(isExporting)
     }
 
     // MARK: - Background (3.3.3, C05)
@@ -619,6 +662,9 @@ struct RecordingExportEditor: View {
         }
         motionBlurRadius = settings.motionBlurRadius; cursorSize = settings.cursorOverlaySize
         includeSmoothedCursor = !settings.cursorPoints.isEmpty; cursorStyle = settings.cursorStyle
+        clickStyle = settings.clickStyle ?? .legacy
+        highlightOn = settings.cursorHighlight != nil
+        highlight = settings.cursorHighlight ?? AOMCursorHighlight()
         showRipples = settings.showClickRipples; keyEvents = settings.keystrokes; showKeys = settings.showKeystrokes
         keyScale = settings.keystrokeScale; keyY = settings.keystrokeY; showCamera = settings.showCamera
         keyStyle = settings.keystrokeStyle ?? .dark

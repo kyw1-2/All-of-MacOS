@@ -246,7 +246,7 @@ enum CaptureSettings {
          "AOMCaptureRecordingKeystrokeSize", "AOMCaptureRecordingKeystrokePosition",
          "AOMCaptureRecordingKeystrokeAllKeys", "AOMCaptureRecordingFocus", "AOMCaptureRecordingFocusOn",
          "AOMCaptureRecordingFocusOff", "AOMAnnotationStylePresets", "AOMAnnotationMyColors",
-         "AOMAnnotationBackgroundPresets", "AOMAnnotationBackgroundAutoPresetID"]
+         "AOMAnnotationBackgroundPresets", "AOMAnnotationBackgroundAutoPresetID"] + recording333BackedUpKeys
     }
 
     /// Never in a backup: they describe this Mac, not the user's choices.
@@ -625,5 +625,149 @@ enum KeystrokeOverlaySize: String, CaseIterable, Identifiable {
         case .medium: return 1
         case .large: return 1.4
         }
+    }
+}
+
+// MARK: - Recording display options (3.3.3, C06)
+
+/// Modifier keys that make a key press a shortcut worth showing. ⇧ is off by
+/// default: with it, Shift-typed capitals and symbols count as shortcuts.
+enum KeystrokeShortcutModifier: String, CaseIterable, Identifiable {
+    case command, control, option, shift
+    var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .command: return "⌘"
+        case .control: return "⌃"
+        case .option: return "⌥"
+        case .shift: return "⇧"
+        }
+    }
+    var displayName: String { "\(symbol) \(rawValue.capitalized)" }
+    /// What AOM showed before 3.3.3.
+    static let defaultSet: Set<KeystrokeShortcutModifier> = [.command, .control, .option]
+
+    /// Stored as a comma-separated list of raw values, e.g. "command,option".
+    static func parse(_ text: String?) -> Set<KeystrokeShortcutModifier> {
+        guard let text else { return defaultSet }
+        return Set(text.split(separator: ",").compactMap { KeystrokeShortcutModifier(rawValue: String($0).trimmingCharacters(in: .whitespaces)) })
+    }
+    static func serialize(_ set: Set<KeystrokeShortcutModifier>) -> String {
+        allCases.filter(set.contains).map(\.rawValue).joined(separator: ",")
+    }
+}
+
+extension CaptureSettings {
+    enum RecordingKey {
+        static let showsCursor = "AOMCaptureRecordingShowsCursor"
+        static let cursorSize = "AOMCaptureRecordingCursorSize"
+        static let cursorHighlight = "AOMCaptureRecordingCursorHighlight"
+        static let cursorHighlightColor = "AOMCaptureRecordingCursorHighlightColor"
+        static let cursorHighlightSize = "AOMCaptureRecordingCursorHighlightSize"
+        static let clickStyle = "AOMCaptureRecordingClickStyle"
+        static let clickColor = "AOMCaptureRecordingClickColor"
+        static let rightClickColor = "AOMCaptureRecordingRightClickColor"
+        static let clickSize = "AOMCaptureRecordingClickSize"
+        static let clickDuration = "AOMCaptureRecordingClickDuration"
+        static let keystrokeModifiers = "AOMCaptureRecordingKeystrokeModifiers"
+    }
+
+    /// The 3.3.3 recording keys a profile backup carries.
+    static var recording333BackedUpKeys: [String] {
+        [RecordingKey.showsCursor, RecordingKey.cursorSize, RecordingKey.cursorHighlight, RecordingKey.cursorHighlightColor,
+         RecordingKey.cursorHighlightSize, RecordingKey.clickStyle, RecordingKey.clickColor, RecordingKey.rightClickColor,
+         RecordingKey.clickSize, RecordingKey.clickDuration, RecordingKey.keystrokeModifiers]
+    }
+
+    private static func clamped(_ key: String, _ range: ClosedRange<Double>, default value: Double) -> Double {
+        guard let stored = d.object(forKey: key) as? Double, stored.isFinite else { return value }
+        return min(range.upperBound, max(range.lowerBound, stored))
+    }
+    private static func color(_ key: String, default value: AOMRGBAColor) -> AOMRGBAColor {
+        d.string(forKey: key).flatMap(AOMRGBAColor.init(hex:)) ?? value
+    }
+
+    /// The user's explicit "Show Cursor" choice for recordings, nil until set.
+    static var recordingShowsCursorChoice: Bool? { d.object(forKey: RecordingKey.showsCursor) as? Bool }
+
+    /// Whether recordings show the pointer. Independent of Show Mouse Clicks
+    /// once chosen (audit CS-38: clicks used to force the system pointer on).
+    /// Until then the pre-3.3.3 rule applies to the system pointer: the
+    /// screenshot Show Cursor option or Show Mouse Clicks.
+    static var recordingShowsCursor: Bool {
+        get { recordingShowsCursorChoice ?? (showsCursor || recordingClickIndicators) }
+        set { d.set(newValue, forKey: RecordingKey.showsCursor) }
+    }
+
+    /// Size of the editable pointer drawn from the cursor track (0.5…3).
+    static var recordingCursorSize: Double {
+        get { clamped(RecordingKey.cursorSize, 0.5...3, default: 1) }
+        set { d.set(newValue.isFinite ? min(3, max(0.5, newValue)) : 1, forKey: RecordingKey.cursorSize) }
+    }
+
+    /// A halo under the pointer, drawn at export from the cursor track.
+    static var recordingCursorHighlight: Bool {
+        get { d.bool(forKey: RecordingKey.cursorHighlight) }
+        set { d.set(newValue, forKey: RecordingKey.cursorHighlight) }
+    }
+
+    static var recordingCursorHighlightStyle: AOMCursorHighlight {
+        get {
+            AOMCursorHighlight(color: color(RecordingKey.cursorHighlightColor, default: AOMCursorHighlight.defaultColor),
+                               size: clamped(RecordingKey.cursorHighlightSize, AOMCursorHighlight.sizeRange, default: 1))
+        }
+        set {
+            d.set(newValue.color.hex, forKey: RecordingKey.cursorHighlightColor)
+            d.set(newValue.clampedSize, forKey: RecordingKey.cursorHighlightSize)
+        }
+    }
+
+    /// Click marks for recordings: shape, left and right colours, size, duration.
+    static var recordingClickStyle: AOMClickStyle {
+        get {
+            AOMClickStyle(shape: AOMClickRingStyle(rawValue: d.string(forKey: RecordingKey.clickStyle) ?? "") ?? .ring,
+                          leftColor: color(RecordingKey.clickColor, default: AOMClickStyle.defaultLeftColor),
+                          rightColor: color(RecordingKey.rightClickColor, default: AOMClickStyle.defaultRightColor),
+                          size: clamped(RecordingKey.clickSize, AOMClickStyle.sizeRange, default: 1),
+                          duration: clamped(RecordingKey.clickDuration, AOMClickStyle.durationRange, default: 0.65))
+        }
+        set {
+            d.set(newValue.shape.rawValue, forKey: RecordingKey.clickStyle)
+            d.set(newValue.leftColor.hex, forKey: RecordingKey.clickColor)
+            d.set(newValue.rightColor.hex, forKey: RecordingKey.rightClickColor)
+            d.set(newValue.clampedSize, forKey: RecordingKey.clickSize)
+            d.set(newValue.clampedDuration, forKey: RecordingKey.clickDuration)
+        }
+    }
+
+    /// Which modifiers make a key press count as a shortcut for the keystroke
+    /// overlay (default ⌘ ⌃ ⌥, as before 3.3.3).
+    static var recordingKeystrokeModifiers: Set<KeystrokeShortcutModifier> {
+        get { KeystrokeShortcutModifier.parse(d.string(forKey: RecordingKey.keystrokeModifiers)) }
+        set { d.set(KeystrokeShortcutModifier.serialize(newValue), forKey: RecordingKey.keystrokeModifiers) }
+    }
+}
+
+extension AOMStudioSettings {
+    /// What a finished recording's Presentation shows, and where Edit
+    /// Recording starts when no Studio project was saved yet.
+    static func recordingDefaults(track: AOMCursorTrack?) -> AOMStudioSettings {
+        let showsClicks = CaptureSettings.recordingClickIndicators
+        var style = AOMStudioSettings(cursorPoints: track?.points ?? [],
+                                      clicks: showsClicks ? (track?.clicks ?? []) : [],
+                                      keystrokes: track?.keystrokes ?? [])
+        style.showClickRipples = showsClicks
+        style.clickStyle = CaptureSettings.recordingClickStyle
+        style.cursorOverlaySize = CaptureSettings.recordingCursorSize
+        // An editable track replaces the pointer; it stays visible unless the
+        // user chose to hide it. A track kept only for the highlight never
+        // draws a second pointer over the one already in the video.
+        let pointerWanted = CaptureSettings.recordingShowsCursorChoice ?? true
+        style.cursorStyle = track?.pointerInVideo == true || !pointerWanted ? .hidden : .arrow
+        style.cursorHighlight = CaptureSettings.recordingCursorHighlight ? CaptureSettings.recordingCursorHighlightStyle : nil
+        style.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
+        style.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
+        style.keystrokeStyle = CaptureSettings.recordingKeystrokeStyle
+        return style
     }
 }

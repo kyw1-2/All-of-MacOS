@@ -35,6 +35,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var recordedScale: CGFloat = 1
     private var outputGIF = false
     private var recordsEditableCursor = false
+    /// 3.3.3: the pointer path is also kept for the cursor highlight.
+    private var recordsPointerPath = false
+    /// ScreenCaptureKit draws the system pointer into this take.
+    private var capturesSystemPointer = false
     private var gifFPS = 10
     private var outputSize = CGSize.zero
     /// Free space required on the save volume before a take starts.
@@ -127,6 +131,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
             if !isRecording { RecordingCameraBubble.shared.hide() }
         }
         recordsEditableCursor = CaptureSettings.recordingCursorMotion
+        capturesSystemPointer = Self.capturesSystemPointer(editableTrack: recordsEditableCursor,
+                                                           showsCursor: CaptureSettings.recordingShowsCursor)
+        recordsPointerPath = recordsEditableCursor || CaptureSettings.recordingCursorHighlight
         outputGIF = UserDefaults.standard.string(forKey: "AOMCaptureRecordingOutputFormat") == "gif"
         gifFPS = max(1, min(30, UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS") == 0 ? 10 : UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS")))
         let source = outputGIF ? RecordingAudioSource.off : CaptureSettings.recordingAudioSource
@@ -250,7 +257,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 config.sourceRect = piece.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
                 config.width = max(2, Int(piece.width * effectiveScale))
                 config.height = max(2, Int(piece.height * effectiveScale))
-                config.showsCursor = !recordsEditableCursor && (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
+                config.showsCursor = capturesSystemPointer
                 if #available(macOS 15.0, *) {
                     config.showMouseClicks = false // Editable local click events are rendered in Studio.
                     config.captureMicrophone = wantsMic && index == 0
@@ -324,7 +331,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let needsMix = audioInput != nil && microphoneInput != nil
         let thumb = firstImage ?? Self.makeFallbackThumbnail(size: recordingRect.size)
         let rect = recordingRect; let scale = recordedScale; let points = cursorSamples.points
-        let telemetry = AOMCursorTrack(points: recordsEditableCursor ? points : [], clicks: clickEvents, keystrokes: keyEvents)
+        let telemetry = currentTrack(points: points)
         let overflowed = inputEventsOverflowed
         let interruption = self.interruption
         let cameraWriter = cameraWriter
@@ -357,10 +364,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if overflowed {
             warnings.append("More than 60,000 clicks or keystrokes: later ones are not in the editable overlay.")
         }
-        var defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
-        defaultStyle.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
-        defaultStyle.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
-        defaultStyle.keystrokeStyle = CaptureSettings.recordingKeystrokeStyle
+        // The Presentation applies the recording's display options (click
+        // style, pointer size and visibility, highlight, keystroke badges).
+        var defaultStyle = AOMStudioSettings.recordingDefaults(track: telemetry)
         // The camera layer starts where the live bubble was left, round like it.
         if let bubblePlacement, cameraWriter != nil {
             defaultStyle.cameraX = bubblePlacement.x
@@ -603,17 +609,53 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         // Password fields (Secure Input) are always excluded above.
         guard let label = Self.keystrokeLabel(keyCode: event.keyCode, flags: event.modifierFlags,
                                               characters: event.charactersIgnoringModifiers,
-                                              allKeys: CaptureSettings.recordingKeystrokesAllKeys) else { return }
+                                              allKeys: CaptureSettings.recordingKeystrokesAllKeys,
+                                              shortcutModifiers: Self.modifierFlags(CaptureSettings.recordingKeystrokeModifiers)) else { return }
         guard let time = recordingTime() else { return }
         guard keyEvents.count < 60_000 else { inputEventsOverflowed = true; return }
         keyEvents.append(AOMKeystrokeEvent(time: time, label: label))
     }
 
-    /// The badge text for a key press, or nil when it is not shown.
+    /// The input track as it stands: pointer samples only when they replace
+    /// the pointer or feed the highlight, flagged when the system pointer is
+    /// already in the video.
+    private func currentTrack(points: [AOMCursorPoint]) -> AOMCursorTrack {
+        AOMCursorTrack(points: recordsPointerPath ? points : [], clicks: clickEvents, keystrokes: keyEvents,
+                       pointerInVideo: recordsPointerPath ? capturesSystemPointer : nil)
+    }
+
+    /// ScreenCaptureKit draws the system pointer only when the user wants a
+    /// pointer and no editable one replaces it. Show Mouse Clicks no longer
+    /// forces it on (audit CS-38).
+    nonisolated static func capturesSystemPointer(editableTrack: Bool, showsCursor: Bool) -> Bool {
+        !editableTrack && showsCursor
+    }
+
+    nonisolated static func modifierFlags(_ modifiers: Set<KeystrokeShortcutModifier>) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if modifiers.contains(.command) { flags.insert(.command) }
+        if modifiers.contains(.control) { flags.insert(.control) }
+        if modifiers.contains(.option) { flags.insert(.option) }
+        if modifiers.contains(.shift) { flags.insert(.shift) }
+        return flags
+    }
+
+    /// 0 left, 1 right, 2 other. A ⌃-click is a right click on macOS, so it
+    /// takes the right-click colour.
+    nonisolated static func clickButton(type: NSEvent.EventType, buttonNumber: Int, flags: NSEvent.ModifierFlags) -> Int {
+        if type == .rightMouseDown || (type == .leftMouseDown && flags.contains(.control)) { return 1 }
+        if type == .leftMouseDown { return 0 }
+        return min(2, max(0, buttonNumber))
+    }
+
+    /// The badge text for a key press, or nil when it is not shown. A key
+    /// counts as a shortcut when one of `shortcutModifiers` is held (3.3.3:
+    /// the user picks them; ⌘ ⌃ ⌥ before).
     nonisolated static func keystrokeLabel(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?,
-                                           allKeys: Bool) -> String? {
+                                           allKeys: Bool,
+                                           shortcutModifiers: NSEvent.ModifierFlags = [.command, .control, .option]) -> String? {
         let special: [UInt16: String] = [36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-        let shortcut = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        let shortcut = !flags.intersection(shortcutModifiers.intersection([.command, .control, .option, .shift])).isEmpty
         guard shortcut || special[keyCode] != nil || allKeys else { return nil }
         let modifiers = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "")
             + (flags.contains(.shift) && shortcut ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
@@ -643,7 +685,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let x = (mouse.x - recordingRect.minX) / recordingRect.width
         let y = ((NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y - recordingRect.minY) / recordingRect.height
         guard (0...1).contains(x), (0...1).contains(y) else { return }
-        clickEvents.append(AOMClickEvent(time: time, x: x, y: y, button: min(2, event.buttonNumber)))
+        clickEvents.append(AOMClickEvent(time: time, x: x, y: y,
+                                         button: Self.clickButton(type: event.type, buttonNumber: event.buttonNumber,
+                                                                  flags: event.modifierFlags)))
     }
 
     private func stopOverlays() {
@@ -673,7 +717,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if seconds - lastSidecarWrite >= 2, !sidecarWriteInFlight, let url = outputURL {
             lastSidecarWrite = seconds
             sidecarWriteInFlight = true
-            let track = AOMCursorTrack(points: recordsEditableCursor ? cursorSamples.points : [], clicks: clickEvents, keystrokes: keyEvents)
+            let track = currentTrack(points: cursorSamples.points)
             sidecarQueue.async { [weak self] in
                 let failure: String?
                 do { try track.write(for: url); failure = nil } catch { failure = error.localizedDescription }

@@ -287,3 +287,262 @@ final class CaptureRecording333BackgroundTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), before, "the source movie is never changed")
     }
 }
+
+/// Runs `body` and puts the listed UserDefaults keys back as they were.
+private func preservingDefaults<T>(_ keys: [String], _ body: () async throws -> T) async rethrows -> T {
+    let saved = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+    defer {
+        for (key, value) in saved {
+            if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+    }
+    return try await body()
+}
+
+// MARK: - C06 click display options
+
+final class CaptureRecording333ClickTests: XCTestCase {
+    private let frame = blackFrame.cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+    private let redColor = AOMRGBAColor(red: 1, green: 0, blue: 0)
+    private let greenColor = AOMRGBAColor(red: 0, green: 1, blue: 0)
+
+    private func render(clicks: [AOMClickEvent], style: AOMClickStyle?, at time: Double) -> Pixels {
+        var settings = AOMStudioSettings(clicks: clicks)
+        settings.clickStyle = style
+        return Pixels(AOMStudioRenderer.frame(frame, time: time, settings: settings))
+    }
+
+    func testClickMarksUseTheLeftAndTheRightClickColour() {
+        let clicks = [AOMClickEvent(time: 0, x: 0.25, y: 0.5, button: 0), AOMClickEvent(time: 0, x: 0.75, y: 0.5, button: 1)]
+        let style = AOMClickStyle(shape: .filled, leftColor: redColor, rightColor: greenColor, size: 1, duration: 1)
+        let pixels = render(clicks: clicks, style: style, at: 0.3)
+        let left = pixels.rgb(50, 50), right = pixels.rgb(150, 50)
+        XCTAssertGreaterThan(left.r, 0.2); XCTAssertLessThan(left.g, 0.05)
+        XCTAssertGreaterThan(right.g, 0.2); XCTAssertLessThan(right.r, 0.05)
+        assertColor(pixels.rgb(100, 50), is: black, "nothing between the clicks")
+    }
+
+    /// The strongest red on the horizontal line through a mark, near `radius`.
+    private func peak(_ pixels: Pixels, centreX: Int, radius: Int) -> Double {
+        (-2...2).map { pixels.rgb(centreX + radius + $0, 50).r }.max() ?? 0
+    }
+
+    func testRingFilledAndDoubleRingShapes() {
+        let click = [AOMClickEvent(time: 0, x: 0.25, y: 0.5)]
+        // At 30 % of a 1 s mark the ring has a 17 px radius.
+        let ring = render(clicks: click, style: AOMClickStyle(shape: .ring, leftColor: redColor, duration: 1), at: 0.3)
+        assertColor(ring.rgb(50, 50), is: black, "a ring leaves its centre clear")
+        XCTAssertGreaterThan(peak(ring, centreX: 50, radius: 17), 0.15, "the ring itself")
+        let filled = render(clicks: click, style: AOMClickStyle(shape: .filled, leftColor: redColor, duration: 1), at: 0.3)
+        XCTAssertGreaterThan(filled.rgb(50, 50).r, 0.2, "a filled mark covers its centre")
+        let double = render(clicks: click, style: AOMClickStyle(shape: .double, leftColor: redColor, duration: 1), at: 0.3)
+        XCTAssertGreaterThan(peak(double, centreX: 50, radius: 17), 0.15, "outer ring")
+        XCTAssertGreaterThan(peak(double, centreX: 50, radius: 8), 0.15, "inner ring at 8.5 px")
+        assertColor(double.rgb(50, 50), is: black)
+    }
+
+    func testClickDurationAndSizeAreApplied() {
+        let click = AOMClickEvent(time: 0, x: 0.25, y: 0.5)
+        XCTAssertEqual(AOMStudioTimeline.activeClicks(at: 1.0, clicks: [click], duration: 1.5).count, 1)
+        XCTAssertEqual(AOMStudioTimeline.activeClicks(at: 1.0, clicks: [click]).count, 0, "0.65 s by default, as before")
+        XCTAssertEqual(AOMStudioTimeline.activeClicks(at: 1.0, clicks: [click], duration: .nan).count, 0)
+        let long = render(clicks: [click], style: AOMClickStyle(shape: .filled, leftColor: redColor, duration: 1.5), at: 1.0)
+        XCTAssertGreaterThan(long.rgb(50, 50).r, 0.1, "still visible after a second")
+        let legacy = render(clicks: [click], style: nil, at: 1.0)
+        assertColor(legacy.rgb(50, 50), is: black)
+
+        let small = render(clicks: [click], style: AOMClickStyle(leftColor: redColor, size: 1, duration: 1), at: 0.3)
+        let large = render(clicks: [click], style: AOMClickStyle(leftColor: redColor, size: 2, duration: 1), at: 0.3)
+        // Twice the size: a 34 px radius instead of 17.
+        XCTAssertGreaterThan(peak(large, centreX: 50, radius: 34), 0.15)
+        XCTAssertLessThan(peak(small, centreX: 50, radius: 34), 0.02)
+        XCTAssertEqual(AOMClickStyle(size: 99, duration: -1).clampedSize, 3)
+        XCTAssertEqual(AOMClickStyle(size: 99, duration: -1).clampedDuration, 0.2)
+    }
+
+    func testOldProjectsKeepTheBlueRingForEveryButton() {
+        let pixels = render(clicks: [AOMClickEvent(time: 0, x: 0.25, y: 0.5, button: 1)], style: nil, at: 0.2)
+        // 0.2 s into the 0.65 s ring: radius 8 + 0.31 × 30 ≈ 17 px.
+        let onRing = (-2...2).map { pixels.rgb(50 + 17 + $0, 50) }.max { $0.b < $1.b }!
+        XCTAssertGreaterThan(onRing.b, 0.12)
+        XCTAssertGreaterThan(onRing.b, onRing.r + 0.1, "blue, not the new orange right-click colour")
+        XCTAssertEqual(AOMClickStyle.legacy.color(button: 1), AOMClickStyle.defaultLeftColor)
+        XCTAssertNotEqual(AOMClickStyle().color(button: 1), AOMClickStyle().color(button: 0))
+    }
+
+    func testCursorHighlightIsDrawnEvenWhenThePointerIsHidden() {
+        let points = [AOMCursorPoint(time: 0, x: 0.5, y: 0.5), AOMCursorPoint(time: 1, x: 0.5, y: 0.5)]
+        var settings = AOMStudioSettings(cursorPoints: points, cursorStyle: .hidden)
+        assertColor(Pixels(AOMStudioRenderer.frame(frame, time: 0.5, settings: settings)).rgb(100, 50), is: black)
+        settings.cursorHighlight = AOMCursorHighlight(color: AOMRGBAColor(red: 1, green: 0.84, blue: 0, alpha: 1), size: 1)
+        let lit = Pixels(AOMStudioRenderer.frame(frame, time: 0.5, settings: settings))
+        assertColor(lit.rgb(100, 50), is: (1, 0.84, 0), tolerance: 0.1)
+        assertColor(lit.rgb(100 + 20, 50), is: (1, 0.84, 0), tolerance: 0.1)
+        assertColor(lit.rgb(100 + 40, 50), is: black, "a 32 px halo")
+        settings.cursorHighlight?.size = 2
+        let wide = Pixels(AOMStudioRenderer.frame(frame, time: 0.5, settings: settings))
+        XCTAssertGreaterThan(wide.rgb(100 + 40, 50).r, 0.8)
+    }
+
+    func testCursorSizeScalesThePointer() {
+        let points = [AOMCursorPoint(time: 0, x: 0.3, y: 0.3), AOMCursorPoint(time: 1, x: 0.3, y: 0.3)]
+        func whitePixels(_ size: Double) -> Int {
+            let pixels = Pixels(AOMStudioRenderer.frame(frame, time: 0.5, settings: AOMStudioSettings(cursorPoints: points, cursorOverlaySize: size)))
+            var count = 0
+            for y in 0..<pixels.height { for x in 0..<pixels.width where pixels.rgb(x, y).g > 0.8 { count += 1 } }
+            return count
+        }
+        let normal = whitePixels(1), double = whitePixels(2)
+        XCTAssertGreaterThan(normal, 40)
+        XCTAssertGreaterThan(Double(double) / Double(normal), 2.5)
+        XCTAssertLessThan(Double(double) / Double(normal), 5.5)
+    }
+
+    func testKeystrokeModifierChoiceDecidesWhichShortcutsShow() {
+        func label(_ flags: NSEvent.ModifierFlags, _ characters: String, keyCode: UInt16 = 7,
+                   modifiers: Set<KeystrokeShortcutModifier> = KeystrokeShortcutModifier.defaultSet) -> String? {
+            ScreenRecordingService.keystrokeLabel(keyCode: keyCode, flags: flags, characters: characters, allKeys: false,
+                                                  shortcutModifiers: ScreenRecordingService.modifierFlags(modifiers))
+        }
+        XCTAssertEqual(label([.option], "x"), "⌥X")
+        XCTAssertNil(label([.option], "x", modifiers: [.command]), "⌥ excluded, e.g. for layouts that type with it")
+        XCTAssertEqual(label([.command, .option], "k", modifiers: [.command]), "⌥⌘K")
+        XCTAssertNil(label([.shift], "a"), "Shift-typed text is not a shortcut by default")
+        XCTAssertEqual(label([.shift], "a", modifiers: [.command, .shift]), "⇧A")
+        XCTAssertEqual(label([], "", keyCode: 123, modifiers: []), "←", "navigation keys still show")
+        XCTAssertEqual(ScreenRecordingService.keystrokeLabel(keyCode: 8, flags: [.command, .shift], characters: "c", allKeys: false), "⇧⌘C")
+
+        XCTAssertEqual(KeystrokeShortcutModifier.parse(nil), KeystrokeShortcutModifier.defaultSet)
+        XCTAssertEqual(KeystrokeShortcutModifier.parse(""), [])
+        XCTAssertEqual(KeystrokeShortcutModifier.parse("shift, command,bogus"), [.shift, .command])
+        XCTAssertEqual(KeystrokeShortcutModifier.serialize([.shift, .command]), "command,shift")
+    }
+
+    func testControlClickCountsAsARightClick() {
+        XCTAssertEqual(ScreenRecordingService.clickButton(type: .leftMouseDown, buttonNumber: 0, flags: []), 0)
+        XCTAssertEqual(ScreenRecordingService.clickButton(type: .leftMouseDown, buttonNumber: 0, flags: [.control]), 1)
+        XCTAssertEqual(ScreenRecordingService.clickButton(type: .rightMouseDown, buttonNumber: 1, flags: []), 1)
+        XCTAssertEqual(ScreenRecordingService.clickButton(type: .otherMouseDown, buttonNumber: 4, flags: []), 2)
+    }
+
+    private let pointerKeys = ["AOMCaptureRecordingShowsCursor", "AOMCaptureShowsCursor",
+                               "AOMCaptureRecordingClickIndicators", "AOMCaptureRecordingCursorMotion"]
+
+    func testThePointerChoiceIsIndependentOfShowMouseClicks() async {
+        await preservingDefaults(pointerKeys) {
+            let d = UserDefaults.standard
+            d.removeObject(forKey: "AOMCaptureRecordingShowsCursor")
+            d.set(false, forKey: "AOMCaptureShowsCursor")
+            d.set(true, forKey: "AOMCaptureRecordingClickIndicators")
+            XCTAssertNil(CaptureSettings.recordingShowsCursorChoice)
+            XCTAssertTrue(CaptureSettings.recordingShowsCursor, "unset: the pre-3.3.3 rule")
+            CaptureSettings.recordingShowsCursor = false
+            XCTAssertFalse(CaptureSettings.recordingShowsCursor, "audit CS-38: clicks no longer force the pointer on")
+            XCTAssertFalse(ScreenRecordingService.capturesSystemPointer(editableTrack: false, showsCursor: CaptureSettings.recordingShowsCursor))
+            XCTAssertTrue(ScreenRecordingService.capturesSystemPointer(editableTrack: false, showsCursor: true))
+            XCTAssertFalse(ScreenRecordingService.capturesSystemPointer(editableTrack: true, showsCursor: true),
+                           "an editable pointer replaces the system one")
+        }
+    }
+
+    private var displayKeys: [String] { CaptureSettings.recording333BackedUpKeys + pointerKeys }
+
+    func testRecordingDefaultsCarryTheDisplayOptions() async {
+        await preservingDefaults(displayKeys) {
+            let style = AOMClickStyle(shape: .double, leftColor: AOMRGBAColor(hex: "#10203040")!, rightColor: AOMRGBAColor(hex: "#A0B0C0FF")!,
+                                      size: 1.5, duration: 1.2)
+            CaptureSettings.recordingClickStyle = style
+            CaptureSettings.recordingClickIndicators = true
+            CaptureSettings.recordingCursorHighlight = true
+            CaptureSettings.recordingCursorSize = 2
+            UserDefaults.standard.removeObject(forKey: "AOMCaptureRecordingShowsCursor")
+            let clicks = [AOMClickEvent(time: 1, x: 0.5, y: 0.5)]
+            let track = AOMCursorTrack(points: [AOMCursorPoint(time: 0, x: 0.1, y: 0.1)], clicks: clicks)
+            let defaults = AOMStudioSettings.recordingDefaults(track: track)
+            XCTAssertEqual(defaults.clickStyle, style)
+            XCTAssertEqual(defaults.clicks, clicks)
+            XCTAssertTrue(defaults.showClickRipples)
+            XCTAssertEqual(defaults.cursorOverlaySize, 2)
+            XCTAssertNotNil(defaults.cursorHighlight)
+            XCTAssertEqual(defaults.cursorStyle, .arrow, "an editable pointer stays visible unless hidden on purpose")
+
+            var baked = track
+            baked.pointerInVideo = true
+            XCTAssertEqual(AOMStudioSettings.recordingDefaults(track: baked).cursorStyle, .hidden, "never a second pointer")
+            CaptureSettings.recordingShowsCursor = false
+            XCTAssertEqual(AOMStudioSettings.recordingDefaults(track: track).cursorStyle, .hidden)
+            CaptureSettings.recordingClickIndicators = false
+            CaptureSettings.recordingCursorHighlight = false
+            let quiet = AOMStudioSettings.recordingDefaults(track: track)
+            XCTAssertTrue(quiet.clicks.isEmpty)
+            XCTAssertFalse(quiet.showClickRipples)
+            XCTAssertNil(quiet.cursorHighlight)
+        }
+    }
+
+    func testDisplaySettingsRoundTripClampAndAreBackedUp() async {
+        await preservingDefaults(displayKeys) {
+            let d = UserDefaults.standard
+            let highlight = AOMCursorHighlight(color: AOMRGBAColor(hex: "#FF000080")!, size: 2.5)
+            CaptureSettings.recordingCursorHighlightStyle = highlight
+            XCTAssertEqual(CaptureSettings.recordingCursorHighlightStyle, highlight)
+            CaptureSettings.recordingKeystrokeModifiers = [.command]
+            XCTAssertEqual(CaptureSettings.recordingKeystrokeModifiers, [.command])
+            d.removeObject(forKey: "AOMCaptureRecordingKeystrokeModifiers")
+            XCTAssertEqual(CaptureSettings.recordingKeystrokeModifiers, KeystrokeShortcutModifier.defaultSet)
+
+            d.set(10.0, forKey: "AOMCaptureRecordingClickSize")
+            d.set(-4.0, forKey: "AOMCaptureRecordingClickDuration")
+            d.set("not a colour", forKey: "AOMCaptureRecordingClickColor")
+            d.set("triangle", forKey: "AOMCaptureRecordingClickStyle")
+            let style = CaptureSettings.recordingClickStyle
+            XCTAssertEqual(style.size, 3)
+            XCTAssertEqual(style.duration, 0.2)
+            XCTAssertEqual(style.leftColor, AOMClickStyle.defaultLeftColor)
+            XCTAssertEqual(style.shape, .ring)
+            d.set(9.0, forKey: "AOMCaptureRecordingCursorSize")
+            XCTAssertEqual(CaptureSettings.recordingCursorSize, 3)
+            CaptureSettings.recordingCursorSize = .nan
+            XCTAssertEqual(CaptureSettings.recordingCursorSize, 1)
+
+            for key in CaptureSettings.recording333BackedUpKeys {
+                XCTAssertTrue(PresetManager.isBackedUpSetting(key), "\(key) is in profile backups")
+            }
+        }
+    }
+
+    func testSidecarRemembersWhetherThePointerIsInTheVideo() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let movie = folder.appendingPathComponent("take.mp4")
+        try AOMCursorTrack(points: [AOMCursorPoint(time: 0, x: 0.2, y: 0.2)], pointerInVideo: true).write(for: movie)
+        XCTAssertEqual(AOMCursorTrack.read(for: movie)?.pointerInVideo, true)
+        try Data(#"{"points":[{"time":0,"x":0.5,"y":0.5}]}"#.utf8).write(to: AOMCursorTrack.sidecarURL(for: movie))
+        let legacy = try XCTUnwrap(AOMCursorTrack.read(for: movie))
+        XCTAssertNil(legacy.pointerInVideo)
+    }
+
+    /// End to end: the recorded click track plus the saved click options
+    /// come out in the exported movie's pixels.
+    func testExportedMovieDrawsClicksFromTheTrackWithTheChosenStyle() async throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("clicks.mp4")
+        try await makeSyntheticMovie(at: source)
+        try AOMCursorTrack(points: [], clicks: [AOMClickEvent(time: 0.5, x: 0.5, y: 0.5)]).write(for: source)
+        try await preservingDefaults(displayKeys) {
+            CaptureSettings.recordingClickStyle = AOMClickStyle(shape: .filled, leftColor: AOMRGBAColor(red: 0, green: 1, blue: 0),
+                                                                size: 2, duration: 1)
+            CaptureSettings.recordingCursorHighlight = false
+            let output = try await RecordingExportService.trim(source: source, start: 0.1, end: 1.5)
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: output))
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            // Output 0.6 s is source 0.7 s: 20 % into a 1 s mark, a 21 px green disc.
+            let pixels = Pixels(try generator.copyCGImage(at: CMTime(seconds: 0.6, preferredTimescale: 600), actualTime: nil))
+            let centre = pixels.rgb(80, 60), corner = pixels.rgb(8, 8)
+            XCTAssertGreaterThan(centre.g - centre.r, 0.2, "the green click mark")
+            XCTAssertEqual(corner.g, corner.r, accuracy: 0.08, "untouched grey away from the click")
+        }
+    }
+}

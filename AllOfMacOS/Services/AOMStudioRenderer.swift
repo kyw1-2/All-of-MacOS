@@ -167,6 +167,78 @@ extension AOMVideoBackground {
     }
 }
 
+/// How a recorded click is drawn (3.3.3, audit CS-39 / C06).
+enum AOMClickRingStyle: String, Codable, CaseIterable, Identifiable {
+    case ring, filled, double
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .ring: return "Ring"
+        case .filled: return "Filled Circle"
+        case .double: return "Double Ring"
+        }
+    }
+}
+
+/// Click marks drawn at export from the recorded click track: shape, a colour
+/// for left and for right clicks, size and how long each mark lasts.
+struct AOMClickStyle: Codable, Equatable {
+    var shape: AOMClickRingStyle = .ring
+    var leftColor = AOMClickStyle.defaultLeftColor
+    /// Right clicks, and ⌃-clicks, which macOS treats as right clicks.
+    var rightColor = AOMClickStyle.defaultRightColor
+    /// A multiple of the original ring, which grows to 38 px.
+    var size: Double = 1
+    /// Seconds each mark stays on screen.
+    var duration: Double = 0.65
+
+    static let defaultLeftColor = AOMRGBAColor(red: 0.2, green: 0.65, blue: 1)
+    static let defaultRightColor = AOMRGBAColor(red: 1, green: 0.62, blue: 0.04)
+    static let sizeRange = 0.5...3.0
+    static let durationRange = 0.2...2.0
+    /// Before 3.3.3 every click, whatever the button, was this blue ring.
+    static let legacy = AOMClickStyle(rightColor: defaultLeftColor)
+
+    var clampedSize: Double { size.isFinite ? min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, size)) : 1 }
+    var clampedDuration: Double {
+        duration.isFinite ? min(Self.durationRange.upperBound, max(Self.durationRange.lowerBound, duration)) : 0.65
+    }
+    func color(button: Int) -> AOMRGBAColor { button == 1 ? rightColor : leftColor }
+    var isValid: Bool { size.isFinite && duration.isFinite && leftColor.isValid && rightColor.isValid }
+}
+
+extension AOMClickStyle {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shape = (try? c.decode(AOMClickRingStyle.self, forKey: .shape)) ?? .ring
+        leftColor = (try? c.decode(AOMRGBAColor.self, forKey: .leftColor)) ?? Self.defaultLeftColor
+        rightColor = (try? c.decode(AOMRGBAColor.self, forKey: .rightColor)) ?? Self.defaultRightColor
+        size = (try? c.decode(Double.self, forKey: .size)) ?? 1
+        duration = (try? c.decode(Double.self, forKey: .duration)) ?? 0.65
+    }
+}
+
+/// A soft halo under the pointer, drawn from the recorded cursor track, also
+/// when the pointer itself is hidden or already in the video (C06).
+struct AOMCursorHighlight: Codable, Equatable {
+    var color = AOMCursorHighlight.defaultColor
+    /// A multiple of a 32 px radius.
+    var size: Double = 1
+
+    static let defaultColor = AOMRGBAColor(red: 1, green: 0.84, blue: 0.04, alpha: 0.4)
+    static let sizeRange = 0.5...3.0
+    var clampedSize: Double { size.isFinite ? min(Self.sizeRange.upperBound, max(Self.sizeRange.lowerBound, size)) : 1 }
+    var isValid: Bool { size.isFinite && color.isValid }
+}
+
+extension AOMCursorHighlight {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        color = (try? c.decode(AOMRGBAColor.self, forKey: .color)) ?? Self.defaultColor
+        size = (try? c.decode(Double.self, forKey: .size)) ?? 1
+    }
+}
+
 struct AOMStudioSettings: Codable, Equatable {
     var keyframes: [AOMStudioZoomKeyframe] = []
     var backdrop: AOMStudioBackdrop = .none
@@ -195,6 +267,11 @@ struct AOMStudioSettings: Codable, Equatable {
     /// 3.3.3 (C05): canvas background. When set it supersedes `backdrop` and
     /// `paddingFraction`; nil keeps the pre-3.3.3 rendering of old projects.
     var background: AOMVideoBackground?
+    /// 3.3.3 (C06): click shape, left/right colours, size and duration.
+    /// nil keeps the original blue ring.
+    var clickStyle: AOMClickStyle?
+    /// 3.3.3 (C06): a halo under the pointer; nil is off.
+    var cursorHighlight: AOMCursorHighlight?
 
     var isActive: Bool {
         !keyframes.isEmpty || (backdrop != .none && paddingFraction > 0) || background?.isActive == true
@@ -255,8 +332,17 @@ enum AOMStudioRenderer {
             let background = CIImage(color: settings.backdrop.color).cropped(to: extent)
             result = inner.composited(over: background).cropped(to: extent)
         }
-        if settings.cursorStyle != .hidden, !settings.cursorPoints.isEmpty, let glyph = settings.cursorStyle == .arrow ? cursorGlyph : dotGlyph,
-           let cursor = AOMCursorTrack(points: settings.cursorPoints).smoothedPosition(at: time) {
+        let pointer = settings.cursorPoints.isEmpty ? nil : AOMCursorTrack(points: settings.cursorPoints).smoothedPosition(at: time)
+        let videoBounds = extent.insetBy(dx: extent.width * legacyInset, dy: extent.height * legacyInset)
+        if let highlight = settings.cursorHighlight, let pointer {
+            let projected = AOMStudioTimeline.projectedPoint(pointer, focus: f, padding: legacyInset)
+            let center = CGPoint(x: extent.minX + projected.x * extent.width, y: extent.maxY - projected.y * extent.height)
+            if let halo = highlightImage(at: center, highlight: highlight) {
+                result = halo.cropped(to: videoBounds).composited(over: result).cropped(to: extent)
+            }
+        }
+        if settings.cursorStyle != .hidden, let glyph = settings.cursorStyle == .arrow ? cursorGlyph : dotGlyph,
+           let cursor = pointer {
             let pointerSize = CGFloat(min(3, max(0.5, settings.cursorOverlaySize)))
             let inset = legacyInset
             let projected = AOMStudioTimeline.projectedPoint(cursor, focus: f, padding: inset)
@@ -267,28 +353,18 @@ enum AOMStudioRenderer {
                     CGAffineTransform(scaleX: pointerSize, y: pointerSize))
                 .transformed(by: CGAffineTransform(translationX: x - pointerSize * (settings.cursorStyle == .dot ? 6 : 2),
                                                    y: y - pointerSize * (settings.cursorStyle == .dot ? 6 : 30)))
-            let videoBounds = extent.insetBy(dx: extent.width * inset, dy: extent.height * inset)
             result = transformed.cropped(to: videoBounds)
                 .composited(over: result).cropped(to: extent)
         }
         if settings.showClickRipples {
-            for click in AOMStudioTimeline.activeClicks(at: time, clicks: settings.clicks) {
-                let progress = (time - click.time) / 0.65
-                let inset = legacyInset
-                let point = AOMStudioTimeline.projectedPoint(CGPoint(x: click.x, y: click.y), focus: f, padding: inset)
-                let center = CIVector(x: extent.minX + point.x * extent.width, y: extent.maxY - point.y * extent.height)
-                let radius = 8 + progress * 30
-                if let ring = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": center,
-                    "inputRadius0": radius - 2, "inputRadius1": radius + 2,
-                    "inputColor0": CIColor(red: 0.2, green: 0.65, blue: 1, alpha: 0),
-                    "inputColor1": CIColor(red: 0.2, green: 0.65, blue: 1, alpha: 0.65 * (1 - progress))])?.outputImage {
-                    let box = CGRect(x: center.x - radius - 2, y: center.y - radius - 2, width: 2 * radius + 4, height: 2 * radius + 4)
-                    // Crop the gradient to a circular outer boundary.
-                    let mask = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": center,
-                        "inputRadius0": radius, "inputRadius1": radius + 2,
-                        "inputColor0": CIColor.white, "inputColor1": CIColor.clear])!.outputImage!
-                    let transparent = CIImage(color: .clear).cropped(to: box)
-                    result = ring.cropped(to: box).applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: transparent, kCIInputMaskImageKey: mask]).composited(over: result).cropped(to: extent)
+            let style = settings.clickStyle ?? .legacy
+            let duration = style.clampedDuration
+            for click in AOMStudioTimeline.activeClicks(at: time, clicks: settings.clicks, duration: duration) {
+                let progress = (time - click.time) / duration
+                let point = AOMStudioTimeline.projectedPoint(CGPoint(x: click.x, y: click.y), focus: f, padding: legacyInset)
+                let center = CGPoint(x: extent.minX + point.x * extent.width, y: extent.maxY - point.y * extent.height)
+                if let mark = clickMark(at: center, progress: progress, style: style, button: click.button) {
+                    result = mark.composited(over: result).cropped(to: extent)
                 }
             }
         }
@@ -398,6 +474,57 @@ enum AOMStudioRenderer {
         }
     }
 
+    /// One click mark `progress` (0…1) of the way through its animation.
+    static func clickMark(at center: CGPoint, progress: Double, style: AOMClickStyle, button: Int) -> CIImage? {
+        let p = CGFloat(progress.isFinite ? min(1, max(0, progress)) : 1)
+        let scale = CGFloat(style.clampedSize)
+        let color = style.color(button: button)
+        let fade = CGFloat(color.isValid ? min(1, max(0, color.alpha)) : 1) * (1 - p)
+        let band = 2 * max(1, scale)
+        let outer = (8 + p * 30) * scale
+        switch style.shape {
+        case .ring:
+            return ring(center: center, radius: outer, band: band, color: color, opacity: 0.65 * fade)
+        case .double:
+            guard let first = ring(center: center, radius: outer, band: band, color: color, opacity: 0.65 * fade) else { return nil }
+            let inner = ring(center: center, radius: (4 + p * 15) * scale, band: 1.5 * max(1, scale), color: color, opacity: 0.8 * fade)
+            return inner.map { $0.composited(over: first) } ?? first
+        case .filled:
+            let radius = (6 + p * 22) * scale
+            guard let disc = CIFilter(name: "CIRadialGradient", parameters: [
+                "inputCenter": CIVector(x: center.x, y: center.y),
+                "inputRadius0": max(0, radius - 1.5), "inputRadius1": radius + 1.5,
+                "inputColor0": color.ciColor(alpha: Double(0.5 * fade)), "inputColor1": color.ciColor(alpha: 0)])?.outputImage else { return nil }
+            return disc.cropped(to: CGRect(x: center.x - radius - 2, y: center.y - radius - 2,
+                                           width: 2 * radius + 4, height: 2 * radius + 4))
+        }
+    }
+
+    /// A ring that fades in from `radius - band` and out to `radius + band`.
+    private static func ring(center: CGPoint, radius: CGFloat, band: CGFloat, color: AOMRGBAColor, opacity: CGFloat) -> CIImage? {
+        let vector = CIVector(x: center.x, y: center.y)
+        guard let ring = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": vector,
+                "inputRadius0": max(0, radius - band), "inputRadius1": radius + band,
+                "inputColor0": color.ciColor(alpha: 0), "inputColor1": color.ciColor(alpha: Double(opacity))])?.outputImage,
+              // Crop the gradient to a circular outer boundary.
+              let mask = CIFilter(name: "CIRadialGradient", parameters: ["inputCenter": vector,
+                "inputRadius0": radius, "inputRadius1": radius + band,
+                "inputColor0": CIColor.white, "inputColor1": CIColor.clear])?.outputImage else { return nil }
+        let box = CGRect(x: center.x - radius - band, y: center.y - radius - band,
+                         width: 2 * (radius + band), height: 2 * (radius + band))
+        let transparent = CIImage(color: .clear).cropped(to: box)
+        return ring.cropped(to: box).applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: transparent,
+                                                                                     kCIInputMaskImageKey: mask])
+    }
+
+    static func highlightImage(at center: CGPoint, highlight: AOMCursorHighlight) -> CIImage? {
+        let radius = CGFloat(32 * highlight.clampedSize)
+        guard let halo = CIFilter(name: "CIRadialGradient", parameters: [
+            "inputCenter": CIVector(x: center.x, y: center.y), "inputRadius0": radius * 0.72, "inputRadius1": radius,
+            "inputColor0": highlight.color.ciColor, "inputColor1": highlight.color.ciColor(alpha: 0)])?.outputImage else { return nil }
+        return halo.cropped(to: CGRect(x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
+    }
+
     private static let dotGlyph = CIFilter(name: "CIRoundedRectangleGenerator", parameters: ["inputExtent": CIVector(cgRect: CGRect(x: 0, y: 0, width: 12, height: 12)), "inputRadius": 6, "inputColor": CIColor.white])?.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 12, height: 12))
 
     private static let glyphLock = NSLock()
@@ -471,7 +598,7 @@ extension AOMStudioSettings {
         let scalars = [paddingFraction, motionBlurRadius, cursorOverlaySize, keystrokeScale, keystrokeY, cameraSize, cameraX, cameraY, cameraRoundness]
         return scalars.allSatisfy { $0.isFinite } && keyframes.count <= 400 &&
             keyframes.allSatisfy { $0.time.isFinite && $0.time >= 0 && $0.magnification.isFinite && $0.focusX.isFinite && $0.focusY.isFinite } &&
-            (background?.isValid ?? true) &&
+            (background?.isValid ?? true) && (clickStyle?.isValid ?? true) && (cursorHighlight?.isValid ?? true) &&
             AOMCursorTrack(points: cursorPoints, clicks: clicks, keystrokes: keystrokes).isValid
     }
     func outputSize(source: CGSize) -> CGSize {
