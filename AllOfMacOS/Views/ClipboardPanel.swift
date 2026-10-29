@@ -1142,6 +1142,8 @@ struct ClipboardPanelView: View {
     let controller: ClipboardPanelController
     @FocusState private var searchFocused: Bool
     @State private var boardPendingDeletion: ClipboardPinboard?
+    /// Link cards follow their switches without reopening the shelf.
+    @ObservedObject private var preferences = ClipboardPreferences.shared
 
     private var entries: [ClipboardEntry] { state.displayedResults(in: store) }
     private var sources: [ClipboardStore.AppSource] { store.availableAppSources }
@@ -1786,6 +1788,7 @@ struct ClipboardPanelView: View {
                     let quickIDs = state.quickPasteIDs(in: store)
                     let suggested = Set(state.suggestedIDs)
                     let boards = store.boards
+                    let linkCards = preferences.networkPreviews && preferences.linkCards
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: spacing) {
@@ -1800,6 +1803,7 @@ struct ClipboardPanelView: View {
                                                       isPreviewing: state.preview?.id == entry.id,
                                                       isSuggested: suggested.contains(entry.id),
                                                       boards: boards,
+                                                      linkCards: linkCards,
                                                       store: store, state: state, controller: controller)
                                         .equatable()
                                         .id(entry.id)
@@ -2041,6 +2045,8 @@ private struct ClipboardCardView: View, Equatable {
     let isPreviewing: Bool
     let isSuggested: Bool
     let boards: [ClipboardPinboard]
+    /// Both link-card switches are on: link cards may look pages up.
+    let linkCards: Bool
     // Action targets only; deliberately not observed.
     let store: ClipboardStore
     let state: ClipboardPanelState
@@ -2062,7 +2068,7 @@ private struct ClipboardCardView: View, Equatable {
             && lhs.compact == rhs.compact && lhs.side == rhs.side && lhs.isSelected == rhs.isSelected
             && lhs.quickNumber == rhs.quickNumber && lhs.showsQuickNumber == rhs.showsQuickNumber
             && lhs.searchActive == rhs.searchActive && lhs.searchQuery == rhs.searchQuery && lhs.isPreviewing == rhs.isPreviewing
-            && lhs.isSuggested == rhs.isSuggested && lhs.boards == rhs.boards
+            && lhs.isSuggested == rhs.isSuggested && lhs.boards == rhs.boards && lhs.linkCards == rhs.linkCards
     }
 
     private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
@@ -2306,26 +2312,10 @@ private struct ClipboardCardView: View, Equatable {
             .padding(.bottom, 18)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if entry.kind == .link {
-            // No network previews (privacy): a site tile plus title and URL.
-            VStack(alignment: .leading, spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(accent.opacity(0.12))
-                    Image(systemName: "safari")
-                        .font(.system(size: compact ? 22 : 34, weight: .light))
-                        .foregroundStyle(accent)
-                }
-                .frame(maxWidth: .infinity).frame(height: compact ? 44 : side * 0.36)
-                Text(linkTitle)
-                    .font(.system(size: compact ? 11 : 13, weight: .semibold))
-                    .lineLimit(2)
-                Text(entry.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? entry.previewText)
-                    .font(.system(size: compact ? 10 : 11))
-                    .foregroundStyle(Color.accentColor)
-                    .lineLimit(2).truncationMode(.middle)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Offline site tile unless link cards are on (P03); then the
+            // page's title, site and image, fetched once per session.
+            ClipboardLinkCardContent(entry: entry, compact: compact, side: side, accent: accent,
+                                     title: linkTitle, userTitled: isUserTitledLink, fetches: linkCards)
         } else if entry.kind == .color, let hex = entry.text {
             Rectangle().fill(Color(hex: hex) ?? .clear)
                 .overlay {
@@ -2349,6 +2339,11 @@ private struct ClipboardCardView: View, Equatable {
         let automatic = entry.text?.trimmingCharacters(in: .whitespacesAndNewlines)
         if entry.title != automatic, !entry.title.isEmpty { return entry.title }
         return URL(string: automatic ?? "")?.host?.replacingOccurrences(of: "www.", with: "") ?? "Link"
+    }
+
+    /// The user renamed this link; a fetched page title never replaces that.
+    private var isUserTitledLink: Bool {
+        !entry.title.isEmpty && entry.title != entry.text?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Paste head-truncates paths so the file name stays visible.

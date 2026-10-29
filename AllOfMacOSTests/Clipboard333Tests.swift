@@ -438,4 +438,92 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertNotEqual(ClipboardIntelligence.digest(rich), ClipboardIntelligence.digest(richEdited))
     }
 
+    // MARK: - P03 · link cards
+
+    func testLinkCardsFetchOnlySafeLinks() {
+        XCTAssertNotNil(ClipboardLinkPolicy.fetchableURL("https://example.com/article"))
+        XCTAssertNotNil(ClipboardLinkPolicy.fetchableURL("http://news.example.org/a?page=2"))
+        for refused in ["https://example.invalid/?token=FAKEONLY0123456789", "https://alice:pw@example.com/",
+                        "mailto:someone@example.com", "ftp://example.com/file", "https://localhost:8080/admin",
+                        "http://192.168.1.1/", "http://10.0.0.8/x", "http://172.20.1.1/", "http://[::1]/", "http://router/",
+                        "https://printer.local/", "https://a.example.com/x?X-Amz-Signature=abcdef0123456789",
+                        "https://example.com/has space"] {
+            XCTAssertNil(ClipboardLinkPolicy.fetchableURL(refused), refused)
+        }
+    }
+
+    func testLinkCardParserReadsOpenGraphAndFallbacks() throws {
+        let base = try XCTUnwrap(URL(string: "https://example.com/posts/1"))
+        let html = """
+        <html><head><title>Fallback title</title>
+        <meta property="og:title" content="Paste &amp; AOM &#8212; parity">
+        <meta property='og:site_name' content='Example News'>
+        <meta content="/images/card.png" property="og:image">
+        </head><body><meta property="og:title" content="ignored"></body></html>
+        """
+        let card = ClipboardLinkMetadataParser.parse(html: html, baseURL: base)
+        XCTAssertEqual(card.title, "Paste & AOM — parity")
+        XCTAssertEqual(card.siteName, "Example News")
+        XCTAssertEqual(card.imageURL?.absoluteString, "https://example.com/images/card.png")
+
+        let plain = ClipboardLinkMetadataParser.parse(html: "<head><title>\n  Just   a title </title><link rel=\"apple-touch-icon\" href=\"https://cdn.example.com/icon.png\"></head>", baseURL: base)
+        XCTAssertEqual(plain.title, "Just a title")
+        XCTAssertEqual(plain.imageURL?.absoluteString, "https://cdn.example.com/icon.png")
+        XCTAssertTrue(ClipboardLinkMetadataParser.parse(html: "<p>no head</p>", baseURL: base).isEmpty)
+        XCTAssertNil(ClipboardLinkMetadataParser.parse(html: "<meta property=\"og:image\" content=\"javascript:alert(1)\">", baseURL: base).imageURL)
+    }
+
+    func testLinkCardsNeverTouchTheNetworkWhileOffAndAskOncePerPage() async throws {
+        let metadata = ClipboardLinkMetadataStore()
+        let requests = Calls()
+        let picture = png(twoWordImage("A", "B"))
+        metadata.loader = { request, _ in
+            let url = try XCTUnwrap(request.url)
+            requests.record(url.absoluteString)
+            if url.path.hasSuffix(".png") {
+                return (picture, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!)
+            }
+            if url.path == "/missing" {
+                return (Data(), HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: ["Content-Type": "text/html"])!)
+            }
+            let html = #"<head><meta property="og:title" content="Card title"><meta property="og:image" content="https://example.com/card.png"></head>"#
+            return (Data(html.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
+                                                     headerFields: ["Content-Type": "text/html; charset=utf-8"])!)
+        }
+        let page = try XCTUnwrap(URL(string: "https://example.com/article"))
+
+        let off = await metadata.card(for: page, enabled: false)
+        XCTAssertNil(off)
+        XCTAssertTrue(requests.all.isEmpty, "with the switches off nothing is requested")
+        let suite = "AOM333-prefs-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertFalse(ClipboardPreferences(defaults: defaults).linkCards, "link cards are off by default")
+
+        let loadedCard = await metadata.card(for: page, enabled: true)
+        let card = try XCTUnwrap(loadedCard)
+        XCTAssertEqual(card.title, "Card title")
+        _ = await metadata.card(for: page, enabled: true)
+        XCTAssertEqual(requests.all, ["https://example.com/article"], "one request per page and session")
+        let picturePreview = await metadata.image(for: card, enabled: true)
+        let image = try XCTUnwrap(picturePreview)
+        XCTAssertLessThanOrEqual(max(image.width, image.height), 480)
+        let switchedOff = await metadata.image(for: card, enabled: false)
+        XCTAssertNil(switchedOff, "the image follows the same switches")
+
+        let missing = try XCTUnwrap(URL(string: "https://example.com/missing"))
+        let first = await metadata.card(for: missing, enabled: true)
+        let second = await metadata.card(for: missing, enabled: true)
+        XCTAssertNil(first)
+        XCTAssertNil(second)
+        XCTAssertEqual(requests.all.filter { $0.hasSuffix("/missing") }.count, 1, "a failure is remembered")
+
+        let tokenLink = try XCTUnwrap(URL(string: "https://example.com/login?token=FAKEONLY0123456789"))
+        let refused = await metadata.card(for: tokenLink, enabled: true)
+        XCTAssertNil(refused)
+        XCTAssertFalse(requests.all.contains(tokenLink.absoluteString), "a one-time link is never fetched")
+        metadata.removeAll()
+        XCTAssertNil(metadata.cachedCard(for: page))
+    }
+
 }
