@@ -629,7 +629,7 @@ enum SettingsCatalog {
             item("shortcutRecorder", .shortcuts, "Capture Shortcuts", "Record and change the keys for every capture tool", ["단축키", "키보드", "hotkey", "shortcut"], AnyView(HubActionRow(icon: "command", tint: .indigo, title: "Capture Shortcuts", subtitle: "Record and change the keys for every capture tool") {
                 Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.shortcuts.rawValue) }.controlSize(.small)
             })),
-            item("bttPreset", .automation, "Import BTT Preset", "Import BetterTouchTool JSON presets", ["btt", "프리셋", "Import"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT Preset", subtitle: "Import BetterTouchTool JSON presets") {
+            item("bttPreset", .automation, "Import BTT Preset", "Import BetterTouchTool presets: .bttpreset files or copied JSON triggers", ["btt", "프리셋", "Import", "bttpreset", "bettertouchtool", "가져오기"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT Preset", subtitle: "Import BetterTouchTool .bttpreset files or copied JSON triggers") {
                 Button("Import") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }.controlSize(.small)
             })),
             item("forceTouchStageHysteresis", .automation, "Force Touch Stage Hysteresis", "How far the pressure must ease off before a Force Touch stage can fire again", ["force touch", "포스 터치", "pressure", "압력", "stage", "단계", "hysteresis", "히스테리시스", "deep press", "강한 클릭"], AnyView(HubSliderRow(icon: "hand.tap", tint: .orange, title: "Force Touch Stage Hysteresis", subtitle: "How far pressure eases off before a stage fires again", key: PressureStageTracker.hysteresisKey, fallback: PressureStageTracker.defaultHysteresis, range: PressureStageTracker.hysteresisRange, step: 0.01, percent: false, decimals: 2))),
@@ -936,13 +936,9 @@ struct SettingsHubView: View {
     }
 
     private func importBTTPreset() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.message = "Choose a BetterTouchTool JSON preset"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in appState.reviewCompatiblePresetImport(from: url) }
-        }
+        // `.bttpreset` files as well as copied BTT trigger JSON
+        // (BTTPresetImport.openPanelContentTypes), then the reviewed import.
+        appState.presentBTTPresetImportPanel()
     }
 
     private func startTutorial() {
