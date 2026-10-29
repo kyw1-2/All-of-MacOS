@@ -200,6 +200,20 @@ extension View {
             .padding(.vertical, AOMSpace.x2)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    /// A multi-line `TextEditor` as a quiet well with a hairline, so it reads
+    /// as a field inside a card (the editor has no bezel of its own).
+    func aomTextWell(minHeight: CGFloat = AOMSpace.x12 + AOMSpace.x6) -> some View {
+        scrollContentBackground(.hidden)
+            .padding(AOMSpace.x1)
+            .frame(minHeight: minHeight)
+            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                    .strokeBorder(AOMColor.hairline, lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
+    }
 }
 
 /// Widths and sheet sizes the automation editors need. The spacing, type,
@@ -212,6 +226,8 @@ enum AOMEditorSize {
     static let rowSlider: CGFloat = 160
     /// A text field inside a row.
     static let rowField: CGFloat = AOMSize.tileMin
+    /// A number field inside a row (milliseconds, seconds, percent).
+    static let numberField: CGFloat = AOMSpace.x10 * 2
     /// The new-trigger and edit-trigger sheets: the editor minimum, so a row
     /// keeps its label and control on one line.
     static let triggerSheet: CGFloat = AOMSize.editorMinimum
