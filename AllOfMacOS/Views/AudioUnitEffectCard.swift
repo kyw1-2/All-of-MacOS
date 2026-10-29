@@ -30,7 +30,7 @@ struct AudioUnitEffectCard: View {
             switch style {
             case .section:
                 AOMSection("Audio Unit Effect", help: Self.help, footer: message) {
-                    AOMSettingRow("Effect", symbol: "waveform.path.ecg") { controls(compact: false) }
+                    AOMSettingRow("Effect", symbol: "waveform.path.ecg") { controls }
                 }
             case .panel:
                 VStack(alignment: .leading, spacing: AOMSpace.x2) {
@@ -41,7 +41,7 @@ struct AudioUnitEffectCard: View {
                             .accessibilityAddTraits(.isHeader)
                         AOMInfoButton(Self.help, topic: "Audio Unit effects")
                     }
-                    controls(compact: true)
+                    controls
                     if let message {
                         Text(message)
                             .font(AOMFont.caption)
@@ -69,14 +69,15 @@ struct AudioUnitEffectCard: View {
         }
     }
 
-    private func controls(compact: Bool) -> some View {
+    /// The effect picker (capped at a tile's width; effect names can be long) and Edit….
+    private var controls: some View {
         HStack(spacing: AOMSpace.x2) {
             Picker("Effect", selection: $selection) {
                 Text("None").tag("")
                 ForEach(effects, id: \.key) { effect in Text(effect.name).tag(effect.key) }
             }
             .pickerStyle(.menu)
-            .frame(maxWidth: compact ? AOMSize.tileMin : nil)
+            .frame(maxWidth: AOMSize.tileMin)
             .accessibilityLabel("Audio Unit effect for every output")
             Button("Edit…") { AudioUnitEffectEditor.shared.show() }
                 .controlSize(.small)
