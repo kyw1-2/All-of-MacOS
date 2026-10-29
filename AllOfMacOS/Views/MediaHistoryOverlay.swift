@@ -394,12 +394,12 @@ struct MediaHistoryOverlayView: View {
     }
 
     private var headerBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AOMSpace.x3 + AOMSpace.x0_5) {
             Label("Captures", systemImage: "photo.on.rectangle.angled")
-                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                .font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.textSecondary)
             Spacer(minLength: 0)
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary)
                 TextField("Search captures", text: $searchQuery)
                     .focused($searchFocused).textFieldStyle(.plain)
                     .onSubmit {
@@ -409,20 +409,21 @@ struct MediaHistoryOverlayView: View {
                     }
                 if !searchQuery.isEmpty {
                     Button { searchQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .buttonStyle(.plain).foregroundStyle(AOMColor.textSecondary)
                         .help("Clear search")
                         .accessibilityLabel("Clear search")
                 }
             }
-            .font(.system(size: 12)).padding(.horizontal, 10).frame(width: 190, height: 30)
-            .background(Color.primary.opacity(0.065), in: Capsule())
+            .font(AOMFont.callout).padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+            .frame(width: AOMFeatureSize.historySearchField, height: AOMSize.rowSingle)
+            .background(AOMColor.sunken, in: Capsule())
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
+                HStack(spacing: AOMSpace.x1) {
                     ForEach(MediaHistoryFilter.primary) { filter in filterButton(filter) }
-                    Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 18).padding(.horizontal, 3)
+                    AOMDivider(axis: .vertical).frame(height: AOMIcon.row).padding(.horizontal, AOMSpace.x1)
                     ForEach(MediaHistoryFilter.extras) { filter in filterButton(filter) }
                 }
-            }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: 470)
+            }.fixedSize(horizontal: false, vertical: true).frame(maxWidth: AOMFeatureSize.historyFilterStrip)
             Spacer(minLength: 0)
             Menu {
                 Menu("Keep History") {
@@ -446,26 +447,25 @@ struct MediaHistoryOverlayView: View {
                 Button("Clear All Except Kept", role: .destructive) { history.removeUnpinned() }
                     .disabled(history.entries.isEmpty)
             } label: {
-                Image(systemName: "gearshape").font(.system(size: 13)).frame(width: 25, height: 28)
+                Image(systemName: "gearshape").font(AOMFont.body)
+                    .frame(width: AOMIcon.hitArea - AOMSpace.x0_5, height: AOMIcon.hitArea)
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help("History Settings").accessibilityLabel("History Settings")
             Button { controller?.dismiss() } label: {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).frame(width: 25, height: 28)
+                Image(systemName: "xmark").font(AOMFont.caption.weight(.semibold))
+                    .frame(width: AOMIcon.hitArea - AOMSpace.x0_5, height: AOMIcon.hitArea)
+                    .contentShape(Rectangle())
             }.buttonStyle(.plain).help("Close (Esc)").accessibilityLabel("Close")
-        }.padding(.horizontal, 20).frame(height: 52)
+        }.padding(.horizontal, AOMSpace.x5).frame(height: AOMSize.rowDetail)
     }
 
+    /// The history's filters: the shared filter chip with a resting fill, so
+    /// they match the clipboard shelf's chips on the same glass.
     private func filterButton(_ filter: MediaHistoryFilter) -> some View {
-        Button { selectedFilter = filter } label: {
-            Label(filter.rawValue, systemImage: filter.icon)
-                .font(.system(size: 13, weight: selectedFilter == filter ? .semibold : .regular))
-                .padding(.horizontal, 10).frame(height: 28)
-                .background(selectedFilter == filter ? Color.primary.opacity(0.12) : Color.clear, in: Capsule())
-                .contentShape(Capsule())
+        AOMFilterChip(filter.rawValue, symbol: filter.icon, selected: selectedFilter == filter) {
+            selectedFilter = filter
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selectedFilter == filter ? .isSelected : [])
     }
 
     /// nil = AOM's "Until Capacity Limit" (no age limit).
@@ -503,7 +503,7 @@ struct MediaHistoryOverlayView: View {
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 18) {
+                            LazyHStack(spacing: AOMSpace.x4 + AOMSpace.x0_5) {
                                 ForEach(filteredEntries) { entry in
                                     CaptureHistoryCard(
                                         entry: entry,
@@ -519,7 +519,7 @@ struct MediaHistoryOverlayView: View {
                                         onPreview: { previewEntry = entry }
                                     ).frame(width: side).id(entry.id)
                                 }
-                            }.padding(.horizontal, 24).padding(.vertical, 10)
+                            }.padding(.horizontal, AOMSpace.x6).padding(.vertical, AOMSpace.x3 - AOMSpace.x0_5)
                         }
                         .onChange(of: keyboardScrollTarget) { _, id in
                             if let id { proxy.scrollTo(id) }
@@ -536,33 +536,35 @@ struct MediaHistoryOverlayView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: AOMSpace.x3) {
             Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(.secondary.opacity(0.5))
+                .font(AOMFont.hero.weight(.regular))
+                .imageScale(.large)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(AOMColor.textSecondary)
 
-            VStack(spacing: 4) {
+            VStack(spacing: AOMSpace.x1) {
                 Text(CaptureSettings.historyCapacity == 0 ? "Capture History is disabled."
                      : searchQuery.isEmpty ? "No files to restore..." : "No captures matching \"\(searchQuery)\"")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.primary)
+                    .font(AOMFont.headline)
+                    .foregroundStyle(AOMColor.text)
 
                 Text(CaptureSettings.historyCapacity == 0 ? "Choose Keep History in the settings menu to turn it on."
                      : searchQuery.isEmpty ? "Captures you take appear here so closed ones can be restored."
                      : "Try clearing your search query or switching filters.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .padding(AOMSpace.x6)
     }
 
     // MARK: - Footer Bar
 
     private var footerBar: some View {
-        HStack(spacing: 12) {
-            Text("\(filteredEntries.count) captures").foregroundStyle(.secondary)
+        HStack(spacing: AOMSpace.x3) {
+            Text("\(filteredEntries.count) captures").monospacedDigit().foregroundStyle(AOMColor.textSecondary)
             Spacer()
             if let entry = filteredEntries.first(where: { $0.id == selectedID }) {
                 Button(entry.isPinned ? "Unpin History" : "Keep in History") { history.togglePin(entry) }
@@ -572,11 +574,11 @@ struct MediaHistoryOverlayView: View {
                 Button("Copy") { copyEntry(entry) }.help("Copy (⌘C or Return)")
                 Button("Save") { saveEntry(entry) }.help("Save (⌘S)")
             } else {
-                Text("Select a capture · Space to preview · Drag to export").foregroundStyle(.secondary)
+                Text("Select a capture · Space to preview · Drag to export").foregroundStyle(AOMColor.textSecondary)
             }
         }
-        .font(.system(size: 11)).buttonStyle(.bordered).controlSize(.small)
-        .frame(height: 28).padding(.horizontal, 20).padding(.vertical, 8)
+        .font(AOMFont.caption).aomGlassButton().controlSize(.small)
+        .frame(height: AOMIcon.hitArea).padding(.horizontal, AOMSpace.x5).padding(.vertical, AOMSpace.x2)
     }
 
     // MARK: - Action Helpers
@@ -747,19 +749,19 @@ private struct CaptureHistoryCard: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             thumbnail
-            footer.padding(.horizontal, 4).padding(.bottom, 4)
+            footer.padding(.horizontal, AOMSpace.x1).padding(.bottom, AOMSpace.x1)
         }
-        .padding(5)
+        .padding(AOMSpace.x1 + 1)
         .frame(maxWidth: .infinity)
-        .background(cardBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        // An opaque card on the glass panel; hover shifts the fill, it never
+        // lifts (c.6), and selection is the accent ring the shelf uses.
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered && !isSelected)
         .overlay(selectionOutline.allowsHitTesting(false))
-        .shadow(color: Color.black.opacity(isHovered ? 0.18 : 0.08),
-                radius: isHovered ? 10 : 4, y: 3)
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
         .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.14)) { isHovered = hovering }
+            withAnimation(AOMMotion.quick) { isHovered = hovering }
             // Have a drag file ready before a drag can start (no UI stall).
             if hovering { CaptureDragFiles.shared.prefetch(entry) }
         }
@@ -774,46 +776,44 @@ private struct CaptureHistoryCard: View {
         .contextMenu { cardMenu }
     }
 
-    private var cardBackground: Color {
-        if isSelected { return Color.accentColor.opacity(0.16) }
-        return isHovered ? Color.primary.opacity(0.06)
-                         : Color(nsColor: .controlBackgroundColor).opacity(0.82)
+    @ViewBuilder private var selectionOutline: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: AOMRadius.card + AOMSpace.x0_5, style: .continuous)
+                .strokeBorder(AOMColor.accent, lineWidth: AOMSpace.x0_5)
+                .padding(-AOMSpace.x0_5)
+        }
     }
 
-    private var selectionOutline: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke(isSelected ? Color.accentColor
-                   : (isHovered ? Color.accentColor.opacity(0.4)
-                                : Color.primary.opacity(0.10)),
-                    lineWidth: isSelected ? 2 : 1)
-    }
+    /// Concentric inside the card at its 5 pt inset (c.3).
+    private var thumbnailRadius: CGFloat { AOMRadius.concentric(AOMRadius.card, inset: AOMSpace.x1 + 1) }
 
     private var thumbnail: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            RoundedRectangle(cornerRadius: thumbnailRadius, style: .continuous)
+                .fill(AOMColor.sunken)
                 .frame(height: thumbnailHeight)
             Image(nsImage: entry.thumbnail)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: thumbnailHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: thumbnailRadius, style: .continuous))
             if entry.kind == .videoRecording {
                 Image(systemName: "play.circle.fill")
-                    .font(.system(size: 37, weight: .light))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.7), radius: 5)
+                    .font(AOMFont.hero.weight(.regular))
+                    .imageScale(.large)
+                    .foregroundStyle(AOMFeatureColor.onMedia)
+                    .shadow(color: AOMFeatureColor.mediaDim, radius: 5)
             }
             if isHovered {
                 hoverActions
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.5))
-                    .shadow(color: Color.black.opacity(0.3), radius: 6, y: 2)
+                    .padding(.horizontal, AOMSpace.x2 - 1)
+                    .padding(.vertical, AOMSpace.x1)
+                    // Over the picture: an opaque plate, so the actions read on any capture.
+                    .aomMediaBadge(radius: AOMRadius.panel)
+                    .aomElevation(.raised)
                     .frame(maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 6)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.95)))
             }
         }
         .frame(height: thumbnailHeight)
@@ -821,7 +821,7 @@ private struct CaptureHistoryCard: View {
 
     /// CleanShot order: Copy, Annotate, Pin, Restore, Delete.
     private var hoverActions: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
             cardButton("doc.on.doc",
                        entry.kind == .videoRecording ? "Copy MP4 File (⌘C)" : "Copy (⌘C)", onCopy)
             if entry.kind == .videoRecording {
@@ -836,22 +836,23 @@ private struct CaptureHistoryCard: View {
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                if entry.isPinned { Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(Color.accentColor) }
+        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            HStack(spacing: AOMSpace.x1) {
+                if entry.isPinned { Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(AOMColor.accent) }
                 Text(entry.displayName)
-                .font(.system(size: 12, weight: .semibold))
+                .font(AOMFont.callout.weight(.semibold))
+                .foregroundStyle(AOMColor.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
             }
-            HStack(spacing: 4) {
+            HStack(spacing: AOMSpace.x1) {
                 Text(relativeTimeString(entry.capturedAt))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 2)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                Spacer(minLength: AOMSpace.x0_5)
                 Text("\(entry.image.width) × \(entry.image.height)")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(AOMFont.badge.monospacedDigit())
+                    .foregroundStyle(AOMColor.textSecondary)
             }
         }
     }
@@ -909,13 +910,14 @@ private struct CaptureHistoryCard: View {
         Button("Delete from History…", role: .destructive, action: onDelete)
     }
 
-    private func cardButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void, tint: Color = .primary) -> some View {
+    private func cardButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void, tint: Color = AOMColor.text) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
+                .font(AOMFont.caption.weight(.semibold))
                 .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-                .background(Color.white.opacity(0.12), in: Circle())
+                .frame(width: AOMIcon.hitArea - AOMSpace.x1, height: AOMIcon.hitArea - AOMSpace.x1)
+                .background(AOMColor.track, in: Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help(help)
