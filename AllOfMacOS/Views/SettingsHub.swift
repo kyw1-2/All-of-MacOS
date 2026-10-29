@@ -172,35 +172,38 @@ struct HubRowShell<Control: View>: View {
         self.control = control()
     }
 
+    /// e.3: a 20 pt monochrome symbol (the tint stays in the API but colour
+    /// has no job here), Body title, one line of Caption, the control at the
+    /// trailing edge; 36 pt tall, 52 with a description.
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.s) {
-            HStack(alignment: .center, spacing: AOMSpace.s) {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
+            HStack(alignment: .center, spacing: AOMSpace.x3) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(AOMFont.body)
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(tint)
-                    .frame(width: 18, height: 18)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .frame(width: AOMIcon.row, height: AOMIcon.row)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text(title)
-                        .font(AOMType.body)
-                        .foregroundStyle(AOMTheme.text)
+                        .font(AOMFont.body)
+                        .foregroundStyle(AOMColor.text)
                     if !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(AOMType.caption)
-                            .foregroundStyle(AOMTheme.textSecondary)
+                            .font(AOMFont.caption)
+                            .foregroundStyle(AOMColor.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: AOMSpace.m)
+                Spacer(minLength: AOMSpace.x4)
             }
             .contentShape(Rectangle())
             .onTapGesture { onLabelTap?() }
             control
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(minHeight: 44)
+        .padding(.horizontal, AOMSpace.x4)
+        .padding(.vertical, AOMSpace.x2)
+        .frame(minHeight: subtitle.isEmpty ? AOMSize.rowStandard : AOMSize.rowDetail)
     }
 }
 
@@ -481,6 +484,13 @@ enum SettingsCatalog {
         "launchAtLogin": "Startup", "showMenuBarIcon": "Startup",
         "appearance": "Appearance", "accentColor": "Appearance",
         "hud": "Feedback", "hudOpacity": "Feedback",
+        // Ten untitled rows used to follow Feedback in one box (e.2: at most 8).
+        "titleBarSnap": "Title-Bar Snap", "titleBarSnapGrid": "Title-Bar Snap", "titleBarSnapAlmost": "Title-Bar Snap",
+        "titleBarSnapHotkeys": "Title-Bar Snap", "titleBarSnapHoldCancel": "Title-Bar Snap",
+        "titleBarSnapSensitivity": "Title-Bar Snap",
+        "mcButtons": "Mission Control, Dock & Menu Bar", "spaceSwipe": "Mission Control, Dock & Menu Bar",
+        "dockPinchQuit": "Mission Control, Dock & Menu Bar", "dockGestures": "Mission Control, Dock & Menu Bar",
+        "menuBarGestures": "Mission Control, Dock & Menu Bar",
         "groupByFolder": "Automation List",
         "captureFormat": "Screenshots", "captureQuality": "Screenshots", "showsCursor": "Screenshots",
         "windowShadow": "Screenshots", "playsSound": "Screenshots", "selfTimer": "Screenshots",
@@ -823,7 +833,7 @@ struct SettingsHubView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AOMSpace.m) {
+                LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     ForEach(visibleSections) { section in
                         if isSearching {
                             groupView(section.category.title, rows: section.items)
@@ -835,12 +845,12 @@ struct SettingsHubView: View {
                     }
                 }
                 .frame(maxWidth: 720, alignment: .leading)
-                .padding(.horizontal, AOMSpace.l)
-                .padding(.top, AOMSpace.xs)
+                .padding(.horizontal, AOMSpace.pageMargin)
+                .padding(.top, AOMSpace.x4)
                 footer
                     .frame(maxWidth: 720, alignment: .leading)
-                    .padding(.horizontal, AOMSpace.l)
-                    .padding(.bottom, AOMSpace.m)
+                    .padding(.horizontal, AOMSpace.pageMargin)
+                    .padding(.bottom, AOMSpace.x6)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
@@ -848,33 +858,31 @@ struct SettingsHubView: View {
         }
     }
 
+    /// e.2: the title above the card in the Section style every main-window
+    /// page uses, the rows inside with dividers inset to the title text.
     private func groupView(_ title: String?, rows: [SettingItem]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             if let title {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AOMTheme.textSecondary)
-                    .padding(.leading, 4)
-                    .accessibilityAddTraits(.isHeader)
+                AOMSectionTitle(title)
             }
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     row.content
                     if index < rows.count - 1 {
-                        AOMDivider().padding(.leading, 44)
+                        AOMDivider().padding(.leading, AOMSpace.x4 + AOMIcon.row + AOMSpace.x3)
                     }
                 }
             }
-            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
+            .aomCard(padding: 0, elevated: false)
         }
     }
 
     private var footer: some View {
         Label("Changes are applied and saved automatically.", systemImage: "checkmark.circle")
-            .font(AOMType.caption)
-            .foregroundStyle(AOMTheme.textTertiary)
-            .padding(.leading, 4)
-            .padding(.top, AOMSpace.xs)
+            .font(AOMFont.caption)
+            .foregroundStyle(AOMColor.textSecondary)
+            .padding(.leading, AOMSpace.x1)
+            .padding(.top, AOMSpace.x4)
     }
 
     private func flashSaved() {
