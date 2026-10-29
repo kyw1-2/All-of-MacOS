@@ -197,7 +197,20 @@ private final class Desktop333: GestureDesktop {
     var switcherOffset = 0
     var appSwitcherAvailable = true
     var scrollOutcome: ScrollToTop.Outcome = .scrolled
+    /// Where the title-bar snap's history says a snapped window came from.
+    var originals: [String: CGRect] = [:]
+    /// Window moves wait here until `finishMoves()` (they complete later
+    /// than their gesture, as real Accessibility moves do).
+    var defersMoves = false
+    private var unfinishedMoves: [() -> Void] = []
     var log: [String] = []
+
+    /// Completes the window moves still waiting, one round.
+    func finishMoves() {
+        let moves = unfinishedMoves
+        unfinishedMoves = []
+        moves.forEach { $0() }
+    }
 
     @discardableResult
     func add(_ id: String, pid: pid_t, frame: CGRect, minimized: Bool = false) -> GestureWindow {
@@ -252,9 +265,10 @@ private final class Desktop333: GestureDesktop {
     func move(_ window: GestureWindow, to frame: CGRect, anchorIn visible: CGRect?, completion: @escaping (CGRect?) -> Void) {
         log.append("move \(window.id)")
         frames[window.id] = frame
-        completion(frame)
+        originals.removeValue(forKey: window.id)
+        if defersMoves { unfinishedMoves.append { completion(frame) } } else { completion(frame) }
     }
-    func unsnapFrame(for window: GestureWindow, current: CGRect) -> CGRect? { nil }
+    func unsnapFrame(for window: GestureWindow, current: CGRect) -> CGRect? { originals[window.id] }
     func snappedCell(for window: GestureWindow, current: CGRect) -> CustomSnapZone.Layout? { nil }
     func recordDisplayMove(of window: GestureWindow, from start: CGRect, to actual: CGRect, layout: CustomSnapZone.Layout) {}
     var snapMargin: CGFloat { 0 }
@@ -754,6 +768,60 @@ final class SwishDock333ServiceTests: XCTestCase {
         harness.frame([], after: 0.02)
         harness.drain()
         XCTAssertEqual(desktop.log, [])
+    }
+
+    /// S05: the ⌘N a pinch out sends a moment after the activation is not
+    /// sent when the screen locked or AOM was switched off in between (the
+    /// target's own pause: `testPinchingTwice…`).
+    func testTheDelayedCommandNChecksTheLockAndTheGateAgain() throws {
+        let app = try someOtherApp()
+        let pid = app.processIdentifier
+        let desktop = Desktop333()
+        let harness = Harness333(desktop)
+        defer { harness.restore() }
+        harness.inTopBand = false
+        harness.dockTarget = app
+        for change in [{ harness.locked = true }, { harness.allowed = false }] {
+            desktop.log = []
+            harness.pinch(in: false)
+            harness.drain(rounds: 1)                  // the wait for a second pinch: activate
+            XCTAssertEqual(desktop.log, ["activate \(pid)"])
+            change()
+            harness.drain()                           // the ⌘N a moment later
+            XCTAssertEqual(desktop.log, ["activate \(pid)"])
+            harness.locked = false
+            harness.allowed = true
+        }
+    }
+
+    /// S05: menu-bar window moves complete later than their gesture; before
+    /// each one AOM's pause, the lock and the window's own app are checked
+    /// again, so a pause half-way leaves the rest where they are.
+    func testMenuBarUnsnapChecksAgainBeforeEachWindowMove() {
+        let desktop = Desktop333()
+        let a = desktop.add("60:1", pid: 60, frame: CGRect(x: 0, y: 25, width: 720, height: 875))
+        let b = desktop.add("61:1", pid: 61, frame: CGRect(x: 720, y: 25, width: 720, height: 875))
+        let c = desktop.add("62:1", pid: 62, frame: CGRect(x: 0, y: 450, width: 720, height: 450))
+        desktop.originals = [a.id: CGRect(x: 100, y: 100, width: 500, height: 400),
+                             b.id: CGRect(x: 800, y: 100, width: 500, height: 400),
+                             c.id: CGRect(x: 200, y: 300, width: 500, height: 400)]
+        desktop.defersMoves = true
+        let harness = Harness333(desktop)
+        defer { harness.restore() }
+        // b's app is paused after the gesture: skipped; AOM paused after the
+        // first move: c stays put.
+        harness.doubleTap()
+        XCTAssertEqual(desktop.log, ["move \(a.id)"])
+        harness.paused = [61]
+        harness.allowed = false
+        desktop.finishMoves()
+        harness.allowed = true
+        XCTAssertEqual(desktop.log, ["move \(a.id)"])
+        // Resumed: the next double tap moves what is left, b still skipped.
+        harness.doubleTap(pause: 1)
+        desktop.finishMoves()
+        XCTAssertEqual(desktop.log, ["move \(a.id)", "move \(c.id)"])
+        XCTAssertNotNil(desktop.originals[b.id], "the paused app's window kept its place and its history")
     }
 
     // MARK: Mission Control
