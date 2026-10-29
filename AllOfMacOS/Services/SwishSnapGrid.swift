@@ -569,15 +569,31 @@ extension SwishSnap {
     /// layouts.
     enum HotkeyScheme: String, CaseIterable {
         case off, arrows, wasd, ijkl, hjkl
+        /// Swish's ",AOE": the keys Dvorak puts at the WASD positions. Key
+        /// codes are positions, so on a Dvorak layout these are the keys
+        /// labelled , A O E (the same physical keys as WASD on QWERTY).
+        case dvorak
 
         /// Key codes for left, right, up and down; nil when off.
         var keyCodes: (left: UInt16, right: UInt16, up: UInt16, down: UInt16)? {
             switch self {
             case .off: return nil
             case .arrows: return (123, 124, 126, 125)
-            case .wasd: return (0, 2, 13, 1)        // A D W S
+            case .wasd, .dvorak: return (0, 2, 13, 1)        // A D W S (Dvorak: A E , O)
             case .ijkl: return (38, 37, 34, 40)     // J L I K
             case .hjkl: return (4, 37, 40, 38)      // H L K J (vi)
+            }
+        }
+
+        /// The keys as the settings name them.
+        var label: String {
+            switch self {
+            case .off: return "Off"
+            case .arrows: return "←↑↓→"
+            case .wasd: return "WASD"
+            case .ijkl: return "IJKL"
+            case .hjkl: return "HJKL"
+            case .dvorak: return ",AOE"
             }
         }
     }
@@ -634,33 +650,265 @@ struct SwishChainQueue: Equatable {
     struct Pending: Equatable {
         var stroke: SwishSnap.Stroke
         var lifted: Bool
+        /// A pinch rather than a swipe (3.3.3 multi-motion: a swipe, then a
+        /// pinch in the same touch). `pinch` is its kind (nil: let go) and
+        /// `stroke` is unused.
+        var isPinch = false
+        var pinch: SwishSnap.Pinch? = nil
     }
 
-    private(set) var pending: Pending?
+    /// The motions waiting for the commit in flight, oldest first: committed
+    /// ones (their fingers lifted, or a further motion of the same touch
+    /// committed them, 3.3.3), then at most one still on the pad.
+    private(set) var queue: [Pending] = []
 
-    /// A swipe engaged during the commit; a newer one replaces it.
-    mutating func began(_ stroke: SwishSnap.Stroke) { pending = Pending(stroke: stroke, lifted: false) }
+    /// The motion to apply next.
+    var pending: Pending? { queue.first }
+
+    /// More committed motions than a person makes while one commit lands;
+    /// the oldest beyond it are dropped.
+    static let limit = 4
+
+    /// A swipe engaged during the commit; a newer one replaces a motion that
+    /// is still on the pad.
+    mutating func began(_ stroke: SwishSnap.Stroke) { push(Pending(stroke: stroke, lifted: false)) }
+
+    /// A pinch began during the commit (multi-motion: after a swipe).
+    mutating func beganPinch(_ kind: SwishSnap.Pinch?) {
+        push(Pending(stroke: SwishSnap.Stroke(.up), lifted: false, isPinch: true, pinch: kind))
+    }
+
+    private mutating func push(_ entry: Pending) {
+        if let last = queue.last, !last.lifted { queue.removeLast() }
+        queue.append(entry)
+        if queue.count > Self.limit { queue.removeFirst(queue.count - Self.limit) }
+    }
 
     /// Its stroke changed (direction, tier, a cross leg) before the commit landed.
     mutating func updated(_ stroke: SwishSnap.Stroke) {
-        guard pending?.lifted == false else { return }
-        pending?.stroke = stroke
+        guard let index = queue.indices.last, !queue[index].lifted, !queue[index].isPinch else { return }
+        queue[index].stroke = stroke
     }
 
-    /// Its fingers lifted before the commit landed.
-    mutating func liftedFingers() { pending?.lifted = true }
+    /// The waiting pinch changed (in, out, let go) before the commit landed.
+    mutating func pinchUpdated(_ kind: SwishSnap.Pinch?) {
+        guard let index = queue.indices.last, !queue[index].lifted, queue[index].isPinch else { return }
+        queue[index].pinch = kind
+    }
+
+    /// Its fingers lifted (or a further motion committed it) before the commit landed.
+    mutating func liftedFingers() {
+        guard let index = queue.indices.last, !queue[index].lifted else { return }
+        queue[index].lifted = true
+    }
 
     /// The touch still on the pad was cancelled (held still, a third finger,
-    /// the watchdog). A swipe whose fingers already lifted stays: a later
+    /// the watchdog). A motion whose fingers already lifted stays: a later
     /// touch's cancel is not its own.
     mutating func cancelTouch() {
-        if pending?.lifted == false { pending = nil }
+        if let last = queue.last, !last.lifted { queue.removeLast() }
     }
 
-    /// The commit landed: what to apply now. Nothing after a failed commit
-    /// (the window did not move, so where the stroke starts is unknown).
+    /// The commit landed: what to apply now (the rest waits for the commit
+    /// that one makes). Nothing after a failed commit (the window did not
+    /// move, so where the strokes start is unknown).
     mutating func landed(succeeded: Bool) -> Pending? {
-        defer { pending = nil }
-        return succeeded ? pending : nil
+        guard succeeded, !queue.isEmpty else { queue.removeAll(); return nil }
+        return queue.removeFirst()
+    }
+}
+
+// MARK: - Chaining a window (3.3.3)
+
+/// Which window title-bar gestures go to regardless of the pointer (3.3.3).
+/// A touch that already moved a window keeps acting on it (Swish's
+/// multi-motion engine; the window may no longer be under the pointer), and
+/// `TitleBarWindowSnap.beginChain` hands a window over from elsewhere (the
+/// Dock stream, a detached tab) for the rest of the touch on the pad and
+/// `grace` seconds after it lifts. A new touch that lands on another
+/// window's title bar captures that window and ends the chain. Pure: windows
+/// are named by key, times are passed in.
+struct SwishWindowChain: Equatable {
+    struct Link: Equatable {
+        let key: String
+        let pid: pid_t
+        let reason: String
+        /// Kept for the next touch (`beginChain`); a touch's own chain ends when it lifts.
+        let outlivesTouch: Bool
+        /// When the next touch must have landed by; nil while a touch it belongs to is on the pad.
+        var expires: TimeInterval?
+    }
+
+    /// How long after the lift a chained window waits for the next touch.
+    static let grace: TimeInterval = 3
+
+    private(set) var link: Link?
+
+    /// Chains `key`. `touchLive`: fingers are on the pad now, so the chain
+    /// lasts until they lift (then `grace` if it outlives the touch);
+    /// otherwise the grace starts now. A touch's own chain to a window that
+    /// is already chained for longer keeps the longer one.
+    mutating func begin(key: String, pid: pid_t, reason: String, outlivesTouch: Bool, touchLive: Bool,
+                        now: TimeInterval) {
+        let keeps = outlivesTouch || (link?.key == key && link?.outlivesTouch == true)
+        if !touchLive, !keeps { link = nil; return }
+        // A touch's own chain to a window handed over earlier keeps that reason.
+        let kept = !outlivesTouch && link?.key == key ? link?.reason : nil
+        link = Link(key: key, pid: pid, reason: kept ?? reason, outlivesTouch: keeps,
+                    expires: touchLive ? nil : now + Self.grace)
+    }
+
+    /// The fingers lifted: a touch's own chain ends, a handed-over one waits `grace` for the next touch.
+    mutating func touchEnded(now: TimeInterval) {
+        guard let current = link else { return }
+        guard current.outlivesTouch else { link = nil; return }
+        link?.expires = now + Self.grace
+    }
+
+    /// A touch landed with `pointerKey`'s title bar under the pointer (nil:
+    /// none). Returns the chained window it acts on, or nil: the chain timed
+    /// out, or another window was captured (both end it).
+    mutating func touchBegan(pointerKey: String?, now: TimeInterval) -> String? {
+        guard let current = link else { return nil }
+        if let expires = current.expires, now > expires { link = nil; return nil }
+        if let pointerKey, pointerKey != current.key { link = nil; return nil }
+        link?.expires = nil
+        return current.key
+    }
+
+    /// The chained window for a gesture now, or nil.
+    func current(now: TimeInterval) -> String? {
+        guard let link else { return nil }
+        if let expires = link.expires, now > expires { return nil }
+        return link.key
+    }
+
+    mutating func end() { link = nil }
+}
+
+// MARK: - Delayed and batched window writes (audit S03, S05)
+
+/// Delayed window work that re-checks when it comes due (S05: the full-screen
+/// step 0.3 s after a display move ran even if AOM had been paused, the app
+/// paused, the screen locked or the app quit meanwhile). `cancelAll` drops
+/// everything scheduled before it. Main thread only.
+final class SwishDelayedTasks {
+    typealias Schedule = (_ delay: Double, _ work: @escaping () -> Void) -> Void
+
+    private(set) var generation = 0
+    private let schedule: Schedule
+
+    init(schedule: @escaping Schedule = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }) {
+        self.schedule = schedule
+    }
+
+    func cancelAll() { generation &+= 1 }
+
+    /// After `delay`, `work` runs only if no `cancelAll` came in between and
+    /// `gate()`, asked then, still allows it; otherwise `skipped()` runs.
+    func run(after delay: Double, gate: @escaping () -> Bool, work: @escaping () -> Void,
+             skipped: @escaping () -> Void = {}) {
+        let token = generation
+        schedule(delay) { [weak self] in
+            guard let self, self.generation == token, gate() else { skipped(); return }
+            work()
+        }
+    }
+
+    /// Pure: the gate a delayed window step uses: AOM allows it (master
+    /// switch, pause), the window's app is not paused, the screen is not
+    /// locked and the app is still running.
+    static func mayRun(allowed: Bool, appPaused: Bool, screenLocked: Bool, appRunning: Bool) -> Bool {
+        allowed && !appPaused && !screenLocked && appRunning
+    }
+}
+
+/// Window writes done one at a time, each once the last has landed, asking
+/// again right before each write (S03: re-snapping after a display change and
+/// the resize-adjacent pass wrote to windows of an app paused in AOM, and kept
+/// going when AOM was paused mid-batch).
+enum SwishGatedBatch {
+    /// `mayWrite(item)` is asked right before each write; an item it refuses
+    /// is skipped and the batch goes on. `apply(item, done)` must call `done`
+    /// exactly once. `finished` gets the number of items written.
+    static func run<Item>(_ items: ArraySlice<Item>, mayWrite: @escaping (Item) -> Bool,
+                          apply: @escaping (Item, @escaping () -> Void) -> Void,
+                          written: Int = 0, finished: @escaping (Int) -> Void = { _ in }) {
+        guard let item = items.first else { finished(written); return }
+        guard mayWrite(item) else {
+            run(items.dropFirst(), mayWrite: mayWrite, apply: apply, written: written, finished: finished)
+            return
+        }
+        apply(item) {
+            run(items.dropFirst(), mayWrite: mayWrite, apply: apply, written: written + 1, finished: finished)
+        }
+    }
+}
+
+extension SwishSnap {
+    /// Pure (S03): whether AOM may write to a window it is not gesturing on
+    /// (re-snapping, a neighbour following a resize, drag to unsnap): never
+    /// AOM's own, never one of an app paused in AOM. The caller adds the gate
+    /// of its input (`AutomationGate`) and asks again right before each write.
+    static func mayWriteBackground(ownApp: Bool, appPaused: Bool) -> Bool { !ownApp && !appPaused }
+
+    /// Pure: whether Esc has a title-bar gesture to cancel (and so is
+    /// consumed): a preview or HUD on show, a tab held for detaching, a
+    /// "twice" action still waiting, or a swipe on the pad queued behind a
+    /// landing commit. Otherwise Esc goes on to the app.
+    static func escapeCancels(gestureOnShow: Bool, tabHeld: Bool, actionWaiting: Bool, motionQueued: Bool) -> Bool {
+        gestureOnShow || tabHeld || actionWaiting || motionQueued
+    }
+}
+
+// MARK: - Tooltip text (3.3.3, Swish's tooltips)
+
+extension SwishSnap {
+    /// Pure: what a place is called in the gesture tooltip.
+    static func placeName(_ place: Place) -> String {
+        switch place {
+        case .center: return "Center"
+        case .almostMaximize: return "Almost Maximize"
+        case .grid(let cell):
+            if let layout = cell.layout {
+                switch layout {
+                case .maximize: return "Maximize"
+                case .leftHalf: return "Left Half"
+                case .rightHalf: return "Right Half"
+                case .topHalf: return "Top Half"
+                case .bottomHalf: return "Bottom Half"
+                case .topLeft: return "Top Left"
+                case .topRight: return "Top Right"
+                case .bottomLeft: return "Bottom Left"
+                case .bottomRight: return "Bottom Right"
+                case .leftThird: return "Left Third"
+                case .centerThird: return "Center Third"
+                case .rightThird: return "Right Third"
+                case .leftTwoThirds: return "Left Two Thirds"
+                case .rightTwoThirds: return "Right Two Thirds"
+                case .center: return "Center"
+                case .nextDisplay: return "Next Display"
+                }
+            }
+            let row = cell.rows == 1 || cell.rowSpan == cell.rows ? ""
+                : cell.row == 0 ? "Top " : cell.row + cell.rowSpan == cell.rows ? "Bottom " : "Middle "
+            let column = cell.columns == 1 || cell.columnSpan == cell.columns ? ""
+                : cell.column == 0 ? "Left " : cell.column + cell.columnSpan == cell.columns ? "Right " : "Center "
+            let unit = cell.columns == 1 || cell.rows == 1 ? "Third" : cell.rows == 3 && cell.columns == 3 ? "Ninth" : "Sixth"
+            let count = cell.columnSpan * cell.rowSpan
+            let size = count == 1 ? unit : "\(count) \(unit)s"
+            return "\(row)\(column)\(size)".trimmingCharacters(in: .whitespaces)
+        }
+    }
+
+    /// Pure: the tooltip for a snap on show: the swipe's arrow and where the
+    /// window goes ("← Left Half"); "Restore" when it goes back to its frame
+    /// from before the snap (place nil).
+    static func tooltipText(direction: Direction?, place: Place?) -> String {
+        let name = place.map(placeName) ?? "Restore"
+        guard let direction else { return name }
+        return "\(arrow(direction)) \(name)"
     }
 }
