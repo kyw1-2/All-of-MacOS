@@ -28,6 +28,58 @@ final class AudioUnfairLock {
 /// an accelerating release (up to +40 dB); a peak above 0.9 pulls the gain
 /// down by 1.5 % per sample and resets the release acceleration. Enabling or
 /// disabling crossfades dry and processed audio over 40 ms.
+/// Named Magic Boost tunings (3.3.3, parity S06: SoundSource offers only a
+/// switch; these are AOM's own). "Music" is the reference tuning above,
+/// unchanged and the default; the others trade fullness for intelligibility
+/// or a smaller dynamic range. Each sets where loud audio is held
+/// (`threshold`), how fast quiet audio comes up (`releaseScale` × the
+/// reference rate), how far (`maximumGain`), the dry share of the parallel
+/// blend and the makeup gain, and for an output also the limiter's release.
+struct AudioBoostPreset: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let summary: String
+    let threshold: Float
+    let releaseScale: Float
+    let maximumGain: Float
+    let dry: Float
+    let makeup: Float
+    /// The output limiter's release on a local output, seconds (nil: 25 ms).
+    /// A network (AirPlay) output never releases faster than its 150 ms.
+    let limiterRelease: Double?
+
+    static let music = AudioBoostPreset(id: "music", name: "Music",
+        summary: "Fuller sound; quiet passages lifted, loud ones kept from overdriving (the reference tuning).",
+        threshold: 0.9, releaseScale: 1, maximumGain: 100, dry: 0.85, makeup: 1, limiterRelease: nil)
+    static let speech = AudioBoostPreset(id: "speech", name: "Speech",
+        summary: "Quiet voices come up quickly; room noise is raised less.",
+        threshold: 0.85, releaseScale: 3, maximumGain: 20, dry: 0.6, makeup: 1.1, limiterRelease: 0.05)
+    static let movie = AudioBoostPreset(id: "movie", name: "Movie",
+        summary: "Dialogue lifted, explosions held down.",
+        threshold: 0.7, releaseScale: 2, maximumGain: 40, dry: 0.5, makeup: 1.15, limiterRelease: 0.1)
+    static let night = AudioBoostPreset(id: "night", name: "Night",
+        summary: "A small dynamic range for listening quietly.",
+        threshold: 0.45, releaseScale: 4, maximumGain: 60, dry: 0.25, makeup: 1.2, limiterRelease: 0.2)
+    static let all: [AudioBoostPreset] = [music, speech, movie, night]
+    static let defaultID = music.id
+
+    static func index(of id: String?) -> Int { all.firstIndex { $0.id == id } ?? 0 }
+    static func preset(id: String?) -> AudioBoostPreset { all[index(of: id)] }
+
+    /// Settings: the output's preset, and each app's (absent: Music).
+    static let masterKey = "AOMAudioMasterBoostPreset"
+    static func appKey(_ bundleID: String) -> String { "AOMAudioMagicBoostPreset_\(bundleID)" }
+    static func storedID(bundleID: String?, defaults: UserDefaults = .standard) -> String {
+        let key = bundleID.map(appKey) ?? masterKey
+        return preset(id: defaults.string(forKey: key)).id
+    }
+    static func store(_ id: String, bundleID: String?, defaults: UserDefaults = .standard) {
+        let key = bundleID.map(appKey) ?? masterKey
+        let preset = preset(id: id)
+        if preset.id == defaultID { defaults.removeObject(forKey: key) } else { defaults.set(preset.id, forKey: key) }
+    }
+}
+
 final class AudioMagicBoost {
     static let lookaheadFrames = 512
     static let threshold: Float = 0.9
@@ -49,15 +101,59 @@ final class AudioMagicBoost {
     private(set) var gain: Float = 1
     private var knee: Float = 1
     private(set) var mix: Float = 0
+    /// 3.3.3 (S06): the preset the control thread wants (an index into
+    /// `AudioBoostPreset.all`) and, render thread only, the one in use, read
+    /// from a table made at init (no array or allocation on the render path).
+    private let presetSlot = AudioAtomicCounter(0)
+    private var appliedPreset = 0
+    private let table: UnsafeMutablePointer<Float>
+    private static let fields = 5
+    private var threshold = AudioMagicBoost.threshold
+    private var releaseRate = AudioMagicBoost.releaseRate
+    private var maximumGain = AudioMagicBoost.maximumGain
+    /// The blend's dry share and makeup glide to a new preset's (about 20 ms)
+    /// so switching never steps the level.
+    private var dry: Float = 0.85, dryTarget: Float = 0.85
+    private var makeupGain: Float = AudioMagicBoost.makeup, makeupTarget: Float = AudioMagicBoost.makeup
+    private let glide: Float
 
     init(sampleRate: Double) {
         let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
         rateScale = Float(44100 / rate)
         fadeStep = Float(1 / (0.04 * rate))
+        glide = Float(1 / (0.02 * rate))
         delay = .allocate(capacity: Self.lookaheadFrames * 2)
         delay.initialize(repeating: 0, count: Self.lookaheadFrames * 2)
+        let presets = AudioBoostPreset.all
+        table = .allocate(capacity: presets.count * Self.fields)
+        for (index, preset) in presets.enumerated() {
+            let row = table + index * Self.fields
+            row[0] = preset.threshold; row[1] = preset.releaseScale; row[2] = preset.maximumGain
+            row[3] = preset.dry; row[4] = preset.makeup
+        }
     }
-    deinit { delay.deallocate() }
+    deinit { delay.deallocate(); table.deallocate() }
+
+    /// Control thread: the tuning to use from the next block on.
+    func setPreset(index: Int) {
+        presetSlot.store(UInt64(min(max(0, index), AudioBoostPreset.all.count - 1)))
+    }
+    var presetIndex: Int { Int(presetSlot.load()) }
+
+    /// Render thread: takes up a new preset (five loads from the table).
+    @inline(__always)
+    private func adoptPreset() {
+        let wanted = Int(presetSlot.load())
+        guard wanted != appliedPreset, wanted >= 0, wanted < AudioBoostPreset.all.count else { return }
+        appliedPreset = wanted
+        let row = table + wanted * Self.fields
+        threshold = row[0]
+        releaseRate = Self.releaseRate * row[1]
+        maximumGain = row[2]
+        dryTarget = row[3]
+        makeupTarget = row[4]
+        if gain > maximumGain { gain = maximumGain }
+    }
 
     /// True while processing or crossfading; false means audio passes untouched.
     var isActive: Bool { mix > 0 || filled > 0 }
@@ -78,11 +174,13 @@ final class AudioMagicBoost {
         }
         // SoundSource releases a hundred times slower over digital silence so
         // the gain does not climb during a pause and blast the next sound.
+        adoptPreset()
         var silent = true
         for frame in 0..<frames where left[frame] != 0 || right[frame] != 0 { silent = false; break }
-        let release = Self.releaseRate * rateScale * (silent ? 0.01 : 1)
+        let release = releaseRate * rateScale * (silent ? 0.01 : 1)
         let attack = Self.attackRate * rateScale
         let capacity = Self.lookaheadFrames
+        let gliding = dry != dryTarget || makeupGain != makeupTarget
         for frame in 0..<frames {
             let inputLeft = left[frame].isFinite ? left[frame] : 0
             let inputRight = right[frame].isFinite ? right[frame] : 0
@@ -102,7 +200,12 @@ final class AudioMagicBoost {
             } else {
                 mix = max(0, mix - fadeStep)
             }
-            let wet = Self.outputGain(gain)
+            if gliding {
+                dry += max(-glide, min(glide, dryTarget - dry))
+                makeupGain += max(-glide, min(glide, makeupTarget - makeupGain))
+            }
+            // The reference blend, makeup × (gain + dry) / 2 (Music: dry 0.85).
+            let wet = makeupGain * (gain + dry) * 0.5
             left[frame] = inputLeft + (delayedLeft * wet - inputLeft) * mix
             right[frame] = inputRight + (delayedRight * wet - inputRight) * mix
         }
@@ -112,14 +215,14 @@ final class AudioMagicBoost {
     @inline(__always)
     private func detect(_ sample: Float, attack: Float, release: Float) {
         guard sample != 0 else { return }
-        if abs(sample * gain) > Self.threshold {
+        if abs(sample * gain) > threshold {
             gain = max(0.0001, gain - max(gain, 1) * attack)
             // The reference can push the knee below 1 (a brief negative
             // release); AOM floors it at 1 so release never lowers the gain.
             if knee > 1 { knee = max(1, knee - Self.kneeAttackDrop) }
         } else {
             let next = gain + release * knee
-            if next < Self.maximumGain { gain = next }
+            if next < maximumGain { gain = next }
             if knee < Self.kneeCeiling { knee += Self.kneeStep }
         }
     }

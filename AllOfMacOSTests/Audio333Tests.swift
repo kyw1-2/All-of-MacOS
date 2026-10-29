@@ -515,4 +515,192 @@ final class Audio333Tests: XCTestCase {
         XCTAssertNotNil(since["resetAt"] as? String)
         XCTAssertEqual((since["counters"] as? [String: Any])?["output.deviceCycleGaps"] as? Int, 2)
     }
+
+    // MARK: - S06: Magic Boost presets
+
+    /// The 3.3.2 Magic Boost, copied from the shipped code: what the Music
+    /// preset must still produce sample for sample.
+    private final class ReferenceBoost {
+        let rateScale: Float, fadeStep: Float
+        var delay = [Float](repeating: 0, count: 1024)
+        var writeIndex = 0, filled = 0
+        var gain: Float = 1, knee: Float = 1, mix: Float = 0
+        init(sampleRate: Double) {
+            rateScale = Float(44100 / sampleRate)
+            fadeStep = Float(1 / (0.04 * sampleRate))
+        }
+        func process(_ left: inout [Float], _ right: inout [Float], frames: Int, enabled: Bool) {
+            if !enabled && mix == 0 { if filled > 0 { reset() }; return }
+            var silent = true
+            for frame in 0..<frames where left[frame] != 0 || right[frame] != 0 { silent = false; break }
+            let release = AudioMagicBoost.releaseRate * rateScale * (silent ? 0.01 : 1)
+            let attack = AudioMagicBoost.attackRate * rateScale
+            for frame in 0..<frames {
+                let inputLeft = left[frame].isFinite ? left[frame] : 0
+                let inputRight = right[frame].isFinite ? right[frame] : 0
+                let slot = writeIndex * 2
+                let delayedLeft = delay[slot], delayedRight = delay[slot + 1]
+                delay[slot] = inputLeft; delay[slot + 1] = inputRight
+                writeIndex += 1
+                if writeIndex == 512 { writeIndex = 0 }
+                if filled < 512 { filled += 1 }
+                detect(inputLeft, attack, release); detect(inputRight, attack, release)
+                if enabled {
+                    if filled >= 512 && mix < 1 { mix = min(1, mix + fadeStep) }
+                } else {
+                    mix = max(0, mix - fadeStep)
+                }
+                let wet = AudioMagicBoost.outputGain(gain)
+                left[frame] = inputLeft + (delayedLeft * wet - inputLeft) * mix
+                right[frame] = inputRight + (delayedRight * wet - inputRight) * mix
+            }
+            if !enabled && mix == 0 { reset() }
+        }
+        private func detect(_ sample: Float, _ attack: Float, _ release: Float) {
+            guard sample != 0 else { return }
+            if abs(sample * gain) > AudioMagicBoost.threshold {
+                gain = max(0.0001, gain - max(gain, 1) * attack)
+                if knee > 1 { knee = max(1, knee - AudioMagicBoost.kneeAttackDrop) }
+            } else {
+                let next = gain + release * knee
+                if next < AudioMagicBoost.maximumGain { gain = next }
+                if knee < AudioMagicBoost.kneeCeiling { knee += AudioMagicBoost.kneeStep }
+            }
+        }
+        private func reset() {
+            delay = [Float](repeating: 0, count: 1024); writeIndex = 0; filled = 0; gain = 1; knee = 1; mix = 0
+        }
+    }
+
+    private func sine(_ amplitude: Float, seconds: Double, frequency: Double = 220, phase: inout Double) -> [Float] {
+        (0..<Int(seconds * 48000)).map { _ in
+            defer { phase += 2 * .pi * frequency / 48000 }
+            return amplitude * Float(sin(phase))
+        }
+    }
+
+    /// Mono signal through a boost in 512-frame blocks; `switchAt` (frames)
+    /// applies `preset` from that block on.
+    private func boosted(_ signal: [Float], _ boost: AudioMagicBoost, enabledUntil: Int = .max,
+                         switchAt: Int = .max, preset: Int = 0) -> [Float] {
+        var output: [Float] = []
+        output.reserveCapacity(signal.count)
+        var left = [Float](repeating: 0, count: 512), right = left
+        var index = 0
+        while index < signal.count {
+            let count = min(512, signal.count - index)
+            if index >= switchAt { boost.setPreset(index: preset) }
+            for frame in 0..<count { left[frame] = signal[index + frame]; right[frame] = signal[index + frame] }
+            left.withUnsafeMutableBufferPointer { l in
+                right.withUnsafeMutableBufferPointer { r in
+                    boost.process(left: l.baseAddress!, right: r.baseAddress!, frames: count, enabled: index < enabledUntil)
+                }
+            }
+            output += left[..<count]
+            index += count
+        }
+        return output
+    }
+
+    private func rms(_ samples: ArraySlice<Float>) -> Float {
+        (samples.reduce(0) { $0 + $1 * $1 } / Float(max(1, samples.count))).squareRoot()
+    }
+
+    func testMusicIsTheShippedMagicBoostSampleForSample() {
+        var phase = 0.0
+        let signal = sine(0.05, seconds: 1.5, phase: &phase) + sine(1.2, seconds: 0.5, phase: &phase)
+            + [Float](repeating: 0, count: 9600) + sine(0.2, seconds: 1, phase: &phase)
+        let enabledUntil = signal.count - 24000
+        let current = AudioMagicBoost(sampleRate: 48000)
+        let explicit = AudioMagicBoost(sampleRate: 48000)
+        explicit.setPreset(index: AudioBoostPreset.index(of: "night"))
+        explicit.setPreset(index: AudioBoostPreset.index(of: "music")) // before any audio: Music again
+        let reference = ReferenceBoost(sampleRate: 48000)
+        let a = boosted(signal, current, enabledUntil: enabledUntil)
+        let b = boosted(signal, explicit, enabledUntil: enabledUntil)
+        var expected: [Float] = []
+        var left = [Float](repeating: 0, count: 512), right = left
+        var index = 0
+        while index < signal.count {
+            let count = min(512, signal.count - index)
+            for frame in 0..<count { left[frame] = signal[index + frame]; right[frame] = signal[index + frame] }
+            reference.process(&left, &right, frames: count, enabled: index < enabledUntil)
+            expected += left[..<count]
+            index += count
+        }
+        XCTAssertEqual(a, expected, "the default is the 3.3.2 boost")
+        XCTAssertEqual(b, expected, "and so is Music chosen explicitly")
+        XCTAssertEqual(AudioBoostPreset.defaultID, "music")
+        XCTAssertEqual(AudioBoostPreset.all.map(\.name), ["Music", "Speech", "Movie", "Night"])
+    }
+
+    /// Night holds loud audio lower and keeps quiet audio up: a smaller
+    /// dynamic range than Music. Speech brings a quiet voice up sooner.
+    func testNightNarrowsTheRangeAndSpeechLiftsAQuietVoiceSooner() {
+        var phase = 0.0
+        let loud = sine(0.9, seconds: 2, phase: &phase), quiet = sine(0.05, seconds: 3, phase: &phase)
+        func levels(_ id: String) -> (loud: Float, quiet: Float) {
+            let boost = AudioMagicBoost(sampleRate: 48000)
+            boost.setPreset(index: AudioBoostPreset.index(of: id))
+            let output = boosted(loud + quiet, boost)
+            return (rms(output[(loud.count - 24000)..<loud.count]), rms(output[(output.count - 48000)...]))
+        }
+        let music = levels("music"), night = levels("night")
+        let dryQuiet = rms(quiet[...])
+        XCTAssertLessThan(night.loud, music.loud * 0.7, "Night holds loud audio at least 3 dB lower")
+        XCTAssertLessThan(night.loud / night.quiet, music.loud / music.quiet, "a smaller range")
+        XCTAssertGreaterThan(night.quiet, dryQuiet * 2, "quiet audio is still raised")
+        func secondsToTriple(_ id: String) -> Double {
+            let boost = AudioMagicBoost(sampleRate: 48000)
+            boost.setPreset(index: AudioBoostPreset.index(of: id))
+            let output = boosted(quiet, boost)
+            for start in stride(from: 0, to: output.count - 4800, by: 4800)
+            where rms(output[start..<(start + 4800)]) >= dryQuiet * 3 { return Double(start) / 48000 }
+            return .infinity
+        }
+        let speech = secondsToTriple("speech"), reference = secondsToTriple("music")
+        XCTAssertLessThan(speech, reference, "Speech lifts a quiet voice sooner (\(speech) s vs \(reference) s)")
+        print("S06 loud/quiet RMS: Music \(music), Night \(night); 3× lift after Speech \(speech) s, Music \(reference) s")
+    }
+
+    /// Changing the preset while audio plays glides: no sample step larger
+    /// than the signal's own.
+    func testSwitchingThePresetWhilePlayingDoesNotStep() {
+        var phase = 0.0
+        let signal = sine(0.3, seconds: 3, phase: &phase)
+        let boost = AudioMagicBoost(sampleRate: 48000)
+        let output = boosted(signal, boost, switchAt: 48000 * 3 / 2, preset: AudioBoostPreset.index(of: "night"))
+        func worstStep(_ range: Range<Int>) -> Float {
+            var worst: Float = 0
+            for index in range.dropFirst() { worst = max(worst, abs(output[index] - output[index - 1])) }
+            return worst
+        }
+        let before = worstStep(48000..<72000), after = worstStep(72000..<96000)
+        XCTAssertLessThanOrEqual(after, before * 1.5 + 0.005, "before \(before), after \(after)")
+        XCTAssertEqual(boost.presetIndex, AudioBoostPreset.index(of: "night"))
+    }
+
+    func testBoostPresetsAreStoredPerAppAndForTheOutput() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "Audio333Tests.\(UUID().uuidString)"))
+        XCTAssertEqual(AudioBoostPreset.storedID(bundleID: "com.example.player", defaults: defaults), "music")
+        AudioBoostPreset.store("night", bundleID: "com.example.player", defaults: defaults)
+        XCTAssertEqual(defaults.string(forKey: "AOMAudioMagicBoostPreset_com.example.player"), "night")
+        XCTAssertEqual(AudioBoostPreset.storedID(bundleID: "com.example.player", defaults: defaults), "night")
+        XCTAssertEqual(AudioBoostPreset.storedID(bundleID: nil, defaults: defaults), "music", "the output keeps its own")
+        AudioBoostPreset.store("movie", bundleID: nil, defaults: defaults)
+        XCTAssertEqual(defaults.string(forKey: AudioBoostPreset.masterKey), "movie")
+        AudioBoostPreset.store("music", bundleID: "com.example.player", defaults: defaults)
+        XCTAssertNil(defaults.object(forKey: "AOMAudioMagicBoostPreset_com.example.player"), "the default stores nothing")
+        defaults.set("garbage", forKey: AudioBoostPreset.masterKey)
+        XCTAssertEqual(AudioBoostPreset.storedID(bundleID: nil, defaults: defaults), "music", "an unknown id is Music")
+        // An app's mixer takes its preset lock-free; the output limiter never
+        // releases faster than its bus allows (AirPlay: 150 ms).
+        let mixer = MixerBox(gain: 1, muted: false)
+        mixer.boostPreset = AudioBoostPreset.index(of: "speech")
+        XCTAssertEqual(mixer.boostPreset, 1)
+        XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.15, preset: .speech), 0.15)
+        XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.15, preset: .night), 0.2)
+        XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.025, preset: .speech), 0.05)
+        XCTAssertEqual(AppAudioRenderBus.limiterRelease(base: 0.025, preset: .music), 0.025)
+    }
 }

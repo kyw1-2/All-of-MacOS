@@ -423,6 +423,7 @@ final class AppAudioEngine {
                 session.muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")
                 mixer.gain = session.gain; mixer.muted = session.muted
                 mixer.magicBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(app.bundleID)")
+                mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: app.bundleID))
                 mixer.overdrive = AppAudioPreferences.overdrive(bundleID: app.bundleID)
                 mixer.balance = AppAudioPreferences.balance(bundleID: app.bundleID)
                 guard updateProcesses(session, ids: ids) else {
@@ -650,19 +651,36 @@ final class AppAudioEngine {
         return AudioEQ(gains: gains, sampleRate: sampleRate)
     }
 
+    /// The master EQ for a session playing to `outputUID`.
+    static func masterEQ(sampleRate: Double = 48000, outputUID: String?) -> AudioEQ {
+        masterEQ(sampleRate: sampleRate)
+    }
+
     func updateEffects() {
         let masterBoost = UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled") ? 1 : 0
-        MainActor.assumeIsolated { SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost) }
+        let masterPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: nil))
+        MainActor.assumeIsolated {
+            SharedOutputRenderer.shared.setMasterBoostLevel(masterBoost)
+            SharedOutputRenderer.shared.setMasterBoostPreset(masterPreset)
+        }
         for session in sessions.values {
             let mixer = session.box.takeUnretainedValue()
             mixer.setEffects(
                 app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: session.outputUID),
                 appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
+            mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: session.bundleID))
             mixer.overdrive = AppAudioPreferences.overdrive(bundleID: session.bundleID)
             mixer.balance = AppAudioPreferences.balance(bundleID: session.bundleID)
         }
         scheduleSync()
+    }
+
+    /// 3.3.3 (S06): a named Magic Boost preset for an app, or for the output
+    /// (`bundleID` nil); applied in place, no session restarts.
+    func setBoostPreset(_ id: String, bundleID: String?) {
+        AudioBoostPreset.store(id, bundleID: bundleID)
+        updateEffects()
     }
 
     // MARK: - Process Hierarchy & Helpers
@@ -1126,8 +1144,9 @@ final class AppAudioEngine {
                              eq: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate))
         let appBoost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)") ? 1 : 0
         mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate),
+                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: outUID),
                          appBoost: appBoost)
+        mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: bundleID))
         mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
         mixer.balance = AppAudioPreferences.balance(bundleID: bundleID)
         mixer.deviceGain = AudioOutputService.softwareGain(uid: outUID)
@@ -1427,6 +1446,12 @@ final class MixerBox {
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
     fileprivate let boostProcessor = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    /// 3.3.3 (S06): the app's Magic Boost preset (an index into
+    /// `AudioBoostPreset.all`); the processor takes it up lock-free.
+    var boostPreset: Int {
+        get { boostProcessor.presetIndex }
+        set { boostProcessor.setPreset(index: newValue) }
+    }
     /// Volume Overdrive. While the app plays to AirPlay (`usesNetworkDynamics`)
     /// its limiter releases like the network bus; the release switches in
     /// place (3.3.2 review: a second, preallocated processor took over with a

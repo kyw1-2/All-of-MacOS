@@ -48,6 +48,15 @@ final class SharedOutputRenderer {
         for output in airPlayOutputs.values { output.bus.setBoostLevel(masterBoostLevel) }
     }
 
+    /// 3.3.3 (S06): the output Magic Boost preset (index into `AudioBoostPreset.all`).
+    private var masterBoostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: nil))
+
+    func setMasterBoostPreset(_ index: Int) {
+        masterBoostPreset = index
+        for graph in graphs.values { graph.bus.setBoostPreset(index) }
+        for output in airPlayOutputs.values { output.bus.setBoostPreset(index) }
+    }
+
     private var graphs: [String: DeviceGraph] = [:]
     private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
     var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
@@ -65,6 +74,7 @@ final class SharedOutputRenderer {
                 if #available(macOS 14.2, *) { AppAudioEngine.shared.requestSync() }
             }
             output.bus.setBoostLevel(masterBoostLevel)
+            output.bus.setBoostPreset(masterBoostPreset)
             airPlayOutputs[device.uid] = output
         }
         return airPlayOutputs[device.uid]!.state
@@ -138,6 +148,7 @@ final class SharedOutputRenderer {
               let format = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 2) else { return nil }
         let bus = AppAudioRenderBus()
         bus.setBoostLevel(masterBoostLevel)
+        bus.setBoostPreset(masterBoostPreset)
         let node = AVAudioSourceNode(format: format) { _, _, frames, buffers in
             bus.render(frames: Int(frames), output: buffers)
             return noErr
@@ -364,8 +375,29 @@ final class AppAudioRenderBus {
     func setBoostLevel(_ level: Int) {
         boostLevel.store(level > 0 ? 1 : 0)
     }
+    /// 3.3.3 (S06): the output's Magic Boost preset, with its limiter
+    /// release. A network bus never releases faster than it was built to
+    /// (150 ms: a faster release modulates bass on AirPlay).
+    func setBoostPreset(_ index: Int) {
+        let preset = AudioBoostPreset.all[min(max(0, index), AudioBoostPreset.all.count - 1)]
+        boost.setPreset(index: index)
+        let seconds = Self.limiterRelease(base: baseRelease, preset: preset)
+        let coefficient = AudioLookaheadLimiter.releaseCoefficient(sampleRate: SharedOutputRenderer.sampleRate, seconds: seconds)
+        limiterReleaseBits.store(UInt64(coefficient.bitPattern))
+    }
+    /// The limiter release a preset gives a bus built with `base` (never faster).
+    static func limiterRelease(base: Double, preset: AudioBoostPreset) -> Double {
+        max(base, preset.limiterRelease ?? base)
+    }
+    var boostPresetIndex: Int { boost.presetIndex }
+    private let baseRelease: Double
+    /// The limiter release coefficient wanted (Float bits; 0: unchanged) and,
+    /// render thread only, the one in use.
+    private let limiterReleaseBits = AudioAtomicCounter()
+    private var appliedReleaseBits: UInt64 = 0
     var limiterCeiling: Float { limiter.ceiling }
     init(ceiling: Float = AppAudioRenderBus.ceiling, truePeak: Bool = false, releaseSeconds: Double = 0.025) {
+        baseRelease = releaseSeconds.isFinite ? min(2, max(0.005, releaseSeconds)) : 0.025
         limiter = AudioLookaheadLimiter(sampleRate: SharedOutputRenderer.sampleRate, ceiling: ceiling, truePeak: truePeak,
                                         releaseSeconds: releaseSeconds)
         scratch = .allocate(capacity: capacity * 2)
@@ -498,6 +530,11 @@ final class AppAudioRenderBus {
         }
         // Snapshot once per buffer; a settings change never takes the render lock.
         let boostEnabled = boostLevel.load() != 0
+        let releaseBits = limiterReleaseBits.load()
+        if releaseBits != 0 && releaseBits != appliedReleaseBits {
+            appliedReleaseBits = releaseBits
+            limiter.setReleaseCoefficient(Float(bitPattern: UInt32(truncatingIfNeeded: releaseBits)))
+        }
         var offset = 0
         while offset < frames {
             let count = min(chunk, frames - offset)
