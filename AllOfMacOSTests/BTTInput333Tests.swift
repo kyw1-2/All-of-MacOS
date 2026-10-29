@@ -570,3 +570,153 @@ final class BTTInput333ValueBindingTests: XCTestCase {
         XCTAssertEqual(fired, ["s1"])
     }
 }
+
+// MARK: - Item 3: Force Touch pressure stages
+
+final class BTTInput333PressureStageTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        UserDefaults.standard.set(true, forKey: AutomationGate.masterSwitchKey)
+    }
+    override func tearDown() {
+        ActionExecutor.onActionExecuted = nil
+        super.tearDown()
+    }
+
+    func testLevelPlacesEachStageBetweenItsBoundaries() {
+        XCTAssertEqual(PressureStageTracker.level(stage: 0, pressure: 0.7), 0)
+        XCTAssertEqual(PressureStageTracker.level(stage: 1, pressure: 0), 1.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(PressureStageTracker.level(stage: 1, pressure: 1), 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(PressureStageTracker.level(stage: 2, pressure: 0), 2.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(PressureStageTracker.level(stage: 2, pressure: 1), 1, accuracy: 1e-9)
+        XCTAssertEqual(PressureStageTracker.level(stage: 3, pressure: 1), 1, accuracy: 1e-9)
+        XCTAssertEqual(PressureStageTracker.level(stage: 1, pressure: .nan), 1.0 / 3, accuracy: 1e-9)
+    }
+
+    func testStageOneFiresOnceAtTheClickAndReArmsOnlyOnRelease() {
+        var tracker = PressureStageTracker(hysteresis: 0.1)
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0), [1])
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0.5), [])
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0), [], "still clicked")
+        XCTAssertTrue(tracker.isHeld(1))
+        XCTAssertEqual(tracker.feed(stage: 0, pressure: 0), [])
+        XCTAssertFalse(tracker.isHeld(1))
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0.1), [1], "the next click fires again")
+    }
+
+    func testStageTwoHasHysteresisAroundTheDeepPress() {
+        var tracker = PressureStageTracker(hysteresis: 0.1)
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0.9), [1])
+        XCTAssertEqual(tracker.feed(stage: 2, pressure: 0), [2])
+        // Wobbling across the deep-press point stays inside the band.
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0.95), [])
+        XCTAssertEqual(tracker.feed(stage: 2, pressure: 0.05), [], "no second stage 2 without leaving the band")
+        XCTAssertTrue(tracker.isHeld(2))
+        // Level (1 + 0.6) / 3 = 0.533 is below 2/3 − 0.1: stage 2 re-arms.
+        XCTAssertEqual(tracker.feed(stage: 1, pressure: 0.6), [])
+        XCTAssertFalse(tracker.isHeld(2))
+        XCTAssertTrue(tracker.isHeld(1))
+        XCTAssertEqual(tracker.feed(stage: 2, pressure: 0), [2])
+    }
+
+    func testAFastDeepPressEntersBothStages() {
+        var tracker = PressureStageTracker(hysteresis: 0.1)
+        XCTAssertEqual(tracker.feed(stage: 2, pressure: 0.5), [1, 2])
+        XCTAssertEqual(tracker.feed(stage: 0, pressure: 0), [])
+        XCTAssertFalse(tracker.isHeld(1) || tracker.isHeld(2))
+    }
+
+    func testHysteresisIsClampedAndReadFromSettings() {
+        XCTAssertEqual(PressureStageTracker(hysteresis: 5).hysteresis, PressureStageTracker.hysteresisRange.upperBound)
+        XCTAssertEqual(PressureStageTracker(hysteresis: 0).hysteresis, PressureStageTracker.hysteresisRange.lowerBound)
+        XCTAssertEqual(PressureStageTracker(hysteresis: .nan).hysteresis, PressureStageTracker.defaultHysteresis)
+        let suite = "AOM.PressureStage.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(PressureStageTracker.storedHysteresis(defaults), PressureStageTracker.defaultHysteresis)
+        defaults.set(0.2, forKey: PressureStageTracker.hysteresisKey)
+        XCTAssertEqual(PressureStageTracker.storedHysteresis(defaults), 0.2)
+    }
+
+    func testProgressRunsFromTheStageBoundaryToFullPressure() {
+        var tracker = PressureStageTracker(hysteresis: 0.1)
+        _ = tracker.feed(stage: 1, pressure: 0)
+        XCTAssertEqual(tracker.progress(from: 1), 0, accuracy: 1e-9)
+        _ = tracker.feed(stage: 2, pressure: 0)
+        XCTAssertEqual(tracker.progress(from: 1), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(tracker.progress(from: 2), 0, accuracy: 1e-9)
+        _ = tracker.feed(stage: 2, pressure: 1)
+        XCTAssertEqual(tracker.progress(from: 1), 1, accuracy: 1e-9)
+        XCTAssertEqual(tracker.progress(from: 2), 1, accuracy: 1e-9)
+    }
+
+    func testStageTriggersFireOncePerPressThroughTheMonitor() {
+        let rig = SystemRig(kinds: [.forceTouchStage(stage: 1), .forceTouchStage(stage: 2)])
+        let press: [(Int, Double)] = [(1, 0.2), (1, 0.8), (2, 0.1), (1, 0.95), (2, 0.2), (1, 0.3), (0, 0)]
+        for (stage, pressure) in press { rig.monitor.handle(.forceTouch(stage: stage, pressure: pressure)) }
+        rig.drain()
+        XCTAssertEqual(rig.fired, ["t0", "t1"])
+        rig.monitor.handle(.forceTouch(stage: 1, pressure: 0.3)); rig.drain()
+        XCTAssertEqual(rig.fired, ["t0", "t1", "t0"], "a new click is a new stage 1")
+    }
+
+    private func boundRig(holdPeak: Bool) -> (SystemRig, RecordingSink333) {
+        let rig = SystemRig(kinds: [.forceTouchStage(stage: 1)]) { trigger, _ in
+            trigger.valueBinding = ContinuousValueBinding(target: .displayBrightness, holdPeak: holdPeak)
+        }
+        let recorder = RecordingSink333()
+        rig.monitor.continuousEngine = ContinuousValueEngine(sink: recorder.sink, resolve: { _ in .displayBrightness(displayID: 1) },
+                                                             currentLevel: { _ in nil })
+        return (rig, recorder)
+    }
+    private func feed(_ rig: SystemRig, _ recorder: RecordingSink333, _ readings: [(Int, Double)]) {
+        for (stage, pressure) in readings {
+            rig.monitor.handle(.forceTouch(stage: stage, pressure: pressure))
+            recorder.run(advancingBy: 1)
+        }
+    }
+
+    func testABoundStageFollowsThePressureWhileHeldAndNeverRunsActions() {
+        let (rig, recorder) = boundRig(holdPeak: false)
+        feed(rig, recorder, [(1, 0), (1, 0.5), (2, 0.5), (0, 0), (0, 0)])
+        rig.drain()
+        let values = recorder.values
+        XCTAssertEqual(values.count, 3, "\(values)")
+        for (a, e) in zip(values, [0, 0.25, 0.75]) { XCTAssertEqual(a, e, accuracy: 1e-6) }
+        XCTAssertTrue(rig.fired.isEmpty, "a bound stage drives its value instead of firing")
+    }
+
+    func testHoldPeakKeepsTheDeepestPressAfterRelease() {
+        let (rig, recorder) = boundRig(holdPeak: true)
+        feed(rig, recorder, [(1, 0), (1, 0.5), (2, 0.5), (1, 0.2), (0, 0), (1, 0.3)])
+        let values = recorder.values
+        XCTAssertEqual(values.count, 3, "\(values)")
+        for (a, e) in zip(values, [0.25, 0.75, 0.15]) { XCTAssertEqual(a, e, accuracy: 1e-6) }
+    }
+
+    func testStagesNeedOnlyTheForceTouchSourceAndAreValidated() throws {
+        let kinds: [SystemTriggerKind] = [.forceTouchStage(stage: 1), .forceTouchStage(stage: 2)]
+        XCTAssertEqual(SignalSource.needs(for: kinds), [.forceTouch])
+        for kind in kinds { XCTAssertEqual(try JSONDecoder().decode(SystemTriggerKind.self, from: JSONEncoder().encode(kind)), kind) }
+        XCTAssertEqual(kinds.map(\.displayName), ["Force Touch stage 1 (click)", "Force Touch stage 2 (deep press)"])
+        XCTAssertNil(TriggerValidation.systemProblem(for: .forceTouchStage(stage: 2)))
+        XCTAssertNotNil(TriggerValidation.systemProblem(for: .forceTouchStage(stage: 3)))
+        let rig = SystemRig(kinds: [.forceTouchStage(stage: 3)])
+        rig.monitor.handle(.forceTouch(stage: 2, pressure: 1)); rig.drain()
+        XCTAssertTrue(rig.fired.isEmpty, "an invalid stage is never registered")
+        XCTAssertTrue(rig.provider.started.isEmpty)
+    }
+
+    func testPressureMonitorDropsRepeatsClampsAndReleases() {
+        var signals: [SystemSignal] = []
+        let monitor = ForceTouchPressureMonitor { signals.append($0) } // never started: no real event monitor
+        monitor.forward(stage: 1, pressure: 0.5)
+        monitor.forward(stage: 1, pressure: 0.505)
+        monitor.forward(stage: 1, pressure: 0.52)
+        monitor.forward(stage: 5, pressure: 2)
+        monitor.forward(stage: 0, pressure: 0.7)
+        monitor.forward(stage: 0, pressure: 0)
+        XCTAssertEqual(signals, [.forceTouch(stage: 1, pressure: 0.5), .forceTouch(stage: 1, pressure: 0.52),
+                                 .forceTouch(stage: 2, pressure: 1), .forceTouch(stage: 0, pressure: 0)])
+    }
+}
