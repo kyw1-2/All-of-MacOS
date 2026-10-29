@@ -1,12 +1,23 @@
 import SwiftUI
 import AppKit
 
-/// The Capture settings tab.
+/// The Capture settings tab (Settings › Capture › All Capture Options, and
+/// Capture › Capture Settings…).
 ///
 /// Split into the same groups CleanShot uses — what is captured, what happens
 /// afterwards, how the overlay behaves — because those are the three things a
-/// user actually comes here to change.
+/// user actually comes here to change. 3.3.3 (ui.md e.3/e.10): standard page
+/// sections (title above an opaque card, at most 8 rows), ⓘ help instead of
+/// caption lines, and dependent options indented and disabled under their
+/// parent instead of hidden.
 struct CaptureSettingsView: View {
+    /// Section anchors; isolated previews can open one with
+    /// `--aom-preview-capture-section <raw value>` (AudioCapturePreviewHooks).
+    enum Section: String, CaseIterable {
+        case format, capture, selecting, recording, pointer, clicks, camera, keystrokes, during,
+             after, naming, overlay, closing, text, pinned
+    }
+
     @AppStorage("AOMCaptureFormat") private var formatRaw = CaptureFormat.png.rawValue
     @AppStorage("AOMCaptureQuality") private var quality = 0.9
     @AppStorage("AOMCaptureShowsCursor") private var showsCursor = false
@@ -60,53 +71,87 @@ struct CaptureSettingsView: View {
     @AppStorage("AOMCaptureFilenameUTC") private var filenameUTC = false
     @AppStorage("AOMCaptureColorProfile") private var colorProfile = CaptureColorProfile.display.rawValue
 
+    // 3.3.3 recording options (CaptureSettings.RecordingKey). The optional
+    // ones are unset until the user picks a value, so CaptureSettings keeps
+    // its own defaults and clamping; rows read through CaptureSettings, and
+    // these declarations redraw the page when a value changes.
+    @AppStorage(CaptureSettings.RecordingKey.showsCursor) private var recordingShowsCursorChoice: Bool?
+    @AppStorage(CaptureSettings.RecordingKey.cursorSize) private var recordingCursorSize: Double?
+    @AppStorage(CaptureSettings.RecordingKey.cursorHighlight) private var recordingCursorHighlight = false
+    @AppStorage(CaptureSettings.RecordingKey.cursorHighlightColor) private var cursorHighlightColorHex: String?
+    @AppStorage(CaptureSettings.RecordingKey.cursorHighlightSize) private var cursorHighlightSize: Double?
+    @AppStorage(CaptureSettings.RecordingKey.clickStyle) private var clickStyleRaw = AOMClickRingStyle.ring.rawValue
+    @AppStorage(CaptureSettings.RecordingKey.clickColor) private var clickColorHex: String?
+    @AppStorage(CaptureSettings.RecordingKey.rightClickColor) private var rightClickColorHex: String?
+    @AppStorage(CaptureSettings.RecordingKey.clickSize) private var clickSize: Double?
+    @AppStorage(CaptureSettings.RecordingKey.clickDuration) private var clickDuration: Double?
+    @AppStorage(CaptureSettings.RecordingKey.keystrokeModifiers) private var keystrokeModifiersRaw: String?
+    @AppStorage(CaptureSettings.RecordingKey.hidesDesktopIcons) private var recordingHidesDesktopIcons = false
+    @AppStorage(CaptureSettings.RecordingKey.gifMaxDimension) private var gifMaxDimension: Int?
+    @AppStorage(CaptureSettings.RecordingKey.gifLoops) private var gifLoops = true
+    @AppStorage(CaptureSettings.RecordingKey.scalesTo1x) private var scalesTo1x = false
+    @AppStorage(CaptureSettings.RecordingKey.cameraID) private var recordingCameraID = ""
+    @AppStorage(CaptureSettings.RecordingKey.microphoneID) private var recordingMicrophoneID = ""
+    @State private var cameras: [RecordingInputDevice] = []
+    @State private var microphones: [RecordingInputDevice] = []
+
     @State private var saveDirectory: String = CaptureSettings.saveDirectory.path
     @State private var permissionGranted = ScreenCaptureService.hasPermission
 
     private var format: CaptureFormat { CaptureFormat(rawValue: formatRaw) ?? .png }
     private var afterAction: AfterCaptureAction { AfterCaptureAction(rawValue: afterActionRaw) ?? .showOverlay }
+    private var recordsGIF: Bool { recordingOutputFormat == "gif" }
+    private var recordsMicrophone: Bool {
+        let source = RecordingAudioSource(rawValue: recordingAudioSourceRaw) ?? .off
+        return !recordsGIF && (source == .microphone || source == .computerAndMicrophone)
+    }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 18) {
-                if !permissionGranted { permissionGroup }
-
-                formatGroup
-                captureGroup
-                recordingGroup
-                afterCaptureGroup
-                namingGroup
-                overlayGroup
-                textRecognitionGroup
-                pinnedGroup
+        ScrollViewReader { proxy in
+            AOMPage(maxWidth: AOMSize.readableWidth) {
+                if !permissionGranted { permissionNotice }
+                formatGroup.id(Section.format)
+                captureGroup.id(Section.capture)
+                selectingGroup.id(Section.selecting)
+                recordingGroup.id(Section.recording)
+                pointerGroup.id(Section.pointer)
+                clicksGroup.id(Section.clicks)
+                cameraAudioGroup.id(Section.camera)
+                keystrokesGroup.id(Section.keystrokes)
+                whileRecordingGroup.id(Section.during)
+                afterCaptureGroup.id(Section.after)
+                namingGroup.id(Section.naming)
+                overlayGroup.id(Section.overlay)
+                closingGroup.id(Section.closing)
+                textRecognitionGroup.id(Section.text)
+                pinnedGroup.id(Section.pinned)
             }
-            .padding(20)
+            .onAppear {
+                guard let section = AudioCapturePreviewHooks.captureSection.flatMap(Section.init(rawValue:)) else { return }
+                DispatchQueue.main.async { proxy.scrollTo(section, anchor: .top) }
+            }
         }
-        .onAppear { permissionGranted = ScreenCaptureService.hasPermission }
+        .onAppear {
+            permissionGranted = ScreenCaptureService.hasPermission
+            // Listing devices opens nothing and needs no permission.
+            cameras = RecordingInputDevice.cameras()
+            if #available(macOS 15, *) { microphones = RecordingInputDevice.microphones() }
+        }
         .onChange(of: historyCapacity) { _, _ in CaptureHistory.shared.applyRetention() }
         .onChange(of: historyRetentionDays) { _, _ in CaptureHistory.shared.applyRetention() }
     }
 
     // MARK: - Permission
 
-    private var permissionGroup: some View {
-        AppleSettingsGroup("Permission") {
-            AppleSettingsRow(
-                icon: "exclamationmark.triangle.fill",
-                iconColor: .orange,
-                title: "Screen Recording Required",
-                subtitle: "All of MacOS needs this to capture the screen",
-                showDivider: false
-            ) {
-                Button("Request") {
-                    ScreenCaptureService.requestPermission()
-                    // The grant is applied by the system, so the state can only be
-                    // re-read after the user has answered the prompt.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        permissionGranted = ScreenCaptureService.hasPermission
-                    }
+    private var permissionNotice: some View {
+        AOMNotice(.warning, "Screen Recording Required", detail: "All of MacOS needs this to capture the screen") {
+            Button("Request") {
+                ScreenCaptureService.requestPermission()
+                // The grant is applied by the system, so the state can only be
+                // re-read after the user has answered the prompt.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    permissionGranted = ScreenCaptureService.hasPermission
                 }
-                .controlSize(.small)
             }
         }
     }
@@ -114,33 +159,28 @@ struct CaptureSettingsView: View {
     // MARK: - Format
 
     private var formatGroup: some View {
-        AppleSettingsGroup("Format") {
-            AppleSettingsRow(icon: "paintpalette", iconColor: .purple, title: "Color Profile",
-                             subtitle: format == .webp ? "WebP output always uses standard sRGB" : "Preserve wide gamut or convert pixels to standard sRGB", showDivider: true) {
-                if format == .webp { Text("sRGB (WebP)").foregroundStyle(.secondary) }
-                else {
-                    Picker("", selection: $colorProfile) {
-                        ForEach(CaptureColorProfile.allCases) { Text($0.title).tag($0.rawValue) }
-                    }.labelsHidden().frame(width: 220)
-                }
-            }
-            AppleSettingsRow(icon: "doc", iconColor: .blue, title: "Image Format",
-                             subtitle: "PNG is lossless; JPEG and HEIC are smaller",
-                             showDivider: format.isLossy) {
-                Picker("", selection: $formatRaw) {
+        AOMSection("Format") {
+            AOMSettingRow("Image Format", symbol: "doc", help: "PNG is lossless; JPEG and HEIC are smaller.") {
+                Picker("Image Format", selection: $formatRaw) {
                     ForEach(CaptureFormat.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 100)
+                .pickerStyle(.menu)
             }
-            if format.isLossy {
-                AppleSettingsRow(icon: "slider.horizontal.3", iconColor: .indigo, title: "Quality",
-                                 subtitle: "Higher is better looking and larger", showDivider: false) {
-                    HStack(spacing: 8) {
-                        Slider(value: $quality, in: 0.3...1.0, step: 0.05).frame(width: 110).controlSize(.small)
-                        Text("\(Int((quality * 100).rounded()))%")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
+            AOMSettingRow("Quality", symbol: "slider.horizontal.3", indent: true,
+                          help: "For the lossy formats. Higher looks better and makes larger files.") {
+                AOMRowSlider("Quality", value: $quality, in: 0.3...1.0, step: 0.05, format: AOMRowSlider.percent)
+            }
+            .aomDependentRows(enabled: format.isLossy)
+            AOMSettingRow("Color Profile", symbol: "paintpalette",
+                          help: format == .webp ? "WebP output always uses standard sRGB."
+                                                : "Preserve wide gamut or convert pixels to standard sRGB.") {
+                if format == .webp {
+                    Text("sRGB (WebP)").foregroundStyle(AOMColor.textSecondary)
+                } else {
+                    Picker("Color Profile", selection: $colorProfile) {
+                        ForEach(CaptureColorProfile.allCases) { Text($0.title).tag($0.rawValue) }
                     }
+                    .pickerStyle(.menu)
                 }
             }
         }
@@ -149,199 +189,257 @@ struct CaptureSettingsView: View {
     // MARK: - Capture behaviour
 
     private var captureGroup: some View {
-        AppleSettingsGroup("Capture") {
-            AppleSettingsRow(icon: "cursorarrow", iconColor: .teal, title: "Show Cursor",
-                             subtitle: "Include the pointer in the capture", showDivider: true) {
-                Toggle("", isOn: $showsCursor).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "macwindow", iconColor: .purple, title: "Window Shadow",
-                             subtitle: "Keep the drop shadow on window captures", showDivider: true) {
-                Toggle("", isOn: $windowShadow).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "square.grid.2x2", iconColor: .gray, title: "Pixel Snap",
-                             subtitle: "Align selections to whole pixels to avoid a soft edge", showDivider: true) {
-                Toggle("", isOn: $pixelSnap).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "rectangle.dashed", iconColor: .blue, title: "Snap Selection to Windows",
-                             subtitle: "Edges stick to nearby window and screen edges. Hold ⌃ while dragging to place freely",
-                             showDivider: true) {
-                Toggle("", isOn: $snapsSelection).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "snowflake", iconColor: .cyan, title: "Freeze Screen",
-                             subtitle: "Hold the desktop still while you draw the selection", showDivider: true) {
-                Toggle("", isOn: $freezeScreen).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "plus.viewfinder", iconColor: .indigo, title: "Crosshair Mode",
-                             subtitle: "Guides while selecting an area", showDivider: true) {
-                Picker("", selection: $crosshairModeRaw) {
-                    ForEach(CrosshairMode.allCases) { Text($0.displayName).tag($0.rawValue) }
-                }
-                .pickerStyle(.menu).labelsHidden().frame(width: 220)
-            }
-            AppleSettingsRow(icon: "magnifyingglass", iconColor: .teal, title: "Show Magnifier",
-                             subtitle: "Pixel loupe next to the pointer; hold ⇧ to show it on demand",
-                             showDivider: true) {
-                Toggle("", isOn: $showsMagnifier).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "speaker.wave.2", iconColor: .green, title: "Play Sound",
-                             subtitle: "Play the system capture sound", showDivider: true) {
-                Toggle("", isOn: $playsSound).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "eye.slash", iconColor: .brown, title: "Hide Desktop Icons",
-                             subtitle: "Temporarily restarts Finder to clear the desktop", showDivider: true) {
-                Toggle("", isOn: $hidesDesktopIcons).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Self-Timer Interval",
-                             subtitle: "Countdown used by the Self-Timer capture mode",
-                             showDivider: true) {
-                Picker("", selection: $selfTimerInterval) {
+        AOMSection("Capture") {
+            AOMToggleRow("Show Cursor", symbol: "cursorarrow",
+                         help: "Include the pointer in screenshots. Recordings have their own Show Cursor under Pointer in Recordings.",
+                         isOn: $showsCursor)
+            AOMToggleRow("Window Shadow", symbol: "macwindow", help: "Keep the drop shadow on window captures.",
+                         isOn: $windowShadow)
+            AOMToggleRow("Play Sound", symbol: "speaker.wave.2", isOn: $playsSound)
+            AOMToggleRow("Hide Desktop Icons", symbol: "eye.slash",
+                         help: "Temporarily restarts Finder to clear the desktop.", isOn: $hidesDesktopIcons)
+            AOMSettingRow("Self-Timer Interval", symbol: "timer", help: "The countdown the Self-Timer capture mode uses.") {
+                Picker("Self-Timer Interval", selection: $selfTimerInterval) {
                     ForEach(SelfTimerInterval.choices, id: \.self) { Text("\($0) Seconds").tag($0) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 120)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "timer.circle", iconColor: .orange, title: "Delay Every Capture",
-                             subtitle: selfTimer == 0 ? "No delay" : "\(selfTimer) second delay before any capture",
-                             showDivider: false) {
-                Picker("", selection: $selfTimer) {
+            AOMSettingRow("Delay Every Capture", symbol: "timer.circle",
+                          help: "Wait before every capture, not only Self-Timer ones.") {
+                Picker("Delay Every Capture", selection: $selfTimer) {
                     Text("Off").tag(0)
                     Text("3 s").tag(3)
                     Text("5 s").tag(5)
                     Text("10 s").tag(10)
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 90)
+                .pickerStyle(.menu)
             }
+        }
+    }
+
+    private var selectingGroup: some View {
+        AOMSection("Selecting") {
+            AOMToggleRow("Pixel Snap", symbol: "square.grid.2x2",
+                         help: "Align selections to whole pixels to avoid a soft edge.", isOn: $pixelSnap)
+            AOMToggleRow("Snap Selection to Windows", symbol: "rectangle.dashed",
+                         help: "Edges stick to nearby window and screen edges. Hold ⌃ while dragging to place freely.",
+                         isOn: $snapsSelection)
+            AOMToggleRow("Freeze Screen", symbol: "snowflake",
+                         help: "Hold the desktop still while you draw the selection.", isOn: $freezeScreen)
+            AOMSettingRow("Crosshair Mode", symbol: "plus.viewfinder", help: "Guides while selecting an area.") {
+                Picker("Crosshair Mode", selection: $crosshairModeRaw) {
+                    ForEach(CrosshairMode.allCases) { Text($0.displayName).tag($0.rawValue) }
+                }
+                .pickerStyle(.menu)
+            }
+            AOMToggleRow("Show Magnifier", symbol: "magnifyingglass",
+                         help: "A pixel loupe next to the pointer. Hold ⇧ to show it on demand.", isOn: $showsMagnifier)
         }
     }
 
     // MARK: - Recording
 
     private var recordingGroup: some View {
-        AppleSettingsGroup("Screen Recording") {
-            AppleSettingsRow(icon: "film", iconColor: .blue, title: "Recording Format",
-                             subtitle: "GIF records up to 120 seconds without audio and retains its MP4 source", showDivider: true) {
-                Picker("", selection: $recordingOutputFormat) {
-                    Text("MP4").tag("mp4"); Text("GIF").tag("gif")
-                }.labelsHidden().frame(width: 120)
-            }
-            if recordingOutputFormat == "gif" {
-                AppleSettingsRow(icon: "photo.stack", iconColor: .purple, title: "GIF Frame Rate", showDivider: true) {
-                    Picker("", selection: $recordingGIFFPS) {
-                        ForEach([5, 8, 10, 15, 20, 30], id: \.self) { Text("\($0) fps").tag($0) }
-                    }.labelsHidden().frame(width: 120)
+        AOMSection("Screen Recording") {
+            AOMSettingRow("Recording Format", symbol: "film",
+                          help: "GIF records up to 120 seconds without audio and keeps its MP4 source.") {
+                Picker("Recording Format", selection: $recordingOutputFormat) {
+                    Text("MP4").tag("mp4")
+                    Text("GIF").tag("gif")
                 }
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "speedometer", iconColor: .indigo,
-                             title: "Frame Rate",
-                             subtitle: "Lower rates keep files smaller", showDivider: true) {
-                Picker("", selection: $recordingFPS) {
+            Group {
+                AOMSettingRow("GIF Frame Rate", symbol: "photo.stack", indent: true) {
+                    Picker("GIF Frame Rate", selection: $recordingGIFFPS) {
+                        ForEach([5, 8, 10, 15, 20, 30], id: \.self) { Text("\($0) fps").tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                }
+                AOMSettingRow("GIF Size", symbol: "aspectratio", indent: true, help: "The longest edge of GIF frames.") {
+                    Picker("GIF Size", selection: gifSize) {
+                        ForEach(CaptureSettings.recordingGIFSizeChoices, id: \.self) { Text("\($0) px").tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                }
+                AOMToggleRow("Loop GIF", symbol: "repeat", help: "Off plays the GIF once.", indent: true, isOn: $gifLoops)
+            }
+            .aomDependentRows(enabled: recordsGIF)
+            AOMSettingRow("Frame Rate", symbol: "speedometer", help: "Lower rates keep files smaller.") {
+                Picker("Frame Rate", selection: $recordingFPS) {
                     Text("15 fps").tag(15)
                     Text("30 fps").tag(30)
                     Text("60 fps").tag(60)
                 }
-                .labelsHidden().pickerStyle(.menu).frame(width: 120)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "slider.horizontal.3", iconColor: .purple,
-                             title: "Video Quality",
-                             subtitle: "Controls H.264 recording bitrate", showDivider: true) {
-                Picker("", selection: $recordingQuality) {
+            AOMSettingRow("Video Quality", symbol: "slider.horizontal.3", help: "Sets the H.264 recording bitrate.") {
+                Picker("Video Quality", selection: $recordingQuality) {
                     Text("Compact").tag(1)
                     Text("Standard").tag(2)
                     Text("High").tag(3)
                 }
-                .labelsHidden().pickerStyle(.menu).frame(width: 120)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "cursorarrow.click.2", iconColor: .orange,
-                             title: "Show Mouse Clicks",
-                             subtitle: "Highlight clicks during screen recordings", showDivider: true) {
-                Toggle("", isOn: $recordingClickIndicators)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            AOMToggleRow("Scale Retina Videos to 1x", symbol: "arrow.down.right.and.arrow.up.left",
+                         help: "Half the width and height on Retina displays, for smaller files.", isOn: $scalesTo1x)
+        }
+    }
+
+    private var pointerGroup: some View {
+        AOMSection("Pointer in Recordings") {
+            AOMToggleRow("Show Cursor", symbol: "cursorarrow",
+                         help: "Show the pointer in recordings. Separate from Show Mouse Clicks.", isOn: recordingShowsCursor)
+            AOMToggleRow("Editable Cursor Track", symbol: "cursorarrow.motionlines",
+                         help: "Keeps local cursor positions with the recording and hides the video cursor, so the pointer can be edited later.",
+                         isOn: $recordingCursorMotion)
+            AOMSettingRow("Cursor Size", symbol: "arrow.up.left.and.arrow.down.right", indent: true,
+                          help: "Size of the editable pointer drawn from the cursor track.") {
+                AOMRowSlider("Cursor Size", value: cursorSizeValue, in: 0.5...3, step: 0.1, format: AOMRowSlider.multiple)
             }
-            AppleSettingsRow(icon: "cursorarrow.motionlines", iconColor: .teal,
-                             title: "Editable Cursor Track",
-                             subtitle: "Opt-in local cursor positions; video cursor hidden for later editing", showDivider: true) {
-                Toggle("", isOn: $recordingCursorMotion)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "video.fill", iconColor: .green,
-                             title: "Camera Overlay", subtitle: "Editable camera layer; original and standalone video are saved", showDivider: true) {
-                Toggle("", isOn: $recordingCameraOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            if recordingCameraOverlay {
-                AppleSettingsRow(icon: "person.crop.circle", iconColor: .green,
-                                 title: "Camera Bubble While Recording",
-                                 subtitle: "A round preview you can drag; it is not baked into the video, and the camera layer starts where you leave it",
-                                 showDivider: true) {
-                    Toggle("", isOn: $recordingCameraBubble).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            .aomDependentRows(enabled: recordingCursorMotion && recordingShowsCursor.wrappedValue)
+            AOMToggleRow("Highlight Cursor", symbol: "cursorarrow.rays",
+                         help: "A soft circle around the pointer in the saved video.", isOn: $recordingCursorHighlight)
+            Group {
+                AOMSettingRow("Highlight Color", symbol: "paintpalette", indent: true) {
+                    AOMHexColorWell("Highlight Color", hex: $cursorHighlightColorHex, fallback: AOMCursorHighlight.defaultColor)
+                }
+                AOMSettingRow("Highlight Size", symbol: "circle.dashed", indent: true) {
+                    AOMRowSlider("Highlight Size", value: highlightSizeValue, in: AOMCursorHighlight.sizeRange, step: 0.1,
+                                 format: AOMRowSlider.multiple)
                 }
             }
-            AppleSettingsRow(icon: "keyboard", iconColor: .purple,
-                             title: "Show Keystrokes",
-                             subtitle: keystrokeAllKeys ? "Every key except in password fields; editable afterwards"
-                                : "Shortcuts and navigation keys; ordinary typed text is not collected", showDivider: true) {
-                Toggle("", isOn: $recordingKeystrokeOverlay).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            if recordingKeystrokeOverlay {
-                AppleSettingsRow(icon: "keyboard.badge.ellipsis", iconColor: .purple, title: "Keys to Show",
-                                 subtitle: nil, showDivider: true) {
-                    Picker("", selection: $keystrokeAllKeys) {
-                        Text("Shortcuts Only").tag(false)
-                        Text("All Keys").tag(true)
-                    }.pickerStyle(.menu).labelsHidden().frame(width: 150)
+            .aomDependentRows(enabled: recordingCursorHighlight)
+        }
+    }
+
+    private var clicksGroup: some View {
+        AOMSection("Clicks in Recordings") {
+            AOMToggleRow("Show Mouse Clicks", symbol: "cursorarrow.click.2",
+                         help: "Highlight clicks during screen recordings.", isOn: $recordingClickIndicators)
+            Group {
+                AOMSettingRow("Click Style", symbol: "smallcircle.filled.circle", indent: true) {
+                    Picker("Click Style", selection: clickShape) {
+                        ForEach(AOMClickRingStyle.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.menu)
                 }
-                AppleSettingsRow(icon: "rectangle.portrait.topthird.inset.filled", iconColor: .purple,
-                                 title: "Keystroke Position, Size and Style", subtitle: nil, showDivider: true) {
-                    HStack(spacing: 6) {
-                        Picker("", selection: $keystrokePosition) {
-                            ForEach(KeystrokeOverlayPosition.allCases) { Text($0.displayName).tag($0.rawValue) }
-                        }.labelsHidden().frame(width: 90)
-                        Picker("", selection: $keystrokeSize) {
-                            ForEach(KeystrokeOverlaySize.allCases) { Text($0.displayName).tag($0.rawValue) }
-                        }.labelsHidden().frame(width: 95)
-                        Picker("", selection: $keystrokeStyle) {
-                            ForEach(AOMKeystrokeStyle.allCases) { Text($0.displayName).tag($0.rawValue) }
-                        }.labelsHidden().frame(width: 80)
-                    }.pickerStyle(.menu)
+                AOMSettingRow("Left Click Color", symbol: "computermouse", indent: true) {
+                    AOMHexColorWell("Left Click Color", hex: $clickColorHex, fallback: AOMClickStyle.defaultLeftColor)
+                }
+                AOMSettingRow("Right Click Color", symbol: "computermouse.fill", indent: true,
+                              help: "Right clicks and ⌃-clicks.") {
+                    AOMHexColorWell("Right Click Color", hex: $rightClickColorHex, fallback: AOMClickStyle.defaultRightColor)
+                }
+                AOMSettingRow("Click Size", symbol: "arrow.up.left.and.arrow.down.right", indent: true) {
+                    AOMRowSlider("Click Size", value: clickSizeValue, in: AOMClickStyle.sizeRange, step: 0.1,
+                                 format: AOMRowSlider.multiple)
+                }
+                AOMSettingRow("Click Duration", symbol: "timer", indent: true, help: "How long each click stays visible.") {
+                    AOMRowSlider("Click Duration", value: clickDurationValue, in: AOMClickStyle.durationRange, step: 0.05,
+                                 format: AOMRowSlider.seconds)
                 }
             }
-            AppleSettingsRow(icon: "speaker.wave.2.fill", iconColor: .blue,
-                             title: "Audio Source",
-                             subtitle: recordingOutputFormat == "gif" ? "GIF has no audio" : "Record computer sound, microphone, or both",
-                             showDivider: true) {
-                Picker("", selection: $recordingAudioSourceRaw) {
+            .aomDependentRows(enabled: recordingClickIndicators)
+        }
+    }
+
+    private var cameraAudioGroup: some View {
+        AOMSection("Camera & Audio") {
+            AOMToggleRow("Camera Overlay", symbol: "video.fill",
+                         help: "An editable camera layer; the original and a standalone camera video are saved.",
+                         isOn: $recordingCameraOverlay)
+            Group {
+                AOMSettingRow("Camera", symbol: "camera", indent: true,
+                              help: "A chosen camera that isn't connected falls back to the system default.") {
+                    devicePicker("Camera", selection: $recordingCameraID, devices: cameras)
+                }
+                AOMToggleRow("Camera Bubble While Recording", symbol: "person.crop.circle",
+                             help: "A round preview you can drag. It is not baked into the video, and the camera layer starts where you leave it.",
+                             indent: true, isOn: $recordingCameraBubble)
+            }
+            .aomDependentRows(enabled: recordingCameraOverlay)
+            AOMSettingRow("Audio Source", detail: recordsGIF ? "GIF has no audio" : nil, symbol: "speaker.wave.2.fill",
+                          help: "Record computer sound, microphone, or both.") {
+                Picker("Audio Source", selection: $recordingAudioSourceRaw) {
                     ForEach(RecordingAudioSource.allCases) { source in
                         Text(source.displayName).tag(source.rawValue)
                     }
                 }
-                .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 200)
-                .disabled(recordingOutputFormat == "gif")
+                .disabled(recordsGIF)
             }
-            AppleSettingsRow(icon: "moon.fill", iconColor: .indigo,
-                             title: "Do Not Disturb While Recording",
-                             subtitle: "Runs your Focus Shortcuts when recording starts and ends",
-                             showDivider: recordingFocus) {
-                Toggle("", isOn: $recordingFocus).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            if recordingFocus {
-                focusShortcutRow(icon: "moon.circle.fill", title: "Start Shortcut", name: $recordingFocusOn, divider: true)
-                focusShortcutRow(icon: "moon.circle", title: "End Shortcut", name: $recordingFocusOff, divider: false)
-                Text(focusTestResult ?? "Create two Shortcuts with a single “Set Focus” action — Do Not Disturb On, and Off — and enter their names here. macOS offers no other supported way to change Focus.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 10)
+            if #available(macOS 15, *) {
+                AOMSettingRow("Microphone", symbol: "mic", indent: true,
+                              help: "A chosen microphone that isn't connected falls back to the system default.") {
+                    devicePicker("Microphone", selection: $recordingMicrophoneID, devices: microphones)
+                }
+                .aomDependentRows(enabled: recordsMicrophone)
             }
         }
     }
 
-    private func focusShortcutRow(icon: String, title: String, name: Binding<String>, divider: Bool) -> some View {
-        AppleSettingsRow(icon: icon, iconColor: .indigo, title: title, subtitle: nil, showDivider: divider) {
-            HStack(spacing: 6) {
+    private var keystrokesGroup: some View {
+        AOMSection("Keystrokes") {
+            AOMToggleRow("Show Keystrokes", symbol: "keyboard",
+                         help: keystrokeAllKeys ? "Every key except in password fields; editable afterwards."
+                                                : "Shortcuts and navigation keys; ordinary typed text is not collected.",
+                         isOn: $recordingKeystrokeOverlay)
+            Group {
+                AOMSettingRow("Keys to Show", symbol: "keyboard.badge.ellipsis", indent: true) {
+                    Picker("Keys to Show", selection: $keystrokeAllKeys) {
+                        Text("Shortcuts Only").tag(false)
+                        Text("All Keys").tag(true)
+                    }
+                    .pickerStyle(.menu)
+                }
+                AOMSettingRow("Shortcut Modifiers", symbol: "command", indent: true,
+                              help: "Keys pressed with these count as shortcuts. ⇧ also shows capitals and symbols typed with Shift.") {
+                    modifiersMenu
+                }
+                AOMSettingRow("Keystroke Position, Size and Style", symbol: "rectangle.portrait.topthird.inset.filled",
+                              indent: true) {
+                    HStack(spacing: AOMSpace.x2) {
+                        Picker("Keystroke position", selection: $keystrokePosition) {
+                            ForEach(KeystrokeOverlayPosition.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }
+                        Picker("Keystroke size", selection: $keystrokeSize) {
+                            ForEach(KeystrokeOverlaySize.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }
+                        Picker("Keystroke style", selection: $keystrokeStyle) {
+                            ForEach(AOMKeystrokeStyle.allCases) { Text($0.displayName).tag($0.rawValue) }
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            .aomDependentRows(enabled: recordingKeystrokeOverlay)
+        }
+    }
+
+    private var whileRecordingGroup: some View {
+        AOMSection("While Recording", footer: recordingFocus ? focusTestResult : nil) {
+            AOMToggleRow("Hide Desktop Icons While Recording", symbol: "eye.slash",
+                         help: "Restarts Finder when a recording starts and ends. If AOM quits unexpectedly, the icons come back at the next launch.",
+                         isOn: $recordingHidesDesktopIcons)
+            AOMToggleRow("Do Not Disturb While Recording", symbol: "moon.fill",
+                         help: "Runs your Focus Shortcuts when recording starts and ends. Create two Shortcuts with a single “Set Focus” action, Do Not Disturb On and Off, and enter their names below. macOS offers no other supported way to change Focus.",
+                         isOn: $recordingFocus)
+            Group {
+                focusShortcutRow(icon: "moon.circle.fill", title: "Start Shortcut", name: $recordingFocusOn)
+                focusShortcutRow(icon: "moon.circle", title: "End Shortcut", name: $recordingFocusOff)
+            }
+            .aomDependentRows(enabled: recordingFocus)
+        }
+    }
+
+    private func focusShortcutRow(icon: String, title: String, name: Binding<String>) -> some View {
+        AOMSettingRow(title, symbol: icon, indent: true) {
+            HStack(spacing: AOMSpace.x2) {
                 TextField("Shortcut name", text: name)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 170)
+                    .frame(width: AOMRowControlMetrics.fieldWidth)
+                    .accessibilityLabel(title)
                 Button("Test") {
                     focusTestResult = "Running “\(name.wrappedValue)”…"
                     RecordingFocus.run(name.wrappedValue) { ok, message in
@@ -354,25 +452,101 @@ struct CaptureSettingsView: View {
         }
     }
 
+    // MARK: - Recording bindings (3.3.3)
+
+    /// Show Cursor for recordings goes through CaptureSettings: while unset,
+    /// it reads the pre-3.3.3 rule (Show Cursor or Show Mouse Clicks).
+    private var recordingShowsCursor: Binding<Bool> {
+        Binding(get: { CaptureSettings.recordingShowsCursor },
+                set: { CaptureSettings.recordingShowsCursor = $0 })
+    }
+
+    private var cursorSizeValue: Binding<Double> {
+        Binding(get: { CaptureSettings.recordingCursorSize },
+                set: { CaptureSettings.recordingCursorSize = $0 })
+    }
+
+    private var highlightSizeValue: Binding<Double> {
+        Binding(get: { CaptureSettings.recordingCursorHighlightStyle.clampedSize },
+                set: { cursorHighlightSize = $0 })
+    }
+
+    private var clickShape: Binding<AOMClickRingStyle> {
+        Binding(get: { AOMClickRingStyle(rawValue: clickStyleRaw) ?? .ring },
+                set: { clickStyleRaw = $0.rawValue })
+    }
+
+    private var clickSizeValue: Binding<Double> {
+        Binding(get: { CaptureSettings.recordingClickStyle.clampedSize },
+                set: { clickSize = $0 })
+    }
+
+    private var clickDurationValue: Binding<Double> {
+        Binding(get: { CaptureSettings.recordingClickStyle.clampedDuration },
+                set: { clickDuration = $0 })
+    }
+
+    /// GIF size reads through CaptureSettings, which keeps it to the offered sizes.
+    private var gifSize: Binding<Int> {
+        Binding(get: { CaptureSettings.recordingGIFMaxDimension },
+                set: { CaptureSettings.recordingGIFMaxDimension = $0 })
+    }
+
+    /// System Default first; a chosen device that is not connected stays
+    /// listed, so the menu shows what will happen (the default is used).
+    private func devicePicker(_ title: String, selection: Binding<String>, devices: [RecordingInputDevice]) -> some View {
+        Picker(title, selection: selection) {
+            Text("System Default").tag("")
+            if !selection.wrappedValue.isEmpty, !devices.contains(where: { $0.id == selection.wrappedValue }) {
+                Text("Disconnected — using default").tag(selection.wrappedValue)
+            }
+            if !devices.isEmpty { Divider() }
+            ForEach(devices) { Text($0.name).tag($0.id) }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: AOMSize.tileMin)
+    }
+
+    /// ⌘ ⌃ ⌥ ⇧ as menu toggles; the label lists the chosen symbols.
+    private var modifiersMenu: some View {
+        let chosen = KeystrokeShortcutModifier.allCases.filter(CaptureSettings.recordingKeystrokeModifiers.contains)
+        return Menu {
+            ForEach(KeystrokeShortcutModifier.allCases) { modifier in
+                Toggle(modifier.displayName, isOn: Binding(
+                    get: { CaptureSettings.recordingKeystrokeModifiers.contains(modifier) },
+                    set: { on in
+                        var set = CaptureSettings.recordingKeystrokeModifiers
+                        if on { set.insert(modifier) } else { set.remove(modifier) }
+                        CaptureSettings.recordingKeystrokeModifiers = set
+                    }))
+            }
+        } label: {
+            Text(chosen.isEmpty ? "None" : chosen.map(\.symbol).joined(separator: " "))
+        }
+        .fixedSize()
+        .accessibilityLabel("Shortcut modifiers")
+        .accessibilityValue(chosen.isEmpty ? "None" : chosen.map { $0.rawValue.capitalized }.joined(separator: ", "))
+    }
+
     // MARK: - After capture
 
     private var afterCaptureGroup: some View {
-        AppleSettingsGroup("After Capture") {
-            AppleSettingsRow(icon: "wand.and.stars", iconColor: .pink, title: "Action",
-                             subtitle: "What happens the moment a capture completes", showDivider: true) {
-                Picker("", selection: $afterActionRaw) {
+        AOMSection("After Capture") {
+            AOMSettingRow("Action", symbol: "wand.and.stars", help: "What happens the moment a capture completes.") {
+                Picker("Action", selection: $afterActionRaw) {
                     ForEach(AfterCaptureAction.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 190)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "folder", iconColor: .blue, title: "Save Location",
-                             subtitle: saveDirectory, showDivider: true) {
-                Button("Choose…") { chooseDirectory() }.controlSize(.small)
+            AOMSettingRow("Save Location", detail: (saveDirectory as NSString).abbreviatingWithTildeInPath, symbol: "folder") {
+                Button("Choose…") { chooseDirectory() }
+                    .controlSize(.small)
+                    .help(saveDirectory)
             }
-            AppleSettingsRow(icon: "clock.arrow.circlepath", iconColor: .gray, title: "History Size",
-                             subtitle: historyCapacity == 0 ? "Unpinned history disabled; pinned captures are kept" : "Up to \(historyCapacity) unpinned captures; pins are kept separately",
-                             showDivider: true) {
-                Picker("", selection: $historyCapacity) {
+            AOMSettingRow("History Size", symbol: "clock.arrow.circlepath",
+                          help: historyCapacity == 0 ? "Unpinned history is off; pinned captures are kept."
+                                                     : "Up to \(historyCapacity) unpinned captures; pins are kept separately.") {
+                Picker("History Size", selection: $historyCapacity) {
                     Text("Off").tag(0)
                     Text("20").tag(20)
                     Text("40").tag(40)
@@ -380,18 +554,19 @@ struct CaptureSettingsView: View {
                     Text("250").tag(250)
                     Text("500").tag(500)
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 90)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "calendar", iconColor: .orange, title: "Keep Unpinned Captures",
-                             subtitle: "The age and count limits both apply. Pinned captures are kept.", showDivider: false) {
-                Picker("", selection: $historyRetentionDays) {
+            AOMSettingRow("Keep Unpinned Captures", symbol: "calendar",
+                          help: "The age and count limits both apply. Pinned captures are kept.") {
+                Picker("Keep Unpinned Captures", selection: $historyRetentionDays) {
                     Text("1 Day").tag(1)
                     Text("3 Days").tag(3)
                     Text("7 Days").tag(7)
                     Text("14 Days").tag(14)
                     Text("30 Days").tag(30)
                     Text("Until Capacity Limit").tag(0)
-                }.pickerStyle(.menu).labelsHidden().frame(width: 180)
+                }
+                .pickerStyle(.menu)
             }
         }
     }
@@ -399,35 +574,25 @@ struct CaptureSettingsView: View {
     // MARK: - File Naming
 
     private var namingGroup: some View {
-        AppleSettingsGroup("File Naming") {
-            AppleSettingsRow(icon: "character.cursor.ibeam", iconColor: .blue,
-                             title: "Capture File Name",
-                             subtitle: "Leave blank to use the current Screenshot timestamp format",
-                             showDivider: true) {
-                TextField("Name template", text: $filenameTemplate)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .accessibilityLabel("Capture filename template")
+        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSection("File Naming") {
+                AOMSettingRow("Capture File Name", symbol: "character.cursor.ibeam",
+                              help: "Leave blank to use the current Screenshot timestamp format. Tokens: {prefix} {date} {time} {datetime} {kind} {window} {width} {height} {year} {month} {day} {hour} {minute} {second} {millisecond} {weekday} {timezone} {unix}") {
+                    TextField("Name template", text: $filenameTemplate)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMRowControlMetrics.fieldWidth)
+                        .accessibilityLabel("Capture filename template")
+                }
+                AOMToggleRow("Use UTC", symbol: "globe",
+                             help: "Apply UTC instead of your Mac's local time to filename tokens.", isOn: $filenameUTC)
             }
-            AppleSettingsRow(icon: "globe", iconColor: .indigo,
-                             title: "Use UTC",
-                             subtitle: "Apply UTC instead of your Mac's local time to filename tokens",
-                             showDivider: true) {
-                Toggle("", isOn: $filenameUTC)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Tokens: {prefix} {date} {time} {datetime} {kind} {window} {width} {height} {year} {month} {day} {hour} {minute} {second} {millisecond} {weekday} {timezone} {unix}")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Preview: " + namingPreview)
-                    .font(.caption.monospaced())
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-            }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
+            // The section footer, selectable so a preview can be copied.
+            Text("Preview: " + namingPreview)
+                .font(AOMFont.caption.monospaced())
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+                .padding(.horizontal, AOMSpace.x1)
         }
     }
 
@@ -440,76 +605,65 @@ struct CaptureSettingsView: View {
 
     // MARK: - Overlay
 
+    private var overlaySize: OverlaySize { OverlaySize(rawValue: overlaySizeRaw) ?? .small }
+
     private var overlayGroup: some View {
-        AppleSettingsGroup("Quick Access Overlay") {
-            AppleSettingsRow(icon: "rectangle.on.rectangle", iconColor: .indigo,
-                             title: "Show Overlay",
-                             subtitle: "Floating thumbnail with copy, save, annotate and pin",
-                             showDivider: true) {
-                Toggle("", isOn: $overlayEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
+        AOMSection("Quick Access Overlay") {
+            AOMToggleRow("Show Overlay", symbol: "rectangle.on.rectangle",
+                         help: "A floating thumbnail with copy, save, annotate and pin.", isOn: $overlayEnabled)
             if afterAction == .copyToClipboard || afterAction == .saveToDisk {
-                AppleSettingsRow(icon: "rectangle.stack.badge.plus", iconColor: .gray,
-                                 title: "Also Show After \(afterAction == .copyToClipboard ? "Copy" : "Save")",
-                                 subtitle: overlayAfterCopyOrSave
-                                    ? "The card appears too, after the capture is \(afterAction == .copyToClipboard ? "copied" : "saved")"
-                                    : "Off: the capture is \(afterAction == .copyToClipboard ? "copied" : "saved") without a card. A card still appears if that fails",
-                                 showDivider: true) {
-                    Toggle("", isOn: $overlayAfterCopyOrSave).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                }
+                AOMToggleRow("Also Show After \(afterAction == .copyToClipboard ? "Copy" : "Save")",
+                             symbol: "rectangle.stack.badge.plus",
+                             help: overlayAfterCopyOrSave
+                                ? "The card appears too, after the capture is \(afterAction == .copyToClipboard ? "copied" : "saved")."
+                                : "Off: the capture is \(afterAction == .copyToClipboard ? "copied" : "saved") without a card. A card still appears if that fails.",
+                             indent: true, isOn: $overlayAfterCopyOrSave)
+                    .aomDependentRows(enabled: overlayEnabled)
             }
-            AppleSettingsRow(icon: "rectangle.lefthalf.inset.filled", iconColor: .purple,
-                             title: "Position on Screen", subtitle: nil, showDivider: true) {
-                Picker("", selection: $overlayCornerRaw) {
+            AOMSettingRow("Position on Screen", symbol: "rectangle.lefthalf.inset.filled") {
+                Picker("Position on Screen", selection: $overlayCornerRaw) {
                     ForEach(OverlayCorner.pickerOrder.prefix(2)) { Text($0.positionName).tag($0.rawValue) }
                     Divider()
                     ForEach(OverlayCorner.pickerOrder.dropFirst(2)) { Text($0.positionName).tag($0.rawValue) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 140)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "display", iconColor: .blue, title: "Move to Active Screen",
-                             subtitle: "Active screen is the screen where your cursor is pointing", showDivider: true) {
-                Toggle("", isOn: $overlayActiveDisplay).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "arrow.up.left.and.arrow.down.right", iconColor: .teal,
-                             title: "Overlay Size",
-                             subtitle: (OverlaySize(rawValue: overlaySizeRaw) ?? .small).displayName,
-                             showDivider: true) {
+            AOMToggleRow("Move to Active Screen", symbol: "display",
+                         help: "The active screen is the one your pointer is on.", isOn: $overlayActiveDisplay)
+            AOMSettingRow("Overlay Size", detail: overlaySize.displayName, symbol: "arrow.up.left.and.arrow.down.right") {
                 Slider(value: Binding(
-                    get: { Double((OverlaySize(rawValue: overlaySizeRaw) ?? .small).sliderIndex) },
+                    get: { Double(overlaySize.sliderIndex) },
                     set: { overlaySizeRaw = OverlaySize.fromSliderIndex(Int($0.rounded())).rawValue }),
                        in: 0...4, step: 1) {
                     Text("Overlay size")
                 } minimumValueLabel: {
-                    Image(systemName: "rectangle.fill").font(.system(size: 8))
+                    Image(systemName: "rectangle.fill").imageScale(.small).foregroundStyle(AOMColor.textSecondary)
                 } maximumValueLabel: {
-                    Image(systemName: "rectangle.fill").font(.system(size: 14))
+                    Image(systemName: "rectangle.fill").imageScale(.large).foregroundStyle(AOMColor.textSecondary)
                 }
-                .labelsHidden()
-                .frame(width: 180)
+                .frame(width: AOMRowControlMetrics.sliderWidth)
                 .controlSize(.small)
-                .accessibilityValue((OverlaySize(rawValue: overlaySizeRaw) ?? .small).displayName)
+                .accessibilityValue(overlaySize.displayName)
             }
-            AppleSettingsRow(icon: "xmark.circle", iconColor: .red, title: "Auto-Close",
-                             subtitle: autoCloseEnabled.wrappedValue
-                                ? "\(overlayAutoCloseSave ? "Saves and closes" : "Closes") after \(OverlayAutoCloseInterval.label(overlayInterval))"
-                                : "Overlays stay until you close them",
-                             showDivider: true) {
-                Toggle("", isOn: autoCloseEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            if autoCloseEnabled.wrappedValue {
-                AppleSettingsRow(icon: "square.and.arrow.down", iconColor: .green,
-                                 title: "Action", subtitle: "If saving fails, the overlay stays for retry",
-                                 showDivider: true) {
-                    Picker("", selection: $overlayAutoCloseSave) {
+        }
+    }
+
+    private var closingGroup: some View {
+        AOMSection("Closing & Saving") {
+            AOMToggleRow("Auto-Close", symbol: "xmark.circle",
+                         help: "Close each overlay after an interval. Off, overlays stay until you close them.",
+                         isOn: autoCloseEnabled)
+            Group {
+                AOMSettingRow("Action", symbol: "square.and.arrow.down", indent: true,
+                              help: "If saving fails, the overlay stays so you can retry.") {
+                    Picker("Auto-Close Action", selection: $overlayAutoCloseSave) {
                         Text("Save and Close").tag(true)
                         Text("Close").tag(false)
                     }
-                    .pickerStyle(.menu).labelsHidden().frame(width: 140)
+                    .pickerStyle(.menu)
                 }
-                AppleSettingsRow(icon: "timer", iconColor: .orange, title: "Interval",
-                                 subtitle: nil, showDivider: true) {
-                    Picker("", selection: $overlayInterval) {
+                AOMSettingRow("Interval", symbol: "timer", indent: true) {
+                    Picker("Auto-Close Interval", selection: $overlayInterval) {
                         ForEach(OverlayAutoCloseInterval.choices, id: \.self) {
                             Text(OverlayAutoCloseInterval.label($0)).tag($0)
                         }
@@ -517,29 +671,22 @@ struct CaptureSettingsView: View {
                             Text(OverlayAutoCloseInterval.label(overlayInterval)).tag(overlayInterval)
                         }
                     }
-                    .pickerStyle(.menu).labelsHidden().frame(width: 100)
+                    .pickerStyle(.menu)
                 }
             }
-            AppleSettingsRow(icon: "hand.draw", iconColor: .green,
-                             title: "Close After Dragging",
-                             subtitle: closeAfterDrag.wrappedValue
-                                ? "Hold ⌥ (Option) while dropping to keep the overlay"
-                                : "Hold ⌥ (Option) while dropping to close the overlay",
-                             showDivider: true) {
-                Toggle("", isOn: closeAfterDrag)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "square.and.arrow.down.on.square", iconColor: .teal,
-                             title: "Save Button Behavior",
-                             subtitle: asksNameOnSave
-                                ? "Press with ⌥ (Option) to use the export location without asking"
-                                : "Press with ⌥ (Option) to choose the destination",
-                             showDivider: false) {
-                Picker("", selection: $asksNameOnSave) {
+            .aomDependentRows(enabled: autoCloseEnabled.wrappedValue)
+            AOMToggleRow("Close After Dragging", symbol: "hand.draw",
+                         help: closeAfterDrag.wrappedValue ? "Hold ⌥ (Option) while dropping to keep the overlay."
+                                                           : "Hold ⌥ (Option) while dropping to close the overlay.",
+                         isOn: closeAfterDrag)
+            AOMSettingRow("Save Button Behavior", symbol: "square.and.arrow.down.on.square",
+                          help: asksNameOnSave ? "Press with ⌥ (Option) to use the export location without asking."
+                                               : "Press with ⌥ (Option) to choose the destination.") {
+                Picker("Save Button Behavior", selection: $asksNameOnSave) {
                     Text("Save to Export Location").tag(false)
                     Text("Ask for Destination").tag(true)
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 190)
+                .pickerStyle(.menu)
             }
         }
     }
@@ -574,21 +721,11 @@ struct CaptureSettingsView: View {
     // MARK: - Pinned captures
 
     private var pinnedGroup: some View {
-        AppleSettingsGroup("Pinned Captures") {
-            AppleSettingsRow(icon: "shadow", iconColor: .gray, title: "Drop Shadow",
-                             subtitle: nil, showDivider: true) {
-                Toggle("", isOn: $pinnedShadow).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "square.dashed", iconColor: .blue, title: "Rounded Corners",
-                             subtitle: nil, showDivider: true) {
-                Toggle("", isOn: $pinnedCorners).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "rectangle.inset.filled", iconColor: .purple, title: "Border",
-                             subtitle: nil, showDivider: true) {
-                Toggle("", isOn: $pinnedBorder).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }
-            AppleSettingsRow(icon: "pin.slash", iconColor: .red, title: "Unpin All",
-                             subtitle: "Remove every pinned capture from the screen", showDivider: false) {
+        AOMSection("Pinned Captures") {
+            AOMToggleRow("Drop Shadow", symbol: "shadow", isOn: $pinnedShadow)
+            AOMToggleRow("Rounded Corners", symbol: "square.dashed", isOn: $pinnedCorners)
+            AOMToggleRow("Border", symbol: "rectangle.inset.filled", isOn: $pinnedBorder)
+            AOMSettingRow("Unpin All", symbol: "pin.slash", help: "Remove every pinned capture from the screen.") {
                 Button("Unpin All") { PinnedScreenshotController.shared.unpinAll() }.controlSize(.small)
             }
         }
