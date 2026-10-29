@@ -1801,6 +1801,9 @@ final class TitleBarWindowSnap {
             resnapWork?.cancel(); resnapWork = nil; resnapKeys = nil
             endChain("the snap is off or paused")
             touchSpent = false
+            touchLive = false
+            heldTab = nil
+            queuedSpaceMove = nil
             fullscreenTasks.cancelAll()
         }
         updateMouseMonitor()

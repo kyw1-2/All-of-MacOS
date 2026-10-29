@@ -581,6 +581,10 @@ final class TitleBarSnapTests: XCTestCase {
     /// restarts the clock, so 1.5 s rests between moves never cancel.
     func testMovingRestartsTheHoldClock() {
         let recognizer = Self.stateMachineRecognizer()
+        // 3.3.3: the nudges below add up past the engage distance, which the
+        // multi-motion engine reads as a second swipe after the first one's
+        // pause; this test is about the hold clock, one gesture per touch.
+        recognizer.motionPause = 0
         let events = observe(recognizer)
         recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
         recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.02)
