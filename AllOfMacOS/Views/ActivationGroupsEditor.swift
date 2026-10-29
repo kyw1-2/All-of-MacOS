@@ -19,27 +19,24 @@ struct ActivationGroupsEditor: View {
                 VStack(spacing: 0) {
                     List(selection: $selectedID) {
                         ForEach(groups) { group in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(group.name).font(AOMType.rowTitle)
-                                    .foregroundStyle(group.isEnabled ? AOMTheme.text : AOMTheme.textTertiary)
-                                Text(Self.scopeSummary(group))
-                                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
+                            AOMListRow(group.name, detail: Self.scopeSummary(group), dimmed: !group.isEnabled) {
+                                Image(systemName: "square.stack.3d.up")
                             }
                             .tag(group.id)
                         }
                     }
                     .listStyle(.inset(alternatesRowBackgrounds: false))
                     AOMDivider()
-                    HStack(spacing: 4) {
+                    HStack(spacing: AOMSpace.x1) {
                         Button { add() } label: { Image(systemName: "plus") }.help("New Group")
                         Button { pendingDeletion = groups.first { $0.id == selectedID } } label: { Image(systemName: "minus") }
                             .disabled(selectedID == nil).help("Delete Group")
                         Spacer()
                     }
                     .buttonStyle(.borderless)
-                    .padding(8)
+                    .padding(AOMSpace.x2)
                 }
-                .frame(width: 220)
+                .frame(width: AOMEditorSize.groupsList)
                 AOMDivider(axis: .vertical)
                 Group {
                     if let index = groups.firstIndex(where: { $0.id == selectedID }) {
@@ -59,14 +56,14 @@ struct ActivationGroupsEditor: View {
             }
             AOMDivider()
             HStack {
-                Text("Automations join a group from “Applies to” in the Automation editor.")
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                AOMEditorNote("Automations join a group from “Applies to” in the Automation editor.")
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
-            .padding(12)
+            .padding(AOMSpace.x3)
         }
-        .frame(minWidth: 720, idealWidth: 780, minHeight: 520, idealHeight: 580)
+        .frame(minWidth: AOMEditorSize.groupsEditorMinimum.width, idealWidth: AOMEditorSize.groupsEditorIdeal.width,
+               minHeight: AOMEditorSize.groupsEditorMinimum.height, idealHeight: AOMEditorSize.groupsEditorIdeal.height)
         .onAppear { selectedID = selectedID ?? appState.selectedActivationGroupID ?? groups.first?.id }
         .confirmationDialog("Delete “\(pendingDeletion?.name ?? "")”?",
                             isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
@@ -122,7 +119,7 @@ private struct ActivationGroupForm: View {
                 Text("Apps")
             } footer: {
                 Text("App-specific automations win over groups; groups win over All Applications.")
-                    .font(AOMType.caption).foregroundStyle(.secondary)
+                    .font(AOMType.caption).foregroundStyle(AOMColor.textSecondary)
             }
             Section {
                 ConditionsForm(conditions: conditions)
@@ -131,7 +128,7 @@ private struct ActivationGroupForm: View {
             } footer: {
                 Text(conditions.wrappedValue.isEmpty ? "No conditions: active whenever one of its apps is frontmost."
                      : "Active only while all of these hold: \(conditions.wrappedValue.summary).")
-                    .font(AOMType.caption).foregroundStyle(.secondary)
+                    .font(AOMType.caption).foregroundStyle(AOMColor.textSecondary)
             }
         }
         .formStyle(.grouped)
@@ -149,7 +146,7 @@ private struct ConditionsForm: View {
     var body: some View {
         Toggle("Days and times", isOn: timeEnabled)
         if let window = conditions.timeWindow {
-            HStack(spacing: 4) {
+            HStack(spacing: AOMSpace.x1) {
                 ForEach(1...7, id: \.self) { day in
                     let on = window.weekdays.contains(day)
                     Toggle(Calendar.current.veryShortWeekdaySymbols[day - 1], isOn: Binding(
@@ -231,11 +228,11 @@ private struct AppListEditor: View {
 
     var body: some View {
         LabeledContent(title) {
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: AOMSpace.x1) {
                 ForEach(bundleIDs, id: \.self) { bundleID in
-                    HStack(spacing: 6) {
+                    HStack(spacing: AOMSpace.x2) {
                         if let icon = AppMetadataCache.shared.icon(for: bundleID) {
-                            Image(nsImage: icon).resizable().frame(width: 16, height: 16)
+                            Image(nsImage: icon).resizable().frame(width: AOMIcon.row, height: AOMIcon.row)
                         }
                         Text(Self.name(bundleID)).lineLimit(1)
                         Button { bundleIDs.removeAll { $0 == bundleID } } label: { Image(systemName: "minus.circle") }
