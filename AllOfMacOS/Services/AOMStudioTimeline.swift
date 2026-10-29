@@ -98,8 +98,9 @@ enum AOMStudioTimeline {
 
     /// Event tracks are sorted once when captured/loaded. Bound per-frame work
     /// to the current ripple interval rather than scanning an entire recording.
-    static func activeClicks(at time: Double, clicks: [AOMClickEvent]) -> ArraySlice<AOMClickEvent> {
-        guard time.isFinite else { return [] }
+    /// `duration` is how long a click mark lasts (3.3.3: user-set, 0.65 s before).
+    static func activeClicks(at time: Double, clicks: [AOMClickEvent], duration: Double = 0.65) -> ArraySlice<AOMClickEvent> {
+        guard time.isFinite, duration.isFinite, duration > 0 else { return [] }
         func boundary(_ threshold: Double, inclusive: Bool) -> Int {
             var lower = 0, upper = clicks.count
             while lower < upper {
@@ -109,7 +110,7 @@ enum AOMStudioTimeline {
             }
             return lower
         }
-        let begin = boundary(time - 0.65, inclusive: false)
+        let begin = boundary(time - duration, inclusive: false)
         let end = boundary(time, inclusive: false)
         return clicks[begin..<max(begin, end)]
     }

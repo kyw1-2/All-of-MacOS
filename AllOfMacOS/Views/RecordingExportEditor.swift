@@ -2,6 +2,7 @@ import AppKit
 import AVKit
 import CoreImage
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Non-destructive MP4 trimming and short animated-GIF export from Capture History.
 struct RecordingExportEditor: View {
@@ -13,6 +14,9 @@ struct RecordingExportEditor: View {
     @State private var start = 0.0
     @State private var end = 0.0
     @State private var fps = 8
+    /// GIF options (3.3.3); shared with the recording settings.
+    @AppStorage("AOMCaptureRecordingGIFSize") private var gifSize = 960
+    @AppStorage("AOMCaptureRecordingGIFLoop") private var gifLoops = true
     @State private var muteAudio = false
     @State private var quality: RecordingExportService.StudioQuality = .high
     @State private var previewPlayer: AVPlayer?
@@ -23,8 +27,7 @@ struct RecordingExportEditor: View {
     @State private var zoomLevel = 1.6
     @State private var focusX = 0.5
     @State private var focusY = 0.5
-    @State private var backdrop: AOMStudioBackdrop = .none
-    @State private var backdropPadding = 0.08
+    @State private var background = AOMVideoBackground()
     @State private var motionBlurRadius = 0.0
     @State private var editableCursorTrack: AOMCursorTrack?
     @State private var includeSmoothedCursor = true
@@ -37,6 +40,9 @@ struct RecordingExportEditor: View {
     @State private var outputResolution: AOMStudioResolution = .source
     @State private var cursorStyle: AOMStudioCursorStyle = .arrow
     @State private var showRipples = true
+    @State private var clickStyle = AOMClickStyle.legacy
+    @State private var highlightOn = false
+    @State private var highlight = AOMCursorHighlight()
     @State private var showKeys = true
     @State private var keyScale = 1.0
     @State private var keyY = 0.9
@@ -161,6 +167,15 @@ struct RecordingExportEditor: View {
                     }
                     .frame(width: 110)
                     .disabled(isExporting)
+                    Picker("Size", selection: $gifSize) {
+                        ForEach(CaptureSettings.recordingGIFSizeChoices, id: \.self) { Text("\($0) px").tag($0) }
+                    }
+                    .frame(width: 120)
+                    .help("Longest edge of the GIF frames")
+                    .disabled(isExporting)
+                    Toggle("Loop", isOn: $gifLoops)
+                        .help("Off plays the GIF once")
+                        .disabled(isExporting)
                 }
 
                 if outputDuration > 120 {
@@ -227,6 +242,9 @@ struct RecordingExportEditor: View {
                     restore(project.settings)
                     muteAudio = project.muteAudio
                     status = "Recovered saved Studio project."
+                } else {
+                    // Start from what the recording's Presentation showed.
+                    restore(AOMStudioSettings.recordingDefaults(track: editableCursorTrack))
                 }
                 updatePreview()
             } catch {
@@ -324,20 +342,7 @@ struct RecordingExportEditor: View {
                     .accessibilityLabel("Remove zoom keyframe")
                 }
             }
-            HStack(spacing: 12) {
-                Picker("Background", selection: $backdrop) {
-                    ForEach(AOMStudioBackdrop.allCases) { item in
-                        Text(item.displayName).tag(item)
-                    }
-                }
-                .frame(width: 205)
-                .disabled(isExporting)
-                Text("Padding")
-                Slider(value: $backdropPadding, in: 0...0.20)
-                    .disabled(isExporting || backdrop == .none)
-                Text("\(Int(backdropPadding * 100))%")
-                    .monospacedDigit().frame(width: 35)
-            }
+            backgroundControls
             HStack(spacing: 10) {
                 Text("Zoom-transition blur").font(.caption)
                 Slider(value: $motionBlurRadius, in: 0...8)
@@ -362,6 +367,11 @@ struct RecordingExportEditor: View {
                 Picker("Cursor", selection: $cursorStyle) { ForEach(AOMStudioCursorStyle.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
                 Toggle("Click ripples", isOn: $showRipples)
             }
+            if editableCursorTrack?.pointerInVideo == true {
+                Text("The system pointer is already in this video; the cursor track adds only the highlight.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            clickAndHighlightControls
             if !keyEvents.isEmpty {
                 Toggle("Shortcut layer", isOn: $showKeys)
                 HStack { Text("Size"); Slider(value: $keyScale, in: 0.5...2); Text("Vertical position"); Slider(value: $keyY, in: 0...1) }
@@ -393,15 +403,136 @@ struct RecordingExportEditor: View {
     }
 
     private var studioSettings: AOMStudioSettings {
-        AOMStudioSettings(keyframes: zoomKeyframes, backdrop: backdrop,
-                          paddingFraction: backdropPadding, motionBlurRadius: motionBlurRadius,
+        AOMStudioSettings(keyframes: zoomKeyframes, backdrop: .none,
+                          paddingFraction: 0, motionBlurRadius: motionBlurRadius,
                           cursorPoints: includeSmoothedCursor ? (editableCursorTrack?.points ?? []) : [],
                           cursorOverlaySize: cursorSize, clicks: editableCursorTrack?.clicks ?? [],
                           showClickRipples: showRipples, cursorStyle: cursorStyle,
                           keystrokes: keyEvents.filter { $0.isValid }.sorted { $0.time < $1.time }, showKeystrokes: showKeys,
                           keystrokeScale: keyScale, keystrokeY: keyY, showCamera: showCamera,
                           cameraSize: cameraSize, cameraX: cameraX, cameraY: cameraY, cameraRoundness: cameraRoundness,
-                          aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle)
+                          aspect: outputAspect, resolution: outputResolution, keystrokeStyle: keyStyle,
+                          background: background, clickStyle: clickStyle,
+                          cursorHighlight: highlightOn ? highlight : nil)
+    }
+
+    // MARK: - Click marks and cursor highlight (3.3.3, C06)
+
+    private var clickAndHighlightControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Picker("Click style", selection: $clickStyle.shape) {
+                    ForEach(AOMClickRingStyle.allCases) { Text($0.displayName).tag($0) }
+                }
+                .frame(width: 220)
+                ColorPicker("Left click", selection: Self.cgColor($clickStyle.leftColor)).fixedSize()
+                ColorPicker("Right click", selection: Self.cgColor($clickStyle.rightColor)).fixedSize()
+            }
+            HStack(spacing: 8) {
+                Text("Click size")
+                Slider(value: $clickStyle.size, in: AOMClickStyle.sizeRange)
+                Text("Duration")
+                Slider(value: $clickStyle.duration, in: AOMClickStyle.durationRange)
+                Text(String(format: "%.2f s", clickStyle.duration)).monospacedDigit().frame(width: 52)
+            }
+            .font(.caption)
+            HStack(spacing: 10) {
+                Toggle("Cursor highlight", isOn: $highlightOn)
+                ColorPicker("Color", selection: Self.cgColor($highlight.color)).fixedSize().disabled(!highlightOn)
+                Text("Size").font(.caption)
+                Slider(value: $highlight.size, in: AOMCursorHighlight.sizeRange).disabled(!highlightOn)
+            }
+            .disabled(editableCursorTrack?.points.isEmpty ?? true)
+        }
+        .disabled(isExporting)
+    }
+
+    // MARK: - Background (3.3.3, C05)
+
+    /// Colour, gradient, picture or desktop picture behind the video, with
+    /// padding, corners and shadow. The preview above updates as they change.
+    private var backgroundControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Picker("Background", selection: Binding(get: { background.kind }, set: { selectBackground($0) })) {
+                    ForEach(AOMVideoBackgroundKind.allCases) { Text($0.displayName).tag($0) }
+                }
+                .frame(width: 250)
+                switch background.kind {
+                case .solid:
+                    ColorPicker("Color", selection: Self.cgColor($background.color, opaque: true), supportsOpacity: false)
+                        .fixedSize()
+                case .gradient:
+                    Picker("Gradient", selection: $background.gradient) {
+                        ForEach(AOMGradientPreset.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .frame(width: 180)
+                case .image:
+                    Button("Choose Image…") { chooseBackgroundImage() }
+                    Text(background.imagePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "No image chosen")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                case .wallpaper:
+                    Button("Use Current Desktop Picture") { selectBackground(.wallpaper) }
+                    Text(background.imagePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Gradient (desktop picture unreadable)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                case .none:
+                    EmptyView()
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Text("Padding")
+                Slider(value: $background.padding, in: AOMVideoBackground.paddingRange)
+                Text("Corners")
+                Slider(value: $background.cornerRadius, in: AOMVideoBackground.cornerRange)
+                Text("Shadow")
+                Slider(value: $background.shadow, in: AOMVideoBackground.shadowRange)
+            }
+            .font(.caption)
+            .disabled(isExporting || !background.isActive)
+        }
+        .disabled(isExporting)
+    }
+
+    private func selectBackground(_ kind: AOMVideoBackgroundKind) {
+        switch kind {
+        case .image:
+            // Reuse a picture chosen earlier; otherwise ask for one.
+            if background.kind != .wallpaper, let path = background.imagePath, FileManager.default.isReadableFile(atPath: path) {
+                background.kind = .image
+            } else {
+                chooseBackgroundImage()
+            }
+        case .wallpaper:
+            let path = AOMVideoBackground.currentWallpaperPath()
+            AOMStudioBackgroundImages.invalidate(path)
+            background.imagePath = path
+            background.kind = .wallpaper
+            if path == nil { status = "The desktop picture is not a readable image file; the \(background.gradient.displayName) gradient is used instead." }
+        default:
+            background.kind = kind
+        }
+    }
+
+    private func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a picture to place behind the recording"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AOMStudioBackgroundImages.invalidate(url.path)
+        background.imagePath = url.path
+        background.kind = .image
+    }
+
+    /// A ColorPicker binding over a stored sRGB colour.
+    private static func cgColor(_ color: Binding<AOMRGBAColor>, opaque: Bool = false) -> Binding<CGColor> {
+        Binding(get: { color.wrappedValue.cgColor }, set: { picked in
+            guard var converted = AOMRGBAColor(cgColor: picked) else { return }
+            if opaque { converted.alpha = 1 }
+            color.wrappedValue = converted
+        })
     }
 
     private func updatePreview() {
@@ -432,6 +563,7 @@ struct RecordingExportEditor: View {
         status = ""
         resultURL = nil
         let begin = start, finish = end, frames = fps
+        let gifSide = gifSize, gifRepeats = gifLoops
         let muted = muteAudio, selectedQuality = quality
         let studio = studioSettings
         let selected = exportClips
@@ -441,7 +573,8 @@ struct RecordingExportEditor: View {
                 let exported: URL
                 if gif {
                     exported = try await RecordingExportService.gif(
-                        source: source, start: begin, end: finish, fps: frames, studio: studio, clips: selected)
+                        source: source, start: begin, end: finish, fps: frames, studio: studio, clips: selected,
+                        maxDimension: gifSide, loops: gifRepeats)
                 } else if rendered {
                     exported = try await RecordingExportService.render(
                         source: source, start: begin, end: finish,
@@ -540,9 +673,17 @@ struct RecordingExportEditor: View {
     }
 
     private func restore(_ settings: AOMStudioSettings) {
-        zoomKeyframes = settings.keyframes; backdrop = settings.backdrop; backdropPadding = settings.paddingFraction
+        zoomKeyframes = settings.keyframes
+        // Projects saved before 3.3.3 carry a single-colour backdrop instead.
+        background = settings.background ?? AOMVideoBackground(legacy: settings.backdrop, padding: settings.paddingFraction)
+        if background.kind == .wallpaper, background.imagePath.map({ !FileManager.default.isReadableFile(atPath: $0) }) ?? true {
+            background.imagePath = AOMVideoBackground.currentWallpaperPath()
+        }
         motionBlurRadius = settings.motionBlurRadius; cursorSize = settings.cursorOverlaySize
         includeSmoothedCursor = !settings.cursorPoints.isEmpty; cursorStyle = settings.cursorStyle
+        clickStyle = settings.clickStyle ?? .legacy
+        highlightOn = settings.cursorHighlight != nil
+        highlight = settings.cursorHighlight ?? AOMCursorHighlight()
         showRipples = settings.showClickRipples; keyEvents = settings.keystrokes; showKeys = settings.showKeystrokes
         keyScale = settings.keystrokeScale; keyY = settings.keystrokeY; showCamera = settings.showCamera
         keyStyle = settings.keystrokeStyle ?? .dark

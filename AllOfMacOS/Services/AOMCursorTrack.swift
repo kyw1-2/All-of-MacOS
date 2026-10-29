@@ -17,6 +17,10 @@ struct AOMCursorTrack: Codable {
     // Optional fields preserve compatibility with pre-Studio sidecars.
     var clicks: [AOMClickEvent]? = nil
     var keystrokes: [AOMKeystrokeEvent]? = nil
+    /// 3.3.3: true when the system pointer is already in the video and the
+    /// points exist only for the cursor highlight, so no second pointer is
+    /// drawn over it. nil in older sidecars, whose points replace the pointer.
+    var pointerInVideo: Bool? = nil
 
     static func sidecarURL(for movie: URL) -> URL {
         movie.appendingPathExtension("aom-cursor.json")

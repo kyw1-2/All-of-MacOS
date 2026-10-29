@@ -35,6 +35,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var recordedScale: CGFloat = 1
     private var outputGIF = false
     private var recordsEditableCursor = false
+    /// 3.3.3: the pointer path is also kept for the cursor highlight.
+    private var recordsPointerPath = false
+    /// ScreenCaptureKit draws the system pointer into this take.
+    private var capturesSystemPointer = false
     private var gifFPS = 10
     private var outputSize = CGSize.zero
     /// Free space required on the save volume before a take starts.
@@ -123,10 +127,17 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         isStarting = true
         defer {
             isStarting = false
-            // Any failed start, wherever it threw, takes the camera bubble down.
-            if !isRecording { RecordingCameraBubble.shared.hide() }
+            // Any failed start, wherever it threw, takes the camera bubble down
+            // and gives the desktop icons back.
+            if !isRecording {
+                RecordingCameraBubble.shared.hide()
+                RecordingDesktopIcons.shared.restore()
+            }
         }
         recordsEditableCursor = CaptureSettings.recordingCursorMotion
+        capturesSystemPointer = Self.capturesSystemPointer(editableTrack: recordsEditableCursor,
+                                                           showsCursor: CaptureSettings.recordingShowsCursor)
+        recordsPointerPath = recordsEditableCursor || CaptureSettings.recordingCursorHighlight
         outputGIF = UserDefaults.standard.string(forKey: "AOMCaptureRecordingOutputFormat") == "gif"
         gifFPS = max(1, min(30, UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS") == 0 ? 10 : UserDefaults.standard.integer(forKey: "AOMCaptureRecordingGIFFPS")))
         let source = outputGIF ? RecordingAudioSource.off : CaptureSettings.recordingAudioSource
@@ -149,6 +160,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 }
             }
         }
+        // Opt-in: Finder redraws the desktop without icons before the first frame.
+        if CaptureSettings.recordingHidesDesktopIcons, RecordingDesktopIcons.shared.hide() {
+            try? await Task.sleep(for: .milliseconds(900))
+        }
         // The bubble must exist before ScreenCaptureKit lists AOM's windows,
         // so the own-window exclusion below keeps it out of the video.
         if CaptureSettings.recordingCameraOverlay && CaptureSettings.recordingCameraBubble {
@@ -158,12 +173,13 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let displays = content.displays.filter { !$0.frame.intersection(globalRect).isEmpty }
         guard !displays.isEmpty else { throw CaptureError.noDisplays }
         guard globalRect.width >= 20, globalRect.height >= 20 else { throw CaptureError.areaTooSmall }
-        let scale = displays.map { display in
+        let scales = displays.map { display in
             NSScreen.screens.first { $0.displayID == display.displayID }?.backingScaleFactor ?? 1
-        }.max() ?? 1
+        }
         // H.264 hardware encoders have finite dimensions. Keep the entire selection
         // while scaling oversized multi-display canvases down proportionally.
-        let effectiveScale = min(scale, 7680 / max(globalRect.width, globalRect.height))
+        let effectiveScale = Self.captureScale(displayScales: scales, scalesTo1x: CaptureSettings.recordingScalesTo1x,
+                                               longestEdge: max(globalRect.width, globalRect.height))
         let width = max(2, Int(globalRect.width * effectiveScale) & ~1)
         let height = max(2, Int(globalRect.height * effectiveScale) & ~1)
         let folder = CaptureSettings.saveDirectory
@@ -250,10 +266,14 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 config.sourceRect = piece.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
                 config.width = max(2, Int(piece.width * effectiveScale))
                 config.height = max(2, Int(piece.height * effectiveScale))
-                config.showsCursor = !recordsEditableCursor && (CaptureSettings.showsCursor || CaptureSettings.recordingClickIndicators)
+                config.showsCursor = capturesSystemPointer
                 if #available(macOS 15.0, *) {
                     config.showMouseClicks = false // Editable local click events are rendered in Studio.
                     config.captureMicrophone = wantsMic && index == 0
+                    if wantsMic, index == 0, let microphone = RecordingInputDevice.chosen(
+                        CaptureSettings.recordingMicrophoneID, among: RecordingInputDevice.microphones().map(\.id)) {
+                        config.microphoneCaptureDeviceID = microphone
+                    }
                 }
                 config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(CaptureSettings.recordingFPS))
                 config.queueDepth = 6; config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -318,13 +338,15 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         ScreenRecordingBarController.shared.hide()
         for stream in streams { try? await stream.stopCapture() }
         streams.removeAll()
+        // After the last frame, so the icons coming back are never recorded.
+        RecordingDesktopIcons.shared.restore()
         guard let writer, let url = outputURL else { clearSession(); return nil }
         videoInput?.markAsFinished(); audioInput?.markAsFinished(); microphoneInput?.markAsFinished()
         let hasFrames = isSessionStarted
         let needsMix = audioInput != nil && microphoneInput != nil
         let thumb = firstImage ?? Self.makeFallbackThumbnail(size: recordingRect.size)
         let rect = recordingRect; let scale = recordedScale; let points = cursorSamples.points
-        let telemetry = AOMCursorTrack(points: recordsEditableCursor ? points : [], clicks: clickEvents, keystrokes: keyEvents)
+        let telemetry = currentTrack(points: points)
         let overflowed = inputEventsOverflowed
         let interruption = self.interruption
         let cameraWriter = cameraWriter
@@ -357,10 +379,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if overflowed {
             warnings.append("More than 60,000 clicks or keystrokes: later ones are not in the editable overlay.")
         }
-        var defaultStyle = AOMStudioSettings(cursorPoints: telemetry.points, clicks: wantsRipples ? (telemetry.clicks ?? []) : [], keystrokes: telemetry.keystrokes ?? [])
-        defaultStyle.keystrokeScale = CaptureSettings.recordingKeystrokeSize.studioScale
-        defaultStyle.keystrokeY = CaptureSettings.recordingKeystrokePosition.studioY
-        defaultStyle.keystrokeStyle = CaptureSettings.recordingKeystrokeStyle
+        // The Presentation applies the recording's display options (click
+        // style, pointer size and visibility, highlight, keystroke badges).
+        var defaultStyle = AOMStudioSettings.recordingDefaults(track: telemetry)
         // The camera layer starts where the live bubble was left, round like it.
         if let bubblePlacement, cameraWriter != nil {
             defaultStyle.cameraX = bubblePlacement.x
@@ -394,7 +415,8 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
             do {
                 let duration = try await RecordingExportService.duration(for: url)
                 let gif = try await RecordingExportService.gif(source: url, start: 0, end: duration, fps: animationFPS,
-                    studio: defaultStyle)
+                    studio: defaultStyle, maxDimension: CaptureSettings.recordingGIFMaxDimension,
+                    loops: CaptureSettings.recordingGIFLoops)
                 NSWorkspace.shared.activateFileViewerSelecting([gif])
                 if outcome.event == "saved" { GestureHUD.shared.show(title: "GIF Saved", detail: gif.lastPathComponent) }
                 else { GestureHUD.shared.show(title: "GIF Saved — \(outcome.title)", detail: outcome.detail) }
@@ -432,23 +454,29 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     func restartRecording() {
         guard isRecording, !isStopping else { return }
         let rect = recordingRect
-        cancelRecording(announce: false, releasesFocus: false)
+        // Focus and hidden desktop icons carry over into the new take.
+        cancelRecording(announce: false, releasesFocus: false, restoresDesktopIcons: false)
         Task { @MainActor in
             for _ in 0..<80 where isStopping { try? await Task.sleep(for: .milliseconds(50)) }
             do {
                 try await startRecording(globalRect: rect)
-                GestureHUD.shared.show(title: "Recording Restarted", detail: "")
+                if isRecording { GestureHUD.shared.show(title: "Recording Restarted", detail: "") }
             } catch {
-                RecordingFocus.release()
                 GestureHUD.shared.show(title: "Recording could not restart", detail: error.localizedDescription)
+            }
+            // No new take: give back what the first one changed.
+            if !isRecording {
+                RecordingFocus.release()
+                RecordingDesktopIcons.shared.restore()
             }
         }
     }
 
-    func cancelRecording(announce: Bool = true, releasesFocus: Bool = true) {
+    func cancelRecording(announce: Bool = true, releasesFocus: Bool = true, restoresDesktopIcons: Bool = true) {
         guard isRecording, !isStopping else { return }
         isStopping = true; isRecording = false
         if releasesFocus { RecordingFocus.release() }
+        if restoresDesktopIcons { RecordingDesktopIcons.shared.restore() }
         RecordingCameraBubble.shared.hide()
         stopTimer(); stopCursorSampling(); stopOverlays(); ScreenRecordingBarController.shared.hide()
         let activeStreams = streams; let writer = writer; let cameraWriter = cameraWriter; let url = outputURL
@@ -603,17 +631,60 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         // Password fields (Secure Input) are always excluded above.
         guard let label = Self.keystrokeLabel(keyCode: event.keyCode, flags: event.modifierFlags,
                                               characters: event.charactersIgnoringModifiers,
-                                              allKeys: CaptureSettings.recordingKeystrokesAllKeys) else { return }
+                                              allKeys: CaptureSettings.recordingKeystrokesAllKeys,
+                                              shortcutModifiers: Self.modifierFlags(CaptureSettings.recordingKeystrokeModifiers)) else { return }
         guard let time = recordingTime() else { return }
         guard keyEvents.count < 60_000 else { inputEventsOverflowed = true; return }
         keyEvents.append(AOMKeystrokeEvent(time: time, label: label))
     }
 
-    /// The badge text for a key press, or nil when it is not shown.
+    /// The input track as it stands: pointer samples only when they replace
+    /// the pointer or feed the highlight, flagged when the system pointer is
+    /// already in the video.
+    private func currentTrack(points: [AOMCursorPoint]) -> AOMCursorTrack {
+        AOMCursorTrack(points: recordsPointerPath ? points : [], clicks: clickEvents, keystrokes: keyEvents,
+                       pointerInVideo: recordsPointerPath ? capturesSystemPointer : nil)
+    }
+
+    /// ScreenCaptureKit draws the system pointer only when the user wants a
+    /// pointer and no editable one replaces it. Show Mouse Clicks no longer
+    /// forces it on (audit CS-38).
+    nonisolated static func capturesSystemPointer(editableTrack: Bool, showsCursor: Bool) -> Bool {
+        !editableTrack && showsCursor
+    }
+
+    /// Pixels per point for the movie: the sharpest display's scale, or 1 with
+    /// "Scale Retina videos to 1x", and never beyond the 7680 px H.264 limit.
+    nonisolated static func captureScale(displayScales: [CGFloat], scalesTo1x: Bool, longestEdge: CGFloat) -> CGFloat {
+        let scale = scalesTo1x ? 1 : (displayScales.max() ?? 1)
+        return min(scale, 7680 / max(1, longestEdge))
+    }
+
+    nonisolated static func modifierFlags(_ modifiers: Set<KeystrokeShortcutModifier>) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if modifiers.contains(.command) { flags.insert(.command) }
+        if modifiers.contains(.control) { flags.insert(.control) }
+        if modifiers.contains(.option) { flags.insert(.option) }
+        if modifiers.contains(.shift) { flags.insert(.shift) }
+        return flags
+    }
+
+    /// 0 left, 1 right, 2 other. A ⌃-click is a right click on macOS, so it
+    /// takes the right-click colour.
+    nonisolated static func clickButton(type: NSEvent.EventType, buttonNumber: Int, flags: NSEvent.ModifierFlags) -> Int {
+        if type == .rightMouseDown || (type == .leftMouseDown && flags.contains(.control)) { return 1 }
+        if type == .leftMouseDown { return 0 }
+        return min(2, max(0, buttonNumber))
+    }
+
+    /// The badge text for a key press, or nil when it is not shown. A key
+    /// counts as a shortcut when one of `shortcutModifiers` is held (3.3.3:
+    /// the user picks them; ⌘ ⌃ ⌥ before).
     nonisolated static func keystrokeLabel(keyCode: UInt16, flags: NSEvent.ModifierFlags, characters: String?,
-                                           allKeys: Bool) -> String? {
+                                           allKeys: Bool,
+                                           shortcutModifiers: NSEvent.ModifierFlags = [.command, .control, .option]) -> String? {
         let special: [UInt16: String] = [36: "↩", 48: "⇥", 49: "Space", 51: "⌫", 53: "Esc", 123: "←", 124: "→", 125: "↓", 126: "↑"]
-        let shortcut = flags.contains(.command) || flags.contains(.control) || flags.contains(.option)
+        let shortcut = !flags.intersection(shortcutModifiers.intersection([.command, .control, .option, .shift])).isEmpty
         guard shortcut || special[keyCode] != nil || allKeys else { return nil }
         let modifiers = (flags.contains(.control) ? "⌃" : "") + (flags.contains(.option) ? "⌥" : "")
             + (flags.contains(.shift) && shortcut ? "⇧" : "") + (flags.contains(.command) ? "⌘" : "")
@@ -643,7 +714,9 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         let x = (mouse.x - recordingRect.minX) / recordingRect.width
         let y = ((NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y - recordingRect.minY) / recordingRect.height
         guard (0...1).contains(x), (0...1).contains(y) else { return }
-        clickEvents.append(AOMClickEvent(time: time, x: x, y: y, button: min(2, event.buttonNumber)))
+        clickEvents.append(AOMClickEvent(time: time, x: x, y: y,
+                                         button: Self.clickButton(type: event.type, buttonNumber: event.buttonNumber,
+                                                                  flags: event.modifierFlags)))
     }
 
     private func stopOverlays() {
@@ -673,7 +746,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         if seconds - lastSidecarWrite >= 2, !sidecarWriteInFlight, let url = outputURL {
             lastSidecarWrite = seconds
             sidecarWriteInFlight = true
-            let track = AOMCursorTrack(points: recordsEditableCursor ? cursorSamples.points : [], clicks: clickEvents, keystrokes: keyEvents)
+            let track = currentTrack(points: cursorSamples.points)
             sidecarQueue.async { [weak self] in
                 let failure: String?
                 do { try track.write(for: url); failure = nil } catch { failure = error.localizedDescription }
@@ -727,6 +800,11 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func offerInterruptedRecordingRecovery() {
+        // 3.3.3: undo what an interrupted take changed in the system first.
+        if !isRecording, !isStarting {
+            RecordingDesktopIcons.shared.restore()
+            RecordingFocus.recoverAfterUnexpectedExit()
+        }
         let recordings = RecordingRecovery.pending()
         guard !recordings.isEmpty else { return }
         let alert = NSAlert()
@@ -762,7 +840,12 @@ private final class RecordingCameraSource: NSObject, AVCaptureVideoDataOutputSam
     var captureSession: AVCaptureSession { session }
     var onFrame: (@MainActor (CIImage) -> Void)?
     func start() async throws {
-        guard let device = AVCaptureDevice.default(for: .video) else { throw CaptureError.captureFailed("No camera is available.") }
+        // The chosen camera when it is connected, else the system default.
+        let chosen = RecordingInputDevice.chosen(CaptureSettings.recordingCameraID,
+                                                 among: RecordingInputDevice.cameras().map(\.id))
+        guard let device = chosen.flatMap(AVCaptureDevice.init(uniqueID:)) ?? AVCaptureDevice.default(for: .video) else {
+            throw CaptureError.captureFailed("No camera is available.")
+        }
         let input = try AVCaptureDeviceInput(device: device)
         session.beginConfiguration()
         session.sessionPreset = .medium
@@ -965,17 +1048,34 @@ private struct ScreenRecordingBarView: View {
 @MainActor
 enum RecordingFocus {
     private static var engaged = false
+    /// Runs a Shortcut by name; tests replace it, so no Shortcut ever runs there.
+    static var runner: (String) -> Void = { run($0) }
+    /// Names the end Shortcut while Focus is engaged, so a crash or force
+    /// quit mid-recording still turns Focus off at the next launch (3.3.3,
+    /// audit CS-37).
+    static var journalURL: URL = RecordingSystemState.directory.appendingPathComponent("recording-focus.json")
 
     static func engage() {
         guard CaptureSettings.recordingFocus, !engaged else { return }
         engaged = true
-        run(CaptureSettings.recordingFocusOnShortcut)
+        let off = CaptureSettings.recordingFocusOffShortcut
+        RecordingSystemState.write(["offShortcut": off], to: journalURL)
+        runner(CaptureSettings.recordingFocusOnShortcut)
     }
 
     static func release() {
         guard engaged else { return }
         engaged = false
-        run(CaptureSettings.recordingFocusOffShortcut)
+        runner(CaptureSettings.recordingFocusOffShortcut)
+        try? FileManager.default.removeItem(at: journalURL)
+    }
+
+    /// After an unexpected exit: run the end Shortcut that was journaled.
+    static func recoverAfterUnexpectedExit() {
+        guard !engaged, let entry = RecordingSystemState.read(journalURL) else { return }
+        try? FileManager.default.removeItem(at: journalURL)
+        let name = entry["offShortcut"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !name.isEmpty { runner(name) }
     }
 
     /// Also used by the settings "Test" buttons.
@@ -1010,5 +1110,142 @@ enum RecordingFocus {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if task.terminationStatus == 0 { return (true, "") }
         return (false, detail.isEmpty ? "Exit status \(task.terminationStatus)" : String(detail.prefix(200)))
+    }
+}
+
+/// Small journals for system state a recording changes (Focus, desktop
+/// icons). Each is written before the change, so the next launch can undo it
+/// after a crash or force quit. Tests use a temporary folder.
+enum RecordingSystemState {
+    static var directory: URL {
+        if PresetManager.isRunningTests {
+            return FileManager.default.temporaryDirectory.appendingPathComponent(
+                "AOMTestRecordingState-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AllOfMacOS", isDirectory: true)
+    }
+
+    @discardableResult
+    static func write(_ entry: [String: String], to url: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(entry).write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// nil when there is no journal; an unreadable one reads as empty.
+    static func read(_ url: URL) -> [String: String]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+}
+
+/// CleanShot's "Hide desktop icons while recording" (3.3.3, §10 CS-옵션):
+/// opt-in, through Finder's `CreateDesktop` preference and a Finder restart.
+/// The previous value is journaled before anything changes, and put back on
+/// stop, on cancel, on a failed start and, after a crash, at the next launch.
+/// Icons the user had already hidden are left alone and never shown.
+@MainActor
+final class RecordingDesktopIcons {
+    struct Finder {
+        /// Finder's `CreateDesktop`; nil when never set (icons shown).
+        var read: () -> Bool?
+        /// Sets `CreateDesktop`, or removes it for nil, and synchronizes.
+        var write: (Bool?) -> Void
+        var restart: () -> Void
+
+        static let system = Finder(
+            read: {
+                let value = CFPreferencesCopyAppValue("CreateDesktop" as CFString, "com.apple.finder" as CFString)
+                if let flag = value as? Bool { return flag }
+                if let text = value as? String { return !["0", "false", "no"].contains(text.lowercased()) }
+                return nil
+            },
+            write: { value in
+                guard !PresetManager.isRunningTests else { return }
+                CFPreferencesSetAppValue("CreateDesktop" as CFString, value.map { $0 as CFBoolean }, "com.apple.finder" as CFString)
+                CFPreferencesAppSynchronize("com.apple.finder" as CFString)
+            },
+            restart: {
+                guard !PresetManager.isRunningTests else { return }
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+                task.arguments = ["Finder"]
+                // Finder relaunches itself; a failure means it was not running.
+                try? task.run()
+            })
+    }
+
+    static let shared = RecordingDesktopIcons(
+        journal: RecordingSystemState.directory.appendingPathComponent("recording-desktop-icons.json"), finder: .system)
+
+    let journal: URL
+    var finder: Finder
+
+    init(journal: URL, finder: Finder) {
+        self.journal = journal
+        self.finder = finder
+    }
+
+    /// The icons are hidden by AOM and not yet put back.
+    var isHidingIcons: Bool { FileManager.default.fileExists(atPath: journal.path) }
+
+    /// Hides the icons when they are showing. True when it changed something.
+    @discardableResult
+    func hide() -> Bool {
+        guard !isHidingIcons else { return false }
+        let current = finder.read()
+        guard current ?? true else { return false }
+        var entry: [String: String] = [:]
+        if let current { entry["previous"] = current ? "true" : "false" }
+        // No journal, no change: a crash could not undo it.
+        guard RecordingSystemState.write(entry, to: journal) else { return false }
+        finder.write(false)
+        finder.restart()
+        return true
+    }
+
+    /// Puts back what `hide()` changed; does nothing without a journal.
+    func restore() {
+        guard let entry = RecordingSystemState.read(journal) else { return }
+        let previous = entry["previous"].map { $0 == "true" }
+        let current = finder.read()
+        if (current ?? true) != (previous ?? true) {
+            finder.write(previous)
+            finder.restart()
+        } else if current != previous {
+            finder.write(previous)
+        }
+        try? FileManager.default.removeItem(at: journal)
+    }
+}
+
+/// Cameras and microphones a recording can use (3.3.3, CS-33/35 device
+/// choice). Listing devices records nothing and needs no permission.
+struct RecordingInputDevice: Identifiable, Equatable {
+    let id: String
+    let name: String
+
+    static func cameras() -> [RecordingInputDevice] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+                                         mediaType: .video, position: .unspecified)
+            .devices.map { RecordingInputDevice(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    static func microphones() -> [RecordingInputDevice] {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone], mediaType: .audio, position: .unspecified)
+            .devices.map { RecordingInputDevice(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    /// The stored choice when that device is connected; nil means the system
+    /// default, so an unplugged camera or microphone never blocks a take.
+    static func chosen(_ stored: String, among available: [String]) -> String? {
+        let id = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !id.isEmpty && available.contains(id) ? id : nil
     }
 }
