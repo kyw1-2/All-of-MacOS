@@ -1215,24 +1215,25 @@ struct ClipboardPanelView: View {
         // fade away on their own (Paste shows no permanent status row).
         .overlay(alignment: .bottom) {
             if !state.status.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: AOMSpace.x2) {
                     Text(state.status)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(AOMFont.callout.weight(.medium))
+                        .foregroundStyle(AOMColor.text)
                         .lineLimit(2)
                         .accessibilityIdentifier("ClipboardStatus")
                     Button { state.status = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary)
                     }.buttonStyle(.plain).help("Dismiss Message").accessibilityLabel("Dismiss Message")
                 }
-                .padding(.leading, 14).padding(.trailing, 8).frame(height: 30)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-                .padding(.bottom, 12)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.leading, AOMSpace.x4).padding(.trailing, AOMSpace.x2).frame(minHeight: AOMSize.rowSingle)
+                // The shelf is already glass: the message is an opaque capsule (c.4).
+                .aomInPanelCapsule()
+                .padding(.bottom, AOMSpace.x3)
+                .transition(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                            ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.18), value: state.status)
+        .aomAnimation(.standard, value: state.status)
         .task(id: state.status) {
             guard !state.status.isEmpty else { return }
             let shown = state.status
@@ -1265,7 +1266,7 @@ struct ClipboardPanelView: View {
             Text(ClipboardBoardDeletionCopy.message(onlyHere: boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0))
         }
         .onChange(of: state.searchFocusToken) { _, _ in
-            withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8)) {
+            withAnimation(AOMMotion.quick) {
                 state.searchExpanded = true
             }
             DispatchQueue.main.async { searchFocused = true }
@@ -1374,14 +1375,14 @@ struct ClipboardPanelView: View {
     /// same filter.
     private var searchSuggestions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1) {
                 ForEach(ClipboardEntry.Kind.allCases) { kind in
                     quickChip(kind.displayName, icon: symbol(kind), selected: state.kind == kind,
                               help: "Only \(kind.displayName.lowercased()) items (type:\(kind.rawValue))") {
                         state.kind = state.kind == kind ? nil : kind
                     }
                 }
-                Divider().frame(height: 14)
+                Divider().frame(height: AOMSpace.x4)
                 ForEach([1, -7, 30], id: \.self) { code in
                     quickChip(ClipboardPanelState.dateFilterTitle(code), icon: "calendar", selected: state.recentDays == code,
                               help: "Copied \(ClipboardPanelState.dateFilterTitle(code).lowercased())") {
@@ -1393,7 +1394,7 @@ struct ClipboardPanelView: View {
                         state.recentDays = 0
                     }
                 }
-                if !sources.isEmpty { Divider().frame(height: 14) }
+                if !sources.isEmpty { Divider().frame(height: AOMSpace.x4) }
                 ForEach(chipSources) { source in
                     quickChip(source.name, icon: nil, appIcon: AppMetadataCache.shared.icon(for: source.bundleID),
                               selected: state.source == source.filterValue,
@@ -1410,7 +1411,7 @@ struct ClipboardPanelView: View {
                         Button(query) { state.query = query }.buttonStyle(.bordered).controlSize(.mini)
                     }
                 }
-            }.padding(.horizontal, 24).padding(.bottom, 6)
+            }.padding(.horizontal, AOMSpace.x6).padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
         }.frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true)
     }
     /// The three most-used apps, plus the selected one if it is not among them.
@@ -1421,32 +1422,12 @@ struct ClipboardPanelView: View {
         return top
     }
 
+    /// One filter under the search field: the shared filter chip, with a
+    /// resting fill so it reads as a button on the glass shelf.
     private func quickChip(_ title: String, icon: String?, appIcon: NSImage? = nil, selected: Bool,
                            help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                if let appIcon {
-                    Image(nsImage: appIcon).resizable().scaledToFit().frame(width: 13, height: 13).accessibilityHidden(true)
-                } else if let icon {
-                    Image(systemName: icon).font(.system(size: 10, weight: .medium))
-                }
-                Text(title).lineLimit(1)
-                if selected { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
-            }
-            .font(.system(size: 11, weight: .medium))
-            .padding(.horizontal, 8).frame(height: 22)
-            .foregroundStyle(selected ? AOMTheme.onAccent(Color.accentColor) : Color.primary)
-            .background(selected ? Color.accentColor : Color.primary.opacity(0.07), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
-    private func removableChip(_ title: String, remove: @escaping () -> Void) -> some View {
-        Button(action: remove) { HStack(spacing: 4) { Text(title); Image(systemName: "xmark.circle.fill") } }
-            .buttonStyle(.borderedProminent).controlSize(.mini).help("Remove filter")
+        AOMFilterChip(title, symbol: icon, appIcon: appIcon, selected: selected, filled: true, showsClear: true,
+                      help: help, action: action)
     }
     /// Token completions, only while a token is being typed ("from:Sa…").
     private var filterSuggestions: [String] {
@@ -1460,14 +1441,15 @@ struct ClipboardPanelView: View {
 
     private var headerBar: some View {
         GeometryReader { geometry in
-        HStack(spacing: 12) {
-            Spacer(minLength: 30)
-            HStack(spacing: 10) {
-                HStack(spacing: 7) {
+        HStack(spacing: AOMSpace.x3) {
+            Spacer(minLength: AOMSpace.x8)
+            HStack(spacing: AOMSpace.x3) {
+                HStack(spacing: AOMSpace.x2) {
                 Button { state.searchFocusToken = UUID() } label: {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .regular))
-                        .frame(width: 30, height: 30)
+                        .font(AOMFont.pageStatus.weight(.regular))
+                        .frame(width: AOMIcon.hitArea + AOMSpace.x0_5, height: AOMIcon.hitArea + AOMSpace.x0_5)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Search Clipboard (⌘F)")
@@ -1475,7 +1457,7 @@ struct ClipboardPanelView: View {
                 if state.searchExpanded {
                     if !ClipboardSearchQuery.filterTokens(in: state.query).isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
+                            HStack(spacing: AOMSpace.x1) {
                                 ForEach(ClipboardSearchQuery.filterTokens(in: state.query), id: \.self) { token in
                                     ClipboardSearchTokenChip(token: token, update: { edited in
                                         state.query = ClipboardSearchQuery.replacing(token: token, with: edited, in: state.query)
@@ -1486,15 +1468,16 @@ struct ClipboardPanelView: View {
                                     })
                                 }
                             }
-                        }.frame(maxWidth: 190)
+                        }.frame(maxWidth: AOMFeatureSize.shelfTokenStrip)
                     }
                     TextField("Search Clipboard", text: Binding(
                         get: { ClipboardSearchQuery.editableText(in: state.query) },
                         set: { state.query = ClipboardSearchQuery.updatingEditableText($0, in: state.query) }))
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .font(AOMFont.body)
                         .focused($searchFocused)
-                        .frame(width: min(400, max(160, geometry.size.width * 0.28)))
+                        .frame(width: min(AOMFeatureSize.shelfSearchField.upperBound,
+                                          max(AOMFeatureSize.shelfSearchField.lowerBound, geometry.size.width * 0.28)))
                         .accessibilityIdentifier("PasteStyleClipboardSearch")
                         .help("Search titles, text, apps and image text. Use quotes for phrases, -word to exclude, from:Safari, board:Work, type:image, after:2026-01-01.")
                         .onSubmit {
@@ -1507,7 +1490,7 @@ struct ClipboardPanelView: View {
                     }
                     if !state.query.isEmpty || hasFilters {
                         Text(resultsLabel)
-                            .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize()
+                            .font(AOMFont.caption).monospacedDigit().foregroundStyle(AOMColor.textSecondary).fixedSize()
                             .help(state.searchesAllLists(in: store)
                                   ? "Search looks through Clipboard History and every pinboard. Add board:Name to search one pinboard."
                                   : "Results in the list on screen")
@@ -1516,13 +1499,14 @@ struct ClipboardPanelView: View {
                         state.query = ""
                         state.searchExpanded = false
                         searchFocused = false
-                    } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain)
                     .help("Close Search")
                     Button { state.filtersExpanded.toggle() } label: {
                         Image(systemName: "line.3.horizontal.decrease")
-                            .foregroundStyle(hasFilters ? Color.accentColor : Color.secondary)
-                            .frame(width: 25, height: 28)
+                            .foregroundStyle(hasFilters ? AOMColor.accent : AOMColor.textSecondary)
+                            .frame(width: AOMIcon.hitArea - AOMSpace.x0_5, height: AOMIcon.hitArea)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Filters")
@@ -1530,12 +1514,12 @@ struct ClipboardPanelView: View {
                     .popover(isPresented: $state.filtersExpanded, arrowEdge: .top) { filterPopover }
                 }
                 }
-                .padding(.horizontal, state.searchExpanded ? 9 : 0)
-                .frame(height: 34)
-                .background(state.searchExpanded ? Color.primary.opacity(0.075) : Color.clear, in: Capsule())
+                .padding(.horizontal, state.searchExpanded ? AOMSpace.x2 : 0)
+                .frame(height: AOMFeatureSize.barControlHeight + AOMSpace.x0_5)
+                .background(state.searchExpanded ? AOMColor.sunken : Color.clear, in: Capsule())
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        boardButton("Clipboard", color: .secondary, icon: "clock.arrow.circlepath", id: nil)
+                    HStack(spacing: AOMSpace.x3) {
+                        boardButton("Clipboard", color: AOMColor.textSecondary, icon: "clock.arrow.circlepath", id: nil)
                         ForEach(store.boards) { board in
                             boardButton(board.name, color: PasteClipboardPalette.board(board.color), icon: nil, id: board.id)
                                 .contextMenu {
@@ -1558,20 +1542,21 @@ struct ClipboardPanelView: View {
                         Button {
                             state.editor = .init(operation: .newBoard, title: "New Pinboard", text: "")
                         } label: {
-                            Image(systemName: "plus").font(.system(size: 19, weight: .regular))
-                                .frame(width: 28, height: 28)
+                            Image(systemName: "plus").font(AOMFont.pageStatus.weight(.regular))
+                                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Add Pinboard (⇧⌘N)")
                         .accessibilityLabel("Add Pinboard")
                     }
-                    .padding(.horizontal, 3)
+                    .padding(.horizontal, AOMSpace.x1)
                     .background(NativeScrollChrome(.hidden))
                 }
                 .scrollIndicators(.hidden)
                 .frame(width: pinboardScrollWidth(containerWidth: geometry.size.width))
             }
-            Spacer(minLength: 30)
+            Spacer(minLength: AOMSpace.x8)
         }
         .overlay(alignment: .trailing) {
             Menu {
@@ -1616,19 +1601,19 @@ struct ClipboardPanelView: View {
                 Button("Close") { controller.hide() }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(store.paused || state.kind != nil || state.source != nil || state.recentDays != 0 ? Color.accentColor : Color.primary)
-                    .frame(width: 30, height: 30)
+                    .font(AOMFont.pageStatus)
+                    .foregroundStyle(store.paused || state.kind != nil || state.source != nil || state.recentDays != 0 ? AOMColor.accent : AOMColor.text)
+                    .frame(width: AOMIcon.hitArea + AOMSpace.x0_5, height: AOMIcon.hitArea + AOMSpace.x0_5)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Clipboard Options and Filters")
         }
-        .padding(.horizontal, 20)
-        .frame(height: 52)
+        .padding(.horizontal, AOMSpace.x5)
+        .frame(height: AOMSize.rowDetail)
         }
-        .frame(height: 52)
+        .frame(height: AOMSize.rowDetail)
         .accessibilityIdentifier("PasteStyleClipboardToolbar")
     }
 
@@ -1636,27 +1621,27 @@ struct ClipboardPanelView: View {
         Button {
             state.selectBoard(id)
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
+                        .font(AOMFont.caption)
+                        .foregroundStyle(state.board == id ? AOMColor.text : AOMColor.textSecondary)
                 } else {
-                    Circle().fill(color).frame(width: 11, height: 11)
+                    Circle().fill(color).frame(width: AOMFeatureSize.chipDot + AOMSpace.x1, height: AOMFeatureSize.chipDot + AOMSpace.x1)
                 }
                 if !state.searchExpanded {
                 Text(name)
-                    .font(.system(size: 14, weight: state.board == id ? .medium : .regular))
+                    .font(state.board == id ? AOMFont.body.weight(.medium) : AOMFont.body)
                     .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 11)
-            .frame(height: 30)
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMIcon.hitArea + AOMSpace.x0_5)
             .background(state.board == id
-                        ? Color.primary.opacity(0.12)
+                        ? AOMColor.sunken
                         : Color.clear,
                         in: Capsule())
-            .foregroundStyle(state.board == id ? Color.primary : Color.secondary)
+            .foregroundStyle(state.board == id ? AOMColor.text : AOMColor.textSecondary)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1709,17 +1694,17 @@ struct ClipboardPanelView: View {
     }
 
     private var filterPopover: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1 + AOMSpace.x0_5), count: 3)
         return ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 HStack {
-                    Text("Filters").font(.headline)
+                    Text("Filters").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                     Spacer()
                     Button("Clear") { state.kind = nil; state.source = nil; state.recentDays = 0 }
-                        .buttonStyle(.plain).foregroundStyle(Color.accentColor).disabled(!hasFilters)
+                        .buttonStyle(.plain).foregroundStyle(AOMColor.accent).disabled(!hasFilters)
                 }
                 filterSection("Type")
-                LazyVGrid(columns: columns, spacing: 6) {
+                LazyVGrid(columns: columns, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     ForEach(ClipboardEntry.Kind.allCases) { kind in
                         filterChip(kind.displayName, icon: symbol(kind), selected: state.kind == kind) {
                             state.kind = state.kind == kind ? nil : kind
@@ -1728,7 +1713,7 @@ struct ClipboardPanelView: View {
                 }
                 if !sources.isEmpty {
                     filterSection("App")
-                    LazyVGrid(columns: columns, spacing: 6) {
+                    LazyVGrid(columns: columns, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                         ForEach(sources) { source in
                             filterChip(source.name, icon: nil,
                                        appIcon: AppMetadataCache.shared.icon(for: source.bundleID),
@@ -1741,7 +1726,7 @@ struct ClipboardPanelView: View {
                 }
                 if !store.boards.isEmpty {
                     filterSection("Pinboard")
-                    LazyVGrid(columns: columns, spacing: 6) {
+                    LazyVGrid(columns: columns, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                         ForEach(store.boards) { board in
                             filterChip(board.name, icon: nil, dot: PasteClipboardPalette.board(board.color),
                                        selected: boardFilterSelected(board)) {
@@ -1751,46 +1736,28 @@ struct ClipboardPanelView: View {
                     }
                 }
                 filterSection("Date")
-                LazyVGrid(columns: columns, spacing: 6) {
+                LazyVGrid(columns: columns, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     ForEach(ClipboardPanelState.dateFilters, id: \.code) { filter in
                         filterChip(filter.title, icon: "calendar", selected: state.recentDays == filter.code) {
                             state.recentDays = state.recentDays == filter.code ? 0 : filter.code
                         }
                     }
                 }
-            }.padding(16)
+            }.padding(AOMSpace.x4)
         }
-        .frame(width: 440).frame(maxHeight: 470)
+        .frame(width: AOMFeatureSize.shelfFilterPopover.width).frame(maxHeight: AOMFeatureSize.shelfFilterPopover.height)
     }
 
     private func filterSection(_ title: String) -> some View {
-        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.top, 4)
+        Text(title).font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary).padding(.top, AOMSpace.x1)
     }
 
+    /// A choice in the Filters popover grid: the shared filter chip, full
+    /// width in its cell. Pinboards show their colour, apps their icon.
     private func filterChip(_ title: String, icon: String?, appIcon: NSImage? = nil, dot: Color? = nil,
                             selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let dot {
-                    Circle().fill(dot).frame(width: 9, height: 9)
-                } else if let appIcon {
-                    Image(nsImage: appIcon).resizable().scaledToFit()
-                        .frame(width: 15, height: 15).accessibilityHidden(true)
-                } else if let icon {
-                    Image(systemName: icon)
-                } else {
-                    Image(systemName: "app")
-                }
-                Text(title).lineLimit(1)
-            }
-            .font(.system(size: 11, weight: .medium))
-            .frame(maxWidth: .infinity).frame(height: 27).padding(.horizontal, 8)
-            .foregroundStyle(selected ? AOMTheme.onAccent(Color.accentColor) : Color.primary)
-            .background(selected ? Color.accentColor : Color.primary.opacity(0.065), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        AOMFilterChip(title, symbol: icon ?? (appIcon == nil && dot == nil ? "app" : nil), appIcon: appIcon, dot: dot,
+                      selected: selected, filled: true, expands: true, action: action)
     }
 
     // MARK: - Filters in the overflow menu
@@ -1852,20 +1819,27 @@ struct ClipboardPanelView: View {
         GeometryReader { geometry in
             let _ = entries // Start a pending search before choosing its progress state.
             let compact = geometry.size.height < 205
-            let cardSide = min(240, max(100, geometry.size.height - (compact ? 24 : 44)))
+            let cardSide = min(240, max(100, geometry.size.height - (compact ? AOMSpace.x6 : AOMSpace.x10 + AOMSpace.x1)))
             Group {
                 if state.isSearchPending {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if entries.isEmpty {
-                    VStack(spacing: 8) {
+                    // The shelf's empty state: ContentUnavailableView's anatomy
+                    // (symbol, title, one sentence, at most one action) sized
+                    // for a panel that can be shorter than its 40 pt glyph needs.
+                    VStack(spacing: AOMSpace.x2) {
                         Image(systemName: isFiltering ? "magnifyingglass" : state.board == nil ? "clipboard" : "pin")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.secondary)
+                            .font(AOMFont.hero.weight(.regular))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .accessibilityHidden(true)
                         Text(store.isLoading ? "Loading Clipboard…" : emptyTitle)
-                            .font(.headline)
+                            .font(AOMFont.headline)
+                            .foregroundStyle(AOMColor.text)
                         Text(emptyMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(AOMFont.caption)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .multilineTextAlignment(.center)
                         // One quiet action per state: fix a broken store, or
                         // resume recording; a merely empty history stays text-only.
                         if !store.isLoading && !isFiltering && state.board == nil {
@@ -1881,7 +1855,7 @@ struct ClipboardPanelView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     let entries = self.entries
-                    let spacing: CGFloat = compact ? 10 : 14
+                    let spacing: CGFloat = compact ? AOMSpace.x3 - AOMSpace.x0_5 : AOMSpace.x3 + AOMSpace.x0_5
                     let quickIDs = state.quickPasteIDs(in: store)
                     let suggested = Set(state.suggestedIDs)
                     let boards = store.boards
@@ -1908,8 +1882,8 @@ struct ClipboardPanelView: View {
                                 }
                             }
                             .padding(.horizontal, Self.shelfInset)
-                            .padding(.top, compact ? 8 : 12)
-                            .padding(.bottom, compact ? 12 : 24)
+                            .padding(.top, compact ? AOMSpace.x2 : AOMSpace.x3)
+                            .padding(.bottom, compact ? AOMSpace.x3 : AOMSpace.x6)
                             .frame(minHeight: geometry.size.height, alignment: .center)
                             .background(NativeScrollChrome(.hidden))
                         }
@@ -2156,7 +2130,8 @@ private struct ClipboardCardView: View, Equatable {
     @State private var characterCount: Int?
     @FocusState private var titleFocused: Bool
 
-    static let radius: CGFloat = 10
+    /// Paste-style cards, on the card radius every surface shares (c.3).
+    static let radius: CGFloat = AOMRadius.card
 
     /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
     /// cards alone instead of re-running every visible card body.
@@ -2190,7 +2165,7 @@ private struct ClipboardCardView: View, Equatable {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .top, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 VStack(alignment: .leading, spacing: 1) {
                     if isEditingTitle {
                         TextField("Title", text: $editedTitle)
@@ -2200,82 +2175,82 @@ private struct ClipboardCardView: View, Equatable {
                                 if !focused && isEditingTitle { commitTitle() }
                             }
                     } else {
-                        HStack(spacing: 4) {
+                        HStack(spacing: AOMSpace.x1) {
                             if isSuggested {
-                                Image(systemName: "sparkles").font(.system(size: compact ? 9 : 11, weight: .semibold))
+                                Image(systemName: "sparkles").font((compact ? AOMFont.badge : AOMFont.caption).weight(.semibold))
                                     .help("Suggested for the app you are pasting into")
                                     .accessibilityLabel("Suggested")
                             }
-                            Text(headerTitle).font(.system(size: compact ? 11 : 12, weight: .semibold)).lineLimit(1)
+                            Text(headerTitle).font((compact ? AOMFont.caption : AOMFont.callout).weight(.semibold)).lineLimit(1)
                         }
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
                     TimelineView(.everyMinute) { context in
                         Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date))
-                            .font(.system(size: compact ? 10 : 12)).opacity(0.85).lineLimit(1)
+                            .font(compact ? AOMFont.badge : AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                     }
                 }
-                .padding(.leading, 12).padding(.top, compact ? 6 : 8)
-                Spacer(minLength: compact ? 38 : 52)
+                .padding(.leading, AOMSpace.x3).padding(.top, compact ? AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x2)
+                Spacer(minLength: compact ? AOMSpace.x8 + AOMSpace.x1 + AOMSpace.x0_5 : AOMSize.rowDetail)
             }
-            .foregroundStyle(AOMTheme.text)
-            .frame(height: compact ? 38 : 42, alignment: .top)
-            .background(AOMTheme.cardAlt)
+            .foregroundStyle(AOMColor.text)
+            .frame(height: compact ? AOMSpace.x8 + AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x10 + AOMSpace.x0_5, alignment: .top)
+            .background(AOMColor.sunken)
             .overlay(alignment: .trailing) {
                 if let appIcon {
                     Image(nsImage: appIcon).resizable().scaledToFill()
-                        .frame(width: 22, height: 22)
-                        .padding(.trailing, 10).help(entry.sourceName ?? "Source App")
+                        .frame(width: AOMIcon.row + AOMSpace.x0_5, height: AOMIcon.row + AOMSpace.x0_5)
+                        .padding(.trailing, AOMSpace.x3 - AOMSpace.x0_5).help(entry.sourceName ?? "Source App")
                 }
             }
             .clipped()
 
             ZStack(alignment: .bottom) {
                 if entry.kind == .image || entry.kind == .color { TransparencyGrid() }
-                else { Color(nsColor: .textBackgroundColor) }
+                else { AOMColor.raised }
                 previewContent
                     .overlay(alignment: .bottomLeading) {
                         if let ocr = entry.recognizedText, !searchQuery.isEmpty,
                            ClipboardSearchQuery(searchQuery).highlightValues.contains(where: { ocr.localizedStandardContains($0) }) {
                             Text(ClipboardSearchQuery(searchQuery).highlighted(ocr, limit: 220))
-                                .font(.system(size: 11)).lineLimit(3).padding(6)
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-                                .padding(6).allowsHitTesting(false)
+                                .font(AOMFont.caption).lineLimit(3).padding(AOMSpace.x1 + AOMSpace.x0_5)
+                                .aomMediaBadge(radius: AOMRadius.control)
+                                .padding(AOMSpace.x1 + AOMSpace.x0_5).allowsHitTesting(false)
                         }
                     }
-                    .padding(entry.kind == .image || entry.kind == .color ? 0 : compact ? 9 : 12)
+                    .padding(entry.kind == .image || entry.kind == .color ? 0 : compact ? AOMSpace.x2 : AOMSpace.x3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .clipped()
                     .overlay(alignment: .bottom) {
                         // A solid-colour fade is far cheaper than a per-card mask.
                         if entry.kind == .text || entry.kind == .link {
-                            LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)],
+                            LinearGradient(colors: [AOMColor.raised.opacity(0), AOMColor.raised],
                                            startPoint: .top, endPoint: .bottom)
-                                .frame(height: 32).allowsHitTesting(false)
+                                .frame(height: AOMSpace.x8).allowsHitTesting(false)
                         }
                     }
                 if entry.kind == .image, !compact || side >= 150 {
                     HStack {
                         Spacer()
-                        Text(metadataLabel).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                            .padding(.horizontal, 6).frame(height: 20)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    }.padding(8).allowsHitTesting(false)
+                        Text(metadataLabel).font(AOMFont.caption.weight(.medium)).monospacedDigit().lineLimit(1)
+                            .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5).frame(height: AOMIcon.row)
+                            .aomMediaBadge()
+                    }.padding(AOMSpace.x2).allowsHitTesting(false)
                 } else if ![.color, .image, .link].contains(entry.kind) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: AOMSpace.x1) {
                         Spacer(minLength: 0)
-                        Text(metadataLabel).font(.system(size: compact ? 10 : 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(metadataLabel).font(compact ? AOMFont.badge : AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                             .truncationMode(entry.kind == .file ? .head : .tail)
                         if entry.kind != .image { Spacer(minLength: 0) }
                         if isHovered && entry.kind != .image {
-                            Button { beginTitleEdit() } label: { Image(systemName: "pencil").font(.system(size: 10)) }
+                            Button { beginTitleEdit() } label: { Image(systemName: "pencil").font(AOMFont.badge) }
                                 .buttonStyle(.plain).help("Rename Item")
                         }
                     }
-                    .padding(.horizontal, 10).padding(.bottom, 9).padding(.top, 16)
+                    .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5).padding(.bottom, AOMSpace.x2).padding(.top, AOMSpace.x4)
                     .background {
                         if entry.kind != .image {
-                            LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)],
+                            LinearGradient(colors: [AOMColor.raised.opacity(0), AOMColor.raised],
                                            startPoint: .top, endPoint: .bottom)
                         }
                     }
@@ -2298,24 +2273,25 @@ private struct ClipboardCardView: View, Equatable {
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if showsQuickNumber, let quickNumber {
-                Text("\(ClipboardPreferences.shared.quickModifier.symbol)\(quickNumber)").font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .padding(.horizontal, 7).padding(.vertical, 4)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-                    .padding(8).allowsHitTesting(false)
+                Text("\(ClipboardPreferences.shared.quickModifier.symbol)\(quickNumber)")
+                    .font(AOMFont.callout.weight(.semibold)).monospacedDigit()
+                    .padding(.horizontal, AOMSpace.x2).padding(.vertical, AOMSpace.x1)
+                    .aomMediaBadge(radius: AOMRadius.control)
+                    .padding(AOMSpace.x2).allowsHitTesting(false)
             }
         }
         .overlay {
             RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                .strokeBorder(AOMColor.hairline, lineWidth: 0.5)
                 .allowsHitTesting(false)
         }
         // Paste draws a 4 pt ring outside the card: accent while the shelf has
         // focus, gray while typing in the search field.
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: Self.radius + 4, style: .continuous)
-                    .strokeBorder(searchActive ? Color.secondary.opacity(0.7) : Color.accentColor, lineWidth: 2)
-                    .padding(-2)
+                RoundedRectangle(cornerRadius: Self.radius + AOMSpace.x1, style: .continuous)
+                    .strokeBorder(searchActive ? AOMColor.textSecondary : AOMColor.accent, lineWidth: AOMSpace.x0_5)
+                    .padding(-AOMSpace.x0_5)
                     .allowsHitTesting(false)
             }
         }
@@ -2375,14 +2351,18 @@ private struct ClipboardCardView: View, Equatable {
     private var previewContent: some View {
         if compact && side < 150 {
             if entry.kind == .color, let hex = entry.text {
-                RoundedRectangle(cornerRadius: 4)
+                RoundedRectangle(cornerRadius: AOMRadius.keycap, style: .continuous)
                     .fill(Color(hex: hex) ?? .clear)
-                    .overlay { Text(hex).font(.system(size: 10)).padding(.horizontal, 3).background(.regularMaterial, in: Capsule()) }
+                    .overlay {
+                        Text(hex).font(AOMFont.badge).monospaced()
+                            .padding(.horizontal, AOMSpace.x1).aomMediaBadge(radius: AOMRadius.panel)
+                    }
             } else if entry.kind == .image {
                 thumbnailContent
             } else {
                 Text(entry.kind == .link ? (URL(string: entry.text ?? "")?.host ?? entry.previewText) : entry.previewText)
-                    .font(.system(size: 10))
+                    .font(AOMFont.badge.weight(.regular))
+                    .foregroundStyle(AOMColor.text)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -2390,23 +2370,25 @@ private struct ClipboardCardView: View, Equatable {
             thumbnailContent
         } else if entry.kind == .file {
             // Real Finder icons (stacked for several files), name below.
-            VStack(spacing: 8) {
+            VStack(spacing: AOMSpace.x2) {
                 ZStack {
                     ForEach(Array(entry.fileURLs.prefix(3).enumerated().reversed()), id: \.offset) { offset, url in
                         Image(nsImage: AppMetadataCache.shared.fileIcon(for: url))
                             .resizable().interpolation(.high).scaledToFit()
-                            .frame(width: compact ? 44 : 76, height: compact ? 44 : 76)
+                            .frame(width: compact ? AOMFeatureSize.fileIcon - AOMSpace.x1 : AOMFeatureSize.fileIconLarge + AOMSpace.x3,
+                                   height: compact ? AOMFeatureSize.fileIcon - AOMSpace.x1 : AOMFeatureSize.fileIconLarge + AOMSpace.x3)
                             .rotationEffect(.degrees(Double(offset) * -6))
                             .offset(x: CGFloat(offset) * 7, y: CGFloat(offset) * -3)
                     }
                 }
                 Text(entry.fileURLs.count == 1 ? (entry.fileURLs.first?.lastPathComponent ?? entry.title)
                      : "\(entry.fileURLs.first?.lastPathComponent ?? "") and \(entry.fileURLs.count - 1) more")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(AOMFont.callout.weight(.medium))
+                    .foregroundStyle(AOMColor.text)
                     .lineLimit(2).truncationMode(.middle)
                     .multilineTextAlignment(.center)
             }
-            .padding(.bottom, 18)
+            .padding(.bottom, AOMSpace.x4 + AOMSpace.x0_5)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if entry.kind == .link {
             // Offline site tile unless link cards are on (P03); then the
@@ -2416,18 +2398,19 @@ private struct ClipboardCardView: View, Equatable {
         } else if entry.kind == .color, let hex = entry.text {
             Rectangle().fill(Color(hex: hex) ?? .clear)
                 .overlay {
-                    Text(hex).font(.system(size: compact ? 15 : 20, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white).shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                    Text(hex).font((compact ? AOMFont.section : AOMFont.pageStatus).weight(.medium)).monospaced()
+                        .foregroundStyle(AOMFeatureColor.onMedia)
+                        .shadow(color: AOMFeatureColor.onMediaShadow, radius: 2, y: 1)
                 }
         } else {
             // Lay out only what fits: a 4,000-character preview per card made
             // every scroll frame re-measure large text blocks.
             Text(ClipboardSearchQuery(searchQuery).highlighted(entry.previewText, limit: cardTextBudget))
-                .font(.system(size: compact ? 11 : 14))
-                .lineSpacing(2)
+                .font(compact ? AOMFont.caption : AOMFont.body)
+                .lineSpacing(AOMSpace.x0_5)
                 .lineLimit(cardLineLimit)
                 .multilineTextAlignment(.leading)
-                .foregroundStyle(.primary.opacity(0.88))
+                .foregroundStyle(AOMColor.text)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
@@ -2654,26 +2637,35 @@ private struct ClipboardEditorSheet: View {
     private let colors = ClipboardStore.boardColors
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(request.title).font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            Text(request.title).font(AOMFont.pageStatus).foregroundStyle(AOMColor.text)
             if request.isTextEditor {
-                TextEditor(text: $text).font(.body).frame(minHeight: 180).border(Color.secondary.opacity(0.2)).focused($inputFocused)
-                if text.utf8.count > ClipboardStore.maximumEntryBytes { Text("Text exceeds the item size limit").font(.caption).foregroundStyle(.red) }
+                TextEditor(text: $text).font(AOMFont.body).frame(minHeight: AOMFeatureSize.snippetTall + AOMSpace.x2)
+                    .scrollContentBackground(.hidden)
+                    .padding(AOMSpace.x1)
+                    .background(AOMColor.canvas, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                        .strokeBorder(AOMColor.hairline, lineWidth: 1))
+                    .focused($inputFocused)
+                if text.utf8.count > ClipboardStore.maximumEntryBytes {
+                    Text("Text exceeds the item size limit").font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
+                }
             } else { TextField("Name", text: $text).textFieldStyle(.roundedBorder).focused($inputFocused) }
             if case .newBoard = request.operation {
-                HStack(spacing: 10) {
-                    Text("Color").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: AOMSpace.x3) {
+                    Text("Color").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                     ForEach(colors, id: \.self) { name in
                         Button { newBoardColor = name } label: {
                             Circle().fill(PasteClipboardPalette.board(name))
-                                .frame(width: 20, height: 20)
-                                .padding(4)
+                                .frame(width: AOMFeatureSize.swatch, height: AOMFeatureSize.swatch)
+                                .padding(AOMSpace.x1)
                                 .overlay(Circle().strokeBorder(
-                                    newBoardColor == name ? Color.primary : Color.clear,
-                                    lineWidth: 2))
+                                    newBoardColor == name ? AOMColor.text : Color.clear,
+                                    lineWidth: AOMFeatureSize.swatchRing))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(name) Pinboard")
+                        .accessibilityAddTraits(newBoardColor == name ? .isSelected : [])
                     }
                 }
             }
@@ -2682,7 +2674,7 @@ private struct ClipboardEditorSheet: View {
                     .keyboardShortcut(request.isTextEditor ? "s" : .return, modifiers: request.isTextEditor ? .command : [])
                     .disabled(!canSave)
             }
-        }.padding(24).frame(width: 460).onAppear { text = request.text; inputFocused = true }
+        }.padding(AOMSpace.x6).frame(width: AOMFeatureSize.sheetStandard).onAppear { text = request.text; inputFocused = true }
     }
     private func save() {
         switch request.operation {
@@ -2823,23 +2815,23 @@ private struct ClipboardPreviewSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: AOMSpace.x2) {
                 Button { controller.closePreview() } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill").font(AOMFont.section.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                 }.help("Close Preview (Space / Esc)").accessibilityLabel("Close Preview")
                 if isEditingTitle {
                     TextField("Title", text: $editedTitle)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(AOMFont.callout.weight(.semibold))
                         .focused($titleFocused)
                         .onSubmit { commitTitle() }
                         .onExitCommand { finishTitleEdit() }
-                        .frame(maxWidth: 220)
+                        .frame(maxWidth: AOMSize.tileMin)
                         .accessibilityLabel("Title")
                 } else {
                     Text(current.title.isEmpty ? current.kind.displayName : current.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(current.title.isEmpty ? .secondary : .primary)
+                        .font(AOMFont.callout.weight(.semibold))
+                        .foregroundStyle(current.title.isEmpty ? AOMColor.textSecondary : AOMColor.text)
                         .lineLimit(1).truncationMode(.middle)
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) { beginTitleEdit() }
@@ -2858,18 +2850,17 @@ private struct ClipboardPreviewSheet: View {
                 } label: { Image(systemName: current.pinboardIDs.isEmpty ? "pin" : "pin.fill") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Pinboard")
                 Button { controller.detachPreview(current) } label: { Image(systemName: "arrow.up.right.square") }.help("Detach Preview")
-                ClipboardPreviewShareButton(entry: current).frame(width: 24, height: 24)
+                ClipboardPreviewShareButton(entry: current).frame(width: AOMIcon.row + AOMSpace.x1, height: AOMIcon.row + AOMSpace.x1)
                 if current.kind == .image || canEditText {
                     Button("Edit") {
                         if current.kind == .image { controller.editEntry(current) }
                         else { beginEditing() }
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 12).frame(height: 24)
-                    .background(Color.primary.opacity(0.07), in: Capsule())
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("Edit Content (⌘E)")
                 }
-            }.buttonStyle(.plain).padding(.horizontal, 10).frame(height: 36)
+            }.buttonStyle(.plain).padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard)
             Group {
                 if current.imageData != nil {
                     Group {
@@ -2881,8 +2872,8 @@ private struct ClipboardPreviewSheet: View {
                                                     onStatus: { state.status = $0 })
                         }
                         else if currentContent == nil { ProgressView().controlSize(.small) }
-                        else { Label("Preview unavailable", systemImage: "photo").foregroundStyle(.secondary) }
-                    }.padding(12)
+                        else { Label("Preview unavailable", systemImage: "photo").foregroundStyle(AOMColor.textSecondary) }
+                    }.padding(AOMSpace.x3)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(TransparencyGrid())
                 } else if !current.fileURLs.isEmpty {
@@ -2895,16 +2886,16 @@ private struct ClipboardPreviewSheet: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .padding(.horizontal, 5).padding(.top, 2)
+            .background(AOMFeatureColor.documentPage)
+            .clipShape(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+            .padding(.horizontal, AOMSpace.x1).padding(.top, AOMSpace.x0_5)
             HStack {
-                Text(summary).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(summary).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 12).frame(height: 30)
+            }.padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowSingle)
         }
         .frame(width: previewSize.width, height: previewSize.height)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMColor.canvas)
         .background(ClipboardPreviewKeyHandler(controller: controller, handle: handlePreviewKey))
         .task(id: current.contentVersion) {
             content = nil; loadedVersion = nil
@@ -3078,30 +3069,21 @@ struct NativeScrollChrome: NSViewRepresentable {
 struct TransparencyGrid: View {
     var body: some View {
         Canvas { context, size in
-            let side: CGFloat = 10
+            let side = AOMSpace.x3 - AOMSpace.x0_5
             var squares = Path()
             for row in 0..<Int(ceil(size.height / side)) {
                 for column in 0..<Int(ceil(size.width / side)) where (row + column).isMultiple(of: 2) {
                     squares.addRect(CGRect(x: CGFloat(column) * side, y: CGFloat(row) * side, width: side, height: side))
                 }
             }
-            context.fill(squares, with: .color(.primary.opacity(0.045)))
-        }.background(Color(nsColor: .textBackgroundColor)).allowsHitTesting(false)
+            context.fill(squares, with: .color(AOMColor.track))
+        }.background(AOMColor.raised).allowsHitTesting(false)
     }
 }
 
 // MARK: - Paste-like palette and height resizing, using original UI primitives.
 
 private enum PasteClipboardPalette {
-    static func type(_ kind: ClipboardEntry.Kind) -> Color {
-        switch kind {
-        case .text: return Color(red: 0.96, green: 0.28, blue: 0.32)
-        case .link: return Color(red: 0.22, green: 0.76, blue: 0.37)
-        case .image: return Color(red: 0.11, green: 0.60, blue: 0.95)
-        case .file: return Color(red: 0.17, green: 0.55, blue: 0.97)
-        case .color: return Color(red: 0.65, green: 0.33, blue: 0.88)
-        }
-    }
     /// Pinboard colours in Paste's order.
     static let boardColors = ClipboardStore.boardColors
 
@@ -3272,7 +3254,7 @@ struct ClipboardFilesPreview: View {
         VStack(spacing: 0) {
             if let url = current {
                 if urls.count > 1 {
-                    HStack(spacing: 10) {
+                    HStack(spacing: AOMSpace.x3) {
                         Button { selected = max(0, selected - 1) } label: { Image(systemName: "chevron.left") }
                             .disabled(selected == 0).help("Previous File")
                         Picker("File", selection: $selected) {
@@ -3280,28 +3262,29 @@ struct ClipboardFilesPreview: View {
                                 Text("\(index + 1). \(item.lastPathComponent)").tag(index)
                             }
                         }.labelsHidden()
-                        Text("\(selected + 1) / \(urls.count)").font(.caption).foregroundStyle(.secondary)
+                        Text("\(selected + 1) / \(urls.count)").font(AOMFont.caption).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
                         Button { selected = min(urls.count - 1, selected + 1) } label: { Image(systemName: "chevron.right") }
                             .disabled(selected >= urls.count - 1).help("Next File")
-                    }.padding(10)
+                    }.padding(AOMSpace.x3)
                     Divider()
                 }
                 if FileManager.default.fileExists(atPath: url.path) {
                     ClipboardFileQuickLookView(url: url).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: "doc.badge.ellipsis").font(.largeTitle)
-                        Text("File is no longer at its original location").font(.headline)
-                        Text(url.path).font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
-                    }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: AOMSpace.x3) {
+                        Image(systemName: "doc.badge.ellipsis").font(AOMFont.hero.weight(.regular))
+                            .symbolRenderingMode(.hierarchical).foregroundStyle(AOMColor.textSecondary)
+                        Text("File is no longer at its original location").font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                        Text(url.path).font(AOMFont.caption).textSelection(.enabled).foregroundStyle(AOMColor.textSecondary)
+                    }.padding(AOMSpace.x4).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 HStack {
-                    Text(url.lastPathComponent).font(.caption).lineLimit(1)
+                    Text(url.lastPathComponent).font(AOMFont.caption).foregroundStyle(AOMColor.text).lineLimit(1)
                     Spacer()
                     Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     Button("Open") { NSWorkspace.shared.open(url) }
                         .disabled(!FileManager.default.fileExists(atPath: url.path))
-                }.padding(10)
+                }.padding(AOMSpace.x3)
             }
         }
         .onChange(of: urls) { _, _ in selected = 0 }

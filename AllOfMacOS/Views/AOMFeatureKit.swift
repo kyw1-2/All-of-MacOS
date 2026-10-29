@@ -53,6 +53,45 @@ enum AOMFeatureSize {
     static let snippetTall: CGFloat = 170
     /// The Paste Stack panel's column (Paste's PasteStack.storyboard width).
     static let stackPanelWidth: CGFloat = 264
+    /// Editor bars (Annotate, recording editor): the window's traffic lights
+    /// sit in the bar, so its first item starts after them.
+    static let trafficLightsInset: CGFloat = 68
+    /// Capsule buttons and controls in editor bars.
+    static let barButtonWidth: CGFloat = 38
+    static let barControlHeight: CGFloat = 32
+    /// Colour dots in a palette row.
+    static let swatchSmall: CGFloat = 16
+    /// Tool and format popovers (Annotate › More Tool Options, Text Format).
+    static let toolPopoverWidth: CGFloat = 300
+    /// Fixed widths for pickers in the editor bars, so the bar doesn't shift
+    /// when a selection's name changes length.
+    static let barPickerNarrow: CGFloat = 80
+    static let barPicker: CGFloat = 110
+    static let barPickerWide: CGFloat = 140
+    /// Sliders in the editor bars.
+    static let sliderShort: CGFloat = 70
+    static let sliderStandard: CGFloat = 90
+    static let sliderWide: CGFloat = 110
+    /// The value label beside a bar slider ("100%", "12 pt").
+    static let sliderValue: CGFloat = 36
+    /// The clipboard shelf's search field and the strip of filter tokens in it.
+    static let shelfSearchField: ClosedRange<CGFloat> = 160...400
+    static let shelfTokenStrip: CGFloat = 190
+    /// The shelf's Filters popover.
+    static let shelfFilterPopover = CGSize(width: 440, height: 470)
+    /// The recording editor window: fixed width, height follows the screen.
+    static let recordingEditorWidth: CGFloat = 720
+    static let recordingEditorHeight: ClosedRange<CGFloat> = 480...820
+    static let recordingEditorScreenMargin: CGFloat = 120
+    /// The video preview at the top of the recording editor.
+    static let videoPreviewHeight: CGFloat = 260
+    /// Slider rows in editor sections: the title column and the value column.
+    static let editorRowTitle: CGFloat = 150
+    static let editorRowValue: CGFloat = 64
+    /// Numeric fields in an editor row (time, duration).
+    static let numberField: CGFloat = 70
+    /// Key pickers in Settings (Hyper key source, remap from / to).
+    static let keyPicker: CGFloat = 170
 }
 
 // MARK: - Feature colours
@@ -66,6 +105,9 @@ enum AOMFeatureColor {
     static let onMedia = Color.white
     /// The soft shadow that keeps `onMedia` labels readable on light media.
     static let onMediaShadow = Color.black.opacity(0.2)
+    /// Copied rich text keeps its own colours, so previews of it sit on a
+    /// white page in both appearances, as the source app showed it.
+    static let documentPage = Color.white
 }
 
 // MARK: - Filter chip
