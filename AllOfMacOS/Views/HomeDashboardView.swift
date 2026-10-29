@@ -663,7 +663,10 @@ private struct WorkspaceSnapshot {
         if home.isFreshSetup {
             state = .setup
         } else if let first = blocking.first {
-            state = .blocked(first, count: blocking.count)
+            // Count what the chips under the title and the sidebar badge count
+            // (every required permission still missing), not only the blocking two.
+            let missing = permissions.filter { $0.1 == .denied || $0.1 == .notDetermined }.count
+            state = .blocked(first, count: max(missing, blocking.count))
         } else if home.isPaused {
             state = .paused(detail: home.pauseDetail)
         } else {
