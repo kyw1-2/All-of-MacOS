@@ -68,6 +68,10 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// Exposé (pinch in: close it, twice: quit its app; swipe down: minimize
     /// it). Default off.
     nonisolated static let missionControlGesturesKey = "AOMMissionControlGestures"
+    /// The settings 3.3.3 adds here, for the backup list and the settings
+    /// areas (`PresetManager`, which this stream does not edit).
+    nonisolated static let settingsKeys333 = [dockDoublePinchKey, appMenuGesturesKey, menuBarScrollToTopKey,
+                                              menuBarSwitcherKey, missionControlGesturesKey]
     /// Frames from one device arrive at 60 Hz or more while fingers rest on
     /// it; a longer silence means the gesture's device was lifted, slept or
     /// disconnected without a final empty frame.
