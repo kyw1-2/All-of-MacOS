@@ -5,7 +5,8 @@ import AppKit
 ///
 /// Languages (Automatic or an ordered list of every Vision language, named
 /// in the user's locale), output options, feedback, and the Capture Text
-/// shortcuts.
+/// shortcuts. 3.3.3: standard sections and rows, ⓘ help instead of caption
+/// lines, dependent options indented and disabled under their parent.
 struct TextCaptureSettingsSection: View {
     @ObservedObject private var settings = TextCaptureSettings.shared
     @ObservedObject private var textShortcuts = TextCaptureShortcuts.shared
@@ -19,7 +20,7 @@ struct TextCaptureSettingsSection: View {
     }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
             languagesGroup
             outputGroup
             feedbackGroup
@@ -31,79 +32,81 @@ struct TextCaptureSettingsSection: View {
     // MARK: Languages
 
     private var languagesGroup: some View {
-        AppleSettingsGroup("Text Recognition") {
-            AppleSettingsRow(icon: "globe", iconColor: .blue, title: "Automatic Languages",
-                             subtitle: automaticSubtitle, showDivider: true) {
-                Toggle("", isOn: Binding(get: { settings.usesAutomaticLanguages },
-                                         set: { settings.setAutomaticLanguages($0) }))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        AOMSection("Text Recognition") {
+            AOMSettingRow("Automatic Languages", detail: automaticSubtitle, symbol: "globe") {
+                Toggle("Automatic languages", isOn: Binding(get: { settings.usesAutomaticLanguages },
+                                                             set: { settings.setAutomaticLanguages($0) }))
                     .accessibilityLabel("Automatic languages")
             }
-            if !settings.usesAutomaticLanguages {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(settings.selectedLanguages.enumerated()), id: \.element) { index, code in
-                        HStack(spacing: 8) {
-                            Text("\(index + 1).").font(.system(size: 11).monospacedDigit())
-                                .foregroundStyle(.secondary).frame(width: 20, alignment: .trailing)
-                            Text(TextCaptureLanguages.displayName(for: code)).font(.system(size: 12))
-                            Text(code).font(.system(size: 10)).foregroundStyle(.tertiary)
-                            Spacer()
-                            Button { settings.moveLanguage(code, by: -1) } label: { Image(systemName: "chevron.up") }
-                                .disabled(index == 0).accessibilityLabel("Move \(code) up")
-                            Button { settings.moveLanguage(code, by: 1) } label: { Image(systemName: "chevron.down") }
-                                .disabled(index == settings.selectedLanguages.count - 1)
-                                .accessibilityLabel("Move \(code) down")
-                            Button { settings.removeLanguage(code) } label: { Image(systemName: "minus.circle") }
-                                .accessibilityLabel("Remove \(code)")
-                        }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                    }
-                    HStack {
-                        Menu("Add Language") {
-                            ForEach(addableLanguages, id: \.self) { code in
-                                Button(TextCaptureLanguages.displayName(for: code)) { settings.addLanguage(code) }
-                            }
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        Spacer()
-                        Text("Earlier languages win when scripts look alike; other languages stay available.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            AppleSettingsRow(icon: "bolt.fill", iconColor: .yellow, title: "Instant Recognition",
-                             subtitle: "Copy after one recognition; turn off for slower, detailed mixed-script recognition",
-                             showDivider: true) {
+            if !settings.usesAutomaticLanguages { languageList }
+            AOMSettingRow("Instant Recognition", symbol: "bolt.fill",
+                          help: "Copy after one recognition. Turn off for slower, detailed mixed-script recognition.") {
                 toggle(\.prefersFastRecognition, "Instant recognition")
             }
-            AppleSettingsRow(icon: "cpu", iconColor: .purple, title: "Engine",
-                             subtitle: "Automatic uses Live Text for Korean, Chinese and Japanese primary languages",
-                             showDivider: true) {
-                Picker("", selection: Binding(get: { settings.engine }, set: { settings.engine = $0 })) {
+            AOMSettingRow("Engine", symbol: "cpu",
+                          help: "Automatic uses Live Text for Korean, Chinese and Japanese primary languages.") {
+                Picker("Engine", selection: Binding(get: { settings.engine }, set: { settings.engine = $0 })) {
                     ForEach(TextRecognitionEngineMode.allCases) { Text($0.displayName).tag($0) }
                 }
-                .pickerStyle(.menu).labelsHidden().frame(width: 230)
+                .pickerStyle(.menu)
             }
-            AppleSettingsRow(icon: "character.book.closed", iconColor: .teal, title: "Language Correction",
-                             subtitle: "Fixes likely misreads in prose; turn off for code and serial numbers",
-                             showDivider: settings.usesLanguageCorrection) {
+            AOMSettingRow("Language Correction", symbol: "character.book.closed",
+                          help: "Fixes likely misreads in prose. Turn off for code and serial numbers.") {
                 toggle(\.usesLanguageCorrection, "Language correction")
             }
-            if settings.usesLanguageCorrection {
-                AppleSettingsRow(icon: "text.book.closed", iconColor: .indigo, title: "Custom Words",
-                                 subtitle: "Comma-separated names and jargon to prefer", showDivider: false) {
-                    TextField("AOM, TextSniper, …", text: $customWords)
-                        .textFieldStyle(.roundedBorder).frame(width: 220)
-                        .onSubmit { settings.customWordsText = customWords }
-                        .onChange(of: customWords) { _, value in settings.customWordsText = value }
-                        .accessibilityLabel("Custom words")
+            AOMSettingRow("Custom Words", symbol: "text.book.closed", indent: true,
+                          help: "Comma-separated names and jargon to prefer.") {
+                TextField("AOM, TextSniper, …", text: $customWords)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: AOMRowControlMetrics.fieldWidth)
+                    .onSubmit { settings.customWordsText = customWords }
+                    .onChange(of: customWords) { _, value in settings.customWordsText = value }
+                    .accessibilityLabel("Custom words")
+            }
+            .aomDependentRows(enabled: settings.usesLanguageCorrection)
+        }
+    }
+
+    /// The ordered languages, indented under Automatic Languages while it is off.
+    private var languageList: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+            ForEach(Array(settings.selectedLanguages.enumerated()), id: \.element) { index, code in
+                HStack(spacing: AOMSpace.x2) {
+                    Text("\(index + 1).")
+                        .font(AOMFont.caption.monospacedDigit())
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row, alignment: .trailing)
+                    Text(TextCaptureLanguages.displayName(for: code)).font(AOMFont.callout)
+                    Text(code).font(AOMFont.badge).foregroundStyle(AOMColor.textTertiary)
+                    Spacer(minLength: AOMSpace.x2)
+                    Button { settings.moveLanguage(code, by: -1) } label: { Image(systemName: "chevron.up") }
+                        .disabled(index == 0).accessibilityLabel("Move \(code) up")
+                    Button { settings.moveLanguage(code, by: 1) } label: { Image(systemName: "chevron.down") }
+                        .disabled(index == settings.selectedLanguages.count - 1)
+                        .accessibilityLabel("Move \(code) down")
+                    Button { settings.removeLanguage(code) } label: { Image(systemName: "minus.circle") }
+                        .accessibilityLabel("Remove \(code)")
                 }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+            HStack(spacing: AOMSpace.x1) {
+                Menu("Add Language") {
+                    ForEach(addableLanguages, id: \.self) { code in
+                        Button(TextCaptureLanguages.displayName(for: code)) { settings.addLanguage(code) }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                AOMInfoButton("Earlier languages win when scripts look alike; other languages stay available.",
+                              topic: "language order")
+                Spacer(minLength: 0)
             }
         }
+        .padding(.leading, AOMSpace.rowSymbolInset + AOMSpace.x5)
+        .padding(.trailing, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x2)
+        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowSymbolInset + AOMSpace.x5) }
     }
 
     private var automaticSubtitle: String {
@@ -115,24 +118,23 @@ struct TextCaptureSettingsSection: View {
     // MARK: Output
 
     private var outputGroup: some View {
-        AppleSettingsGroup("Recognized Text") {
-            AppleSettingsRow(icon: "text.alignleft", iconColor: .green, title: "Keep Line Breaks",
-                             subtitle: "Off re-flows lines into paragraphs (no spaces added between CJK lines)",
-                             showDivider: true) { toggle(\.keepsLineBreaks, "Keep line breaks") }
-            AppleSettingsRow(icon: "minus", iconColor: .gray, title: "Join Hyphenated Words",
-                             subtitle: "“infor-” + “mation” becomes “information”", showDivider: true) {
+        AOMSection("Recognized Text") {
+            AOMSettingRow("Keep Line Breaks", symbol: "text.alignleft",
+                          help: "Off re-flows lines into paragraphs (no spaces added between CJK lines).") {
+                toggle(\.keepsLineBreaks, "Keep line breaks")
+            }
+            AOMSettingRow("Join Hyphenated Words", symbol: "minus", help: "“infor-” + “mation” becomes “information”.") {
                 toggle(\.joinsHyphenatedWords, "Join hyphenated words")
             }
-            AppleSettingsRow(icon: "text.badge.plus", iconColor: .orange, title: "Additive Clipboard",
-                             subtitle: "Append each capture to the text already on the clipboard", showDivider: true) {
+            AOMSettingRow("Additive Clipboard", symbol: "text.badge.plus",
+                          help: "Append each capture to the text already on the clipboard.") {
                 toggle(\.additiveClipboard, "Additive clipboard")
             }
-            AppleSettingsRow(icon: "link", iconColor: .blue, title: "Detect Links",
-                             subtitle: "Show detected web and mail links in the result HUD", showDivider: true) {
+            AOMSettingRow("Detect Links", symbol: "link", help: "Show detected web and mail links in the result HUD.") {
                 toggle(\.detectsLinks, "Detect links")
             }
-            AppleSettingsRow(icon: "qrcode", iconColor: .brown, title: "Read QR Codes and Barcodes",
-                             subtitle: "Add code payloads found in the selection", showDivider: false) {
+            AOMSettingRow("Read QR Codes and Barcodes", symbol: "qrcode",
+                          help: "Add code payloads found in the selection.") {
                 toggle(\.readsBarcodes, "Read QR codes and barcodes")
             }
         }
@@ -141,28 +143,25 @@ struct TextCaptureSettingsSection: View {
     // MARK: Feedback
 
     private var feedbackGroup: some View {
-        AppleSettingsGroup("Text Capture Feedback") {
-            AppleSettingsRow(icon: "speaker.wave.2", iconColor: .green, title: "Play Sound",
-                             subtitle: "Confirm success or “nothing found” with a sound", showDivider: true) {
+        AOMSection("Text Capture Feedback") {
+            AOMSettingRow("Play Sound", symbol: "speaker.wave.2",
+                          help: "Confirm success or “nothing found” with a sound.") {
                 toggle(\.playsSound, "Play sound")
             }
-            AppleSettingsRow(icon: "rectangle.and.text.magnifyingglass", iconColor: .indigo, title: "Show Result HUD",
-                             subtitle: "Preview with Copy, Edit, Speak and Share; hover to keep it open",
-                             showDivider: true) {
-                HStack(spacing: 8) {
-                    if settings.showsResultHUD {
-                        Picker("", selection: Binding(get: { Int(settings.hudDuration) },
-                                                      set: { settings.hudDuration = Double($0) })) {
-                            ForEach([3, 6, 10, 20], id: \.self) { Text("\($0) s").tag($0) }
-                        }
-                        .pickerStyle(.menu).labelsHidden().frame(width: 70)
-                        .accessibilityLabel("HUD duration")
-                    }
-                    toggle(\.showsResultHUD, "Show result HUD")
-                }
+            AOMSettingRow("Show Result HUD", symbol: "rectangle.and.text.magnifyingglass",
+                          help: "A preview with Copy, Edit, Speak and Share. Hover to keep it open.") {
+                toggle(\.showsResultHUD, "Show result HUD")
             }
-            AppleSettingsRow(icon: "waveform", iconColor: .pink, title: "Speak Result",
-                             subtitle: "Read the text aloud in its detected language", showDivider: false) {
+            AOMSettingRow("HUD Duration", symbol: "timer", indent: true) {
+                Picker("HUD duration", selection: Binding(get: { Int(settings.hudDuration) },
+                                                          set: { settings.hudDuration = Double($0) })) {
+                    ForEach([3, 6, 10, 20], id: \.self) { Text("\($0) s").tag($0) }
+                }
+                .pickerStyle(.menu)
+                .accessibilityLabel("HUD duration")
+            }
+            .aomDependentRows(enabled: settings.showsResultHUD)
+            AOMSettingRow("Speak Result", symbol: "waveform", help: "Read the text aloud in its detected language.") {
                 toggle(\.speaksResult, "Speak result")
             }
         }
@@ -171,17 +170,14 @@ struct TextCaptureSettingsSection: View {
     // MARK: Shortcuts
 
     private var shortcutsGroup: some View {
-        AppleSettingsGroup("Text Capture Shortcuts") {
-            AppleSettingsRow(icon: "text.viewfinder", iconColor: .orange, title: "Capture Text",
-                             subtitle: "Select an area and copy its text", showDivider: true) {
+        AOMSection("Text Capture Shortcuts") {
+            AOMSettingRow("Capture Text", symbol: "text.viewfinder", help: "Select an area and copy its text.") {
                 recorder(id: "ocr", current: captureShortcuts.shortcut(for: .ocr)) {
                     captureShortcuts.setShortcut($0, for: .ocr)
                 }
             }
-            ForEach(Array(TextCaptureShortcutAction.allCases.enumerated()), id: \.element) { index, action in
-                AppleSettingsRow(icon: action.iconName, iconColor: .orange, title: action.displayName,
-                                 subtitle: subtitle(for: action),
-                                 showDivider: index < TextCaptureShortcutAction.allCases.count - 1) {
+            ForEach(TextCaptureShortcutAction.allCases, id: \.self) { action in
+                AOMSettingRow(action.displayName, symbol: action.iconName, help: subtitle(for: action)) {
                     recorder(id: action.rawValue, current: textShortcuts.shortcut(for: action)) {
                         textShortcuts.setShortcut($0, for: action)
                     }
@@ -201,21 +197,22 @@ struct TextCaptureSettingsSection: View {
 
     private func recorder(id: String, current: KeyboardShortcut?,
                           set: @escaping (KeyboardShortcut?) -> Void) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AOMSpace.x1) {
             Button {
                 if recording == id { stopRecording() } else { startRecording(id: id, set: set) }
             } label: {
                 Text(recording == id ? "Type shortcut…" : (current?.displayString ?? "Record Shortcut"))
-                    .font(.system(size: 11, weight: recording == id ? .medium : .regular))
-                    .foregroundStyle(recording == id ? Color.accentColor : (current == nil ? .secondary : .primary))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                    .font(recording == id ? AOMFont.caption.weight(.medium) : AOMFont.caption)
+                    .foregroundStyle(recording == id ? AOMColor.accent : (current == nil ? AOMColor.textSecondary : AOMColor.text))
+                    .padding(.horizontal, AOMSpace.x2)
+                    .padding(.vertical, AOMSpace.x1)
+                    .background(AOMColor.track, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Shortcut")
             if current != nil, recording != id {
                 Button { set(nil) } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary)
                 }
                 .buttonStyle(.plain).help("Clear Shortcut").accessibilityLabel("Clear shortcut")
             }
@@ -245,9 +242,9 @@ struct TextCaptureSettingsSection: View {
         recording = nil
     }
 
+    /// A row switch (the row draws it as the standard mini switch).
     private func toggle(_ keyPath: ReferenceWritableKeyPath<TextCaptureSettings, Bool>, _ label: String) -> some View {
-        Toggle("", isOn: Binding(get: { settings[keyPath: keyPath] }, set: { settings[keyPath: keyPath] = $0 }))
-            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+        Toggle(label, isOn: Binding(get: { settings[keyPath: keyPath] }, set: { settings[keyPath: keyPath] = $0 }))
             .accessibilityLabel(label)
     }
 }
