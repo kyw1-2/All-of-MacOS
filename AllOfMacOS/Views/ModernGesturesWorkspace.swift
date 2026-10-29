@@ -409,6 +409,7 @@ struct ModernGesturesWorkspace: View {
                 .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
             .background(AOMColor.canvas)
             .id(current.id)
         } else {
@@ -683,7 +684,7 @@ struct ModernGesturesWorkspace: View {
     private func optionsSection(_ trigger: Trigger) -> some View {
         AOMSection("Options",
                    help: "How this automation runs. Only the settings that apply to its input are shown.") {
-            AOMDisclosureRows(Self.optionsSummary(trigger), isExpanded: $showOptions) {
+            AOMDisclosureRows("Advanced", detail: Self.optionsSummary(trigger), isExpanded: $showOptions) {
                 TriggerConfigView(trigger: trigger, part: .options)
                     .id(trigger.id)
             }
