@@ -17,6 +17,10 @@ struct AudioWorkspaceView: View {
             header
             notices
             devicesCard
+            // 3.3.3: output-wide effects follow the devices (and the output
+            // equalizer inside them), before the per-app list.
+            HeadphoneEQCard()
+            AudioUnitEffectCard()
             applicationsCard
         }
         .aomPage("Audio")
@@ -283,6 +287,10 @@ private struct OutputDeviceRow: View {
                 service.allAppsBoostEnabled.toggle()
             }
             .disabled(!service.isSupported)
+            // 3.3.3: the output's Magic Boost preset, next to its switch like
+            // every app row's; off while the output boost is off.
+            AudioBoostPresetPicker(bundleID: nil, style: .menu)
+                .disabled(!service.isSupported || !service.allAppsBoostEnabled)
             DisclosureButton(expanded: $expanded, label: "Output effects")
         }
         .padding(.horizontal, AOMSpace.m)
@@ -409,7 +417,7 @@ private struct InputDeviceRow: View {
                 .foregroundStyle(AOMTheme.textSecondary)
                 .frame(width: 38, alignment: .trailing)
             // Keeps the columns aligned with the output row.
-            Color.clear.frame(width: 26 + 26 + AOMSpace.s, height: 1)
+            Color.clear.frame(width: 26 + 26 + AudioBoostPresetPicker.menuWidth + AOMSpace.s * 2, height: 1)
         }
         .padding(.horizontal, AOMSpace.m)
         .padding(.vertical, 10)
@@ -474,7 +482,7 @@ private struct SoundEffectsRow: View {
                 .font(AOMType.caption.monospacedDigit())
                 .foregroundStyle(AOMTheme.textSecondary)
                 .frame(width: 38, alignment: .trailing)
-            Color.clear.frame(width: 26 + 26 + AOMSpace.s, height: 1)
+            Color.clear.frame(width: 26 + 26 + AudioBoostPresetPicker.menuWidth + AOMSpace.s * 2, height: 1)
         }
         .padding(.horizontal, AOMSpace.m)
         .padding(.vertical, 10)
@@ -594,6 +602,9 @@ private struct ApplicationAudioRow: View {
                 MagicBoostButton(isOn: app.magicBoost, label: "Magic Boost for \(app.name)") {
                     service.toggleMagicBoost(bundleID: app.bundleID)
                 }
+                // 3.3.3: this app's Magic Boost preset, next to its switch.
+                AudioBoostPresetPicker(bundleID: app.bundleID, style: .menu)
+                    .disabled(!app.magicBoost || app.bundleID.isEmpty)
                 DisclosureButton(expanded: $expanded, label: "Effects for \(app.name)")
             }
             .padding(.horizontal, AOMSpace.m)
