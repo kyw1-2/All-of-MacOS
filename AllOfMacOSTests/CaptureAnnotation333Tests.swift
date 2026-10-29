@@ -713,4 +713,47 @@ final class CaptureAnnotation333Tests: XCTestCase {
         XCTAssertEqual(moved.lineEndpoints.start, CGPoint(x: 90, y: 10))
         XCTAssertEqual(moved.lineEndpoints.end, CGPoint(x: 10, y: 90))
     }
+
+    // MARK: - 4. Spotlights and crop presets
+
+    func testSeveralSpotlightsShareOneDimLayer() {
+        var document = AnnotationDocument(baseImage: solid(200, 100, .white))
+        var style = AnnotationStyle()
+        style.spotlightOpacity = 0.5
+        document.add(AnnotationObject(kind: .spotlight, rect: CGRect(x: 10, y: 10, width: 40, height: 40), style: style))
+        var buffer = rgba(document.render(scale: 1)!)
+        let dimmed = Int(pixel(buffer, 150, 80)[0])
+        XCTAssertTrue(isWhite(pixel(buffer, 30, 30)))
+        XCTAssertEqual(dimmed, 128, accuracy: 3)
+        document.add(AnnotationObject(kind: .spotlight, rect: CGRect(x: 120, y: 20, width: 40, height: 40), style: style))
+        buffer = rgba(document.render(scale: 1)!)
+        XCTAssertTrue(isWhite(pixel(buffer, 30, 30)), "the first cutout stays bright")
+        XCTAssertTrue(isWhite(pixel(buffer, 140, 40)), "and so does the second")
+        XCTAssertEqual(Int(pixel(buffer, 100, 80)[0]), dimmed, accuracy: 3, "dimmed once, not twice")
+        // Overlapping cutouts stay bright where they overlap.
+        document.objects[1].rect = CGRect(x: 30, y: 30, width: 40, height: 40)
+        document.objects[1].style.spotlightShape = .ellipse
+        buffer = rgba(document.render(scale: 1)!)
+        XCTAssertTrue(isWhite(pixel(buffer, 40, 40)))
+        XCTAssertTrue(isWhite(pixel(buffer, 50, 50)))
+        XCTAssertEqual(Int(pixel(buffer, 150, 80)[0]), dimmed, accuracy: 3)
+    }
+
+    func testCropPresetsGiveTheLargestCentredSelection() {
+        let size = CGSize(width: 300, height: 200)
+        XCTAssertEqual(AnnotationCropPreset.freeform.ratio(imageSize: size), 0)
+        XCTAssertEqual(AnnotationCropPreset.original.ratio(imageSize: size), 1.5, accuracy: 1e-9)
+        XCTAssertEqual(AnnotationCropPreset.r9x16.ratio(imageSize: size), 9.0 / 16.0, accuracy: 1e-9)
+        let bounds = CGRect(origin: .zero, size: size)
+        XCTAssertEqual(AnnotationCropPreset.centredRect(ratio: 1, in: bounds), CGRect(x: 50, y: 0, width: 200, height: 200))
+        let portrait = AnnotationCropPreset.centredRect(ratio: 9.0 / 16.0, in: bounds)
+        XCTAssertEqual(portrait.height, 200, accuracy: 1e-9)
+        XCTAssertEqual(portrait.width / portrait.height, 9.0 / 16.0, accuracy: 1e-9)
+        XCTAssertEqual(portrait.midX, 150, accuracy: 1e-9)
+        let wide = AnnotationCropPreset.centredRect(ratio: 21.0 / 9.0, in: bounds)
+        XCTAssertEqual(wide.width, 300, accuracy: 1e-9)
+        XCTAssertEqual(wide.midY, 100, accuracy: 1e-9)
+        XCTAssertEqual(AnnotationCropPreset.centredRect(ratio: 0, in: bounds), bounds)
+        XCTAssertEqual(Set(AnnotationCropPreset.allCases.map(\.title)).count, AnnotationCropPreset.allCases.count)
+    }
 }

@@ -767,15 +767,18 @@ private struct AnnotationEditorView: View {
             }
             .toggleStyle(.button).help("Drop shadow").accessibilityLabel("Text shadow")
             if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .text {
+                // 3.3.3: vertical axis, so ⌥↩ adds a line (the box grows to fit).
                 TextField("Text", text: Binding(
                     get: { object.text },
                     set: { newValue in
                         document.beginChange()
                         var updated = object; updated.text = newValue; document.update(fittedText(updated))
-                    }))
+                    }), axis: .vertical)
+                .lineLimit(1)
                 .textFieldStyle(.roundedBorder)
                 .focused($textFieldFocused)
                 .frame(width: 200)
+                .help("Text (⌥↩ starts a new line; More Tool Options shows every line)")
                 .accessibilityLabel("Text content")
             }
         case .eraser:
@@ -1051,17 +1054,25 @@ private struct AnnotationEditorView: View {
         HStack(spacing: 12) {
             Color.clear.frame(width: 68, height: 32)
             capsuleButton("crop", help: "Exit Crop", active: true) { cropMode = false }
-            Picker("Aspect Ratio", selection: $cropAspect) {
-                Text("Freeform").tag(CGFloat(0))
-                Text("Square").tag(CGFloat(1))
-                Text("16:9").tag(CGFloat(16.0 / 9.0))
-                Text("4:3").tag(CGFloat(4.0 / 3.0))
+            Picker("Aspect Ratio", selection: Binding<AnnotationCropPreset>(
+                get: {
+                    // A fixed ratio wins over "Original" when both match.
+                    let size = CGSize(width: document.croppedImage.width, height: document.croppedImage.height)
+                    let fixed = AnnotationCropPreset.allCases.filter { $0 != .original }
+                    return fixed.first { abs($0.ratio(imageSize: size) - cropAspect) < 0.0001 }
+                        ?? (abs(AnnotationCropPreset.original.ratio(imageSize: size) - cropAspect) < 0.0001 ? .original : .freeform)
+                },
+                set: { preset in
+                    let bounds = CGRect(x: 0, y: 0, width: CGFloat(document.croppedImage.width) / scale,
+                                        height: CGFloat(document.croppedImage.height) / scale)
+                    cropAspect = preset.ratio(imageSize: bounds.size)
+                    // The largest selection of that ratio, centred (3.3.3).
+                    guard cropAspect > 0 else { return }
+                    cropRect = boundedCrop(AnnotationCropPreset.centredRect(ratio: cropAspect, in: bounds))
+                })) {
+                ForEach(AnnotationCropPreset.allCases) { Text($0.title).tag($0) }
             }.labelsHidden().frame(width: 135)
-                .onChange(of: cropAspect) { _, ratio in
-                    guard ratio > 0, var rect = cropRect else { return }
-                    rect.size.height = rect.width / ratio
-                    cropRect = boundedCrop(rect)
-                }
+                .help("Aspect ratio of the crop")
             cropDimension("Width", width: true)
             Image(systemName: "arrow.left.and.right").foregroundStyle(.secondary)
             cropDimension("Height", width: false)
@@ -1496,8 +1507,10 @@ private struct AnnotationEditorView: View {
                                 set: { newValue in
                                     document.beginChange()
                                     var updated = object; updated.text = newValue; document.update(fittedText(updated))
-                                }))
+                                }), axis: .vertical)
+                            .lineLimit(2...6)
                             .textFieldStyle(.roundedBorder)
+                            .help("⌥↩ starts a new line")
                         }
                     }
                 }

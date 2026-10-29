@@ -905,14 +905,50 @@ struct AnnotationDocument {
                              scale: CGFloat, base: CGImage) {
         var source = base
         var layerSinceSource = false
+        // 3.3.3: several spotlights share one dimmed layer with every cutout,
+        // instead of each dimming the others' bright areas.
+        let spotlights = list.filter { $0.kind == .spotlight }
+        var spotlightsDrawn = false
         for (index, object) in list.enumerated() {
             if object.kind == .image { layerSinceSource = true }
             if layerSinceSource, object.kind.samplesPixelsBelow {
                 source = compositeForRedaction(layers: Array(list[..<index]), base: base, scale: scale)
                 layerSinceSource = false
             }
+            if spotlights.count > 1, object.kind == .spotlight {
+                if !spotlightsDrawn {
+                    drawMergedSpotlights(spotlights, in: context, imageRect: imageRect, scale: scale)
+                    spotlightsDrawn = true
+                }
+                continue
+            }
             draw(object, in: context, imageRect: imageRect, scale: scale, baseImage: source)
         }
+    }
+
+    /// Every spotlight cutout punched out of one dim layer, drawn at the lowest
+    /// spotlight's place in the z-order with the topmost spotlight's dimming.
+    private func drawMergedSpotlights(_ spotlights: [AnnotationObject], in context: CGContext,
+                                      imageRect: CGRect, scale: CGFloat) {
+        guard let lowest = spotlights.first, let topmost = spotlights.last else { return }
+        context.saveGState()
+        context.setAlpha(CGFloat(lowest.style.opacity))
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setFillColor(NSColor.black.withAlphaComponent(topmost.style.spotlightOpacity ?? 0.55).cgColor)
+        context.fill(imageRect)
+        context.setBlendMode(.clear)
+        for spotlight in spotlights {
+            let rect = CGRect(x: imageRect.minX + spotlight.rect.minX * scale,
+                              y: imageRect.maxY - spotlight.rect.maxY * scale,
+                              width: spotlight.rect.width * scale, height: spotlight.rect.height * scale)
+            if spotlight.style.spotlightShape == .ellipse {
+                context.fillEllipse(in: rect)
+            } else {
+                context.fill(rect)
+            }
+        }
+        context.endTransparencyLayer()
+        context.restoreGState()
     }
 
     /// The base image with `subset` drawn on it and no background (flattening).
