@@ -439,6 +439,14 @@ struct AddTriggerSheet: View {
     init(keyboardMonitor: KeyboardMonitor, category: TriggerCategory) {
         self.keyboardMonitor = keyboardMonitor
         _category = State(initialValue: category == .all ? .trackpad : category)
+        // Isolated UI previews can open the sheet on a MIDI Control Change
+        // trigger (`--aom-preview-add-midi-trigger`) to review its rows.
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-add-midi-trigger") {
+            _otherTriggerMode = State(initialValue: "event")
+            _systemEventKind = State(initialValue: "midi")
+            _midiStatus = State(initialValue: MIDIMessageType.controlChange.rawValue)
+            _midiMinimum = State(initialValue: 0)
+        }
     }
 
     @State private var selectedGesture: TrackpadGesture = .twoFingerSwipeUp
@@ -493,9 +501,11 @@ struct AddTriggerSheet: View {
     @State private var drawingIgnoreDirection = false
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             Text("Add New Trigger")
-                .font(.headline)
+                .font(AOMFont.pageStatus)
+                .foregroundStyle(AOMColor.text)
+                .accessibilityAddTraits(.isHeader)
 
             Picker("Input type", selection: $category) {
                 ForEach(TriggerCategory.inputCategories) { item in
@@ -503,7 +513,7 @@ struct AddTriggerSheet: View {
                 }
             }.onChange(of: category) { _, _ in keyboardMonitor.stopRecording() }
 
-            Divider()
+            AOMDivider()
 
             switch category {
             case .trackpad:
@@ -524,13 +534,13 @@ struct AddTriggerSheet: View {
                     DrawingPatternComposer(name: $drawingName, samples: $drawingSamples,
                                            certainty: $drawingCertainty,
                                            ignoreDirection: $drawingIgnoreDirection)
-                        .padding(3)
-                }.frame(height: 510)
+                        .padding(AOMSpace.x1)
+                }.frame(height: AOMEditorSize.drawingComposer)
             case .otherTriggers:
                 otherTriggerPicker
             default:
                 Text("Coming soon for \(category.rawValue)")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(AOMColor.textSecondary)
             }
 
             TextField("Trigger Name (optional)", text: $triggerName)
@@ -545,8 +555,8 @@ struct AddTriggerSheet: View {
                     .disabled(!canAdd)
             }
         }
-        .padding(20)
-        .frame(width: category == .drawings ? 540 : 400)
+        .padding(AOMSpace.x5)
+        .frame(width: category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet)
     }
 
     private var canAdd: Bool {
@@ -583,66 +593,61 @@ struct AddTriggerSheet: View {
     }
 
     private var trackpadPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Select Gesture:")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            Text("Gesture")
+                .font(AOMFont.headline)
+                .foregroundStyle(AOMColor.text)
             TextField("Search gestures...", text: $gestureSearch)
                 .textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: 0) {
                         ForEach(filteredGestures) { gesture in
                             let selected = selectedGesture == gesture
-                            HStack {
+                            let onAccent = AOMTheme.onAccent(AOMColor.accent)
+                            HStack(spacing: AOMSpace.x2) {
                                 Image(systemName: gestureIcon(gesture))
-                                    .frame(width: 20)
-                                    .foregroundColor(selected ? .white : .accentColor)
+                                    .frame(width: AOMIcon.row)
+                                    .foregroundStyle(selected ? onAccent : AOMColor.textSecondary)
                                 Text(gesture.rawValue)
-                                    .foregroundColor(selected ? .white : .primary)
+                                    .font(AOMFont.body)
+                                    .foregroundStyle(selected ? onAccent : AOMColor.text)
                                 Spacer()
                                 if selected {
                                     Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.white)
-                                        .font(.system(size: 14))
-                                        .transition(.scale.combined(with: .opacity))
+                                        .foregroundStyle(onAccent)
+                                        .transition(.opacity)
                                 }
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, AOMSpace.x2)
+                            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(selected ? Color.accentColor : Color.clear)
+                                RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                                    .fill(selected ? AOMColor.accent : Color.clear)
                             )
-                            .scaleEffect(selected ? 1.02 : 1.0)
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) {
-                                withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
-                                    selectedGesture = gesture
-                                }
+                                withAnimation(AOMMotion.quick) { selectedGesture = gesture }
                                 addTrigger()
                             }
                             .onTapGesture {
-                                withAnimation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7))) {
-                                    selectedGesture = gesture
-                                }
+                                withAnimation(AOMMotion.quick) { selectedGesture = gesture }
                             }
-                            .animation(AOMDesign.animation(.spring(response: 0.3, dampingFraction: 0.7)), value: selected)
                             .id(gesture)
                         }
                     }
-                    .padding(4)
+                    .padding(AOMSpace.x1)
                 }
                 .onChange(of: gestureSearch) { _ in
                     if let first = filteredGestures.first {
                         selectedGesture = first
-                        withAnimation(AOMDesign.animation(.default)) { proxy.scrollTo(first, anchor: .top) }
+                        withAnimation(AOMMotion.standard) { proxy.scrollTo(first, anchor: .top) }
                     }
                 }
             }
-            .frame(height: 200)
-            .background(Color(nsColor: .textBackgroundColor))
-            .cornerRadius(6)
+            .frame(height: AOMEditorSize.gestureList)
+            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
             if selectedGesture.isLongTouch {
                 Stepper("Hold for \(String(format: "%.1f", Double(longTouchMs) / 1000)) s", value: $longTouchMs, in: 100...5000, step: 100)
@@ -650,21 +655,21 @@ struct AddTriggerSheet: View {
             if selectedGesture.isTrackpadScroll {
                 RequiredModifierToggles(modifiers: $trackpadModifiers)
                 if let problem = TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers) {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    AOMEditorNote(problem, tone: .warning)
                 }
             }
         }
     }
 
     private var sequenceRecorder: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             Text(sequenceStrokes.isEmpty ? "No steps recorded" : sequenceStrokes.map(\.displayName).joined(separator: " → "))
-                .font(.system(size: 16, weight: .medium, design: .monospaced))
-                .frame(maxWidth: .infinity, minHeight: 42)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(8)
-            HStack {
+                .font(AOMFont.body.monospaced())
+                .foregroundStyle(sequenceStrokes.isEmpty ? AOMColor.textSecondary : AOMColor.text)
+                .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
+                .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+            HStack(spacing: AOMSpace.x2) {
                 Button(keyboardMonitor.isMonitoring ? "Recording..." : "Record Next Key") {
                     keyboardMonitor.startRecording { shortcut in
                         if sequenceStrokes.count < 6 {
@@ -677,9 +682,14 @@ struct AddTriggerSheet: View {
                     Button("⌥ Option") { appendModifier(58) }
                     Button("⌃ Control") { appendModifier(59) }
                     Button("⇧ Shift") { appendModifier(56) }
-                }.disabled(sequenceStrokes.count >= 6)
+                }
+                .fixedSize()
+                .disabled(sequenceStrokes.count >= 6)
                 Button("Undo") { if !sequenceStrokes.isEmpty { sequenceStrokes.removeLast() } }
                     .disabled(sequenceStrokes.isEmpty)
+                Spacer(minLength: 0)
+                AOMInfoButton("Regular keys still reach the active app. Modifier-only key presses are available via Modifier Press. At least 2 steps are needed unless hold is selected.",
+                              topic: "key sequences")
             }
             Toggle("Single-key hold instead of sequence", isOn: $sequenceHoldEnabled)
             if sequenceHoldEnabled {
@@ -687,8 +697,6 @@ struct AddTriggerSheet: View {
             } else {
                 Stepper("Max gap: \(sequenceGapMs) ms", value: $sequenceGapMs, in: 100...2000, step: 50)
             }
-            Text("Regular keys still reach the active app. Modifier-only key presses are available via Modifier Press. At least 2 steps are needed unless hold is selected.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
     private func appendModifier(_ code: UInt16) {
@@ -696,17 +704,24 @@ struct AddTriggerSheet: View {
     }
 
     private var keyboardRecorder: some View {
-        VStack(spacing: 12) {
-            Text(recordedShortcut?.displayString ?? "Press a key combination...")
-                .font(.system(size: 18, weight: .medium, design: .monospaced))
-                .frame(height: 50)
-                .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(keyboardMonitor.isMonitoring ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 2)
-                )
+        VStack(spacing: AOMSpace.x3) {
+            Group {
+                if let shortcut = recordedShortcut {
+                    AOMShortcutKeys(shortcut: shortcut)
+                } else {
+                    Text("Press a key combination...")
+                        .font(AOMFont.body)
+                        .foregroundStyle(AOMColor.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
+            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                    .strokeBorder(keyboardMonitor.isMonitoring ? AOMColor.accent : AOMColor.hairline,
+                                  lineWidth: keyboardMonitor.isMonitoring ? 2 : 0.5)
+            )
+            .aomAnimation(.quick, value: keyboardMonitor.isMonitoring)
 
             Button(keyboardMonitor.isMonitoring ? "Recording..." : "Record Shortcut") {
                 keyboardMonitor.startRecording { shortcut in
@@ -726,7 +741,7 @@ struct AddTriggerSheet: View {
     private var mouseInput: TriggerInput { MouseTriggerEditor.input(for: mouseSpec) }
 
     private var otherTriggerPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
             Picker("Type", selection: $otherTriggerMode) {
                 Text("Named Trigger").tag("named")
                 Text("Scheduled").tag("scheduled")
@@ -744,25 +759,28 @@ struct AddTriggerSheet: View {
     /// Scheduled entries fire from the clock, so they need a time and, for
     /// weekly, the days to run on.
     private var scheduledField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Picker("Schedule", selection: $scheduleKind) {
-                Text("Daily").tag("daily")
-                Text("Weekly").tag("weekly")
-                Text("Interval").tag("interval")
-            }.pickerStyle(.segmented)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x2) {
+                Picker("Schedule", selection: $scheduleKind) {
+                    Text("Daily").tag("daily")
+                    Text("Weekly").tag("weekly")
+                    Text("Interval").tag("interval")
+                }.pickerStyle(.segmented)
+                AOMInfoButton("Runs while AOM is open. Missed times are not replayed on launch.", topic: "schedules")
+            }
 
             if scheduleKind == "interval" {
-                HStack {
+                HStack(spacing: AOMSpace.x2) {
                     Text("Every")
                     TextField("30", value: $intervalMinutes, format: .number)
-                        .textFieldStyle(.roundedBorder).frame(width: 64)
+                        .textFieldStyle(.roundedBorder).frame(width: AOMEditorSize.numberField)
                     Text("minutes")
                 }
                 Toggle("Restrict to a time and weekday window", isOn: $restrictInterval)
                 if restrictInterval {
                     Stepper("From \(String(format: "%02d:%02d", windowStartMinute / 60, windowStartMinute % 60))", value: $windowStartMinute, in: 0...1439, step: 15)
                     Stepper("Until \(String(format: "%02d:%02d", windowEndMinute / 60, windowEndMinute % 60))", value: $windowEndMinute, in: 0...1439, step: 15)
-                    Text("An end time before the start time continues into the next morning.").font(.caption).foregroundStyle(.secondary)
+                    AOMEditorNote("An end time before the start time continues into the next morning.")
                     Toggle("Restrict calendar date range", isOn: $restrictDates)
                     if restrictDates {
                         DatePicker("First date", selection: $windowFirstDate, displayedComponents: .date)
@@ -770,20 +788,20 @@ struct AddTriggerSheet: View {
                     }
                 }
             } else {
-                HStack {
+                HStack(spacing: AOMSpace.x2) {
                     Text("At")
                     Picker("", selection: $scheduleHour) {
                         ForEach(0..<24, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.labelsHidden().frame(width: 70)
+                    }.labelsHidden().frame(width: AOMEditorSize.numberField)
                     Text(":")
                     Picker("", selection: $scheduleMinute) {
                         ForEach(0..<60, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
-                    }.labelsHidden().frame(width: 70)
+                    }.labelsHidden().frame(width: AOMEditorSize.numberField)
                 }
             }
 
             if scheduleKind == "weekly" || (scheduleKind == "interval" && restrictInterval) {
-                HStack(spacing: 4) {
+                HStack(spacing: AOMSpace.x1) {
                     ForEach(1...7, id: \.self) { day in
                         let label = ["S", "M", "T", "W", "T", "F", "S"][day - 1]
                         Button(label) {
@@ -791,41 +809,62 @@ struct AddTriggerSheet: View {
                             else { selectedWeekdays.insert(day) }
                         }
                         .buttonStyle(.bordered)
-                        .tint(selectedWeekdays.contains(day) ? .accentColor : .secondary)
-                        .frame(width: 28)
+                        .tint(selectedWeekdays.contains(day) ? AOMColor.accent : AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea)
                     }
                 }
-                Text(SystemTriggerKind.weekdayNames(Array(selectedWeekdays)))
-                    .font(.caption).foregroundStyle(.secondary)
+                AOMEditorNote(SystemTriggerKind.weekdayNames(Array(selectedWeekdays)))
             }
-
-            Text("Runs while AOM is open. Missed times are not replayed on launch.")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
     /// System events are discrete state changes rather than times, so they only
-    /// need which event, plus an app for the launch/quit cases.
+    /// need which event, plus an app for the launch/quit cases. One card of
+    /// setting rows; explanations sit in each row's ⓘ.
     private var systemEventField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Picker("Event", selection: $systemEventKind) {
-                ForEach(Self.systemEvents, id: \.0) { event in Text(event.1).tag(event.0) }
+        AOMSection {
+            AOMSettingRow("Event", help: BTTInputTriggerKinds.kind(for: systemEventKind) != nil
+                          ? "Stage 1 fires on the click, stage 2 on the deep press, once per press. Stage 2 needs Force Click and haptic feedback turned on in Trackpad settings."
+                          : nil) {
+                Picker("Event", selection: $systemEventKind) {
+                    ForEach(Self.systemEvents, id: \.0) { event in Text(event.1).tag(event.0) }
+                }
+                .pickerStyle(.menu)
             }
             if ["wifiOn", "wifiOff", "usbOn", "usbOff", "btOn", "btOff", "midi", "gamepad"].contains(systemEventKind) {
-                TextField("Device name / SSID filter (empty = any)", text: $eventFilter)
-                Text("USB, Bluetooth and MIDI match a substring; Wi-Fi matches the full SSID. Use regex:pattern for a regular expression. SSID names require Location permission.").font(.caption).foregroundStyle(.secondary)
+                AOMSettingRow("Device or SSID",
+                              help: "USB, Bluetooth and MIDI match a substring; Wi-Fi matches the full SSID. Use regex:pattern for a regular expression. SSID names require Location permission.") {
+                    TextField("Device name / SSID filter (empty = any)", text: $eventFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
+                }
             }
             if systemEventKind == "file" {
-                TextField("Absolute file or folder path", text: $eventFilter)
-                Button("Choose File or Folder…") {
-                    let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true
-                    if panel.runModal() == .OK { eventFilter = panel.url?.path ?? "" }
+                AOMSettingRow("Path", help: "Watches this file or immediate folder changes, including atomic replacement and later creation.") {
+                    TextField("Absolute file or folder path", text: $eventFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
                 }
-                Text("Watches this file or immediate folder changes, including atomic replacement and later creation.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Choose File or Folder…") {
+                        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = true
+                        if panel.runModal() == .OK { eventFilter = panel.url?.path ?? "" }
+                    }
+                }
+                .aomRowInset()
             }
-            if systemEventKind == "variable" { TextField("Variable name (empty = any)", text: $eventFilter) }
+            if systemEventKind == "variable" {
+                AOMSettingRow("Variable") {
+                    TextField("Variable name (empty = any)", text: $eventFilter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
+                }
+            }
             if systemEventKind == "batteryBelow" || systemEventKind == "batteryAbove" {
-                Stepper("Charge: \(eventNumber)%", value: $eventNumber, in: 1...99)
+                AOMSettingRow("Charge") {
+                    AOMRowStepper("Charge", value: $eventNumber, in: 1...99, display: "\(eventNumber)%")
+                }
             }
             if systemEventKind == "midi" {
                 // Every channel-voice message, "Any" number and the 14-bit
@@ -834,31 +873,55 @@ struct AddTriggerSheet: View {
                                         minimum: $midiMinimum, maximum: $midiMaximum)
             }
             if systemEventKind == "hid" {
-                TextField("Vendor ID (decimal)", value: $hidVendor, format: .number)
-                TextField("Product ID (decimal)", value: $hidProduct, format: .number)
-                TextField("Usage page (decimal)", value: $hidPage, format: .number)
-                TextField("Usage (decimal)", value: $hidUsage, format: .number)
-                TextField("Minimum value", value: $hidMinimum, format: .number)
-                TextField("Maximum value", value: $hidMaximum, format: .number)
-                Text("Opt-in IOHID input for this exact vendor/product and element usage. Standard keyboards/mice are excluded. May require Input Monitoring permission; use values documented by your device.").font(.caption).foregroundStyle(.secondary)
+                Group {
+                    hidRow("Vendor ID", $hidVendor, help: "Opt-in IOHID input for this exact vendor/product and element usage, in decimal. Standard keyboards/mice are excluded. May require Input Monitoring permission; use values documented by your device.")
+                    hidRow("Product ID", $hidProduct)
+                    hidRow("Usage page", $hidPage)
+                    hidRow("Usage", $hidUsage)
+                    hidRow("Minimum value", $hidMinimum)
+                    hidRow("Maximum value", $hidMaximum)
+                }
             }
             if systemEventKind == "gamepad" {
-                Picker("Control", selection: $gamepadControl) {
-                    ForEach(["a", "b", "x", "y", "leftShoulder", "rightShoulder", "leftTrigger", "rightTrigger", "up", "down", "left", "right", "menu", "options", "leftThumbstick", "rightThumbstick", "leftStickUp", "leftStickDown", "leftStickLeft", "leftStickRight", "rightStickUp", "rightStickDown", "rightStickLeft", "rightStickRight"], id: \.self) { Text($0).tag($0) }
+                AOMSettingRow("Control",
+                              help: "Uses macOS GameController extended and micro gamepads (including supported Siri Remotes); triggers and stick directions cross a 50% threshold.") {
+                    Picker("Control", selection: $gamepadControl) {
+                        ForEach(["a", "b", "x", "y", "leftShoulder", "rightShoulder", "leftTrigger", "rightTrigger", "up", "down", "left", "right", "menu", "options", "leftThumbstick", "rightThumbstick", "leftStickUp", "leftStickDown", "leftStickLeft", "leftStickRight", "rightStickUp", "rightStickDown", "rightStickLeft", "rightStickRight"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu)
                 }
-                Toggle("On press (off = release)", isOn: $eventPressed)
-                Text("Uses macOS GameController extended and micro gamepads (including supported Siri Remotes); triggers and stick directions cross a 50% threshold.").font(.caption).foregroundStyle(.secondary)
+                AOMToggleRow("On press (off = release)", isOn: $eventPressed)
             }
             if systemEventKind == "power" {
-                Picker("When", selection: $powerOnAC) { Text("Power connected").tag(true); Text("Battery").tag(false) }.pickerStyle(.segmented)
-            }
-            if ["appLaunch", "appQuit", "appActive", "appInactive"].contains(systemEventKind) {
-                TextField("Application bundle ID", text: $systemEventAppID)
-                Button("Choose Application…") {
-                    let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
-                    if panel.runModal() == .OK, let url = panel.url { systemEventAppID = Bundle(url: url)?.bundleIdentifier ?? "" }
+                AOMSettingRow("When") {
+                    Picker("When", selection: $powerOnAC) { Text("Power connected").tag(true); Text("Battery").tag(false) }.pickerStyle(.segmented)
                 }
             }
+            if ["appLaunch", "appQuit", "appActive", "appInactive"].contains(systemEventKind) {
+                AOMSettingRow("Application") {
+                    TextField("Application bundle ID", text: $systemEventAppID)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMEditorSize.rowField)
+                }
+                HStack {
+                    Spacer()
+                    Button("Choose Application…") {
+                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+                        if panel.runModal() == .OK, let url = panel.url { systemEventAppID = Bundle(url: url)?.bundleIdentifier ?? "" }
+                    }
+                }
+                .aomRowInset()
+            }
+        }
+    }
+
+    /// One decimal field of the generic HID filter as a row.
+    private func hidRow(_ title: String, _ value: Binding<Int>, help: String? = nil) -> some View {
+        AOMSettingRow(title, help: help) {
+            TextField(title, value: value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: AOMEditorSize.numberField)
+                .multilineTextAlignment(.trailing)
         }
     }
     private static let systemEvents: [(String, String)] = [
@@ -939,17 +1002,16 @@ struct AddTriggerSheet: View {
     }
 
     private var typedStringFields: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Type this abbreviation in any app and it is replaced:")
-                .font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            Text("Type this abbreviation in any app and it is replaced")
+                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Abbreviation, e.g. ;email", text: $typedAbbreviation)
                 .textFieldStyle(.roundedBorder)
-            Text("Replaced with:")
-                .font(.subheadline).foregroundStyle(.secondary)
+            Text("Replaced with")
+                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Replacement text (empty = run the trigger's actions)", text: $typedReplacement)
                 .textFieldStyle(.roundedBorder)
-            Text("Never expands in password fields. Leave the replacement empty to run this trigger's actions instead.")
-                .font(.caption).foregroundStyle(.secondary)
+            AOMEditorNote("Never expands in password fields. Leave the replacement empty to run this trigger's actions instead.")
         }
     }
 
@@ -977,9 +1039,9 @@ struct AddTriggerSheet: View {
     }
 
     private var namedTriggerField: some View {
-        VStack(alignment: .leading) {
-            Text("Named Trigger:")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            Text("Name")
+                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Enter trigger name", text: $namedTriggerName)
                 .textFieldStyle(.roundedBorder)
         }
