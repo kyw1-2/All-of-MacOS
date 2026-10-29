@@ -33,46 +33,47 @@ struct SystemToolsView: View {
         }
     }
 
+    /// d.9: what the page holds, in one line; there is no master switch.
+    private var header: some View {
+        let total = groups.reduce(0) { $0 + $1.tools.count }
+        return AOMPageHeader("\(total) tools, one click each", module: .systemTools,
+                             subtitle: "Finder, network, PDF, media and file utilities")
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AOMSpace.m) {
-                if showActionLibrary {
-                    AOMSectionCard("All Actions", symbol: "square.grid.3x3", accessory: {
-                        Button("Hide") { showActionLibrary = false }.controlSize(.small)
-                    }) {
-                        ActionLibraryView().environmentObject(appState)
-                    }
+        AOMPage {
+            header
+            if showActionLibrary {
+                AOMSectionCard("All Actions", symbol: "square.grid.3x3", accessory: {
+                    Button("Hide") { showActionLibrary = false }.controlSize(.small)
+                }) {
+                    ActionLibraryView().environmentObject(appState)
                 }
-                let shown = visibleGroups
-                if shown.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Tools Match “\(query)”", systemImage: "magnifyingglass")
-                    } description: {
-                        Text("Try another word, or browse every action AOM can run.")
-                    } actions: {
-                        Button("Clear Search") { query = "" }
-                        Button("All Actions") { query = ""; showActionLibrary = true }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 240)
+            }
+            let shown = visibleGroups
+            if shown.isEmpty {
+                ContentUnavailableView {
+                    Label("No Tools Match “\(query)”", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Try another word, or browse every action AOM can run.")
+                } actions: {
+                    Button("Clear Search") { query = "" }
+                    Button("All Actions") { query = ""; showActionLibrary = true }
                 }
-                ForEach(shown, id: \.name) { group in
-                    AOMSectionCard(group.name, symbol: group.symbol, detail: "\(group.tools.count)") {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 200), spacing: AOMSpace.s)],
-                                  spacing: AOMSpace.s) {
-                            ForEach(group.tools) { tool in
-                                ToolCard(title: tool.title, symbol: tool.symbol, tint: tool.tint, run: tool.run)
-                            }
+                .frame(maxWidth: .infinity, minHeight: 240)
+            }
+            ForEach(shown, id: \.name) { group in
+                AOMSectionCard(group.name, symbol: group.symbol, detail: "\(group.tools.count)") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 200), spacing: AOMSpace.tileGap)],
+                              spacing: AOMSpace.tileGap) {
+                        ForEach(group.tools) { tool in
+                            ToolCard(title: tool.title, symbol: tool.symbol, tint: tool.tint, run: tool.run)
                         }
                     }
                 }
             }
-            .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, AOMSpace.l)
-            .padding(.vertical, AOMSpace.m)
-            .frame(maxWidth: .infinity)
         }
-        .aomScrollEdge()
-        .aomPage("System Tools", subtitle: "Finder, network, PDF, media and file utilities")
+        .aomPage("System Tools")
         .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
         .toolbar {
             ToolbarItem(placement: .automatic) {

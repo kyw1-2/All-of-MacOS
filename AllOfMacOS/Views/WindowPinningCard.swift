@@ -6,22 +6,22 @@ struct WindowPinningCard: View {
     @State private var showsOptions = false
 
     var body: some View {
-        AOMSectionCard("Always on Top", symbol: "pin", detail: service.pins.isEmpty ? "Ready" : "\(service.pins.count) pinned") {
+        AOMSection("Always on Top", detail: service.pins.isEmpty ? "Ready" : "\(service.pins.count) pinned",
+                   help: "Pin a window above other apps. Move, resize and use its original window while it stays pinned.",
+                   footer: "Assign pinning shortcuts in Settings → Shortcuts, or add a Window Management action to an automation.",
+                   padding: AOMSpace.cardPadding) {
             Button { showsOptions = true } label: { Image(systemName: "slider.horizontal.3") }
                 .buttonStyle(.borderless).help("Window pinning options")
                 .accessibilityLabel("Window pinning options")
         } content: {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Pin a window above other apps. Move, resize and use its original window while it stays pinned.")
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 ViewThatFits(in: .horizontal) {
                     HStack { chooseButton; selectButton }
                     VStack(alignment: .leading) { chooseButton; selectButton }
                 }
                 .disabled(service.isChoosingWindow)
                 if let error = service.lastError {
-                    Text(error).font(AOMType.caption).foregroundStyle(.red).textSelection(.enabled)
+                    Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText).textSelection(.enabled)
                 }
                 ForEach(service.pins) { pin in
                     Divider()
@@ -30,9 +30,6 @@ struct WindowPinningCard: View {
                 if !service.pins.isEmpty {
                     Button("Unpin All Windows") { service.unpinAll() }.controlSize(.small)
                 }
-                Text("Assign pinning shortcuts in Settings → Shortcuts, or add a Window Management action to an automation.")
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .sheet(isPresented: $showsOptions) { WindowPinningOptionsView() }

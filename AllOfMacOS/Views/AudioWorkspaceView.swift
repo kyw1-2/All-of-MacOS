@@ -13,28 +13,45 @@ struct AudioWorkspaceView: View {
     @State private var expandedOutput = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AOMSpace.m) {
-                notices
-                devicesCard
-                applicationsCard
-            }
-            .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .leading)
-            .padding(.horizontal, AOMSpace.l)
-            .padding(.vertical, AOMSpace.m)
-            .frame(maxWidth: .infinity)
+        AOMPage {
+            header
+            notices
+            devicesCard
+            applicationsCard
         }
-        .aomScrollEdge()
-        .aomPage("Audio", subtitle: subtitle)
+        .aomPage("Audio")
         .searchable(text: $searchText, placement: .toolbar, prompt: "Filter Apps")
         .toolbar { toolbarContent }
         .onAppear { service.beginMetering(); service.refresh() }
         .onDisappear { service.endMetering() }
     }
 
+    // MARK: Header (d.9)
+
+    /// The page's one status: what App Audio is doing, one line of context and
+    /// its master switch. Off is a state, not a warning (e.6).
+    private var header: some View {
+        AOMPageHeader(headerTitle, module: .audio, subtitle: subtitle,
+                      help: "App Audio sends each app through AOM, so every app gets its own volume, Magic Boost and equalizer. Turned off, audio plays directly and every setting is kept.",
+                      active: service.isSupported && service.soundEnabled) {
+            if service.isSupported {
+                Toggle("App Audio", isOn: $service.soundEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .help(service.soundEnabled ? "Turn off app audio processing" : "Turn on app audio processing")
+                    .accessibilityLabel("App audio processing")
+            }
+        }
+    }
+
+    private var headerTitle: String {
+        guard service.isSupported else { return "Per-app audio isn't available" }
+        return service.soundEnabled ? "App audio is on" : "App audio is off"
+    }
+
     private var subtitle: String {
         guard service.isSupported else { return "Per-app audio needs macOS 14.2 or newer" }
-        guard service.soundEnabled else { return "App audio off — playing directly" }
+        guard service.soundEnabled else { return "Audio plays directly; your app and effect settings are saved." }
         var parts: [String] = []
         let playing = service.apps.filter(\.isPlaying).count
         parts.append(playing == 1 ? "1 app playing" : "\(playing) apps playing")
@@ -45,21 +62,6 @@ struct AudioWorkspaceView: View {
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
-            if service.isSupported {
-                HStack(spacing: 6) {
-                    Text("App Audio").font(AOMType.caption.weight(.medium)).foregroundStyle(AOMTheme.textSecondary)
-                    Toggle("App Audio", isOn: $service.soundEnabled)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                }
-                .padding(.horizontal, 6)
-                .help(service.soundEnabled ? "Turn off app audio processing" : "Turn on app audio processing")
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("App audio processing")
-            }
-        }
         ToolbarItem(placement: .automatic) {
             Menu {
                 Button("Add Application…", systemImage: "plus") { pickAndAddApplication() }
@@ -82,15 +84,11 @@ struct AudioWorkspaceView: View {
 
     // MARK: Notices
 
+    /// Only what needs a decision; App Audio being off is the header's status.
     @ViewBuilder private var notices: some View {
-        if !service.soundEnabled {
-            AOMNotice(.warning, "App audio is off", detail: "Audio plays directly; your app and effect settings are saved.") {
-                Button("Turn On") { service.soundEnabled = true }.aomPrimaryButton().controlSize(.small)
-            }
-        }
         if service.competingMixer != nil && service.soundEnabled {
             AOMNotice(.warning, "SoundSource is also running", detail: "Two mixers can compete for the same audio.") {
-                Button("Quit SoundSource & Reconnect") { service.quitCompetingMixer() }.controlSize(.small)
+                Button("Quit SoundSource & Reconnect") { service.quitCompetingMixer() }
             }
         }
         if service.airPlayRecovering {
@@ -98,7 +96,7 @@ struct AudioWorkspaceView: View {
         }
         if let error = service.lastError, !service.airPlayRecovering {
             AOMNotice(.warning, "Audio needs attention", detail: error) {
-                Button("Reconnect") { service.reconnectAll() }.controlSize(.small)
+                Button("Reconnect") { service.reconnectAll() }
             }
         }
     }

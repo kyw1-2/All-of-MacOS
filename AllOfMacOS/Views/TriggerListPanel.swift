@@ -1223,6 +1223,10 @@ struct TriggerEditorCommands: Commands {
         CommandGroup(before: .textEditing) {
             Button("Search Automations") { editor?.search() }.keyboardShortcut("f", modifiers: .command).disabled(editor == nil)
         }
+        // Controls › Pause AOM and Window › Diagnostics Console / Touch
+        // Visualizer (MainShell.swift); installed here because the app
+        // already lists these commands.
+        AOMShellCommandMenus()
     }
 }
 

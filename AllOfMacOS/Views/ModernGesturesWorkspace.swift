@@ -218,6 +218,7 @@ struct ModernGesturesWorkspace: View {
 
     private var listPane: some View {
         VStack(spacing: 0) {
+            AutomationStatusNotice()
             filterBar
             AOMDivider()
             if rows.isEmpty {
@@ -703,58 +704,45 @@ struct ModernGesturesWorkspace: View {
 
     /// No automations in this scope yet: what can start one, as a short
     /// menu of inputs (Keyboard Maestro's New Macro choices), never a blank page.
+    /// No automations in this scope yet: the d.9 header says so, then one
+    /// section of input kinds to start from (e.5; a chooser rather than one
+    /// button, because the input decides everything that follows).
     private var onboardingView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AOMSpace.m) {
-                VStack(alignment: .leading, spacing: AOMSpace.xs) {
-                    Text("Create the first automation for \(scopeTitle)")
-                        .font(AOMType.title1).tracking(-0.3)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("Choose what starts it, then add the actions it runs. You can change both later.")
-                        .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-                }
-                VStack(spacing: 0) {
-                    let choices: [(TriggerCategory, String, String)] = [
-                        (.trackpad, "Trackpad Gesture", "Swipes, taps, pinches, TipTap and edge slides"),
-                        (.keyboard, "Keyboard Shortcut", "Shortcuts, key sequences and typed words"),
-                        (.normalMouse, "Mouse Button", "Extra buttons and clicks with modifiers"),
-                        (.drawings, "Drawing", "Draw a shape with the pointer to run actions"),
-                        (.otherTriggers, "Other Trigger", "App launch, Wi-Fi, battery, displays and timers")
-                    ]
-                    ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
-                        Button { presentAddTrigger(choice.0) } label: {
-                            HStack(spacing: AOMSpace.s) {
-                                AOMIconBadge(systemImage: choice.0.iconName, tint: GestureVisual.tint(choice.0),
-                                             size: 30, filled: true)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(choice.1).font(AOMType.headline).foregroundStyle(AOMTheme.text)
-                                    Text(choice.2).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                                }
-                                Spacer(minLength: AOMSpace.xs)
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(AOMTheme.textTertiary)
+        AOMPage(maxWidth: AOMSize.readableWidth) {
+            AOMPageHeader("No automations in \(scopeTitle) yet", module: .automation,
+                          subtitle: "Choose what starts one, then add the actions it runs. You can change both later.")
+            AOMSection("Start with",
+                       footer: "\(AOMPaletteShortcut.current(appState.currentPreset).displayString) finds any action, automation or setting.") {
+                let choices: [(TriggerCategory, String, String)] = [
+                    (.trackpad, "Trackpad Gesture", "Swipes, taps, pinches, TipTap and edge slides"),
+                    (.keyboard, "Keyboard Shortcut", "Shortcuts, key sequences and typed words"),
+                    (.normalMouse, "Mouse Button", "Extra buttons and clicks with modifiers"),
+                    (.drawings, "Drawing", "Draw a shape with the pointer to run actions"),
+                    (.otherTriggers, "Other Trigger", "App launch, Wi-Fi, battery, displays and timers")
+                ]
+                ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                    Button { presentAddTrigger(choice.0) } label: {
+                        HStack(spacing: AOMSpace.x3) {
+                            AOMModuleBadge(symbol: choice.0.iconName, hue: AOMModule.automation.hue, size: AOMIcon.tileBadge)
+                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                                Text(choice.1).font(AOMFont.body).foregroundStyle(AOMColor.text)
+                                Text(choice.2).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                             }
-                            .padding(.horizontal, AOMSpace.s)
-                            .frame(minHeight: 54)
-                            .contentShape(Rectangle())
+                            Spacer(minLength: AOMSpace.x2)
+                            Image(systemName: "chevron.right")
+                                .font(AOMFont.caption.weight(.semibold))
+                                .foregroundStyle(AOMColor.textTertiary)
                         }
-                        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.tile))
-                        .accessibilityLabel("\(choice.1): \(choice.2)")
-                        if index < choices.count - 1 { AOMDivider().padding(.leading, 54) }
+                        .padding(.horizontal, AOMSpace.x4)
+                        .frame(minHeight: AOMSize.rowDetail)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(AOMRowButtonStyle(radius: 0))
+                    .accessibilityLabel("\(choice.1): \(choice.2)")
+                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.x4 + AOMIcon.tileBadge + AOMSpace.x3) }
                 }
-                .padding(AOMSpace.xxs)
-                .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
-                Text("Tip: \(AOMPaletteShortcut.current(appState.currentPreset).displayString) finds any action, automation or setting.")
-                    .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
             }
-            .frame(maxWidth: 620, alignment: .leading)
-            .padding(.horizontal, AOMSpace.xl)
-            .padding(.vertical, AOMSpace.l)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(AOMTheme.workspace)
     }
 }
 

@@ -1,16 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// The main window in the macOS arrangement: a system sidebar for the eight
-/// places, the selected page in the detail column with its own contextual
-/// toolbar (title, view switch, search, create), and the optional diagnostics
-/// drawer. Global navigation and page tools no longer share one row.
+/// The main window in the macOS arrangement (d.6–d.8): the system sidebar for
+/// the eight places, the selected page in the detail column with its own
+/// contextual toolbar (title, filter, one primary action), and the optional
+/// diagnostics drawer.
 ///
-/// AOM 3: the shell is the system's. macOS 26+ floats the sidebar as Liquid
-/// Glass over the page and the toolbar picks up the scroll edge effect, so
-/// AOM draws no window material of its own (HIG Sidebars/Toolbars, WWDC25
-/// "Build a SwiftUI app with the new design"). Each page paints its canvas
-/// edge to edge, under the toolbar.
+/// The frame is the system's: macOS 26+ floats the sidebar as Liquid Glass and
+/// the toolbar picks up the automatic scroll edge effect over the one opaque
+/// page canvas, so AOM draws no window material, bar background or footer of
+/// its own. Global controls live where macOS puts them: Pause AOM in the
+/// Workspace hero, the menu-bar extra and Controls › Pause AOM; Settings in
+/// the app menu (⌘,); Diagnostics Console and Touch Visualizer in the Window
+/// menu; Show Welcome Again in Help.
 struct AOMMainShell<Content: View>: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
@@ -41,9 +43,7 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
-            AOMSidebar(showingCommandPalette: $showingCommandPalette,
-                       showLog: $showLog,
-                       showTouchVisualizer: $showTouchVisualizer)
+            AOMSidebar(showingCommandPalette: $showingCommandPalette)
                 .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
                                                 max: AOMSize.sidebarMax)
                 .tutorialAnchor(.sidebar)
@@ -63,7 +63,7 @@ struct AOMMainShell<Content: View>: View {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
-                            .background(AOMTheme.pane)
+                            .background(AOMColor.canvas)
                     }
                 }
                 .overlay(alignment: .trailing) {
@@ -71,9 +71,9 @@ struct AOMMainShell<Content: View>: View {
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
                             .frame(maxHeight: .infinity)
-                            .background(AOMTheme.pane)
+                            .background(AOMColor.raised)
                             .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
-                            .shadow(color: .black.opacity(0.16), radius: 14, x: -3)
+                            .aomElevation(.raised)
                     }
                 }
             }
@@ -89,19 +89,15 @@ struct AOMMainShell<Content: View>: View {
 
 // MARK: - Sidebar
 
-/// Navigation only: search at the top, the six places with live state where
-/// it needs attention (a paused engine, a running recording, paused clipboard
-/// history), and the engine switch with Settings and Help at the bottom.
-/// Scopes, filters and pinboards live inside the page they filter. No brand
-/// block: the window title and toolbar say where you are (HIG Sidebars).
+/// Navigation only (d.6): the search field at the top (the visible way into
+/// ⌘K), then Workspace, Tools and Activity. Badges appear only for states that
+/// aren't normal ("Paused", "Rec", "Off", a count of problems to fix), in the
+/// one status pill. Icons stay the system accent; module hues never appear
+/// here. No footer: global controls moved to the hero and the menus.
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
-    @Binding var showLog: Bool
-    @Binding var showTouchVisualizer: Bool
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -125,15 +121,15 @@ struct AOMSidebar: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top, spacing: 0) { searchButton }
-        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
     private func statusBadge(for tab: AOMMainTab) -> some View {
         switch tab {
+        case .home: AOMWorkspaceSidebarBadge()
         case .gestures:
-            if !appState.globalEnabled { AOMSidebarStatusBadge(text: "Paused", tint: AOMTheme.warning) }
+            if !appState.globalEnabled { AOMSidebarStatusBadge(text: "Paused", tone: .neutral) }
         case .capture: AOMRecordingSidebarBadge()
         case .clipboard: AOMClipboardSidebarBadge()
         case .audio: AOMAudioSidebarBadge()
@@ -146,7 +142,7 @@ struct AOMSidebar: View {
     private func navigationItem(_ tab: AOMMainTab) -> some View {
         HStack(spacing: 0) {
             Label(tab.title, systemImage: tab.sidebarSymbol)
-            Spacer(minLength: 4)
+            Spacer(minLength: AOMSpace.x1)
             statusBadge(for: tab)
         }
         .tag(tab)
@@ -155,77 +151,74 @@ struct AOMSidebar: View {
 
     private var searchButton: some View {
         Button { showingCommandPalette = true } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium))
-                Text("Search").font(AOMType.body)
-                Spacer(minLength: 4)
+            HStack(spacing: AOMSpace.x1 + 2) {
+                Image(systemName: "magnifyingglass").imageScale(.small)
+                Text("Search").font(AOMFont.body)
+                Spacer(minLength: AOMSpace.x1)
                 AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
-            .foregroundStyle(AOMTheme.textSecondary)
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(.quaternary.opacity(contrast == .increased ? 1 : 0.6), in: Capsule())
+            .foregroundStyle(AOMColor.textSecondary)
+            .padding(.horizontal, AOMSpace.x3 - 2)
+            .frame(height: AOMIcon.hitArea)
+            .background(AOMColor.track, in: Capsule())
             .overlay {
-                if contrast == .increased { Capsule().strokeBorder(AOMTheme.textSecondary, lineWidth: 1) }
+                Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
+                                       lineWidth: contrast == .increased ? 1 : 0.5)
             }
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .help("Search commands, automations, clipboard and captures")
+        .padding(.horizontal, AOMSpace.x3 - 2)
+        .padding(.top, AOMSpace.x1 + 2)
+        .padding(.bottom, AOMSpace.x2)
+        .help("Search pages, settings and actions")
         .accessibilityLabel("Search")
     }
+}
 
-    private var footer: some View {
-        let on = appState.globalEnabled
-        return HStack(spacing: AOMSpace.xs) {
-            // A shape as well as a colour: a paused engine shows a pause glyph
-            // when Differentiate Without Color is on.
-            Group {
-                if differentiateWithoutColor {
-                    Image(systemName: on ? "circle.fill" : "pause.circle.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(on ? AOMTheme.positive : AOMTheme.warning)
-                } else {
-                    Circle()
-                        .fill(on ? AOMTheme.positive : AOMTheme.warning)
-                        .frame(width: 7, height: 7)
-                }
-            }
-            .accessibilityHidden(true)
-            Text(on ? "Automation On" : "Automation Paused")
-                .font(AOMType.caption.weight(.medium))
-                .foregroundStyle(AOMTheme.textSecondary)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Toggle("Automation", isOn: Binding(get: { appState.globalEnabled },
-                                               set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .accessibilityLabel("Automation engine")
-                .help(on ? "Pause every gesture and shortcut" : "Resume automation")
-            Menu {
-                Button("Settings…") { openSettings() }
-                    .keyboardShortcut(",", modifiers: .command)
-                Divider()
-                Toggle("Diagnostics Console", isOn: $showLog)
-                Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
-                Divider()
-                Button("Show Welcome Again") { appState.showTutorialRequested = true }
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Settings, diagnostics and help")
-            .accessibilityLabel("Settings and Help")
+// MARK: - Menu commands for the shell
+
+/// What the main window offers to the menu bar: the master switch and the
+/// diagnostics drawer. Published by `MainWindow` as a focused scene value and
+/// read by `AOMShellCommandMenus` (inside `TriggerEditorCommands`, which the
+/// app already installs).
+struct AOMShellCommandActions {
+    var engineOn: Bool
+    var toggleEngine: () -> Void
+    var showLog: Bool
+    var setShowLog: (Bool) -> Void
+    var showTouchVisualizer: Bool
+    var setShowTouchVisualizer: (Bool) -> Void
+}
+
+private struct AOMShellCommandsKey: FocusedValueKey { typealias Value = AOMShellCommandActions }
+
+extension FocusedValues {
+    var aomShellCommands: AOMShellCommandActions? {
+        get { self[AOMShellCommandsKey.self] }
+        set { self[AOMShellCommandsKey.self] = newValue }
+    }
+}
+
+/// Controls › Pause AOM / Resume AOM, and Window › Diagnostics Console and
+/// Touch Visualizer (these moved out of the sidebar footer).
+struct AOMShellCommandMenus: Commands {
+    @FocusedValue(\.aomShellCommands) private var shell
+
+    var body: some Commands {
+        CommandMenu("Controls") {
+            Button(shell?.engineOn == false ? "Resume AOM" : "Pause AOM") { shell?.toggleEngine() }
+                .disabled(shell == nil)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Toggle("Diagnostics Console", isOn: Binding(get: { shell?.showLog ?? false },
+                                                        set: { shell?.setShowLog($0) }))
+                .disabled(shell == nil)
+            Toggle("Touch Visualizer", isOn: Binding(get: { shell?.showTouchVisualizer ?? false },
+                                                     set: { shell?.setShowTouchVisualizer($0) }))
+                .disabled(shell == nil)
+        }
     }
 }
 
@@ -273,42 +266,69 @@ enum AOMPaletteShortcut {
     }
 }
 
+// MARK: - Sidebar badges
+
 // Only the small status badge observes recording ticks/clipboard updates.
 // Navigation selection and the full List no longer redraw for these events.
+
+/// A sidebar badge: the one status pill.
 private struct AOMSidebarStatusBadge: View {
     let text: String
-    let tint: Color
-    @Environment(\.colorSchemeContrast) private var contrast
+    var tone: AOMTone = .neutral
+    var symbol: String?
+
     var body: some View {
-        Text(text).font(.caption2.weight(.semibold)).foregroundStyle(tint)
-            .padding(.horizontal, 6).frame(height: 16)
-            .background(tint.opacity(contrast == .increased ? 0.26 : 0.14), in: Capsule())
-            .overlay { if contrast == .increased { Capsule().strokeBorder(tint, lineWidth: 1) } }
-            .accessibilityLabel(text)
+        AOMStatusPill(text, tone: tone, symbol: symbol)
     }
 }
+
+/// Workspace: the number of problems that need fixing now (missing
+/// permissions), polled like the Workspace hero does.
+private struct AOMWorkspaceSidebarBadge: View {
+    @State private var missing = 0
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if missing > 0 {
+                AOMSidebarStatusBadge(text: "\(missing)", tone: .warning, symbol: "exclamationmark.triangle.fill")
+                    .accessibilityLabel("\(missing) to fix")
+                    .help(missing == 1 ? "1 permission needs your attention" : "\(missing) permissions need your attention")
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                let count = AOMPermission.required.filter { [.denied, .notDetermined].contains($0.status) }.count
+                if count != missing { missing = count }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+}
+
 private struct AOMRecordingSidebarBadge: View {
     @ObservedObject private var recording = ScreenRecordingService.shared
     var body: some View {
         if recording.isRecording {
-            AOMSidebarStatusBadge(text: recording.isPaused ? "Paused" : "REC", tint: AOMTheme.danger)
+            AOMSidebarStatusBadge(text: recording.isPaused ? "Paused" : "Rec", tone: .recording)
         }
     }
 }
+
 private struct AOMClipboardSidebarBadge: View {
     @ObservedObject private var clipboard = ClipboardStore.shared
     var body: some View {
-        if clipboard.paused { AOMSidebarStatusBadge(text: "Paused", tint: AOMTheme.warning) }
+        if clipboard.paused { AOMSidebarStatusBadge(text: "Paused", tone: .neutral) }
     }
 }
+
 private struct AOMAudioSidebarBadge: View {
     @ObservedObject private var audio = AppAudioMixerService.shared
     var body: some View {
-        if !audio.soundEnabled { AOMSidebarStatusBadge(text: "Off", tint: AOMTheme.textSecondary) }
-        else if audio.airPlayBypassed { AOMSidebarStatusBadge(text: "Direct", tint: AOMTheme.textSecondary) }
-        else if audio.airPlayProcessingActive { AOMSidebarStatusBadge(text: "AirPlay FX", tint: AOMTheme.positive) }
+        if !audio.soundEnabled { AOMSidebarStatusBadge(text: "Off", tone: .neutral) }
+        else if audio.airPlayBypassed { AOMSidebarStatusBadge(text: "Direct", tone: .neutral) }
+        else if audio.airPlayProcessingActive { AOMSidebarStatusBadge(text: "AirPlay", tone: .success) }
         else if audio.eqEnabled || audio.allAppsBoostEnabled {
-            AOMSidebarStatusBadge(text: "FX", tint: AOMTheme.positive)
+            AOMSidebarStatusBadge(text: "Effects", tone: .success)
         }
     }
 }
