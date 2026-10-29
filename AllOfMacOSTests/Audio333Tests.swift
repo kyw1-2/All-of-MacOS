@@ -209,4 +209,146 @@ final class Audio333Tests: XCTestCase {
         XCTAssertGreaterThan(cost.callbacks, 2000)
         XCTAssertNotNil(stats["renderCycleLoadPercent"] as? Double)
     }
+
+    // MARK: - A02: output moves
+
+    private func capture(_ transport: AppAudioTransport, phase: inout Double, frames: Int, frequency: Double = 440) {
+        var packet = [Float](repeating: 0, count: frames * 2)
+        for frame in 0..<frames {
+            let value = Float(0.5 * sin(phase))
+            packet[frame * 2] = value; packet[frame * 2 + 1] = value
+            phase += 2 * .pi * frequency / 48000
+        }
+        packet.withUnsafeMutableBufferPointer { pointer in
+            var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                mNumberChannels: 2, mDataByteSize: UInt32(pointer.count * 4), mData: pointer.baseAddress))
+            withUnsafePointer(to: &list) { transport.capture($0) }
+        }
+    }
+
+    private func pull(_ transport: AppAudioTransport, _ mixer: MixerBox, frames: Int, consumer: UInt64) -> [Float] {
+        var output = [Float](repeating: 0, count: frames * 2)
+        output.withUnsafeMutableBufferPointer { pointer in
+            var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(
+                mNumberChannels: 2, mDataByteSize: UInt32(pointer.count * 4), mData: pointer.baseAddress))
+            withUnsafeMutablePointer(to: &list) {
+                transport.render(frames: frames, output: $0, mixer: mixer, allowWaiting: true, consumer: consumer)
+            }
+        }
+        return output
+    }
+
+    private func pulled(_ transport: AppAudioTransport) -> UInt64 { transport.statistics["pulledFrames"] as? UInt64 ?? 0 }
+
+    /// An app moves from output A (512-frame callbacks) to output B (480).
+    /// Only one of them pulls at any time: A renders to the end of a 5 ms
+    /// fade-out and stops, B continues with the next frame, fading in. A
+    /// reference transport replays exactly the pulls that happened with one
+    /// consumer: outside the two fades the moved stream is that stream sample
+    /// for sample, so nothing was pulled twice, skipped or run through the
+    /// DSP twice.
+    func testAnOutputMoveHandsTheStreamOverWithoutPullingTwice() {
+        let moved = AppAudioTransport(sampleRate: 48000), reference = AppAudioTransport(sampleRate: 48000)
+        let movedMixer = MixerBox(gain: 1, muted: false), referenceMixer = MixerBox(gain: 1, muted: false)
+        let a: UInt64 = 0, b = moved.makeConsumer()
+        let fade = AppAudioTransport.handoverFadeFrames
+        var phaseM = 0.0, phaseR = 0.0
+        var nextCapture = 0.0, nextA = 0.3 * 512 / 48000, nextB = 0.7 * 480 / 48000
+        var handoverRequested = false
+        var pullers: [UInt64] = []
+        var aLastPull: (out: [Float], ref: [Float], frames: Int)?
+        var bFirstPull: (out: [Float], ref: [Float])?
+        var exactMismatches = 0, silentCallsWithAudio = 0
+        while min(nextCapture, nextA, nextB) < 2 {
+            if nextCapture <= min(nextA, nextB) {
+                capture(moved, phase: &phaseM, frames: 512)
+                capture(reference, phase: &phaseR, frames: 512)
+                nextCapture += 512.0 / 48000
+                continue
+            }
+            let isA = nextA <= nextB
+            let now = isA ? nextA : nextB
+            if isA { nextA += 512.0 / 48000 } else { nextB += 480.0 / 48000 }
+            if now >= 1, !handoverRequested { moved.beginHandover(to: b); handoverRequested = true }
+            let consumer = isA ? a : b
+            let before = pulled(moved)
+            let out = pull(moved, movedMixer, frames: isA ? 512 : 480, consumer: consumer)
+            let count = Int(pulled(moved) - before)
+            guard count > 0 else {
+                if out.contains(where: { $0 != 0 }) { silentCallsWithAudio += 1 }
+                continue
+            }
+            let ref = pull(reference, referenceMixer, frames: count, consumer: 0)
+            XCTAssertTrue(out[(count * 2)...].allSatisfy { $0 == 0 }, "nothing after what was pulled")
+            pullers.append(consumer)
+            if isA, count < 512 {
+                aLastPull = (Array(out[..<(count * 2)]), ref, count)
+            } else if !isA, bFirstPull == nil {
+                bFirstPull = (Array(out[..<(count * 2)]), ref)
+                if Array(out[(fade * 2)..<(count * 2)]) != Array(ref[(fade * 2)...]) { exactMismatches += 1 }
+            } else if Array(out[..<(count * 2)]) != ref {
+                exactMismatches += 1
+            }
+        }
+        // One switch, A to B, never both.
+        let switches = zip(pullers, pullers.dropFirst()).filter { $0 != $1 }.count
+        XCTAssertEqual(switches, 1, "the stream has one owner at a time")
+        XCTAssertEqual(pullers.first, a); XCTAssertEqual(pullers.last, b)
+        XCTAssertEqual(silentCallsWithAudio, 0, "a consumer that does not pull is silent")
+        XCTAssertEqual(exactMismatches, 0, "outside the fades the stream is the single-consumer stream")
+        XCTAssertEqual(pulled(moved), pulled(reference), "nothing was pulled twice")
+        let state = moved.handoverState
+        XCTAssertEqual(state.owner, b); XCTAssertEqual(state.pending, 0)
+        XCTAssertEqual(state.completed, 1); XCTAssertEqual(state.takeovers, 0)
+        // A's last pull is exactly its fade-out; B's first one fades in.
+        guard let last = aLastPull, let first = bFirstPull else { return XCTFail("no hand-over happened") }
+        XCTAssertEqual(last.frames, fade)
+        var gain: Float = 1
+        for frame in 0..<fade {
+            let out = last.out[frame * 2], ref = last.ref[frame * 2]
+            XCTAssertLessThanOrEqual(abs(out), abs(ref) + 1e-6)
+            if abs(ref) > 0.05 { XCTAssertLessThanOrEqual(out / ref, gain + 1e-4); gain = out / ref }
+        }
+        XCTAssertLessThan(abs(last.out[(fade - 1) * 2]), 0.001, "A ends in silence")
+        XCTAssertLessThan(abs(first.out[0]), 0.001, "B starts from silence")
+        gain = 0
+        for frame in 0..<fade {
+            let out = first.out[frame * 2], ref = first.ref[frame * 2]
+            XCTAssertLessThanOrEqual(abs(out), abs(ref) + 1e-6)
+            if abs(ref) > 0.05 { XCTAssertGreaterThanOrEqual(out / ref, gain - 1e-4); gain = out / ref }
+        }
+        // And A, still called by its bus for a moment, stays silent.
+        let after = pulled(moved)
+        XCTAssertTrue(pull(moved, movedMixer, frames: 512, consumer: a).allSatisfy { $0 == 0 })
+        XCTAssertEqual(pulled(moved), after)
+    }
+
+    /// The old output stopped rendering (its device went away): the new one
+    /// does not wait for a fade-out that cannot come. Within the timeout it
+    /// stays silent and pulls nothing; then it takes over, from silence.
+    func testAMoveAwayFromAStoppedOutputTakesOverAfterTheTimeout() {
+        let transport = AppAudioTransport(sampleRate: 48000)
+        let mixer = MixerBox(gain: 1, muted: false)
+        var phase = 0.0
+        for _ in 0..<60 {
+            capture(transport, phase: &phase, frames: 512)
+            _ = pull(transport, mixer, frames: 512, consumer: 0)
+        }
+        let b = transport.makeConsumer()
+        transport.beginHandover(to: b)
+        capture(transport, phase: &phase, frames: 512)
+        let before = pulled(transport)
+        XCTAssertTrue(pull(transport, mixer, frames: 480, consumer: b).allSatisfy { $0 == 0 }, "A may still fade out")
+        XCTAssertEqual(pulled(transport), before)
+        usleep(UInt32(AppAudioTransport.handoverTimeout * 1_000_000) + 30_000)
+        capture(transport, phase: &phase, frames: 512)
+        let out = pull(transport, mixer, frames: 480, consumer: b)
+        XCTAssertEqual(pulled(transport), before + 480, "B took over")
+        XCTAssertLessThan(abs(out[0]), 0.001, "from silence")
+        XCTAssertGreaterThan(out[(300 * 2)...].map { abs($0) }.max() ?? 0, 0.3, "and plays the stream")
+        let state = transport.handoverState
+        XCTAssertEqual(state.owner, b); XCTAssertEqual(state.takeovers, 1); XCTAssertEqual(state.completed, 0)
+        XCTAssertTrue(pull(transport, mixer, frames: 512, consumer: 0).allSatisfy { $0 == 0 }, "A, back late, is silent")
+        XCTAssertEqual(pulled(transport), before + 480)
+    }
 }

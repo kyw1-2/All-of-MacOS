@@ -1221,9 +1221,15 @@ final class AppAudioEngine {
         // Bridge, don't break: the new source is added before the old one is
         // removed. A failed add must leave the session playing through its
         // existing output — losing the device is what pauses every player.
+        // 3.3.3 (A02): the new output renders as its own consumer and gets
+        // the stream once the old one has faded out (no frame pulled twice,
+        // one DSP state; see AppAudioTransport.beginHandover).
+        let consumer = transport.makeConsumer()
         guard let source = MainActor.assumeIsolated({ SharedOutputRenderer.shared.addSource(
             uid: device.uid, device: device,
-            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay) }) }) else { return false }
+            render: { transport.render(frames: $0, output: $1, mixer: mixer, allowWaiting: isAirPlay,
+                                       consumer: consumer) }) }) else { return false }
+        transport.beginHandover(to: consumer)
         if let old = session.sourceToken {
             MainActor.assumeIsolated { SharedOutputRenderer.shared.removeSource(old) }
         }

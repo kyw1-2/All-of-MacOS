@@ -66,6 +66,11 @@ final class AudioAtomicCounter {
         while !storage.exchange(expected: old, desired: 0) { old = load() }
         return old
     }
+    /// Stores `desired` only if the value is still `expected`.
+    @discardableResult
+    func compareExchange(expected: UInt64, desired: UInt64) -> Bool {
+        storage.exchange(expected: expected, desired: desired)
+    }
 }
 
 /// Band-limited interpolation prototype (J. O. Smith's bandlimited
