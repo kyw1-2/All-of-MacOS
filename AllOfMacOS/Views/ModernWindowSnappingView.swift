@@ -367,8 +367,19 @@ struct ModernWindowSnappingView: View {
 
     // MARK: - Dock & menu bar
 
+    /// Why the 3.3.3 Dock and menu-bar options (`SwishDockMenuBarExtraRows`)
+    /// are dimmed, if they are.
+    private var dockFooter: String? {
+        switch (dockGestures, menuBarGestures) {
+        case (true, true): return nil
+        case (false, true): return "Turn on Dock gestures to use the Dock options."
+        case (true, false): return "Turn on Menu-bar gestures to use the menu-bar options."
+        case (false, false): return "Turn on Dock gestures and Menu-bar gestures to use their options."
+        }
+    }
+
     private var dockSection: some View {
-        AOMSection("Dock & menu bar") {
+        AOMSection("Dock & menu bar", footer: dockFooter) {
             AOMSettingRow("Top-bar Space swipe", detail: "Two fingers on the menu bar switch Spaces") {
                 Toggle("Top-bar Space swipe", isOn: $topBarSpaceSwipe)
             }
@@ -387,6 +398,9 @@ struct ModernWindowSnappingView: View {
                 Toggle("Menu-bar gestures", isOn: $menuBarGestures)
             }
             .help("Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.")
+            // 3.3.3: Dock pinch twice, the app's menu, scroll to top, the
+            // tap-hold-scroll switcher and Mission Control gestures.
+            SwishDockMenuBarExtraRows()
         }
     }
 
