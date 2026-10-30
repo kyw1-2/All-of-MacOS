@@ -1,3 +1,46 @@
+## 3.3.4 (2026-10-30)
+
+Fixes for the 3.3.3 re-audit of 2026-10-30 (N333-01 to N333-08), a title-bar swipe up that took the top half instead of maximizing, the HomePod crackle in boosted passages, and a denser main window. docs/release-3.3.4-audit-resolution.md maps every re-audit ID to its commit and tests; docs/window-snap-3.3.4.md and the 3.3.4 addendum of docs/airplay-crackle-3.3.2.md have the details. Nothing below was tried on a real trackpad or listened to on a HomePod.
+
+Tests: only the tests that had failed and the new or changed ones were run; tests that had passed were not re-run. The re-audit's independent tests (copied verbatim): the 4 that failed on 3.3.3 pass. Runs: 71 tests (those 4 and 67 new N333 tests), 22 (20 new swipe-up tests and the 2 existing tests whose expectations changed) and 6 new AirPlay gain-staging tests, 0 failures, 0 skipped. The audio work also re-ran 9 existing tests that pin Magic Boost's Music reference output, because the change touches it; all passed.
+
+### Re-audit fixes
+
+- Fixed (N333-01, P1): MCP `read_item`, search and `copy_to_clipboard` withhold credentials under quoted keys (`{"password": "…"}`, YAML `'token': '…'`, TOML, escaped JSON inside strings, camelCase names such as `accessToken`), and JSON up to 2 MiB is also read key by key. Placeholders (`***`, `<redacted>`, `null`) and schemas stay readable.
+- Fixed (N333-02, P1): the Audio Unit effect hand-off uses hazard pointers, so the render thread never adopts a host a control thread has released (forced interleavings in tests).
+- Fixed (N333-03): a suggestion request, the model look and the paste log ask the privacy decision again when their work lands; an app excluded, secure input turned on or the feature turned off meanwhile gets `[]`.
+- Fixed (N333-04): only a successful continuous write (MIDI, pressure, scroll bindings) counts as written, a failed one is retried once, and system volume is cached per output device.
+- Fixed (N333-05): tab detach stops when the tab cannot be selected and re-checks the tab and its window right before Move Tab to New Window.
+- Fixed (N333-06): a snap that lands after a pause, a lock or a target change keeps its history but runs no haptic, activation, pointer move or queued motion; `bringForward` checks the pause itself.
+- Fixed (N333-07, B05): Reset Preferences resets every AOM preference (`PreferenceResetRegistry`) and its alert says what is kept.
+- Fixed (N333-08, B07): your two-finger triggers stay quiet on touches the Dock, menu-bar and Mission Control gestures own.
+
+### Swish title bar
+
+- A swipe up maximizes at any length or speed, through the lift slide and a multi-motion pause; with ⇧ it almost-maximizes. The longer-swipe tier no longer applies to up, so the preview, tooltip and haptic say Maximize throughout.
+- A large free window flush with a corner or an edge is no longer read as the quarter or half it only overflows when you swipe up (that reading made a top half or a top quarter); down and diagonal swipes keep it.
+- The top half is Swish's double swipe up: swipe up again on the maximized window within 0.5 s (`SwishSnap.doubleSwipeWindow`).
+
+### HomePod / AirPlay
+
+- AirPlay outputs run Magic Boost → a 10 ms lookahead leveler → the −1 dBTP limiter. Boosted clicks and consonants made the 1.3 ms limiter take 5–8 dB in runs (the live log matched the "10 s" crackle); now the limiter stays at 0 dB on the test material and the distortion residual is 6–8 dB lower. AirPlay latency grows by 10.7 ms; local outputs are unchanged.
+- Magic Boost no longer lifts near-silent audio (under −60 dBFS) by up to +34 dB over 10 s.
+- Limiter and leveler events carry the input peak, the apps' summed peak and the other stage's reduction.
+
+### Main window
+
+- Type: no 26 pt hero; page and hero sentences 15–17 pt semibold, section titles 13 pt semibold, tile values 13 pt.
+- Density: page margin 16, section gap 20, card padding 12, tile gap 8, rows 32/40/44 pt; the Workspace hero is one or two lines (about 48–63 pt), module tiles 76 pt in System Settings' row layout, Needs attention and Recent activity rows 32 pt, compact quick actions.
+- Window Tiling: the switches are the first rows of their sections, one footer instead of five, one ⓘ per section, fewer restating details, Snap Zones, Saved Windows and Always on Top sheets with one header pattern.
+- Capture and Clipboard: one-line capture cards and filter row, one settings sheet with Done at the top, no row symbols in capture settings, sentence case, two footers in clipboard settings.
+- Audio, System Tools, Insights: one-line device rows with 20 pt glyphs, aligned value and label columns, no per-band EQ reset links, one System Tools card of row-height tiles, Insights without empty "—" details.
+- Settings, ⌘K palette, What's New, tour: Settings rows use the page geometry and names (with the old names still searchable), one value-label width, smaller palette search row, What's New sized to its content, the tour lists all six tools.
+
+### Not done / needs hardware check
+
+- Not done: sanitizer (ASan/TSan) runs for N333-02; withdrawing suggestions already shown when the policy changes later; arbitration when a user trigger ran before a utility gesture in the same touch; the HAL's 128-frame gaps on the HomePod; unused `TriggerListPanel` code.
+- Needs a hardware check: swipe up and the double swipe on a real trackpad; tab detach in Finder, Preview and Safari with Korean and Japanese menus; the Dock and menu-bar trigger ownership; 20 minutes per state on the HomePod with diagnostics on; the denser layout at the 980 pt minimum window width.
+
 ## 3.3.3 (2026-10-30)
 
 Fixes for the three 3.3.2 audit reports of 2026-10-29 (the main report, the Swish REA comparison, and the Swish deep report with its CleanShot X, BetterTouchTool and Paste appendix), and a redesign of the main window. docs/release-3.3.3-audit-resolution.md maps every audit ID to its fix or says why it is open; docs/window-snap-3.3.3.md has the gesture details. Backups cover every new setting; the audio diagnostics reset request and the recording camera and microphone stay out on purpose. Nothing below was tried on a real trackpad, MIDI controller, HomePod or in a real recording; the last section lists what still needs that.

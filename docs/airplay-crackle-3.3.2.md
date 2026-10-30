@@ -176,3 +176,60 @@ Run the 3.3.2 test above with diagnostics on. In addition:
   reset button or automation action (the API exists).
 - App queues (tap to mix clock) have the same block sawtooth; their drift loop did not get
   `levelBias` (expected to be inaudible, not measured live).
+
+## 3.3.4 addendum
+
+Report: "AirPlay sometimes crackles for about 10 seconds." Code: 4f64788 (`AudioLookaheadLeveler`,
+`AppAudioRenderBus.network()`, the Magic Boost floor, dynamics readings in events); tests in
+`AllOfMacOSTests/N334AirPlayGainStagingTests.swift` (synthetic signals).
+
+### Live evidence, 2026-10-30 (3.3.3 installed, diagnostics on, music and video playing)
+
+- AOM's own path was clean: 0 underruns, trims, clears and drops in the bridge and the app queues;
+  the mix thread realtime at priority 97 with no late wakes; render cost about 21 µs of 2,667 µs.
+- HAL cycle gaps at the HomePod's fixed 128-frame IO: about 20–28 in 8–10 h, 4–12 ms each, never
+  two within about 70 s; about half followed a gPTP clock-master change within 1.5 s. Single
+  clicks, already faded back in; not 10 s episodes.
+- The receiver reported one glitch in about 6 h, at a Wi-Fi latency spike with AWDL at 21–22 % duty
+  and iPhone Continuity activity (network side).
+- The network bus limiter engaged constantly: in one hour 94 engage/release pairs, each 2–4 s
+  including the 2 s release hold, up to 6.45 dB, in runs of 5–12 s. This matched "about 10 s".
+
+### Cause (reproduced with synthetic signals)
+
+Output Magic Boost lifts a quiet passage (gain 3–20). Its attack acts only on the samples over its
+threshold, so a click, a consonant or a rim shot (well under a millisecond) passes with most of
+that gain. The network limiter (1.3 ms lookahead) then took 5.5–7.9 dB off each and modulated the
+bass under it: grit for as long as such a passage lasted. Hot (+6 dBFS) or summed sources gave at
+most about 1.6 dB; with Magic Boost off, 0 dB.
+
+Magic Boost also lifted near-silent (not digital-zero) audio by +26/+33/+34 dB after 5/10/15 s, so
+noise in a quiet passage rose for about 10 s.
+
+### What 3.3.4 changes
+
+- AirPlay buses (`AppAudioRenderBus.network()`): Magic Boost → leveler → −1 dBTP limiter. The
+  leveler is the limiter's design over a 10 ms window (true-peak detection, the minimum required
+  gain over the window smoothed inside it), with a program-dependent release (0.5 s after a lone
+  peak, 1.5 s after a run) and a target 0.1 dB under where the limiter starts. AirPlay latency
+  grows by 10.7 ms. Local outputs keep Magic Boost → limiter, sample for sample.
+- Magic Boost floor (all outputs, per-app too): a block whose peak is under −60 dBFS releases like
+  digital silence (×0.01). At or above −60 dBFS, and exact zeros, behave as before.
+- Events: each limiter or leveler event carries the stage's input peak, the apps' summed peak, the
+  other stage's reduction and the episode length (`inputPeakDBFS`, `appsPeakDBFS`,
+  `levelerDB`/`limiterDB`, `durationMS`); new kinds `levelerEngaged`/`levelerReleased`.
+
+Measured (3.3.3 → 3.3.4): limiter maximum on hits over a −30 dBFS bed 5.52 → 0.00 dB, clicks
+12.90 → 0.00, speech 3.98 → 0.00; the distortion residual after a 10 ms gain match 5.8–8.1 dB
+lower; output true peak at or under −1.06 dBTP; −66 dBFS noise lifted +4.0 dB after 15 s instead of
++34. Trade-off: the level is held down more often, more smoothly.
+
+### Still open
+
+- Not listened to on the HomePod. The isolated HAL gaps (128-frame IO the device keeps) and
+  network-side glitches remain outside AOM.
+- If an episode remains: note its time and read `events` within a second of it. `levelerEngaged`
+  with a low `appsPeakDBFS` means Magic Boost lifting transients (turn Magic Boost off for the
+  HomePod to remove it entirely); `limiterEngaged` means the leveler missed; `cycleGap`/`overload`
+  is the HAL; nothing from AOM is the network or the receiver (AirDrop "Receiving Off", Handoff and
+  Continuity Camera off while streaming, the Mac on 5 GHz near the router).
