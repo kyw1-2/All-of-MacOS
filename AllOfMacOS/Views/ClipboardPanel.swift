@@ -2165,8 +2165,10 @@ private struct ClipboardCardView: View, Equatable {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                VStack(alignment: .leading, spacing: 1) {
+            // One header line (3.3.5, was the kind over the time): the kind,
+            // then the time, then the source app's icon at the trailing edge.
+            HStack(alignment: .center, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1) {
                     if isEditingTitle {
                         TextField("Title", text: $editedTitle)
                             .textFieldStyle(.plain).focused($titleFocused)
@@ -2187,14 +2189,15 @@ private struct ClipboardCardView: View, Equatable {
                     // "16 minutes ago", refreshed while the shelf is open.
                     TimelineView(.everyMinute) { context in
                         Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date))
-                            .font(compact ? AOMFont.badge : AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                            .font(compact ? AOMFont.badge : AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                     }
                 }
-                .padding(.leading, AOMSpace.x3).padding(.top, compact ? AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x2)
-                Spacer(minLength: compact ? AOMSpace.x8 + AOMSpace.x1 + AOMSpace.x0_5 : AOMSize.rowDetail)
+                .padding(.leading, compact ? AOMSpace.x2 : AOMSpace.x3)
+                // Room for the app icon drawn over the trailing edge.
+                Spacer(minLength: AOMIcon.row + AOMSpace.x4)
             }
             .foregroundStyle(AOMColor.text)
-            .frame(height: compact ? AOMSpace.x8 + AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x10 + AOMSpace.x0_5, alignment: .top)
+            .frame(height: compact ? ShelfCardMetrics.headerCompact : ShelfCardMetrics.header)
             .background(AOMColor.sunken)
             .overlay(alignment: .trailing) {
                 if let appIcon {
@@ -3306,4 +3309,10 @@ enum ClipboardRelativeDate {
         if seconds < 60 { return String(localized: "Just now") }
         return formatter.localizedString(for: min(date, now), relativeTo: now)
     }
+}
+
+/// The shelf card's header strip: one line (3.3.5, was 38 / 42 pt for two).
+private enum ShelfCardMetrics {
+    static let header: CGFloat = 28
+    static let headerCompact: CGFloat = 24
 }
