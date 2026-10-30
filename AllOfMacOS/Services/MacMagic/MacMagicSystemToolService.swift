@@ -18,6 +18,10 @@ enum SystemToolError: LocalizedError, Equatable {
     case trashNotReadable
     /// A Finder preference could not be written.
     case finderSettingNotSaved(String)
+    /// A Dock, screenshot or global preference could not be written.
+    case settingNotSaved(String)
+    /// The tool needs input it didn't get (an empty clipboard, a bad port).
+    case invalidInput(String)
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +32,10 @@ enum SystemToolError: LocalizedError, Equatable {
             return "macOS doesn't let All of MacOS read the Trash. Turn on All of MacOS in System Settings › Privacy & Security › Full Disk Access, or empty the Trash in Finder."
         case .finderSettingNotSaved(let key):
             return "Finder's \(key) setting could not be changed, so nothing was toggled."
+        case .settingNotSaved(let key):
+            return "The \(key) setting could not be changed, so nothing was changed."
+        case .invalidInput(let message):
+            return message
         }
     }
 
