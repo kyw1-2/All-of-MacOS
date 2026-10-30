@@ -740,6 +740,30 @@ final class ClipboardIntelligence {
         !context.blocksSuggestions && (context.kind == .unknown || context.source == .appCategory)
     }
 
+    /// The privacy decision for a destination, from the current state:
+    /// Intelligent Clipboard is on, the app is not excluded and secure
+    /// keyboard entry is off (audit PA-01, PA-02). `nil` means allowed;
+    /// otherwise the context to record, built from nothing that was read.
+    private func refusal(for bundleID: String?, store: ClipboardStore) -> ClipboardDestinationContext? {
+        guard isEnabled else { return ClipboardDestinationContext() }
+        let verdict = ClipboardPrivacyGate.suggestions(destinationBundleID: bundleID, settings: store.settings,
+                                                       secureInput: secureInputProbe())
+        return verdict == .allowed ? nil : ClipboardPrivacyGate.blockedContext(verdict, bundleID: bundleID)
+    }
+
+    /// `refusal(for:store:)` for work already under way, asked again right
+    /// before it publishes suggestions and at every step of the window look
+    /// (audit 2026-10-30, N333-03). The feature may have been turned off,
+    /// the app excluded or secure input turned on since the work began. The
+    /// excluded-app list must also still be the one the work ranked with:
+    /// an app excluded meanwhile may be the source of an item, or of paste
+    /// history, in the result.
+    func pendingRefusal(for bundleID: String?, store: ClipboardStore,
+                        rankedWith excluded: Set<String>) -> ClipboardDestinationContext? {
+        if let refused = refusal(for: bundleID, store: store) { return refused }
+        return store.settings.excludedBundleIDs == excluded ? nil : ClipboardDestinationContext(bundleID: bundleID)
+    }
+
     func suggestionsAsync(for destination: NSRunningApplication?, store: ClipboardStore,
                           update: @escaping @MainActor ([UUID]) -> Void) {
         suggestionsAsync(for: ClipboardSuggestionTarget(destination), store: store, update: update)
@@ -747,20 +771,20 @@ final class ClipboardIntelligence {
 
     /// Suggestions computed entirely off the main thread (Accessibility IPC,
     /// classification, ranking). `update` runs on the main actor with the
-    /// result; a newer request supersedes an older one.
+    /// result; a newer request supersedes an older one, which then never
+    /// calls `update` because its successor answers instead.
     ///
     /// The privacy gate runs first, on the main actor: an excluded app or
     /// secure keyboard entry ends the request before the destination is read
-    /// through Accessibility or the screen (audit PA-01, PA-02).
+    /// through Accessibility or the screen (audit PA-01, PA-02). It runs
+    /// again before every answer (N333-03): a request the current policy
+    /// refuses answers `[]`.
     func suggestionsAsync(for target: ClipboardSuggestionTarget?, store: ClipboardStore,
                           update: @escaping @MainActor ([UUID]) -> Void) {
         suggestionGeneration &+= 1
         let generation = suggestionGeneration
-        guard isEnabled else { lastContext = .init(); update([]); return }
-        let verdict = ClipboardPrivacyGate.suggestions(destinationBundleID: target?.bundleID, settings: store.settings,
-                                                       secureInput: secureInputProbe())
-        guard verdict == .allowed else {
-            lastContext = ClipboardPrivacyGate.blockedContext(verdict, bundleID: target?.bundleID)
+        if let refused = refusal(for: target?.bundleID, store: store) {
+            lastContext = refused
             update([])
             return
         }
@@ -790,22 +814,41 @@ final class ClipboardIntelligence {
                 MainActor.assumeIsolated { [weak self] in
                     guard let self else { return }
                     for (id, value) in computed { self.classCache[id] = value }
+                    // Superseded: the newer request answers instead.
                     guard generation == self.suggestionGeneration else { return }
+                    // Ranked with the policy of the request's start. If the
+                    // policy now refuses it, publish nothing it computed.
+                    if let refused = self.pendingRefusal(for: bundleID, store: store, rankedWith: excluded) {
+                        self.lastContext = refused
+                        update([])
+                        return
+                    }
                     self.lastContext = context
                     update(ids)
                     if wantsModel, Self.allowsScreenRefinement(context) {
                         Task { @MainActor [weak self] in
                             // Re-checked at each step: focus may have moved to a
-                            // password field, or the app list may have changed.
+                            // password field, the app list may have changed, or
+                            // the feature or the window look may have been turned off.
                             let stillAllowed: @MainActor () -> Bool = { [weak self] in
-                                guard let self, generation == self.suggestionGeneration else { return false }
-                                return ClipboardPrivacyGate.suggestions(destinationBundleID: bundleID, settings: store.settings,
-                                                                        secureInput: self.secureInputProbe()) == .allowed
+                                guard let self, generation == self.suggestionGeneration,
+                                      self.readsDestinationScreen else { return false }
+                                return self.pendingRefusal(for: bundleID, store: store, rankedWith: excluded) == nil
                             }
-                            guard let self, let kind = await Self.modelDestinationKind(destinationPID: pid,
-                                                                                         excludedBundleIDs: store.settings.excludedBundleIDs,
-                                                                                         stillAllowed: stillAllowed),
-                                  kind != .unknown, kind != .password, stillAllowed() else { return }
+                            guard let self else { return }
+                            let answer = await Self.modelDestinationKind(destinationPID: pid,
+                                                                         excludedBundleIDs: store.settings.excludedBundleIDs,
+                                                                         stillAllowed: stillAllowed)
+                            guard generation == self.suggestionGeneration else { return }
+                            // Refused while the window was looked at: the
+                            // suggestions published above are withdrawn.
+                            if let refused = self.pendingRefusal(for: bundleID, store: store, rankedWith: excluded) {
+                                self.lastContext = refused
+                                update([])
+                                return
+                            }
+                            guard let kind = answer, kind != .unknown, kind != .password,
+                                  self.readsDestinationScreen else { return }
                             var refined = context
                             refined.kind = kind
                             refined.source = .model
@@ -829,11 +872,8 @@ final class ClipboardIntelligence {
     }
 
     func suggestions(for target: ClipboardSuggestionTarget?, store: ClipboardStore) -> [UUID] {
-        guard isEnabled else { lastContext = .init(); return [] }
-        let verdict = ClipboardPrivacyGate.suggestions(destinationBundleID: target?.bundleID, settings: store.settings,
-                                                       secureInput: secureInputProbe())
-        guard verdict == .allowed else {
-            lastContext = ClipboardPrivacyGate.blockedContext(verdict, bundleID: target?.bundleID)
+        if let refused = refusal(for: target?.bundleID, store: store) {
+            lastContext = refused
             return []
         }
         let isolated = PresetManager.isUIPreview || PresetManager.isRunningTests
@@ -849,16 +889,17 @@ final class ClipboardIntelligence {
 
     /// Learns where clips are pasted. Nothing is learned about an excluded
     /// app, a password field or a paste made under secure keyboard entry, and
-    /// a secret's destination is never logged. `completion` (a test seam) runs
-    /// once the decision is made and any event is recorded.
+    /// a secret's destination is never logged. The decision is taken when the
+    /// paste is made and again when its classification lands (N333-03).
+    /// `completion` (a test seam) runs once the decision is made and any
+    /// event is recorded.
     func recordPaste(entryIDs: [UUID], target: ClipboardSuggestionTarget?, store: ClipboardStore,
                      completion: (@MainActor () -> Void)? = nil) {
-        guard isEnabled, let target, !PresetManager.isUIPreview else { completion?(); return }
+        guard let target, !PresetManager.isUIPreview, mayLearnPaste(into: target.bundleID, store: store) else {
+            completion?(); return
+        }
         let destinationBundleID = target.bundleID
         let sameDestination = lastContext.bundleID == destinationBundleID
-        guard ClipboardPrivacyGate.suggestions(destinationBundleID: destinationBundleID, settings: store.settings,
-                                               secureInput: secureInputProbe()) == .allowed,
-              !(sameDestination && lastContext.blocksSuggestions) else { completion?(); return }
         let settings = store.settings
         let entries = entryIDs.prefix(20).compactMap { id in store.entries.first { $0.id == id } }
             .filter { !settings.excludes($0.sourceBundleID) }
@@ -876,10 +917,16 @@ final class ClipboardIntelligence {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { [weak self] in
                     guard let self else { completion?(); return }
+                    // Asked again: the app may have been excluded, secure input
+                    // turned on or the feature turned off meanwhile, and an
+                    // item's own app may have been excluded too.
+                    let allowed = self.mayLearnPaste(into: destinationBundleID, store: store)
+                    let current = store.settings
                     let log = self.log(for: store)
                     for (entry, digest, cls) in classified {
                         self.classCache[entry.id] = (digest, cls)
-                        guard cls != .secret else { continue }  // never log where secrets go
+                        // Never log where secrets go.
+                        guard allowed, cls != .secret, !current.excludes(entry.sourceBundleID) else { continue }
                         log.record(.init(entryID: entry.id, itemClass: cls, sourceBundleID: entry.sourceBundleID,
                                          destinationBundleID: destinationBundleID, destinationKind: destinationKind,
                                          date: Date()))
@@ -890,13 +937,21 @@ final class ClipboardIntelligence {
         }
     }
 
+    /// Whether a paste into `bundleID` may be learned now: the shared privacy
+    /// decision, and no blocked context already recorded for that app.
+    private func mayLearnPaste(into bundleID: String?, store: ClipboardStore) -> Bool {
+        guard refusal(for: bundleID, store: store) == nil else { return false }
+        return !(lastContext.bundleID == bundleID && lastContext.blocksSuggestions)
+    }
+
     // MARK: On-device model (Apple Intelligence)
 
     /// The optional look at the destination window. `stillAllowed` repeats
-    /// the privacy gate before the capture, after it and before the model
-    /// call; the window must belong to the destination and to no excluded
-    /// app; and text visible in the window is checked for secrets before
-    /// either model (macOS 26 text or macOS 27 image) sees anything.
+    /// the pending privacy decision before the capture, after it and before
+    /// the model call, and the caller asks once more before publishing; the
+    /// window must belong to the destination and to no excluded app; and
+    /// text visible in the window is checked for secrets before either model
+    /// (macOS 26 text or macOS 27 image) sees anything.
     private static func modelDestinationKind(destinationPID: pid_t?, excludedBundleIDs: Set<String>,
                                              stillAllowed: @escaping @MainActor () -> Bool) async -> ClipboardDestinationKind? {
         #if canImport(FoundationModels)
@@ -904,7 +959,7 @@ final class ClipboardIntelligence {
               let window = try? await ScreenCaptureService.shared.frontmostCapturableWindow(),
               let owner = window.owningApplication, owner.processID == destinationPID,
               !excludedBundleIDs.contains(owner.bundleIdentifier.lowercased()), stillAllowed(),
-              let shot = try? await ScreenCaptureService.shared.captureWindow(window),
+              let shot = try? await ScreenCaptureService.shared.captureWindow(window), stillAllowed(),
               let image = downscaled(shot.image, maxSide: 1_024) else { return nil }
         let visible = await ClipboardScreenContextOCR.recognize(image)
         guard stillAllowed(), !ClipboardSecretScanner.containsSecret(inText: visible),
