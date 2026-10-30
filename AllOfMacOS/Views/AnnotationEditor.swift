@@ -885,10 +885,12 @@ private struct AnnotationEditorView: View {
                     Toggle("Bold", isOn: Binding(get: { style.resolvedFontWeight.isBold },
                                                  set: { style.fontWeight = nil; style.bold = $0; applyStyleToSelection() }))
                         .help("Bold")
+                        .accessibilityLabel("Bold")
                 }
                 AOMSettingRow("Italic") {
                     Toggle("Italic", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
                         .help("Italic")
+                        .accessibilityLabel("Italic")
                 }
             }
             AOMCardGroup("Paragraph") {
@@ -923,6 +925,7 @@ private struct AnnotationEditorView: View {
                     Toggle("Text shadow", isOn: Binding(get: { style.textShadow ?? false },
                                                         set: { style.textShadow = $0 ? true : nil; applyStyleToSelection() }))
                         .help("Drop shadow")
+                        .accessibilityLabel("Text shadow")
                 }
             }
         }
