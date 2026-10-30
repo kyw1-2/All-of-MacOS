@@ -1703,6 +1703,15 @@ final class TitleBarWindowSnap {
     @MainActor private var queuedSpaceMove: (action: SwishSnap.WindowAction, target: WindowManager.Target, start: CGRect)?
     /// The tab under the pointer for the gesture on show (F02).
     @MainActor private var targetTab: AXUIElement?
+    /// The latest tab detach (N333-05). A detach in flight goes on only while
+    /// it is still the latest; the snap stopping, sleep and wake move it on.
+    @MainActor private var detachRequest = 0
+    /// The generation a commit starts in (N333-06). It moves on when the snap
+    /// stops (switched off, Accessibility lost), the Mac sleeps or wakes, or a
+    /// chain hands the gestures to another window; a commit landing after
+    /// that neither activates its window, moves the pointer nor applies a
+    /// motion queued behind it.
+    @MainActor private var landingGeneration = 0
 
     /// One left-button press: where it went down (top-left coordinates), the
     /// snapped window its first drag found on a title bar, and the snapped
@@ -1805,6 +1814,9 @@ final class TitleBarWindowSnap {
             heldTab = nil
             queuedSpaceMove = nil
             fullscreenTasks.cancelAll()
+            // N333-05, N333-06: a tab detach or a landing commit from before never acts after this.
+            detachRequest &+= 1
+            landingGeneration &+= 1
         }
         updateMouseMonitor()
     }
@@ -2147,6 +2159,9 @@ final class TitleBarWindowSnap {
         lastTap = nil
         cancel()
         cancelRequests &+= 1
+        // N333-05, N333-06: nor does a tab detach in flight, or what follows a commit still landing.
+        detachRequest &+= 1
+        landingGeneration &+= 1
     }
 
     @MainActor
@@ -2282,19 +2297,22 @@ final class TitleBarWindowSnap {
 
     /// Moves the window to `rect` the way Swish commits a snap; the preview
     /// then settles on the frame it took, which is kept for unsnapping.
+    /// `generation`: the one the commit started in (a native tile falling
+    /// back here passes its own); nil starts it now.
     @MainActor
     private func commitFrame(_ rect: CGRect, target: WindowManager.Target, anchorVisible visible: CGRect,
-                             start: CGRect, restoring: Bool, place: SwishSnap.Place?) {
+                             start: CGRect, restoring: Bool, place: SwishSnap.Place?, generation: Int? = nil) {
         committing = true
         let key = Self.key(target)
+        let generation = generation ?? landingGeneration
         // Anchor inside the margin-inset area, so a gap the user asked for is
         // kept when an app refuses the cell's size.
         let anchorArea = margin > 0 ? visible.insetBy(dx: margin, dy: margin) : visible
         WindowManager.shared.applySnap(rect, target: target, visible: restoring ? nil : anchorArea) { actual in
             // `applySnap` reports on the main thread (its settle polling runs there).
             MainActor.assumeIsolated {
-                TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: key,
-                                                       start: start, restoring: restoring, place: place)
+                TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: key, start: start,
+                                                       restoring: restoring, place: place, generation: generation)
             }
         }
     }
@@ -2318,55 +2336,98 @@ final class TitleBarWindowSnap {
                               anchorVisible visible: CGRect, start: CGRect) {
         committing = true
         let windowKey = Self.key(target)
+        let generation = landingGeneration
         NativeTiling.tile(target, key: key, mayContinue: {
             TitleBarWindowSnap.shared.allowedNow && !Self.appPaused(target.pid)
         }) { pressed in
             let service = TitleBarWindowSnap.shared
             guard pressed else {
                 guard service.allowedNow, !Self.appPaused(target.pid) else {
-                    service.finishCommit(nil, target: target, key: windowKey, start: start, restoring: false, place: place)
+                    service.finishCommit(nil, target: target, key: windowKey, start: start, restoring: false, place: place,
+                                         generation: generation)
                     return
                 }
-                service.commitFrame(rect, target: target, anchorVisible: visible, start: start, restoring: false, place: place)
+                service.commitFrame(rect, target: target, anchorVisible: visible, start: start, restoring: false,
+                                    place: place, generation: generation)
                 return
             }
             // macOS animates the tile; read where the window landed once it has.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 MainActor.assumeIsolated {
-                    let actual = Self.boundedFrame(of: target) ?? rect
-                    TitleBarWindowSnap.shared.finishCommit(actual, target: target, key: windowKey, start: start,
-                                                           restoring: false, place: place)
+                    let landed = Self.boundedFrame(of: target)
+                    // N333-06: a window that no longer answers gets no follow-ups.
+                    TitleBarWindowSnap.shared.finishCommit(landed ?? rect, target: target, key: windowKey, start: start,
+                                                           restoring: false, place: place, generation: generation,
+                                                           windowAnswers: landed != nil)
                 }
             }
         }
     }
 
+    /// The end of a commit (N333-06). The bookkeeping always runs: the
+    /// history keeps where the window went (or forgets a restore), the
+    /// preview goes and the gesture state is cleared. The haptic, the
+    /// preview settling on the frame, the activation, the pointer move and a
+    /// motion queued behind the commit run only if `landingAllowed`, asked
+    /// now: AOM, the window's app or the snap may have changed while the
+    /// window moved.
     @MainActor
-    private func finishCommit(_ actual: CGRect?, target: WindowManager.Target, key: String,
-                              start: CGRect, restoring: Bool, place: SwishSnap.Place?) {
+    private func finishCommit(_ actual: CGRect?, target: WindowManager.Target, key: String, start: CGRect,
+                              restoring: Bool, place: SwishSnap.Place?, generation: Int, windowAnswers: Bool = true) {
         committing = false
         let fromKeyboard = keyboardCommit
         keyboardCommit = false
-        // A swipe that engaged meanwhile carries on with this window (3.3.2 review).
-        let chained = chain.landed(succeeded: actual != nil)
+        let followUps = actual != nil
+            && landingAllowed(target, generation: generation, keyboard: fromKeyboard, windowAnswers: windowAnswers)
+        // A swipe that engaged meanwhile carries on with this window (3.3.2
+        // review), only when the follow-ups may run.
+        let chained = chain.landed(succeeded: followUps)
         guard let actual else { hideOwnPreview(); reset(); return }
-        if restoring {
-            forgetSnap(key)
-        } else {
-            history.recordSnap(key: key, from: start, to: actual, place: place)
-            remember(target, key: key)
+        if !followUps {
+            GestureLog.shared.logFromAnyThread("Title-bar snap landed after a pause or a change: "
+                                               + "no activation, pointer move or chained gesture", level: .detect)
         }
-        if hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
-        overlay.settle(on: SwishSnap.appKitRect(actual, primaryTop: primaryTop))
-        if Self.flag(Self.activateKey, default: true) { bringForward(target) }
-        if Self.flag(Self.keepPointerKey, default: false), !fromKeyboard {
-            CGWarpMouseCursorPosition(SwishSnap.titleBarRestPoint(for: actual))
-            // A warp briefly suppresses local mouse events; re-associate so
-            // the pointer moves again immediately.
-            CGAssociateMouseAndMouseCursorPosition(1)
-        }
-        reset()
-        if let chained { resumeChain(chained, target: target, frame: actual) }
+        let landing = SwishCommitLanding(
+            record: {
+                if restoring {
+                    self.forgetSnap(key)
+                } else {
+                    self.history.recordSnap(key: key, from: start, to: actual, place: place)
+                    self.remember(target, key: key)
+                }
+            },
+            hidePreview: { self.hideOwnPreview() },
+            settlePreview: { self.overlay.settle(on: SwishSnap.appKitRect(actual, primaryTop: self.primaryTop)) },
+            haptic: { _ = GestureHaptics.shared.feedback(enabled: true) },
+            activate: { self.bringForward(target) },
+            warpPointer: {
+                CGWarpMouseCursorPosition(SwishSnap.titleBarRestPoint(for: actual))
+                // A warp briefly suppresses local mouse events; re-associate so
+                // the pointer moves again immediately.
+                CGAssociateMouseAndMouseCursorPosition(1)
+            },
+            reset: { self.reset() },
+            resumeQueued: {
+                if let chained { self.resumeChain(chained, target: target, frame: actual) }
+            })
+        landing.land(followUps: followUps,
+                     options: .init(haptics: hapticsOn, activate: Self.flag(Self.activateKey, default: true),
+                                    movePointer: Self.flag(Self.keepPointerKey, default: false) && !fromKeyboard))
+    }
+
+    /// Whether what follows a commit's move may run as it lands (N333-06):
+    /// the commit's generation still holds (the snap did not stop, the Mac did
+    /// not sleep, no chain took the gestures to another window), its window
+    /// still answered, and the rules of a delayed window step allow it, with
+    /// the gate of the commit's own input (the keyboard's for a hotkey).
+    @MainActor
+    private func landingAllowed(_ target: WindowManager.Target, generation: Int, keyboard: Bool,
+                                windowAnswers: Bool) -> Bool {
+        let app = NSRunningApplication(processIdentifier: target.pid)
+        return SwishCommitLanding.followUpsAllowed(
+            sameGeneration: generation == landingGeneration, windowAnswers: windowAnswers,
+            allowed: keyboard ? hotkeyAllowedNow : allowedNow, appPaused: Self.appPaused(target.pid),
+            screenLocked: ScreenLock.isLocked, appRunning: app.map { !$0.isTerminated } ?? false)
     }
 
     /// The swipe that engaged while the last commit was landing (3.3.2
@@ -2635,11 +2696,23 @@ final class TitleBarWindowSnap {
         GestureHUD.shared.dismiss()
         let pid = held.target.pid
         guard active, allowedNow, !Self.appPaused(pid) else { return }
+        // N333-05: each detach is a request of its own, asked about at every step.
+        detachRequest &+= 1
+        let request = detachRequest
         SwishTabs.detach(tab: held.tab, window: held.target.window, pid: pid,
-                         mayContinue: { TitleBarWindowSnap.shared.allowedNow && !Self.appPaused(pid) }) { detached in
+                         mayContinue: { TitleBarWindowSnap.shared.detachMayContinue(request, target: held.target) }) { detached in
             guard let detached else { return }
             _ = TitleBarWindowSnap.shared.beginChain(window: detached.window, pid: detached.pid, reason: "detached tab")
         }
+    }
+
+    /// Whether the tab detach `request` may go on (N333-05): it is still the
+    /// latest, and the rules of a delayed window step allow it (the snap on
+    /// and not paused, the window's app not paused, the screen not locked,
+    /// the app still running).
+    @MainActor
+    private func detachMayContinue(_ request: Int, target: WindowManager.Target) -> Bool {
+        request == detachRequest && delayedStepAllowed(target)
     }
 
     // MARK: Chaining a window (3.3.3)
@@ -2664,6 +2737,9 @@ final class TitleBarWindowSnap {
         guard Self.boundedFrame(of: chained) != nil else { return false }
         // Whatever this touch showed on another window is dropped.
         if target != nil, !committing { cancel() }
+        // N333-06: a commit landing on another window does not take the user
+        // back to it (no activation, pointer move or queued motion).
+        if committing, target.map({ Self.key($0) }) != Self.key(chained) { landingGeneration &+= 1 }
         windowChain.begin(key: Self.key(chained), pid: pid, reason: reason, outlivesTouch: true,
                           touchLive: touchLive, now: ProcessInfo.processInfo.systemUptime)
         chainTarget = chained
@@ -2983,9 +3059,16 @@ final class TitleBarWindowSnap {
     }
 
     /// Swish raises and activates the window it snapped; a background window
-    /// would otherwise land in place but stay hidden behind others.
+    /// would otherwise land in place but stay hidden behind others. Never
+    /// while AOM is switched off or paused (whatever the input), or the
+    /// window's app is (N333-06: it asked neither).
     @MainActor
     private func bringForward(_ target: WindowManager.Target) {
+        guard SwishCommitLanding.mayBringForward(active: active, gateAllows: AutomationGate.allows(.system),
+                                                 appPaused: Self.appPaused(target.pid)) else {
+            GestureLog.shared.logFromAnyThread("Title-bar snap: no activation, AOM or the app is paused", level: .detect)
+            return
+        }
         _ = AXUIElementPerformAction(target.window, kAXRaiseAction as CFString)
         guard target.pid != ProcessInfo.processInfo.processIdentifier else { return }
         NSRunningApplication(processIdentifier: target.pid)?.activate(options: [])
@@ -3437,6 +3520,81 @@ private let aomSnapDisplaysReconfiguring: CGDisplayReconfigurationCallBack = { _
         MainActor.assumeIsolated { TitleBarWindowSnap.shared.displaysWillChange() }
     } else {
         DispatchQueue.main.async { MainActor.assumeIsolated { TitleBarWindowSnap.shared.displaysWillChange() } }
+    }
+}
+
+// MARK: - The end of a commit (N333-06)
+
+/// What a title-bar commit does once its window has moved. 3.3.3 ran the
+/// haptic, the activation, the pointer move and a motion queued behind the
+/// commit even when AOM or the window's app had been paused, or the snap had
+/// stopped, while the move landed (Native Tiling's 0.35 s read-back and
+/// `applySnap`'s completion alike). The move itself had started already; the
+/// bookkeeping always runs (the history keeps where the window went, the
+/// preview goes, the gesture state is cleared), and what reaches the user
+/// beyond the move runs only when the follow-ups are allowed, asked once as
+/// it lands. Each step is a closure, so the order can be tested without
+/// windows. Main thread only.
+struct SwishCommitLanding {
+    /// Keeps the snap in the history (or forgets a restore).
+    var record: @MainActor () -> Void
+    /// Hides the preview, when the follow-ups are not allowed.
+    var hidePreview: @MainActor () -> Void
+    /// Animates the preview onto the frame the window took, then fades it.
+    var settlePreview: @MainActor () -> Void
+    var haptic: @MainActor () -> Void
+    /// Raises the window and activates its app (Swish's "activate after snapping").
+    var activate: @MainActor () -> Void
+    /// Puts the pointer on the window's title bar (Swish's "move cursor").
+    var warpPointer: @MainActor () -> Void
+    /// Clears the gesture state.
+    var reset: @MainActor () -> Void
+    /// Applies the motion that waited for this commit, if any.
+    var resumeQueued: @MainActor () -> Void
+
+    /// The settings that ask for each follow-up.
+    struct Options: Equatable {
+        var haptics = true
+        var activate = true
+        /// Off for a hotkey's commit: the pointer stays where it is.
+        var movePointer = false
+    }
+
+    @MainActor func land(followUps allowed: Bool, options: Options) {
+        record()
+        guard allowed else {
+            hidePreview()
+            reset()
+            return
+        }
+        if options.haptics { haptic() }
+        settlePreview()
+        if options.activate { activate() }
+        if options.movePointer { warpPointer() }
+        reset()
+        resumeQueued()
+    }
+
+    /// Pure: whether the follow-ups may run as a commit lands. The generation
+    /// it started in still holds (the snap did not stop, the Mac did not
+    /// sleep, no chain took the gestures to another window), its window still
+    /// answered, and the rules of a delayed window step allow it
+    /// (`SwishDelayedTasks.mayRun`: AOM through the gate of the commit's
+    /// input, the window's app not paused, the screen not locked, the app
+    /// still running).
+    static func followUpsAllowed(sameGeneration: Bool, windowAnswers: Bool, allowed: Bool, appPaused: Bool,
+                                 screenLocked: Bool, appRunning: Bool) -> Bool {
+        sameGeneration && windowAnswers
+            && SwishDelayedTasks.mayRun(allowed: allowed, appPaused: appPaused, screenLocked: screenLocked,
+                                        appRunning: appRunning)
+    }
+
+    /// Pure: whether `bringForward` may raise a window and activate its app,
+    /// whoever asks (a landing commit, a Space move): the snap is on, AOM is
+    /// neither switched off nor paused (`gateAllows`: the `.system` gate, the
+    /// pause whatever the input) and the window's app is not paused.
+    static func mayBringForward(active: Bool, gateAllows: Bool, appPaused: Bool) -> Bool {
+        TitleBarWindowSnap.mayMoveWindow(active: active, gateAllows: gateAllows) && !appPaused
     }
 }
 

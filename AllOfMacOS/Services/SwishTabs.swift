@@ -488,52 +488,125 @@ enum SwishTabs {
         return deadline.isSpent ? 0 : count
     }
 
+    /// How far a tab detach got (N333-05).
+    enum DetachOutcome: Equatable {
+        /// Move Tab to New Window was pressed.
+        case pressed
+        /// `mayContinue()` said no: a newer request, AOM or the app paused,
+        /// the screen locked.
+        case cancelled
+        /// The tab could not be selected: the press failed, or the tab still
+        /// does not read as selected after it.
+        case notSelected
+        /// The window could not be brought forward (its app is gone or is AOM).
+        case notActivated
+        /// The app has no enabled Move Tab to New Window item.
+        case noMenuItem
+        /// Right before the press, the tab was no longer the selected one, or
+        /// its window no longer the app's focused or main window.
+        case targetChanged
+        /// The press itself failed.
+        case pressFailed
+    }
+
     /// Swish's detach ("Tap and hold to detach a native tab into a new window"):
     /// selects the tab, brings its window forward, presses the app's own
     /// "Move Tab to New Window" (it acts on the selected tab of the active
     /// window), then waits for the new window to take focus. `mayContinue()`
-    /// is asked before selecting, before pressing and before reporting.
+    /// (the caller's gate: the same request, AOM and the app not paused, the
+    /// screen not locked) is asked before selecting, after the activation
+    /// delay, right before pressing and before reporting.
+    /// N333-05: a tab that cannot be selected stops the detach, and right
+    /// before the press the tab must still be the selected one and its window
+    /// the app's focused or main window, so the menu never moves another tab
+    /// (`SwishTabDetachSteps`).
     @MainActor static func detach(tab: AXUIElement, window: AXUIElement, pid: pid_t,
                                   mayContinue: @escaping @MainActor () -> Bool,
                                   completion: @escaping @MainActor (WindowManager.Target?) -> Void) {
         guard pid > 0, pid != ProcessInfo.processInfo.processIdentifier else { completion(nil); return }
         let name = SwishTabAX.appName(pid)
-        guard mayContinue() else {
-            GestureLog.shared.logFromAnyThread("Detach tab cancelled", level: .detect)
-            completion(nil); return
-        }
-        let deadline = AXDeadline(perRequest: 0.25, budget: 0.6)
-        if !SwishTabAX.isSelected(tab, deadline) { _ = SwishTabAX.perform(tab, kAXPressAction, deadline) }
-        AXUIElementSetMessagingTimeout(tab, 0)
-        guard SwishTabAX.bringForward(window: window, pid: pid, deadline) else {
-            GestureLog.shared.logFromAnyThread("Detach tab: could not activate \(name)", level: .error)
-            completion(nil); return
-        }
-        // Give the activation a moment so the menu item acts on this window.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            MainActor.assumeIsolated {
+        // Selecting and activating share one budget, as before; the checks
+        // right before the press have their own (`detachTargetHolds`).
+        let start = AXDeadline(perRequest: 0.25, budget: 0.6)
+        let steps = SwishTabDetachSteps<AXUIElement>(
+            mayContinue: mayContinue,
+            tabSelected: {
+                defer { AXUIElementSetMessagingTimeout(tab, 0) }
+                return SwishTabAX.isSelected(tab, start)
+            },
+            selectTab: {
+                defer { AXUIElementSetMessagingTimeout(tab, 0) }
+                return SwishTabAX.perform(tab, kAXPressAction, start)
+            },
+            bringForward: {
+                // The window the tab shows in now: a native tab that was just
+                // selected may have a window of its own.
+                let front = SwishTabAX.element(SwishTabAX.copy(tab, kAXWindowAttribute, start)) ?? window
+                AXUIElementSetMessagingTimeout(tab, 0)
+                return SwishTabAX.bringForward(window: front, pid: pid, start)
+            },
+            targetHolds: { SwishTabs.detachTargetHolds(tab: tab, window: window, pid: pid) },
+            findItem: {
                 let titles = AppKitMenuTitles.titles(AppKitMenuTitles.moveTabToNewWindow)
-                let item = AXMenuSearch.item(pid: pid, path: [AppKitMenuTitles.titles(AppKitMenuTitles.window), titles],
-                                             budget: 0.4)
+                return AXMenuSearch.item(pid: pid, path: [AppKitMenuTitles.titles(AppKitMenuTitles.window), titles],
+                                         budget: 0.4)
                     ?? AXMenuSearch.item(pid: pid, path: [nil, titles], budget: 0.6)
-                guard let item else {
-                    GestureLog.shared.logFromAnyThread("Detach tab: no enabled Move Tab to New Window item in \(name)",
-                                                       level: .error)
-                    completion(nil); return
-                }
-                guard mayContinue() else {
-                    GestureLog.shared.logFromAnyThread("Detach tab cancelled", level: .detect)
-                    completion(nil); return
-                }
-                guard AXMenuSearch.press(item) else {
-                    GestureLog.shared.logFromAnyThread("Detach tab: Move Tab to New Window failed in \(name)", level: .error)
-                    completion(nil); return
-                }
+            },
+            press: { AXMenuSearch.press($0) },
+            after: { delay, work in
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { work() } }
+            })
+        steps.run { outcome in
+            switch outcome {
+            case .pressed:
                 GestureLog.shared.logFromAnyThread("Detach tab: pressed Move Tab to New Window in \(name)", level: .action)
                 let until = ProcessInfo.processInfo.systemUptime + 1.5
                 SwishTabs.pollNewWindow(pid: pid, old: window, until: until, name: name,
-                              mayContinue: mayContinue, completion: completion)
+                                        mayContinue: mayContinue, completion: completion)
+                return
+            case .cancelled:
+                GestureLog.shared.logFromAnyThread("Detach tab cancelled", level: .detect)
+            case .targetChanged:
+                GestureLog.shared.logFromAnyThread("Detach tab cancelled: the tab or its window changed in \(name)",
+                                                   level: .detect)
+            case .notSelected:
+                GestureLog.shared.logFromAnyThread("Detach tab: could not select the tab in \(name)", level: .error)
+            case .notActivated:
+                GestureLog.shared.logFromAnyThread("Detach tab: could not activate \(name)", level: .error)
+            case .noMenuItem:
+                GestureLog.shared.logFromAnyThread("Detach tab: no enabled Move Tab to New Window item in \(name)",
+                                                   level: .error)
+            case .pressFailed:
+                GestureLog.shared.logFromAnyThread("Detach tab: Move Tab to New Window failed in \(name)", level: .error)
             }
+            completion(nil)
+        }
+    }
+
+    /// Right before the press (N333-05): the tab is still the selected one
+    /// and its window is the app's focused or main window. Bounded: 0.25 s
+    /// per request, 0.5 s in all; anything unreadable counts as changed.
+    @MainActor private static func detachTargetHolds(tab: AXUIElement, window: AXUIElement, pid: pid_t) -> Bool {
+        let deadline = AXDeadline(perRequest: 0.25, budget: 0.5)
+        defer { AXUIElementSetMessagingTimeout(tab, 0) }
+        guard SwishTabAX.isSelected(tab, deadline) else { return false }
+        let tabWindow = SwishTabAX.element(SwishTabAX.copy(tab, kAXWindowAttribute, deadline))
+        let app = AXUIElementCreateApplication(pid)
+        let front = SwishTabAX.multiple(app, [kAXFocusedWindowAttribute, kAXMainWindowAttribute], deadline)
+        return windowInFront(focused: SwishTabAX.element(front[0]), main: SwishTabAX.element(front[1]),
+                             window: window, tabWindow: tabWindow, same: { CFEqual($0, $1) })
+    }
+
+    /// Pure (N333-05): whether the app's focused or main window, the one its
+    /// menu commands act on, is the tab's window: the window the gesture
+    /// found, or the one the tab reports now (a native tab that was just
+    /// selected may have a window of its own). `same` compares two windows.
+    static func windowInFront<Window>(focused: Window?, main: Window?, window: Window, tabWindow: Window?,
+                                      same: (Window, Window) -> Bool) -> Bool {
+        let tabWindows = [window] + (tabWindow.map { [$0] } ?? [])
+        return [focused, main].contains { front in
+            guard let front else { return false }
+            return tabWindows.contains { same(front, $0) }
         }
     }
 
@@ -563,6 +636,60 @@ enum SwishTabs {
                 }
                 SwishTabs.pollNewWindow(pid: pid, old: old, until: until, name: name, mayContinue: mayContinue, completion: completion)
             }
+        }
+    }
+}
+
+// MARK: - Detaching a tab, step by step (N333-05)
+
+/// A tab detach as its steps in order, each a closure, so the checks around
+/// the menu press can be tested without Accessibility. 3.3.3 went on when the
+/// tab's selection failed and, right before pressing Move Tab to New Window,
+/// asked only about the pause: a selection that did not take, or another tab
+/// or window chosen in the app meanwhile, let the menu move another tab.
+/// Main thread only.
+struct SwishTabDetachSteps<Item> {
+    /// The caller's gate (the same request, AOM and the app not paused, the
+    /// screen not locked): asked before selecting, after the activation
+    /// delay, and again right before pressing (the menu search may take up
+    /// to a second).
+    var mayContinue: @MainActor () -> Bool
+    /// Whether the tab is the selected one of its group, read now.
+    var tabSelected: @MainActor () -> Bool
+    /// Presses the tab to select it; false when the request failed.
+    var selectTab: @MainActor () -> Bool
+    /// Raises the tab's window and activates its app; false when the app is
+    /// gone or is AOM.
+    var bringForward: @MainActor () -> Bool
+    /// Right before the press: the tab is still the selected one and its
+    /// window is still the app's focused or main window.
+    var targetHolds: @MainActor () -> Bool
+    /// The app's enabled Move Tab to New Window item, or nil.
+    var findItem: @MainActor () -> Item?
+    /// Presses the item; false when the request failed.
+    var press: @MainActor (Item) -> Bool
+    /// Runs `work` on main after `delay` seconds.
+    var after: @MainActor (_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) -> Void
+
+    /// The moment given to the activation, so the menu acts on this window.
+    static var activationDelay: TimeInterval { 0.15 }
+
+    /// Runs the steps; `completion` gets how far they went. Nothing is
+    /// pressed unless every check passed.
+    @MainActor func run(_ completion: @escaping @MainActor (SwishTabs.DetachOutcome) -> Void) {
+        guard mayContinue() else { completion(.cancelled); return }
+        // A tab that is not selected yet is pressed, and must then read as selected.
+        if !tabSelected() {
+            guard selectTab(), tabSelected() else { completion(.notSelected); return }
+        }
+        guard bringForward() else { completion(.notActivated); return }
+        let steps = self
+        after(Self.activationDelay) {
+            guard steps.mayContinue() else { completion(.cancelled); return }
+            guard let item = steps.findItem() else { completion(.noMenuItem); return }
+            guard steps.mayContinue() else { completion(.cancelled); return }
+            guard steps.targetHolds() else { completion(.targetChanged); return }
+            completion(steps.press(item) ? .pressed : .pressFailed)
         }
     }
 }
