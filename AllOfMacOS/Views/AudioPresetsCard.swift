@@ -21,17 +21,32 @@ struct AudioBoostPresetPicker: View {
 
     let bundleID: String?
     var style: Style
-    @State private var selection: String
+    /// The stored preset id (absent: Music). Read through AppStorage so every
+    /// picker for the same output or app stays in step: the output's appears
+    /// in the mixer panel and on the Audio page at the same time.
+    @AppStorage private var storedID: String?
 
     init(bundleID: String? = nil, style: Style = .segmented) {
         self.bundleID = bundleID
         self.style = style
-        _selection = State(initialValue: AudioBoostPreset.storedID(bundleID: bundleID))
+        _storedID = AppStorage(bundleID.map(AudioBoostPreset.appKey) ?? AudioBoostPreset.masterKey)
     }
 
-    private var preset: AudioBoostPreset { AudioBoostPreset.preset(id: selection) }
+    private var preset: AudioBoostPreset { AudioBoostPreset.preset(id: storedID) }
     private var accessibilityName: String {
         bundleID == nil ? "Magic Boost preset for the output" : "Magic Boost preset for this app"
+    }
+
+    /// Writes go through the engine (stores the id and retunes in place).
+    private var selection: Binding<String> {
+        Binding(get: { preset.id }, set: { id in
+            guard id != preset.id else { return }
+            if #available(macOS 14.2, *) {
+                AppAudioEngine.shared.setBoostPreset(id, bundleID: bundleID)
+            } else {
+                AudioBoostPreset.store(id, bundleID: bundleID)
+            }
+        })
     }
 
     var body: some View {
@@ -62,17 +77,10 @@ struct AudioBoostPresetPicker: View {
         }
         .controlSize(.small)
         .help("Magic Boost preset: \(preset.name). \(preset.summary)")
-        .onChange(of: selection) { _, id in
-            if #available(macOS 14.2, *) {
-                AppAudioEngine.shared.setBoostPreset(id, bundleID: bundleID)
-            } else {
-                AudioBoostPreset.store(id, bundleID: bundleID)
-            }
-        }
     }
 
     private var picker: some View {
-        Picker("Boost preset", selection: $selection) {
+        Picker("Boost preset", selection: selection) {
             ForEach(AudioBoostPreset.all) { preset in
                 Text(preset.name).tag(preset.id)
             }
@@ -116,6 +124,11 @@ struct HeadphoneEQCard: View {
             }
         }
         .onAppear(perform: reload)
+        // The page and the mixer panel can both show this card; a change in
+        // one (or an import) reaches the other. Only stored values are read
+        // here, never the device list.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in syncFromStore() }
         .onChange(of: deviceUID) { _, _ in assigned = AudioDeviceEQ.assignment(uid: deviceUID) ?? "" }
         .onChange(of: assigned) { _, name in apply(name.isEmpty ? nil : name) }
     }
@@ -203,6 +216,14 @@ struct HeadphoneEQCard: View {
         }
         names = AudioDeviceEQ.presetNames()
         assigned = AudioDeviceEQ.assignment(uid: deviceUID) ?? ""
+    }
+
+    /// The curve names and this output's curve as stored now (cheap reads).
+    private func syncFromStore() {
+        let storedNames = AudioDeviceEQ.presetNames()
+        if storedNames != names { names = storedNames }
+        let stored = AudioDeviceEQ.assignment(uid: deviceUID) ?? ""
+        if stored != assigned { assigned = stored }
     }
 
     private func apply(_ name: String?) {

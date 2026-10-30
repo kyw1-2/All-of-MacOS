@@ -56,6 +56,13 @@ struct AudioUnitEffectCard: View {
             effects = AudioUnitEffectHost.installedEffects()
             selection = SharedOutputRenderer.shared.masterEffect?.key ?? ""
         }
+        // The page and the mixer panel can both show this card; a choice in
+        // one reaches the other (the renderer's choice is stored in defaults).
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)) { _ in
+            let current = SharedOutputRenderer.shared.masterEffect?.key ?? ""
+            if current != selection { selection = current }
+        }
         .onChange(of: selection) { _, key in
             let choice = effects.first { $0.key == key }
             guard choice?.key != SharedOutputRenderer.shared.masterEffect?.key else { return }
