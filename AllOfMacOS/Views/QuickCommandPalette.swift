@@ -287,13 +287,13 @@ struct QuickCommandPalette: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: 0) {
-                HStack(spacing: 10) {
+                HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(AOMTheme.textSecondary)
+                        .font(AOMFont.section.weight(.medium))
+                        .foregroundStyle(AOMColor.textSecondary)
                     TextField("Search commands, apps, files, clipboard and captures", text: $query)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 17))
+                        .font(AOMFont.pageStatus.weight(.regular))
                         .focused($isFieldFocused)
                         .onChange(of: query) { _, _ in selectedID = nil }
                         .accessibilityLabel("Search")
