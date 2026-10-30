@@ -1095,6 +1095,7 @@ private struct AnnotationEditorView: View {
             if !cropMode {
                 AnnotationShareButton(image: renderedImage(), scale: scale)
                     .frame(width: AOMFeatureSize.barButtonWidth, height: AOMFeatureSize.barControlHeight)
+                    .background(AOMColor.track, in: Capsule())
             }
         }
         // macOS 26 rounds windows more: keep the end controls clear of the
@@ -2342,8 +2343,6 @@ private struct AnnotationShareButton: NSViewRepresentable {
         let button = NSButton(image: NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")!,
                               target: context.coordinator, action: #selector(Coordinator.share(_:)))
         button.isBordered = false
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 16
         button.toolTip = "Share"
         button.setAccessibilityLabel("Share")
         return button
@@ -2354,7 +2353,9 @@ private struct AnnotationShareButton: NSViewRepresentable {
             NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale))
         }
         button.isEnabled = image != nil
-        button.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // The capsule behind the button is drawn by SwiftUI (`AOMColor.track`),
+        // so it follows the window's appearance; a layer colour resolved here
+        // came out dark in a light window when the main window was dark.
     }
 
     final class Coordinator: NSObject {
