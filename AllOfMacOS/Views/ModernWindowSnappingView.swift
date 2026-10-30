@@ -223,7 +223,7 @@ struct ModernWindowSnappingView: View {
     // MARK: - Title-bar snap
 
     private var swipeHelp: String {
-        "Swipe two fingers on a title bar or toolbar: left or right for a half, up to maximize, down to \(trackpadSnapDownAction == SwishSnap.DownAction.center.rawValue ? "center" : "minimize"), diagonally for that quarter. Swipes chain from where the window is: a half swiped up or down becomes a quarter, a top quarter swiped down moves to the bottom, a diagonal swipe reaches any quarter from anywhere (a maximized or top-half window swiped ↙ goes to the bottom-left), and swiping toward an edge grows the window along it; swipe down on a maximized or bottom-edge window to put it back. Lift to apply. To cancel, add a third finger or rest your fingers without moving (2 s by default)."
+        "Swipe two fingers on a title bar or toolbar: left or right for a half, up to maximize, down to \(trackpadSnapDownAction == SwishSnap.DownAction.center.rawValue ? "center" : "minimize"), diagonally for that quarter. A swipe up always maximizes, wherever the window is. Other swipes chain from where the window is: a half swiped down becomes its bottom quarter, a top quarter swiped down moves to the bottom, a diagonal swipe reaches any quarter from anywhere (a maximized window swiped ↙ goes to the bottom-left), and swiping sideways toward an edge grows the window along it; swipe down on a maximized or bottom-edge window to put it back. No swipe snaps to the top or bottom half. Lift to apply. To cancel, add a third finger or rest your fingers without moving (2 s by default)."
     }
 
     private var titleBarSection: some View {
@@ -273,7 +273,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                .help("A swipe down on a window that is not snapped, at any length. For the bottom half, swipe down, rest until the trackpad taps, and swipe down again; a snapped window keeps moving between cells.")
+                .help("A swipe down on a window that is not snapped, at any length. A snapped window keeps moving between cells, and a maximized or bottom-edge one goes back to its size from before the snap.")
             }
             .dependentSetting(on: trackpadSnapOn)
             // Swish's cancel: rest the fingers without moving. Shared by the
@@ -356,7 +356,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped up or down takes its upper or lower half. 3 × 3: a third swiped up or down becomes a ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths.")
+                .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped down takes its lower half. 3 × 3: a third swiped down becomes its bottom ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths. A swipe up always maximizes.")
                 AOMSettingRow("Almost maximize") {
                     Toggle("Almost maximize", isOn: $trackpadSnapAlmost)
                 }

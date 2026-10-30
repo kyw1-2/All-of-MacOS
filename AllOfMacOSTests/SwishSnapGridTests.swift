@@ -98,15 +98,18 @@ final class SwishSnapGridTests: XCTestCase {
 
     // MARK: 3 × 2: thirds and sixths
 
+    /// N337: down takes the lower half of a third; up maximizes (3.3.2–3.3.6:
+    /// the upper sixth).
     func testThirdsSwipedVerticallyTakeTheirUpperOrLowerHalf() {
-        XCTAssertEqual(step(at(.leftThird), .up, .threeByTwo), to(.sixth(0, 0)))
+        XCTAssertEqual(step(at(.leftThird), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.leftThird), .down, .threeByTwo), to(.sixth(0, 1)))
-        XCTAssertEqual(step(at(.centerThird), .up, .threeByTwo), to(.sixth(1, 0)))
+        XCTAssertEqual(step(at(.centerThird), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.rightThird), .down, .threeByTwo), to(.sixth(2, 1)))
-        XCTAssertEqual(step(at(.leftTwoThirds), .up, .threeByTwo), to(.sixth(0, 0, columnSpan: 2)))
+        XCTAssertEqual(step(at(.leftTwoThirds), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.rightTwoThirds), .down, .threeByTwo), to(.sixth(1, 1, columnSpan: 2)))
-        // Halves still become quarters, and sideways the 3.3.1 table holds.
-        XCTAssertEqual(step(at(.leftHalf), .up, .threeByTwo), .cell(.topLeft))
+        // Halves still become bottom quarters, and sideways the 3.3.1 table holds.
+        XCTAssertEqual(step(at(.leftHalf), .down, .threeByTwo), .cell(.bottomLeft))
+        XCTAssertEqual(step(at(.leftHalf), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.leftHalf), .left, .threeByTwo), .cell(.leftThird))
         XCTAssertEqual(step(at(.leftThird), .left, .threeByTwo), .cell(.leftTwoThirds))
         XCTAssertEqual(step(at(.leftTwoThirds), .right, .threeByTwo), .cell(.rightHalf))
@@ -114,55 +117,62 @@ final class SwishSnapGridTests: XCTestCase {
 
     func testSixthsMoveBetweenCellsAndGrowTowardAnEdge() {
         XCTAssertEqual(step(at(.sixth(0, 0)), .down, .threeByTwo), to(.sixth(0, 1)))
-        XCTAssertEqual(step(at(.sixth(0, 1)), .up, .threeByTwo), to(.sixth(0, 0)))
+        XCTAssertEqual(step(at(.sixth(0, 1)), .up, .threeByTwo), .cell(.maximize), "N337")
         XCTAssertEqual(step(at(.sixth(0, 0)), .right, .threeByTwo), to(.sixth(1, 0)))
         XCTAssertEqual(step(at(.sixth(1, 0)), .right, .threeByTwo), to(.sixth(2, 0)))
         XCTAssertEqual(step(at(.sixth(2, 0)), .left, .threeByTwo), to(.sixth(1, 0)))
         // Toward a side edge: the whole column (its third).
         XCTAssertEqual(step(at(.sixth(0, 0)), .left, .threeByTwo), .cell(.leftThird))
         XCTAssertEqual(step(at(.sixth(2, 1)), .right, .threeByTwo), .cell(.rightThird))
-        // Toward the top or bottom edge: one cell wider, then the whole half.
-        XCTAssertEqual(step(at(.sixth(0, 0)), .up, .threeByTwo), to(.sixth(0, 0, columnSpan: 2)))
-        XCTAssertEqual(step(at(.sixth(2, 0)), .up, .threeByTwo), to(.sixth(1, 0, columnSpan: 2)))
-        XCTAssertEqual(step(at(.sixth(0, 0, columnSpan: 2)), .up, .threeByTwo), .cell(.topHalf))
-        XCTAssertEqual(step(at(.sixth(1, 0)), .up, .threeByTwo), .cell(.topHalf), "the middle of an edge spans it")
-        XCTAssertEqual(step(at(.sixth(1, 1)), .down, .threeByTwo), .cell(.bottomHalf))
+        // Down toward the bottom edge: one cell wider; N337: never the whole
+        // bottom half (the window is put back instead). Up maximizes.
+        XCTAssertEqual(step(at(.sixth(0, 1)), .down, .threeByTwo), to(.sixth(0, 1, columnSpan: 2)))
+        XCTAssertEqual(step(at(.sixth(2, 1)), .down, .threeByTwo), to(.sixth(1, 1, columnSpan: 2)))
+        XCTAssertEqual(step(at(.sixth(0, 1, columnSpan: 2)), .down, .threeByTwo), .restore)
+        XCTAssertEqual(step(at(.sixth(1, 1)), .down, .threeByTwo), .restore, "the middle of an edge would span it")
+        XCTAssertEqual(step(at(.sixth(0, 0)), .up, .threeByTwo), .cell(.maximize))
+        XCTAssertEqual(step(at(.sixth(1, 0)), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.topHalf), .up, .threeByTwo), .cell(.maximize))
         XCTAssertEqual(step(at(.bottomHalf), .down, .threeByTwo), .restore)
         // Two sixths side by side.
         XCTAssertEqual(step(at(.sixth(0, 0, columnSpan: 2)), .right, .threeByTwo), to(.sixth(1, 0, columnSpan: 2)))
         XCTAssertEqual(step(at(.sixth(1, 0, columnSpan: 2)), .right, .threeByTwo), .cell(.rightTwoThirds))
         XCTAssertEqual(step(at(.sixth(0, 0, columnSpan: 2)), .left, .threeByTwo), .cell(.leftTwoThirds))
-        XCTAssertEqual(step(at(.sixth(0, 1, columnSpan: 2)), .up, .threeByTwo), to(.sixth(0, 0, columnSpan: 2)))
+        XCTAssertEqual(step(at(.sixth(0, 0, columnSpan: 2)), .down, .threeByTwo), to(.sixth(0, 1, columnSpan: 2)))
+        XCTAssertEqual(step(at(.sixth(0, 1, columnSpan: 2)), .up, .threeByTwo), .cell(.maximize))
         // An L-shape still picks a quarter outright.
         XCTAssertEqual(SwishSnap.step(from: at(.sixth(1, 1)), stroke: .init(.left, cross: .up), grid: .threeByTwo), .cell(.topLeft))
     }
 
     // MARK: 3 × 3: ninths, two-ninths and four-ninths
 
+    /// N337: down steps through the rows; up maximizes from every ninth.
     func testThirdsSwipedVerticallyBecomeNinthsAndNinthsStepThroughTheRows() {
-        XCTAssertEqual(step(at(.leftThird), .up, .threeByThree), to(.ninth(0, 0)))
+        XCTAssertEqual(step(at(.leftThird), .up, .threeByThree), .cell(.maximize))
         XCTAssertEqual(step(at(.leftThird), .down, .threeByThree), to(.ninth(0, 2)))
-        XCTAssertEqual(step(at(.centerThird), .up, .threeByThree), to(.ninth(1, 0)))
-        XCTAssertEqual(step(at(.leftTwoThirds), .up, .threeByThree), to(.ninth(0, 0, columnSpan: 2)))
+        XCTAssertEqual(step(at(.centerThird), .down, .threeByThree), to(.ninth(1, 2)))
+        XCTAssertEqual(step(at(.leftTwoThirds), .down, .threeByThree), to(.ninth(0, 2, columnSpan: 2)))
         XCTAssertEqual(step(at(.ninth(0, 0)), .down, .threeByThree), to(.ninth(0, 1)))
         XCTAssertEqual(step(at(.ninth(0, 1)), .down, .threeByThree), to(.ninth(0, 2)))
-        XCTAssertEqual(step(at(.ninth(0, 2)), .up, .threeByThree), to(.ninth(0, 1)))
-        XCTAssertEqual(step(at(.ninth(1, 1)), .up, .threeByThree), to(.ninth(1, 0)))
+        XCTAssertEqual(step(at(.ninth(0, 2)), .up, .threeByThree), .cell(.maximize))
+        XCTAssertEqual(step(at(.ninth(1, 1)), .up, .threeByThree), .cell(.maximize))
         XCTAssertEqual(step(at(.ninth(1, 1)), .left, .threeByThree), to(.ninth(0, 1)))
         // Free windows and halves behave as on every grid.
         XCTAssertEqual(step(nil, .left, .threeByThree, tier: 2), .cell(.leftThird))
-        XCTAssertEqual(step(at(.leftHalf), .up, .threeByThree), .cell(.topLeft))
+        XCTAssertEqual(step(at(.leftHalf), .up, .threeByThree), .cell(.maximize))
+        XCTAssertEqual(step(at(.leftHalf), .down, .threeByThree), .cell(.bottomLeft))
         XCTAssertEqual(step(at(.leftHalf), .left, .threeByThree), .cell(.leftThird))
     }
 
     func testANinthGrowsToTwoNinthsThenFourNinths() {
-        // Toward the edge it touches: one cell along it…
-        XCTAssertEqual(step(at(.ninth(0, 0)), .up, .threeByThree), to(.ninth(0, 0, columnSpan: 2)))
+        // Toward the edge it touches: one cell along it (N337: up maximizes,
+        // so only the bottom edge and the sides)…
+        XCTAssertEqual(step(at(.ninth(0, 0)), .up, .threeByThree), .cell(.maximize))
+        XCTAssertEqual(step(at(.ninth(0, 2)), .down, .threeByThree), to(.ninth(0, 2, columnSpan: 2)))
         XCTAssertEqual(step(at(.ninth(0, 0)), .left, .threeByThree), to(.ninth(0, 0, rowSpan: 2)))
         // …then toward the other edge: four-ninths, whichever came first.
         XCTAssertEqual(step(at(.ninth(0, 0, columnSpan: 2)), .left, .threeByThree), to(.ninth(0, 0, columnSpan: 2, rowSpan: 2)))
-        XCTAssertEqual(step(at(.ninth(0, 0, rowSpan: 2)), .up, .threeByThree), to(.ninth(0, 0, columnSpan: 2, rowSpan: 2)))
+        XCTAssertEqual(step(at(.ninth(0, 1, rowSpan: 2)), .down, .threeByThree), to(.ninth(0, 1, columnSpan: 2, rowSpan: 2)))
         XCTAssertEqual(step(at(.ninth(2, 2)), .down, .threeByThree), to(.ninth(1, 2, columnSpan: 2)))
         XCTAssertEqual(step(at(.ninth(1, 2, columnSpan: 2)), .right, .threeByThree), to(.ninth(1, 1, columnSpan: 2, rowSpan: 2)))
         // Four-ninths move a cell, and grow on into two thirds.
@@ -171,11 +181,12 @@ final class SwishSnapGridTests: XCTestCase {
         XCTAssertEqual(step(fourNinths, .down, .threeByThree), to(.ninth(0, 1, columnSpan: 2, rowSpan: 2)))
         XCTAssertEqual(step(fourNinths, .left, .threeByThree), .cell(.leftTwoThirds))
         let topTwoThirds = SwishGridCell(columns: 1, rows: 3, column: 0, row: 0, rowSpan: 2)
-        XCTAssertEqual(step(fourNinths, .up, .threeByThree), to(topTwoThirds))
+        XCTAssertEqual(step(fourNinths, .up, .threeByThree), .cell(.maximize))
         XCTAssertEqual(step(at(topTwoThirds), .up, .threeByThree), .cell(.maximize))
         // A middle cell spans the edge; a row of the grid moves and splits.
         let topRow = SwishGridCell(columns: 1, rows: 3, column: 0, row: 0)
-        XCTAssertEqual(step(at(.ninth(1, 0)), .up, .threeByThree), to(topRow))
+        XCTAssertEqual(step(at(.ninth(1, 2)), .down, .threeByThree), to(topRow.shifted(rows: 2)))
+        XCTAssertEqual(step(at(.ninth(1, 0)), .up, .threeByThree), .cell(.maximize))
         XCTAssertEqual(step(at(.ninth(0, 1)), .left, .threeByThree), .cell(.leftThird))
         XCTAssertEqual(step(at(topRow), .up, .threeByThree), .cell(.maximize))
         XCTAssertEqual(step(at(topRow), .down, .threeByThree), to(topRow.shifted(rows: 1)))
@@ -256,6 +267,7 @@ final class SwishSnapGridTests: XCTestCase {
         XCTAssertEqual(step(at(.maximize), .up, .twoByTwo, almost: true), .cell(.maximize))
         XCTAssertEqual(step(.almostMaximize, .up, .threeByTwo, almost: true), .cell(.maximize), "in 3 × 2 too")
         XCTAssertEqual(step(at(.topHalf), .up, .threeByTwo, almost: true), .place(.almostMaximize))
+        XCTAssertEqual(step(at(.bottomRight), .up, .twoByTwo, almost: true), .place(.almostMaximize), "N337")
         XCTAssertEqual(step(at(SwishGridCell(columns: 1, rows: 3, column: 0, row: 0)), .up, .threeByThree, almost: true),
                        .place(.almostMaximize))
         XCTAssertEqual(step(nil, .up, .twoByTwo, almost: true, tier: 2), .place(.almostMaximize),

@@ -5,11 +5,11 @@ import XCTest
 /// is. Until now a swipe past the longer-swipe distance (0.16 of the pad,
 /// measured from touch-down) took the top half, so a quick flick, a long swipe
 /// or the slide of the lifting fingers often showed and committed the top half
-/// before the maximize the user meant. The top half is Swish's double swipe up
-/// instead: a second, separate swipe up on the window the first one maximized,
-/// within `SwishSnap.doubleSwipeWindow`. Pure: the mapping, the recognizer fed
-/// with frames, and the double-swipe tracker on an injected clock; no
-/// trackpad, Accessibility or windows.
+/// before the maximize the user meant. 3.3.4–3.3.6 then took the top half with
+/// Swish's double swipe up; N337 removed it (the user's rule: a swipe up always
+/// maximizes, and no gesture takes the top or bottom half). Pure: the mapping
+/// and the recognizer fed with frames on an injected clock; no trackpad,
+/// Accessibility or windows.
 final class N334SwipeUpMaximizeTests: XCTestCase {
     // MARK: Helpers
 
@@ -21,8 +21,8 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
 
     private func move(_ place: SwishSnap.Place?, _ stroke: SwishSnap.Stroke,
                       _ options: SwishSnap.GestureOptions = SwishSnap.GestureOptions(),
-                      modifiers: SwishSnap.Modifiers = [], second: Bool = false) -> SwishSnap.Move? {
-        SwishSnap.move(at: place, stroke: stroke, modifiers: modifiers, options: options, secondSwipeUp: second)
+                      modifiers: SwishSnap.Modifiers = []) -> SwishSnap.Move? {
+        SwishSnap.move(at: place, stroke: stroke, modifiers: modifiers, options: options)
     }
 
     /// Two fingers 0.02 apart whose centroid sits at (x, y) in the snap's pad
@@ -36,32 +36,20 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
     /// The title-bar snap's decisions without windows or Accessibility: each
     /// gesture starts from where the last commit put the window, every stroke
     /// it shows is planned with `SwishSnap.move(at:…)`, a commit lands at once
-    /// (most apps take `WindowManager.applySnap`'s immediate write), and the
-    /// double swipe up is decided as `TitleBarWindowSnap` decides it: when a
-    /// swipe engages (`begin`) and when a commit ends (`finishCommit`), on the
-    /// frames' clock. Labels are what the tooltip (or the HUD) says.
+    /// (most apps take `WindowManager.applySnap`'s immediate write). Labels
+    /// are what the tooltip (or the HUD) says.
     private final class Desk {
         let recognizer = TitleBarSnapRecognizer()
         var options = SwishSnap.GestureOptions()
         /// Where the window is now; the next gesture starts there.
         var place: SwishSnap.Place?
-        /// The window the next gesture finds under the pointer.
-        var key = "w"
-        /// False: the commits land but `landingAllowed` refuses their follow-ups.
-        var followUps = true
-        var tracker = SwishDoubleSwipeUp()
         /// Per gesture, what each stroke on show said.
         private(set) var gestures: [[String]] = []
         private(set) var committed: [String] = []
         private(set) var strokes: [SwishSnap.Stroke] = []
         private(set) var readies = 0
         private var start: SwishSnap.Place?
-        private var second = false
-        /// N335: the double swipe in one touch (`commit(continuingWith:)`).
-        private var carried: SwishSnap.Direction?
-        private var double: SwishSnap.Direction?
         private var stroke: SwishSnap.Stroke?
-        private var now: Double = 0
 
         init(sensitivity: Double = TitleBarWindowSnap.sensitivityDefault) {
             let distances = TitleBarWindowSnap.distances(sensitivity: sensitivity)
@@ -69,28 +57,21 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
             recognizer.crossEngage = distances.crossEngage
             recognizer.onBegin = { [unowned self] stroke in
                 self.start = self.place
-                self.second = self.tracker.swipeBegan(key: self.key, newTouch: self.recognizer.motionIndex == 0,
-                                                      at: self.now)
-                self.double = self.carried
-                self.carried = nil
                 self.gestures.append([])
                 self.show(stroke)
             }
             recognizer.onUpdate = { [unowned self] stroke in self.show(stroke) }
             recognizer.onCommit = { [unowned self] in self.commit() }
-            recognizer.onMotionCommit = { [unowned self] next in self.commit(continuingWith: next) }
-            recognizer.onCancel = { [unowned self] in self.stroke = nil; self.second = false; self.double = nil }
+            recognizer.onCancel = { [unowned self] in self.stroke = nil }
             recognizer.onMotionReady = { [unowned self] in self.readies += 1 }
         }
 
         func feed(_ contacts: [TouchPoint], at time: Double) {
-            now = time
             recognizer.feed(contacts: contacts, timestamp: time)
         }
 
         private func plan(_ stroke: SwishSnap.Stroke) -> SwishSnap.Move? {
-            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options, secondSwipeUp: second,
-                           doubleSwipe: double)
+            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options)
         }
 
         private func show(_ stroke: SwishSnap.Stroke) {
@@ -100,27 +81,15 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
             gestures[gestures.count - 1].append(Self.label(plan(stroke), stroke.direction))
         }
 
-        private func commit(continuingWith next: SwishSnap.Stroke? = nil) {
+        private func commit() {
             guard let stroke else { return }
             let move = plan(stroke)
-            if let next, let direction = SwishSnap.doubleSwipe(first: stroke, firstMove: move, next: next) {
-                carried = direction
-                self.stroke = nil
-                return
-            }
             committed.append(Self.label(move, stroke.direction))
             switch move {
-            case .cell?, .place?, .restore?:
-                place = move?.destination
-                let upMaximize = SwishDoubleSwipeUp.isUpMaximize(direction: stroke.direction, place: move?.destination,
-                                                                 action: nil)
-                tracker.commitEnded(key: key, upMaximize: upMaximize && followUps, at: now)
-            case .action?, nil:
-                break
+            case .cell?, .place?, .restore?: place = move?.destination
+            case .action?, nil: break
             }
             self.stroke = nil
-            second = false
-            double = nil
         }
 
         static func label(_ move: SwishSnap.Move?, _ direction: SwishSnap.Direction) -> String {
@@ -203,26 +172,24 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
                 let options = SwishSnap.GestureOptions(grid: grid, almostMaximize: almost)
                 let starts: [SwishSnap.Place?] = [nil, .center, .almostMaximize] + grid.cells.map { .grid($0) }
                 for start in starts {
-                    for second in [false, true] {
-                        XCTAssertEqual(move(start, up(1), options, second: second), move(start, up(2), options, second: second),
-                                       "\(grid) almost \(almost) \(String(describing: start)) second \(second)")
-                    }
+                    XCTAssertEqual(move(start, up(1), options), move(start, up(2), options),
+                                   "\(grid) almost \(almost) \(String(describing: start))")
                 }
             }
         }
     }
 
-    // MARK: Unchanged chains
+    // MARK: N337: no swipe up chains any more
 
-    func testTheOtherSwipesUpChainAsBefore() {
+    /// 3.3.4–3.3.6 chained a swipe up from a half or quarter (left half →
+    /// top-left, bottom-right → top-right, top-left → top half). N337: every
+    /// one maximizes.
+    func testTheOtherSwipesUpMaximizeToo() {
         for tier in [1, 2] {
-            XCTAssertEqual(move(at(.bottomHalf), up(tier)), .cell(.topHalf))
-            XCTAssertEqual(move(at(.topLeft), up(tier)), .cell(.topHalf))
-            XCTAssertEqual(move(at(.topRight), up(tier)), .cell(.topHalf))
-            XCTAssertEqual(move(at(.topHalf), up(tier)), .cell(.maximize))
-            XCTAssertEqual(move(at(.leftHalf), up(tier)), .cell(.topLeft))
-            XCTAssertEqual(move(at(.rightHalf), up(tier)), .cell(.topRight))
-            XCTAssertEqual(move(at(.bottomLeft), up(tier)), .cell(.topLeft))
+            for layout: CustomSnapZone.Layout in [.bottomHalf, .topLeft, .topRight, .topHalf, .leftHalf, .rightHalf,
+                                                  .bottomLeft, .bottomRight] {
+                XCTAssertEqual(move(at(layout), up(tier)), .cell(.maximize), "\(layout) tier \(tier)")
+            }
         }
     }
 
@@ -252,14 +219,14 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         let filled = CGRect(x: 0, y: 25, width: 720, height: 875)
         let filledRead = SwishSnap.place(of: filled, visible: visible, margin: 0, grid: .twoByTwo, overflowing: false)
         XCTAssertEqual(filledRead, at(.leftHalf))
-        XCTAssertEqual(move(filledRead, up()), .cell(.topLeft))
+        XCTAssertEqual(move(filledRead, up()), .cell(.maximize), "N337: a filled half maximizes too")
         XCTAssertEqual(SwishSnap.cell(of: large, visible: visible, margin: 0, thirds: false, overflowing: false), nil)
         XCTAssertEqual(SwishSnap.cell(of: large, visible: visible, margin: 0, thirds: false), .topLeft, "the default is unchanged")
     }
 
     /// N335: down lost its longer swipe as up did in N334 (Swish: "Swipe
-    /// down once to minimize a window"; the bottom half is the double swipe
-    /// down). Sideways keeps its longer swipe for thirds.
+    /// down once to minimize a window"). Sideways keeps its longer swipe for
+    /// thirds.
     func testDownAndSidewaysKeepTheirLongerSwipes() {
         XCTAssertEqual(move(nil, .init(.down)), .action(.minimize))
         XCTAssertEqual(move(.center, .init(.down)), .action(.minimize))
@@ -277,13 +244,10 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         XCTAssertEqual(move(nil, .init(.left, tier: 2)), .cell(.leftHalf), "2 × 2: no thirds")
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .center)
         XCTAssertEqual(SwishSnap.layout(for: .right, tier: 2), .rightThird)
-        // `secondSwipeUp` is only for up (down has `doubleSwipe`, N335).
-        XCTAssertEqual(move(at(.maximize), .init(.down), second: true), .restore)
-        XCTAssertEqual(move(at(.maximize), .init(.down, tier: 2), second: true), .restore)
     }
 
     /// The ⌃⌥ hotkeys send a plain swipe, so ⌃⌥↑ still maximizes and ⌃⌥⇧↑
-    /// still almost-maximizes; a key never completes a double swipe.
+    /// still almost-maximizes.
     func testTheUpHotkeysAreUnchanged() {
         let chord: NSEvent.ModifierFlags = [.control, .option]
         func command(_ flags: NSEvent.ModifierFlags) -> SwishSnap.HotkeyCommand? {
@@ -295,71 +259,25 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         XCTAssertEqual(move(at(.maximize), .init(.up)), .cell(.maximize))
         let secondary = SwishSnap.effectiveOptions(swish, held: [.secondary])
         XCTAssertEqual(move(nil, .init(.up), secondary, modifiers: .init(held: [.secondary])), .place(.almostMaximize))
-        XCTAssertFalse(SwishDoubleSwipeUp.isUpMaximize(direction: nil, place: at(.maximize), action: nil),
-                       "a hotkey commit has no swipe on show")
+        XCTAssertEqual(move(at(.bottomRight), .init(.up)), .cell(.maximize), "N337: ⌃⌥↑ maximizes from a quarter too")
     }
 
-    // MARK: Swish's double swipe up (mapping and tracker)
+    // MARK: N337: a second swipe up stays maximized
 
-    func testTheSecondSwipeUpOnTheMaximizedWindowTakesTheTopHalf() {
+    /// 3.3.4–3.3.6: a second swipe up on the maximized window (separate
+    /// within 0.5 s, or after a rest in the same touch) took the top half.
+    func testASecondSwipeUpOnTheMaximizedWindowStaysMaximized() {
         let full = at(.maximize)
-        XCTAssertEqual(move(full, up(), second: true), .cell(.topHalf))
-        XCTAssertEqual(move(full, up(2), second: true), .cell(.topHalf))
-        XCTAssertEqual(move(full, up(), modifiers: .general, second: true), .cell(.topHalf), "⌥ up is a plain swipe up")
-        XCTAssertEqual(move(full, up(), SwishSnap.effectiveOptions(swish, held: [.secondary]), modifiers: .secondary,
-                            second: true), .cell(.topHalf))
-        // Only a plain swipe up, on the window the first swipe maximized.
-        XCTAssertEqual(move(nil, up(), second: true), .cell(.maximize), "not maximized (moved since): a first swipe")
-        XCTAssertEqual(move(.almostMaximize, up(), .init(almostMaximize: true), second: true), .cell(.maximize))
-        XCTAssertEqual(move(full, .init(.left), second: true), .cell(.leftHalf))
-        XCTAssertEqual(move(full, .init(.up, cross: .left), second: true), .cell(.topLeft))
-        XCTAssertEqual(move(full, .init(.up, held: true), second: true), .action(.toggleFullscreen))
-        XCTAssertEqual(move(full, up(), modifiers: .screen, second: true), .action(.screen(.up)))
-        XCTAssertNil(SwishSnap.move(at: full, stroke: up(), modifiers: [], options: swish, fullscreen: true,
-                                    secondSwipeUp: true))
-    }
-
-    func testOnlyASwipeUpThatMaximizedArmsTheDoubleSwipe() {
-        XCTAssertTrue(SwishDoubleSwipeUp.isUpMaximize(direction: .up, place: at(.maximize), action: nil))
-        XCTAssertFalse(SwishDoubleSwipeUp.isUpMaximize(direction: .up, place: .almostMaximize, action: nil),
-                       "⇧ up almost-maximizes: up again maximizes as before")
-        XCTAssertFalse(SwishDoubleSwipeUp.isUpMaximize(direction: .up, place: at(.topHalf), action: nil))
-        XCTAssertFalse(SwishDoubleSwipeUp.isUpMaximize(direction: .left, place: at(.maximize), action: nil))
-        XCTAssertFalse(SwishDoubleSwipeUp.isUpMaximize(direction: .up, place: at(.maximize), action: .screen(.up)))
-    }
-
-    func testTheSecondSwipeIsANewTouchOnTheSameWindowWithinHalfASecond() {
-        XCTAssertEqual(SwishSnap.doubleSwipeWindow, 0.5)
-        var tracker = SwishDoubleSwipeUp()
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 1), "nothing landed yet")
-        tracker.commitEnded(key: "w", upMaximize: true, at: 10)
-        XCTAssertEqual(tracker.landing, .init(key: "w", at: 10))
-        XCTAssertTrue(tracker.swipeBegan(key: "w", newTouch: true, at: 10.3))
-        XCTAssertNil(tracker.landing, "used up")
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 10.4), "a third swipe is a first one again")
-        // The edge of the window: 0.5 s is in, later is out.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 20)
-        XCTAssertTrue(tracker.swipeBegan(key: "w", newTouch: true, at: 20.5))
-        tracker.commitEnded(key: "w", upMaximize: true, at: 30)
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 30.51))
-        // A further motion of the same touch, or a re-armed one.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 40)
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: false, at: 40.1))
-        // Another window, which also uses the landing up.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 50)
-        XCTAssertFalse(tracker.swipeBegan(key: "other", newTouch: true, at: 50.1))
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 50.2))
-        // A later commit that was no up maximize, or did not land, or was refused.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 60)
-        tracker.commitEnded(key: "w", upMaximize: false, at: 60.1)
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 60.2))
-        // The snap stopped, or the Mac slept or woke.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 70)
-        tracker.reset()
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 70.1))
-        // A swipe stamped before the landing is never inside the window.
-        tracker.commitEnded(key: "w", upMaximize: true, at: 80)
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 79.9))
+        XCTAssertEqual(move(full, up()), .cell(.maximize))
+        XCTAssertEqual(move(full, up(2)), .cell(.maximize))
+        XCTAssertEqual(move(full, up(), modifiers: .general), .cell(.maximize), "⌥ up is a plain swipe up")
+        XCTAssertEqual(move(full, up(), SwishSnap.effectiveOptions(swish, held: [.secondary]), modifiers: .secondary),
+                       .cell(.maximize))
+        XCTAssertEqual(move(full, .init(.left)), .cell(.leftHalf))
+        XCTAssertEqual(move(full, .init(.up, cross: .left)), .cell(.topLeft), "a diagonal still picks its quarter")
+        XCTAssertEqual(move(full, .init(.up, held: true)), .action(.toggleFullscreen))
+        XCTAssertEqual(move(full, up(), modifiers: .screen), .action(.screen(.up)))
+        XCTAssertNil(SwishSnap.move(at: full, stroke: up(), modifiers: [], options: swish, fullscreen: true))
     }
 
     // MARK: Frames from the pad: one swipe up is one maximize
@@ -408,38 +326,34 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
     }
 
     /// Swish's multi-motion: up, a pause that locks it (haptic), then up again
-    /// in the same touch. N335: that is Swish's double swipe up ("Try swiping
-    /// up twice on the titlebar"): the locked maximize is not committed and
-    /// the second swipe shows and commits the top half. Until 3.3.5 the
-    /// maximize committed and the second swipe stayed maximized. It is still
-    /// a further motion of the touch, never the second of two separate swipes.
-    func testAPauseLockThenMoreSwipeUpInTheSameTouchIsTheDoubleSwipe() {
+    /// in the same touch. 3.3.5–3.3.6 held the maximize back and took the top
+    /// half (Swish's "Try swiping up twice"); N337: the maximize commits as
+    /// the fingers move on, and the second swipe keeps it maximized.
+    func testAPauseLockThenMoreSwipeUpInTheSameTouchStaysMaximized() {
         let desk = Desk()
         desk.feed(pair(0.5, 0.80), at: 0)
         desk.feed(pair(0.5, 0.70), at: 0.05)               // engages up
         desk.feed(pair(0.5, 0.66), at: 0.07)
         for t in [0.10, 0.15, 0.20, 0.25, 0.30, 0.35] { desk.feed(pair(0.5, 0.66), at: t) }
         XCTAssertEqual(desk.readies, 1, "the pause locked the swipe")
-        desk.feed(pair(0.5, 0.60), at: 0.40)               // moves on: the double swipe, nothing committed
-        XCTAssertEqual(desk.committed, [], "the maximize never lands")
-        XCTAssertNil(desk.tracker.landing)
+        desk.feed(pair(0.5, 0.60), at: 0.40)               // moves on: the maximize commits
+        XCTAssertEqual(desk.committed, ["↑ Maximize"])
         desk.feed(pair(0.5, 0.40), at: 0.42)               // 0.26 from the pause: tier 2
         desk.feed([], at: 0.45)
         XCTAssertEqual(desk.recognizer.motionIndex, 1, "the touch's second gesture")
         XCTAssertTrue(desk.strokes.contains(up(2)))
         XCTAssertEqual(desk.gestures.count, 2)
         XCTAssertEqual(Set(desk.gestures[0]), ["↑ Maximize"])
-        XCTAssertEqual(Set(desk.gestures[1]), ["↑ Top Half"], "every frame of the second swipe")
-        XCTAssertEqual(desk.committed, ["↑ Top Half"])
-        XCTAssertEqual(desk.place, at(.topHalf))
+        XCTAssertEqual(Set(desk.gestures[1]), ["↑ Maximize"], "every frame of the second swipe")
+        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
+        XCTAssertEqual(desk.place, at(.maximize))
     }
 
-    // MARK: Frames from the pad: Swish's double swipe up
+    // MARK: Frames from the pad: a second, separate swipe up
 
-    /// Up, lift, and up again within half a second: the first swipe maximizes,
-    /// the second one's preview and tooltip say Top Half from its first frame,
-    /// and it commits the top half.
-    func testASecondSwipeUpWithinHalfASecondTakesTheTopHalf() {
+    /// Up, lift, and up again within half a second (3.3.4–3.3.6: the top
+    /// half): N337, maximized again, on every frame.
+    func testASecondSwipeUpWithinHalfASecondStaysMaximized() {
         let desk = Desk()
         swipeUp(desk, toY: 0.60, at: 0, duration: 0.08)    // lands at 0.10
         XCTAssertEqual(desk.committed, ["↑ Maximize"])
@@ -449,15 +363,9 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         desk.feed(pair(0.5, 0.55), at: 0.38)
         desk.feed([], at: 0.40)
         XCTAssertEqual(desk.gestures.count, 2)
-        XCTAssertEqual(Set(desk.gestures[0]), ["↑ Maximize"])
-        XCTAssertEqual(desk.gestures[1].first, "↑ Top Half")
-        XCTAssertEqual(Set(desk.gestures[1]), ["↑ Top Half"])
-        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Top Half"])
-        XCTAssertEqual(desk.place, at(.topHalf))
-        XCTAssertNil(desk.tracker.landing, "the top half disarms it")
-        // From the top half, up again maximizes as before.
-        swipeUp(desk, toY: 0.60, at: 0.6, duration: 0.08)
-        XCTAssertEqual(desk.committed.last, "↑ Maximize")
+        XCTAssertEqual(Set(desk.gestures[1]), ["↑ Maximize"])
+        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
+        XCTAssertEqual(desk.place, at(.maximize))
     }
 
     func testASecondSwipeUpAfterHalfASecondStaysMaximized() {
@@ -468,33 +376,8 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         XCTAssertEqual(desk.gestures.flatMap { $0 }.filter { $0 != "↑ Maximize" }, [])
     }
 
-    func testASwipeUpOnAnotherWindowIsNoSecondSwipe() {
-        let desk = Desk()
-        swipeUp(desk, toY: 0.60, at: 0, duration: 0.08)
-        desk.key = "other"
-        desk.place = nil                                   // a free window
-        swipeUp(desk, toY: 0.55, at: 0.30, duration: 0.08)
-        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
-        // Back on the first window, still within half a second of its
-        // maximize: the swipe on the other window used that landing up.
-        desk.key = "w"
-        desk.place = at(.maximize)
-        swipeUp(desk, toY: 0.55, at: 0.50, duration: 0.04)
-        XCTAssertEqual(desk.committed.last, "↑ Maximize")
-    }
-
-    /// A maximize whose follow-ups `landingAllowed` refused (AOM or the app was
-    /// paused as it landed, the snap stopped) arms nothing.
-    func testARefusedLandingArmsNothing() {
-        let desk = Desk()
-        desk.followUps = false
-        swipeUp(desk, toY: 0.60, at: 0, duration: 0.08)
-        swipeUp(desk, toY: 0.55, at: 0.30, duration: 0.08)
-        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
-    }
-
-    /// With ⇧ (Secondary) the first swipe up almost-maximizes, which arms
-    /// nothing, so a quick second one maximizes as before.
+    /// With ⇧ (Secondary) the first swipe up almost-maximizes, and a quick
+    /// second one maximizes (N337: never the top half).
     func testWithSecondaryTwoQuickSwipesUpAlmostMaximizeThenMaximize() {
         let desk = Desk()
         desk.options = SwishSnap.effectiveOptions(swish, held: [.secondary])

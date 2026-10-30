@@ -64,7 +64,7 @@ enum SwishSnap {
     /// (horizontal). Up is maximize and down the centre at any length (N334,
     /// N335): a longer swipe up or down used to read as the top or bottom
     /// half, which a quick or long swipe reached before the move it was meant
-    /// for. Those halves are Swish's double swipes now.
+    /// for. N337: no title-bar swipe reaches those halves any more.
     static func layout(for direction: Direction, tier: Int) -> CustomSnapZone.Layout {
         switch (direction, tier >= 2) {
         case (.left, false): return .leftHalf
@@ -317,16 +317,19 @@ enum SwishSnap {
     /// Swish-style chaining on the 2 × 2 grid, or with `thirds` on the 3 × 2
     /// grid (`step(from:stroke:grid:almost:)` has the full rules and the 3 × 3
     /// grid):
+    /// - Up maximizes from everywhere (N337).
     /// - From a half, the other axis halves it again: left half + down →
     ///   bottom-left quarter, top half + right → top-right quarter.
     /// - From a quarter, a swipe toward the other row or column moves it
-    ///   there (top-left + down → bottom-left); a swipe toward the edge it
-    ///   already touches grows it along that edge (top-left + up → top half,
-    ///   top-left + left → left half).
-    /// - Maximized, or on the bottom edge, a swipe down puts the window back.
+    ///   there (top-left + down → bottom-left, bottom-left + right →
+    ///   bottom-right); sideways toward the edge it already touches it grows
+    ///   to that half (top-left + left → left half).
+    /// - Maximized, or on the bottom edge (a bottom quarter, the bottom half),
+    ///   a swipe down puts the window back; so does the top half swiped down
+    ///   (N337: never the bottom half).
     /// - Thirds only when `thirds` is on: a longer swipe on a free window, and
     ///   swipes toward an edge that step half → third → two thirds → half;
-    ///   a third swiped up or down becomes its upper or lower sixth.
+    ///   a third swiped down becomes its lower sixth.
     /// - An L-shaped swipe picks a quarter outright, from anywhere.
     static func move(from current: CustomSnapZone.Layout?, stroke: Stroke, thirds: Bool) -> Move {
         step(from: current.flatMap(Place.init), stroke: stroke, grid: thirds ? .threeByTwo : .twoByTwo)
@@ -443,16 +446,12 @@ enum SwishSnap {
     ///   except that a swipe down on a free-floating or centred window
     ///   minimizes it ("Swipe down once to minimize a window") while
     ///   `downAction` is `.minimize`, at any length (N335).
-    /// - `secondSwipeUp` (`move(at:…)`, N334, Swish's double swipe up): this
-    ///   swipe is the second of two separate swipes up (`SwishDoubleSwipeUp`);
-    ///   on the maximized window a plain swipe up takes the top half. A single
-    ///   swipe up never does, however long.
-    /// - `doubleSwipe` (N335, Swish: "Double-swipe vertically to snap to the
-    ///   top or bottom half of the screen"): the caller found this swipe to be
-    ///   the second half of a double swipe that way (up or down, pause, the
-    ///   same way again in one touch; or a second swipe down soon after a
-    ///   swipe down landed). A plain swipe that way takes the top or bottom
-    ///   half from wherever the window is.
+    /// - N337 (the user's rule over Swish's "Double-swipe vertically to snap
+    ///   to the top or bottom half of the screen"): no double swipe. A plain
+    ///   swipe up maximizes from every place, as the first motion of a touch,
+    ///   a later one, or a new touch right after another swipe; nothing here
+    ///   produces the top or bottom half (`step`). 3.3.4–3.3.6 took them with
+    ///   a second swipe up or down, in the same touch or within 0.5 s.
     /// A window in native full screen only answers to tap-and-hold and the
     /// modifiers. Nil: the stroke does nothing.
     static func move(from current: CustomSnapZone.Layout?, stroke: Stroke, modifiers: Modifiers,
@@ -463,8 +462,7 @@ enum SwishSnap {
 
     /// The same mapping for any place (sixths, ninths, almost-maximize).
     static func move(at current: Place?, stroke: Stroke, modifiers: Modifiers,
-                     options: GestureOptions, fullscreen: Bool = false, secondSwipeUp: Bool = false,
-                     doubleSwipe: Direction? = nil) -> Move? {
+                     options: GestureOptions, fullscreen: Bool = false) -> Move? {
         let modifiers = options.modifierGestures ? modifiers : []
         let held = stroke.held && options.holdGestures
         let direction = stroke.direction
@@ -485,14 +483,6 @@ enum SwishSnap {
             }
         }
         guard !fullscreen else { return nil }
-        // N334: the second half of the double swipe up, on the window the
-        // first half maximized.
-        if secondSwipeUp, direction == .up, stroke.cross == nil, current == Place.grid(.full) { return .cell(.topHalf) }
-        // N335: the second half of a double swipe up or down.
-        if let doubleSwipe, doubleSwipe == direction, stroke.cross == nil {
-            if direction == .up { return .cell(.topHalf) }
-            if direction == .down { return .cell(.bottomHalf) }
-        }
         let grid = options.grid, almost = options.almostMaximize
         guard options.downAction == .minimize else { return step(from: current, stroke: stroke, grid: grid, almost: almost) }
         // Swish: a centred window, or a place the grid cannot produce (a
@@ -873,11 +863,6 @@ final class TitleBarSnapRecognizer {
     /// The fingers lifted after a tap and hold that never swiped or pinched
     /// (after its `onCancel`): the tab detach (F02) acts on it.
     var onHoldLift: (() -> Void)?
-    /// N335: a locked swipe commits because the fingers swipe on, and this is
-    /// the stroke they go on with (reported just before its `onBegin`). Set,
-    /// it replaces `onCommit` for that commit, so the service can tell a
-    /// double swipe (up, pause, up) from two separate moves.
-    var onMotionCommit: ((SwishSnap.Stroke) -> Void)?
     /// N335: the fingers took an engaged swipe back to where it started
     /// (within `withdrawShare` of the engage distance): nothing is on show,
     /// and lifting now does nothing (its `onCommit` finds no plan). Swiping
@@ -1161,7 +1146,7 @@ final class TitleBarSnapRecognizer {
             return
         }
         guard let stroke = engagedStroke(dx: dx, dy: dy) else { return }
-        commitLocked(next: stroke)
+        commitLocked()
         phase = .engaged
         withdrawn = false
         (startX, startY) = (pauseX, pauseY)
@@ -1174,14 +1159,15 @@ final class TitleBarSnapRecognizer {
         onBegin?(stroke)
     }
 
-    /// Commits the locked gesture as its lift would have. `next`: the swipe
-    /// the fingers go on with (N335, `onMotionCommit`).
-    private func commitLocked(next: SwishSnap.Stroke? = nil) {
+    /// Commits the locked gesture as its lift would have (N337: also when the
+    /// fingers swipe on the same way; 3.3.5–3.3.6 held a swipe up or down
+    /// back for the double swipe).
+    private func commitLocked() {
         locked = false
         motionIndex += 1
         switch phase {
         case .engaged:
-            if let next, let onMotionCommit { onMotionCommit(next) } else { onCommit?() }
+            onCommit?()
         case .pinching:
             if let kind = pinch { onPinch?(kind) }
         default:
@@ -1781,25 +1767,6 @@ final class TitleBarWindowSnap {
     /// that neither activates its window, moves the pointer nor applies a
     /// motion queued behind it.
     @MainActor private var landingGeneration = 0
-    /// N334: Swish's double swipe up. A swipe up that maximized and landed
-    /// arms it for that window; `secondSwipeUp` says whether the gesture on
-    /// show is its second half (decided as the swipe engages, kept for the
-    /// whole gesture), and `committingArms` (N335) what the commit in flight
-    /// arms for a second swipe.
-    @MainActor private var doubleSwipeUp = SwishDoubleSwipeUp()
-    @MainActor private var secondSwipeUp = false
-    /// N335: the vertical double swipe the gesture on show completes (the
-    /// second swipe of one touch, or a second swipe down soon after a swipe
-    /// down landed), and what the commit in flight arms for the next one.
-    @MainActor private var doubleSwipe: SwishSnap.Direction?
-    @MainActor private var committingArms: SwishSnap.Direction?
-    /// N335: set by a locked swipe that the fingers carried on the same way
-    /// (`commit(continuingWith:)`), read by the `begin` that follows at once.
-    @MainActor private var inTouchDouble: SwishSnap.Direction?
-    /// N335: the stroke on show and the move it plans, for the double swipe
-    /// in one touch.
-    @MainActor private var shownStroke: SwishSnap.Stroke?
-    @MainActor private var shownMove: SwishSnap.Move?
 
     /// One left-button press: where it went down (top-left coordinates), the
     /// snapped window its first drag found on a title bar, and the snapped
@@ -1825,7 +1792,6 @@ final class TitleBarWindowSnap {
         recognizer.onUpdate = { stroke in Self.onMain { TitleBarWindowSnap.shared.update(stroke) } }
         recognizer.onActive = { still in Self.onMain { TitleBarWindowSnap.shared.stillHeld(for: still) } }
         recognizer.onCommit = { Self.onMain { TitleBarWindowSnap.shared.commit() } }
-        recognizer.onMotionCommit = { next in Self.onMain { TitleBarWindowSnap.shared.commit(continuingWith: next) } }
         recognizer.onWithdraw = { Self.onMain { TitleBarWindowSnap.shared.withdraw() } }
         recognizer.onCancel = { Self.onMain { TitleBarWindowSnap.shared.cancel() } }
         recognizer.onHoldCancel = { Self.onMain { TitleBarWindowSnap.shared.heldStillCancel() } }
@@ -1907,9 +1873,6 @@ final class TitleBarWindowSnap {
             // N333-05, N333-06: a tab detach or a landing commit from before never acts after this.
             detachRequest &+= 1
             landingGeneration &+= 1
-            // N334: nor does the first half of a double swipe up.
-            doubleSwipeUp.reset()
-            inTouchDouble = nil
         }
         updateMouseMonitor()
     }
@@ -2004,10 +1967,6 @@ final class TitleBarWindowSnap {
 
     @MainActor
     private func begin(_ stroke: SwishSnap.Stroke) {
-        // N335: the double swipe in one touch is decided by the commit just
-        // before this begin; it holds for this begin only.
-        let carriedDouble = inTouchDouble
-        inTouchDouble = nil
         // Only engage over a window's title bar, so the gesture never competes
         // with AOM's other two-finger gestures elsewhere on screen. A swipe that
         // engages while the previous snap is still landing is kept (3.3.2
@@ -2019,17 +1978,8 @@ final class TitleBarWindowSnap {
         }
         guard allowedNow, !touchSpent else { hideOwnPreview(); reset(); return }
         guard let capture = gestureCapture(), adopt(capture) else { hideOwnPreview(); reset(); return }
-        // N334: the second half of a double swipe up is a new touch's first
-        // gesture on the window a swipe up just maximized (a further motion
-        // of a touch, or a re-armed one, has a motion index above 0). N335:
-        // the same for a second swipe down after a centre or a restore, and
-        // a further motion that carries a rested swipe on the same way.
-        let separate = doubleSwipeUp.secondSwipe(key: Self.key(capture.window), newTouch: recognizer.motionIndex == 0,
-                                                 at: ProcessInfo.processInfo.systemUptime)
-        secondSwipeUp = separate == .up
-        doubleSwipe = carriedDouble ?? (separate == .down ? .down : nil)
         scheduleTimeout()
-        showPreview(for: stroke, zoneHaptic: carriedDouble != nil)
+        showPreview(for: stroke, zoneHaptic: false)
     }
 
     /// The window a gesture starting now acts on: the chained one (a further
@@ -2119,8 +2069,6 @@ final class TitleBarWindowSnap {
         fullscreen = Self.boundedIsFullscreen(capture.window)
         repeating = pending.flatMap { $0.target.pid == capture.window.pid ? $0.action : nil }
         shownAction = nil
-        secondSwipeUp = false
-        doubleSwipe = nil
         targetTab = capture.tab
         return true
     }
@@ -2217,8 +2165,6 @@ final class TitleBarWindowSnap {
         guard target != nil, !pinching else { return }
         scheduleTimeout()
         plan = nil
-        shownStroke = nil
-        shownMove = nil
         present(nil)
     }
 
@@ -2289,9 +2235,6 @@ final class TitleBarWindowSnap {
         // N333-05, N333-06: nor does a tab detach in flight, or what follows a commit still landing.
         detachRequest &+= 1
         landingGeneration &+= 1
-        // N334: nor the first half of a double swipe up.
-        doubleSwipeUp.reset()
-        inTouchDouble = nil
     }
 
     @MainActor
@@ -2301,7 +2244,6 @@ final class TitleBarWindowSnap {
         // Swish taps the trackpad as the preview moves to a new zone.
         if zoneHaptic, next != plan, hapticsOn { _ = GestureHaptics.shared.feedback(enabled: true) }
         plan = next
-        shownStroke = stroke
         // The second ⌥ swipe down on the app quits it: the first one's close no longer waits.
         if next?.action == .quitApp, repeating == .close { cancelPending() }
         tooltipDirection = stroke.direction
@@ -2317,11 +2259,7 @@ final class TitleBarWindowSnap {
                       visible: CGRect, start: CGRect) -> Plan? {
         let move = SwishSnap.move(at: Self.place(forStroke: stroke, start: startPlace, startForUp: startPlaceForUp),
                                   stroke: stroke, modifiers: modifiers,
-                                  options: gestureOptionsNow(), fullscreen: fullscreen,
-                                  secondSwipeUp: secondSwipeUp, doubleSwipe: doubleSwipe)
-        shownMove = move
-        // N335: the second half of a double swipe shows two arrows.
-        tooltipDouble = SwishSnap.isDoubleSwipeResult(move, stroke: stroke, double: secondSwipeUp ? .up : doubleSwipe)
+                                  options: gestureOptionsNow(), fullscreen: fullscreen)
         guard let move else { return nil }
         switch move {
         case .restore:
@@ -2394,8 +2332,7 @@ final class TitleBarWindowSnap {
             overlay.show(frame: SwishSnap.appKitRect(plan.rect, primaryTop: primaryTop), restoring: plan.place == nil)
             // Swish's tooltip beside the pointer: where the window goes (3.3.3).
             if Self.tooltipOn() {
-                SwishGestureTooltip.shared.show(SwishSnap.tooltipText(direction: tooltipDirection, place: plan.place,
-                                                                      double: tooltipDouble),
+                SwishGestureTooltip.shared.show(SwishSnap.tooltipText(direction: tooltipDirection, place: plan.place),
                                                 near: NSEvent.mouseLocation, speed: Self.animationSpeed())
             }
             return
@@ -2419,7 +2356,7 @@ final class TitleBarWindowSnap {
     }
 
     @MainActor
-    private func commit(continuingWith next: SwishSnap.Stroke? = nil) {
+    private func commit() {
         timeout?.cancel(); timeout = nil
         // The lift of a swipe that engaged while the previous snap is still
         // landing: it is applied once that commit is done (`finishCommit`).
@@ -2432,24 +2369,10 @@ final class TitleBarWindowSnap {
         // Multi-motion (3.3.3): what the fingers do next in this touch acts
         // on this window, wherever it ends up.
         chainTouch(to: target)
-        // N335: up or down, a rest, and the same way again is Swish's double
-        // swipe. The first swipe is not committed; the preview stays up and
-        // moves on to the half the next swipe (`begin`, right after) takes.
-        if let next, let shown = shownStroke,
-           let direction = SwishSnap.doubleSwipe(first: shown, firstMove: shownMove, next: next) {
-            inTouchDouble = direction
-            GestureLog.shared.logFromAnyThread("Title-bar snap: double swipe \(direction == .up ? "up" : "down")",
-                                               level: .detect)
-            return
-        }
         if let action = plan.action {
             run(action, plan: plan, target: target, start: start)
             return
         }
-        // N334: a swipe up that maximizes arms the double swipe up once it
-        // has landed; N335: a swipe down that centres or restores arms the
-        // double swipe down.
-        committingArms = SwishDoubleSwipeUp.arming(direction: tooltipDirection, place: plan.place, action: plan.action)
         // F06: Swish's "Native Window Tiling" for what macOS can tile.
         if Self.nativeTilingWanted, let place = plan.place, let key = NativeTiling.menuKey(for: place) {
             commitNative(key: key, place: place, rect: plan.rect, target: target, anchorVisible: visible, start: start)
@@ -2543,12 +2466,6 @@ final class TitleBarWindowSnap {
         keyboardCommit = false
         let followUps = actual != nil
             && landingAllowed(target, generation: generation, keyboard: fromKeyboard, windowAnswers: windowAnswers)
-        // N334: a swipe up whose maximize landed with its follow-ups allowed
-        // arms the double swipe up on this window; any other commit disarms
-        // it. N335: so does a swipe down that centred or restored it.
-        doubleSwipeUp.commitEnded(key: key, vertical: followUps ? committingArms : nil,
-                                  at: ProcessInfo.processInfo.systemUptime)
-        committingArms = nil
         // A swipe that engaged meanwhile carries on with this window (3.3.2
         // review), only when the follow-ups may run.
         let chained = chain.landed(succeeded: followUps)
@@ -2699,8 +2616,6 @@ final class TitleBarWindowSnap {
     /// The direction of the swipe on show, for the tooltip's arrow and for
     /// `commit` to tell a swipe up that maximizes (N334).
     @MainActor private var tooltipDirection: SwishSnap.Direction?
-    /// N335: the plan on show completes a double swipe (two arrows).
-    @MainActor private var tooltipDouble = false
 
     @MainActor
     private func hideTooltip() {
@@ -2712,11 +2627,6 @@ final class TitleBarWindowSnap {
         target = nil; targetVisible = nil; startFrame = nil; startPlace = nil; startPlaceForUp = nil; plan = nil; targetTab = nil
         modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil; heldRoles = []
         tooltipDirection = nil
-        secondSwipeUp = false
-        doubleSwipe = nil
-        tooltipDouble = false
-        shownStroke = nil
-        shownMove = nil
         hideTooltip()
     }
 

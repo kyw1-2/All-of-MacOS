@@ -57,7 +57,8 @@ final class TitleBarSnapTests: XCTestCase {
         // a window at the top is no longer stuck there.
         let down = SwishSnap.Stroke(.down)
         XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: down, thirds: false), .cell(.bottomLeft))
-        XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: down, thirds: false), .cell(.bottomHalf))
+        // N337: the top half swiped down is put back, never the bottom half.
+        XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: down, thirds: false), .restore)
     }
 
     // MARK: 3.3.2 — taps, settling and lift-off never snap
@@ -138,7 +139,8 @@ final class TitleBarSnapTests: XCTestCase {
 
     func testAHalfSwipedVerticallyBecomesAQuarter() {
         XCTAssertEqual(SwishSnap.move(from: .leftHalf, stroke: .init(.down), thirds: false), .cell(.bottomLeft))
-        XCTAssertEqual(SwishSnap.move(from: .leftHalf, stroke: .init(.up), thirds: false), .cell(.topLeft))
+        // N337: up maximizes from a half (3.3.2–3.3.6: the top quarter).
+        XCTAssertEqual(SwishSnap.move(from: .leftHalf, stroke: .init(.up), thirds: false), .cell(.maximize))
         XCTAssertEqual(SwishSnap.move(from: .rightHalf, stroke: .init(.down), thirds: false), .cell(.bottomRight))
         XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: .init(.left), thirds: false), .cell(.topLeft))
         XCTAssertEqual(SwishSnap.move(from: .bottomHalf, stroke: .init(.right), thirds: false), .cell(.bottomRight))
@@ -148,15 +150,17 @@ final class TitleBarSnapTests: XCTestCase {
     func testATopCellSwipedDownMovesToTheBottom() {
         XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: .init(.down), thirds: false), .cell(.bottomLeft))
         XCTAssertEqual(SwishSnap.move(from: .topRight, stroke: .init(.down), thirds: false), .cell(.bottomRight))
-        XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: .init(.down), thirds: false), .cell(.bottomHalf))
-        XCTAssertEqual(SwishSnap.move(from: .bottomLeft, stroke: .init(.up), thirds: false), .cell(.topLeft))
+        XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: .init(.down), thirds: false), .restore, "N337")
+        XCTAssertEqual(SwishSnap.move(from: .bottomLeft, stroke: .init(.up), thirds: false), .cell(.maximize), "N337")
         XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: .init(.right), thirds: false), .cell(.topRight))
     }
 
+    /// N337: only sideways; toward the top or bottom edge it would have
+    /// been the top or bottom half (up maximizes, down puts it back).
     func testSwipingTowardAnEdgeGrowsTheWindowAlongIt() {
-        XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: .init(.up), thirds: false), .cell(.topHalf))
+        XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: .init(.up), thirds: false), .cell(.maximize))
         XCTAssertEqual(SwishSnap.move(from: .topLeft, stroke: .init(.left), thirds: false), .cell(.leftHalf))
-        XCTAssertEqual(SwishSnap.move(from: .bottomRight, stroke: .init(.down), thirds: false), .cell(.bottomHalf))
+        XCTAssertEqual(SwishSnap.move(from: .bottomRight, stroke: .init(.down), thirds: false), .restore)
         XCTAssertEqual(SwishSnap.move(from: .bottomRight, stroke: .init(.right), thirds: false), .cell(.rightHalf))
         XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: .init(.up), thirds: false), .cell(.maximize))
     }

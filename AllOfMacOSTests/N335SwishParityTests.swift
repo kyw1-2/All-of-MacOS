@@ -3,9 +3,10 @@ import XCTest
 
 /// N335: the title-bar snap brought closer to Swish 1.13 where the evidence is
 /// clear (its gesture help strings: "Swipe down once to minimize a window",
-/// "Double-swipe vertically to snap to the top or bottom half of the screen",
-/// "Try swiping up twice on the titlebar of this window" with the multi-motion
-/// engine, "Unsnap: Avoid cropping"), and a swipe that can be taken back.
+/// "Unsnap: Avoid cropping"), and a swipe that can be taken back. N337: the
+/// double swipe to the top or bottom half that 3.3.5 added from "Double-swipe
+/// vertically to snap to the top or bottom half of the screen" is gone again
+/// (the user's rule); the tests that covered it now check the plain motions.
 /// Pure: the mapping, the recognizer fed with frames and a model of the
 /// service's sequencing (`Desk`) on an injected clock; no trackpad,
 /// Accessibility or windows.
@@ -16,10 +17,8 @@ final class N335SwishParityTests: XCTestCase {
 
     private func move(_ place: SwishSnap.Place?, _ stroke: SwishSnap.Stroke,
                       _ options: SwishSnap.GestureOptions = SwishSnap.GestureOptions(),
-                      modifiers: SwishSnap.Modifiers = [], double: SwishSnap.Direction? = nil,
-                      fullscreen: Bool = false) -> SwishSnap.Move? {
-        SwishSnap.move(at: place, stroke: stroke, modifiers: modifiers, options: options, fullscreen: fullscreen,
-                       doubleSwipe: double)
+                      modifiers: SwishSnap.Modifiers = [], fullscreen: Bool = false) -> SwishSnap.Move? {
+        SwishSnap.move(at: place, stroke: stroke, modifiers: modifiers, options: options, fullscreen: fullscreen)
     }
 
     private var centerOption: SwishSnap.GestureOptions {
@@ -36,28 +35,19 @@ final class N335SwishParityTests: XCTestCase {
     }
 
     /// The title-bar snap's decisions as `TitleBarWindowSnap` takes them:
-    /// `begin` (the window's place, the separate double swipe from the
-    /// tracker, the double swipe carried by the commit just before),
-    /// `showPreview`/`plan(for:)` (labels as the tooltip says them),
-    /// `withdraw`, `commit(continuingWith:)` (the double swipe in one touch)
-    /// and `finishCommit` (what a landing arms). Commits land at once.
+    /// `begin` (the window's place), `showPreview`/`plan(for:)` (labels as the
+    /// tooltip says them), `withdraw` and `commit`. Commits land at once.
     private final class Desk {
         let recognizer = TitleBarSnapRecognizer()
         var options = SwishSnap.GestureOptions()
         var place: SwishSnap.Place?
-        var key = "w"
-        var tracker = SwishDoubleSwipeUp()
         private(set) var gestures: [[String]] = []
         private(set) var committed: [String] = []
         private(set) var withdrawals = 0
         private(set) var readies = 0
         private(set) var minimized = false
         private var start: SwishSnap.Place?
-        private var secondUp = false
-        private var double: SwishSnap.Direction?
-        private var carried: SwishSnap.Direction?
         private var stroke: SwishSnap.Stroke?
-        private var now: Double = 0
 
         init(motionPause: Double = 0.25) {
             let distances = TitleBarWindowSnap.distances(sensitivity: TitleBarWindowSnap.sensitivityDefault)
@@ -65,13 +55,7 @@ final class N335SwishParityTests: XCTestCase {
             recognizer.crossEngage = distances.crossEngage
             recognizer.motionPause = motionPause
             recognizer.onBegin = { [unowned self] stroke in
-                let carried = self.carried
-                self.carried = nil
                 self.start = self.place
-                let separate = self.tracker.secondSwipe(key: self.key, newTouch: self.recognizer.motionIndex == 0,
-                                                        at: self.now)
-                self.secondUp = separate == .up
-                self.double = carried ?? (separate == .down ? .down : nil)
                 self.gestures.append([])
                 self.show(stroke)
             }
@@ -81,9 +65,8 @@ final class N335SwishParityTests: XCTestCase {
                 self.stroke = nil
                 self.gestures[self.gestures.count - 1].append("nothing")
             }
-            recognizer.onCommit = { [unowned self] in self.commit(continuingWith: nil) }
-            recognizer.onMotionCommit = { [unowned self] next in self.commit(continuingWith: next) }
-            recognizer.onCancel = { [unowned self] in self.stroke = nil; self.double = nil; self.secondUp = false }
+            recognizer.onCommit = { [unowned self] in self.commit() }
+            recognizer.onCancel = { [unowned self] in self.stroke = nil }
             recognizer.onMotionReady = { [unowned self] in
                 // `TitleBarWindowSnap.motionReady`: only with something planned.
                 if SwishSnap.motionReadyHaptic(planOnShow: self.stroke != nil, motionQueued: false) { self.readies += 1 }
@@ -91,22 +74,18 @@ final class N335SwishParityTests: XCTestCase {
         }
 
         func feed(_ contacts: [TouchPoint], at time: Double) {
-            now = time
             recognizer.feed(contacts: contacts, timestamp: time)
         }
 
         func plan(_ stroke: SwishSnap.Stroke) -> SwishSnap.Move? {
-            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options, secondSwipeUp: secondUp,
-                           doubleSwipe: double)
+            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options)
         }
 
         private func label(_ move: SwishSnap.Move?, _ stroke: SwishSnap.Stroke) -> String {
             switch move {
             case .action(let action)?: return SwishSnap.title(for: action, appName: nil)
             case .restore?: return SwishSnap.tooltipText(direction: stroke.direction, place: nil)
-            case let move?:
-                let twice = SwishSnap.isDoubleSwipeResult(move, stroke: stroke, double: secondUp ? .up : double)
-                return SwishSnap.tooltipText(direction: stroke.direction, place: move.destination, double: twice)
+            case let move?: return SwishSnap.tooltipText(direction: stroke.direction, place: move.destination)
             case nil: return "nothing"
             }
         }
@@ -116,33 +95,17 @@ final class N335SwishParityTests: XCTestCase {
             gestures[gestures.count - 1].append(label(plan(stroke), stroke))
         }
 
-        private func commit(continuingWith next: SwishSnap.Stroke?) {
+        private func commit() {
             guard let stroke else { return }
             let move = plan(stroke)
-            if let next, let direction = SwishSnap.doubleSwipe(first: stroke, firstMove: move, next: next) {
-                carried = direction
-                self.stroke = nil
-                return
-            }
             committed.append(label(move, stroke))
             switch move {
-            case .cell?, .place?:
-                place = move?.destination
-                tracker.commitEnded(key: key, vertical: SwishDoubleSwipeUp.arming(direction: stroke.direction,
-                                                                                  place: place, action: nil), at: now)
-            case .restore?:
-                place = nil
-                tracker.commitEnded(key: key, vertical: SwishDoubleSwipeUp.arming(direction: stroke.direction,
-                                                                                  place: nil, action: nil), at: now)
-            case .action(.minimize)?:
-                minimized = true
-                tracker.commitEnded(key: key, vertical: nil, at: now)
-            case .action?, nil:
-                break
+            case .cell?, .place?: place = move?.destination
+            case .restore?: place = nil
+            case .action(.minimize)?: minimized = true
+            case .action?, nil: break
             }
             self.stroke = nil
-            double = nil
-            secondUp = false
         }
     }
 
@@ -203,8 +166,8 @@ final class N335SwishParityTests: XCTestCase {
             }
         }
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .center)
-        // Chains and L-shapes are untouched.
-        XCTAssertEqual(move(at(.topHalf), .init(.down, tier: 2)), .cell(.bottomHalf))
+        // Chains and L-shapes are untouched; N337: the top half is put back.
+        XCTAssertEqual(move(at(.topHalf), .init(.down, tier: 2)), .restore)
         XCTAssertEqual(move(at(.topLeft), .init(.down, tier: 2)), .cell(.bottomLeft))
         XCTAssertEqual(move(nil, .init(.down, tier: 2, cross: .left)), .cell(.bottomLeft))
     }
@@ -232,86 +195,52 @@ final class N335SwishParityTests: XCTestCase {
         }
     }
 
-    // MARK: 3–5. The double swipe in one touch
+    // MARK: 3–6. N337: the same way twice is two plain motions
 
-    /// Swish's "Try swiping up twice on the titlebar" (multi-motion): up, a
-    /// rest (haptic), up again. The maximize never lands; the second swipe
-    /// shows "↑↑ Top Half" from its first frame and commits it.
-    func testUpPauseUpInOneTouchIsTheTopHalf() {
+    /// 3.3.5–3.3.6 held a rested swipe up back and took the top half ("↑↑ Top
+    /// Half"). N337: up, a rest (haptic), up again commits the maximize and
+    /// keeps it, at the user's 0.5 s pause too.
+    func testUpPauseUpInOneTouchStaysMaximized() {
         for pause in [0.35, 0.6] {
             let desk = Desk(motionPause: pause == 0.6 ? 0.5 : 0.25)   // the user's 0.5 s too
             doubleSwipe(desk, down: false, pause: pause)
             XCTAssertEqual(desk.readies, 1, "the rest locked the swipe (\(pause))")
             XCTAssertEqual(desk.gestures.count, 2)
             XCTAssertEqual(Set(desk.gestures[0]), ["↑ Maximize"])
-            XCTAssertEqual(Set(desk.gestures[1]), ["↑↑ Top Half"])
-            XCTAssertEqual(desk.committed, ["↑↑ Top Half"], "no maximize first")
-            XCTAssertEqual(desk.place, at(.topHalf))
+            XCTAssertEqual(Set(desk.gestures[1]), ["↑ Maximize"])
+            XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
+            XCTAssertEqual(desk.place, at(.maximize))
         }
     }
 
-    /// With the Center option a second swipe down put the centred window back
-    /// (3.3.4); Swish's double swipe down takes the bottom half, and the
-    /// centre never lands.
-    func testDownPauseDownInOneTouchIsTheBottomHalf() {
+    /// 3.3.5–3.3.6 took the bottom half ("↓↓ Bottom Half"). N337, Center
+    /// option: down centres, down again puts the window back; from maximized,
+    /// down restores and down again centres.
+    func testDownPauseDownInOneTouchIsTwoPlainSwipesDown() {
         let desk = Desk()
         desk.options = centerOption
         doubleSwipe(desk, down: true)
         XCTAssertEqual(Set(desk.gestures[0]), ["↓ Center"])
-        XCTAssertEqual(Set(desk.gestures[1]), ["↓↓ Bottom Half"])
-        XCTAssertEqual(desk.committed, ["↓↓ Bottom Half"])
-        XCTAssertEqual(desk.place, at(.bottomHalf))
-        // From maximized: the restore never lands either.
+        XCTAssertEqual(Set(desk.gestures[1]), ["↓ Restore"])
+        XCTAssertEqual(desk.committed, ["↓ Center", "↓ Restore"])
+        XCTAssertNil(desk.place)
         let full = Desk()
         full.options = centerOption
         full.place = at(.maximize)
         doubleSwipe(full, down: true)
-        XCTAssertEqual(Set(full.gestures[0]), ["↓ Restore"])
-        XCTAssertEqual(full.committed, ["↓↓ Bottom Half"])
+        XCTAssertEqual(full.committed, ["↓ Restore", "↓ Center"])
     }
 
-    /// With Minimize (Swish's default), the first swipe down used to minimize
-    /// the window as the second one began, so the double swipe could never
-    /// reach the bottom half.
-    func testDownPauseDownWithMinimizeNeverMinimizes() {
+    /// Minimize option: the first swipe down minimizes as the fingers move on
+    /// (3.3.5–3.3.6 held it back for the bottom half). The service ends the
+    /// touch there (`touchContinues(after: .minimize)` is false).
+    func testDownPauseDownWithMinimizeMinimizesAtTheFirstMotion() {
         let desk = Desk()
         doubleSwipe(desk, down: true)
         XCTAssertEqual(Set(desk.gestures[0]), ["Minimize"])
-        XCTAssertFalse(desk.minimized)
-        XCTAssertEqual(desk.committed, ["↓↓ Bottom Half"])
-    }
-
-    /// Only a plain swipe that way, after a plain first swipe whose move is
-    /// the single swipe's (maximize, almost-maximize; centre, minimize,
-    /// restore). Everything else commits the first motion as before.
-    func testTheDoubleSwipeRuleIsOnlyForPlainSameWaySwipes() {
-        let up = SwishSnap.Stroke(.up), down = SwishSnap.Stroke(.down)
-        XCTAssertEqual(SwishSnap.doubleSwipe(first: up, firstMove: .cell(.maximize), next: up), .up)
-        XCTAssertEqual(SwishSnap.doubleSwipe(first: up, firstMove: .place(.almostMaximize), next: .init(.up, tier: 2)), .up)
-        XCTAssertEqual(SwishSnap.doubleSwipe(first: down, firstMove: .cell(.center), next: down), .down)
-        XCTAssertEqual(SwishSnap.doubleSwipe(first: down, firstMove: .action(.minimize), next: down), .down)
-        XCTAssertEqual(SwishSnap.doubleSwipe(first: down, firstMove: .restore, next: down), .down)
-        // Other ways, legs, holds and moves.
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: .cell(.maximize), next: down))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: .cell(.maximize), next: .init(.left)))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: .cell(.maximize), next: .init(.up, cross: .left)))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: .init(.up, held: true), firstMove: .action(.toggleFullscreen),
-                                           next: .init(.up, held: true)))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: .cell(.topHalf), next: up), "top half + up maximizes")
-        XCTAssertNil(SwishSnap.doubleSwipe(first: down, firstMove: .cell(.bottomHalf), next: down))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: down, firstMove: .action(.close), next: down), "⌥ down twice quits")
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: .action(.screen(.up)), next: up), "⌘ display moves")
-        XCTAssertNil(SwishSnap.doubleSwipe(first: .init(.left), firstMove: .cell(.leftHalf), next: .init(.left)))
-        XCTAssertNil(SwishSnap.doubleSwipe(first: up, firstMove: nil, next: up))
-        // The mapping of the second half: only a plain swipe that way.
-        XCTAssertEqual(move(nil, up, double: .up), .cell(.topHalf))
-        XCTAssertEqual(move(nil, .init(.up, tier: 2), double: .up), .cell(.topHalf))
-        XCTAssertEqual(move(.center, down, double: .down), .cell(.bottomHalf))
-        XCTAssertEqual(move(nil, .init(.left), double: .up), .cell(.leftHalf))
-        XCTAssertEqual(move(nil, .init(.up, cross: .right), double: .up), .cell(.topRight))
-        XCTAssertEqual(move(nil, down, double: .up), .action(.minimize))
-        XCTAssertEqual(move(nil, down, modifiers: .general, double: .down), .action(.close))
-        XCTAssertNil(move(at(.maximize), up, double: .up, fullscreen: true))
+        XCTAssertEqual(desk.committed.first, "Minimize")
+        XCTAssertTrue(desk.minimized)
+        XCTAssertFalse(SwishSnap.touchContinues(after: .minimize, waits: false))
     }
 
     /// Other multi-motion chains still commit each motion: left, rest, down
@@ -324,51 +253,29 @@ final class N335SwishParityTests: XCTestCase {
         slide(desk, from: (0.38, 0.5), to: (0.38, 0.62), at: 0.45, duration: 0.08)
         desk.feed([], at: 0.56)
         XCTAssertEqual(desk.committed, ["← Left Half", "↓ Bottom Left"])
-        // And up, rest, up from the top half: top half → maximize.
+        // N337: up, rest, up from the bottom half maximizes twice (3.3.5:
+        // top half, then maximize).
         let top = Desk()
         top.place = at(.bottomHalf)
         doubleSwipe(top, down: false)
-        XCTAssertEqual(top.committed, ["↑ Top Half", "↑ Maximize"])
+        XCTAssertEqual(top.committed, ["↑ Maximize", "↑ Maximize"])
     }
 
-    // MARK: 6. A second, separate swipe down
-
-    /// N334's separate double swipe up, for down too: a swipe down that
-    /// centred or restored the window arms a second swipe down within
-    /// `doubleSwipeWindow` on the same window, which takes the bottom half.
-    func testASecondSeparateSwipeDownAfterACentreOrRestoreTakesTheBottomHalf() {
-        XCTAssertEqual(SwishDoubleSwipeUp.arming(direction: .down, place: .center, action: nil), .down)
-        XCTAssertEqual(SwishDoubleSwipeUp.arming(direction: .down, place: nil, action: nil), .down, "a restore")
-        XCTAssertEqual(SwishDoubleSwipeUp.arming(direction: .up, place: at(.maximize), action: nil), .up)
-        XCTAssertNil(SwishDoubleSwipeUp.arming(direction: .down, place: nil, action: .minimize))
-        XCTAssertNil(SwishDoubleSwipeUp.arming(direction: .down, place: at(.bottomHalf), action: nil))
-        XCTAssertNil(SwishDoubleSwipeUp.arming(direction: .down, place: at(.bottomLeft), action: nil))
-        XCTAssertNil(SwishDoubleSwipeUp.arming(direction: nil, place: .center, action: nil), "a hotkey or double tap")
-        var tracker = SwishDoubleSwipeUp()
-        tracker.commitEnded(key: "w", vertical: .down, at: 10)
-        XCTAssertFalse(tracker.swipeBegan(key: "w", newTouch: true, at: 10.2), "not an up double swipe")
-        tracker.commitEnded(key: "w", vertical: .down, at: 20)
-        XCTAssertEqual(tracker.secondSwipe(key: "w", newTouch: true, at: 20.4), .down)
-        tracker.commitEnded(key: "w", vertical: .down, at: 30)
-        XCTAssertNil(tracker.secondSwipe(key: "w", newTouch: true, at: 30.6), "too late")
-        // From frames, Center option: down (centre), lift, down within 0.5 s.
+    /// A second, separate swipe down soon after the first (3.3.5–3.3.6: the
+    /// bottom half within 0.5 s) is a plain swipe down from where the first
+    /// one left the window.
+    func testASecondSeparateSwipeDownIsAPlainSwipeDown() {
         let desk = Desk()
         desk.options = centerOption
         swipe(desk, down: true, at: 0)
         swipe(desk, down: true, at: 0.3)
-        XCTAssertEqual(desk.committed, ["↓ Center", "↓↓ Bottom Half"])
-        // Later than that: the centred window is put back, as before.
-        let late = Desk()
-        late.options = centerOption
-        swipe(late, down: true, at: 0)
-        swipe(late, down: true, at: 0.9)
-        XCTAssertEqual(late.committed, ["↓ Center", "↓ Restore"])
-        // Maximized: down restores, a quick second down takes the bottom half.
+        XCTAssertEqual(desk.committed, ["↓ Center", "↓ Restore"])
         let full = Desk()
+        full.options = centerOption
         full.place = at(.maximize)
         swipe(full, down: true, at: 0)
         swipe(full, down: true, at: 0.3)
-        XCTAssertEqual(full.committed, ["↓ Restore", "↓↓ Bottom Half"])
+        XCTAssertEqual(full.committed, ["↓ Restore", "↓ Center"])
         XCTAssertFalse(full.minimized)
     }
 
@@ -485,17 +392,12 @@ final class N335SwishParityTests: XCTestCase {
         XCTAssertEqual(desk.committed, [])
     }
 
-    // MARK: 12. Two arrows for a double swipe
+    // MARK: 12. One arrow in every tooltip (N337)
 
-    func testTheTooltipShowsTwoArrowsForADoubleSwipe() {
-        XCTAssertEqual(SwishSnap.tooltipText(direction: .up, place: at(.topHalf), double: true), "↑↑ Top Half")
-        XCTAssertEqual(SwishSnap.tooltipText(direction: .down, place: at(.bottomHalf), double: true), "↓↓ Bottom Half")
-        XCTAssertEqual(SwishSnap.tooltipText(direction: .up, place: at(.topHalf)), "↑ Top Half", "a chained top half")
-        XCTAssertTrue(SwishSnap.isDoubleSwipeResult(.cell(.topHalf), stroke: .init(.up), double: .up))
-        XCTAssertTrue(SwishSnap.isDoubleSwipeResult(.cell(.bottomHalf), stroke: .init(.down, tier: 2), double: .down))
-        XCTAssertFalse(SwishSnap.isDoubleSwipeResult(.cell(.topHalf), stroke: .init(.up), double: nil))
-        XCTAssertFalse(SwishSnap.isDoubleSwipeResult(.cell(.leftHalf), stroke: .init(.left), double: .up))
-        XCTAssertFalse(SwishSnap.isDoubleSwipeResult(.cell(.topLeft), stroke: .init(.up, cross: .left), double: .up))
+    func testTheTooltipShowsOneArrow() {
+        XCTAssertEqual(SwishSnap.tooltipText(direction: .up, place: at(.maximize)), "↑ Maximize")
+        XCTAssertEqual(SwishSnap.tooltipText(direction: .down, place: nil), "↓ Restore")
+        XCTAssertEqual(SwishSnap.tooltipText(direction: .up, place: at(.topHalf)), "↑ Top Half", "the name is kept for hotkey actions")
     }
 
     // MARK: 13. A withdrawn swipe queued behind a landing commit

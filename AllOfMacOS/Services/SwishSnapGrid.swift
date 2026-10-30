@@ -247,37 +247,48 @@ extension SwishSnap {
 
     /// Swish-style chaining on a grid: a swipe moves the window on from the
     /// place it is in.
+    /// - Up (N337, the user's rule): a plain swipe up maximizes from every
+    ///   place, however long the swipe: a free or centred window, a half, a
+    ///   quarter (bottom-right ↑ is no longer top-right), a third, a sixth, a
+    ///   ninth, a row; a maximized window stays maximized. Almost maximize on:
+    ///   it almost-maximizes instead, and an almost-maximized window swiped
+    ///   up maximizes. Only an L-shaped or diagonal stroke reaches a top
+    ///   quarter; the upper sixths and the upper and middle ninths are no
+    ///   longer reached by a swipe at all (3.3.2–3.3.6: a third or a lower
+    ///   cell swiped up).
     /// - Free-floating or centred: sideways a half (a longer swipe a third
-    ///   when the grid has thirds); up maximizes, however long the swipe
-    ///   (N334: until then a longer one took the top half, which a quick
-    ///   swipe up reached before the maximize the user meant; the top half
-    ///   is Swish's double swipe up, `SwishDoubleSwipeUp`); down centres the
-    ///   window, and on a centred one puts it back, however long the swipe
-    ///   (N335: the bottom half is the double swipe down).
-    /// - Maximized: sideways a half, up stays, down puts the window back.
-    /// - Almost maximize on: every swipe that would maximize almost-maximizes
-    ///   instead (a free window or the top half swiped up), and an
-    ///   almost-maximized window swiped up maximizes; sideways it becomes a
-    ///   half and down puts it back.
-    /// - A full-height column (a half, a third, two thirds) swiped up or down
-    ///   takes the top or bottom row of the grid: a half becomes a quarter;
-    ///   in 3 × 2 a third becomes its upper or lower sixth and two thirds the
-    ///   two sixths above or below; in 3 × 3 a third becomes its top or
-    ///   bottom ninth and two thirds two-ninths.
+    ///   when the grid has thirds); down centres the window, and on a centred
+    ///   one puts it back, however long the swipe (N335).
+    /// - Maximized or almost-maximized: sideways a half, down puts the window back.
+    /// - No swipe ever takes the top or bottom half (N337, the user's rule;
+    ///   Swish's "Double-swipe vertically to snap to the top or bottom half"
+    ///   is left out on purpose). A swipe down that would have reached one
+    ///   (the top half moving down a row, a bottom quarter growing along the
+    ///   bottom edge, a bottom sixth spanning the bottom row) puts the window
+    ///   back instead, as a swipe down on any bottom-edge window does.
+    /// - A full-height column (a half, a third, two thirds) swiped down takes
+    ///   the bottom row of the grid (Swish: "Swipe horizontally and
+    ///   vertically to snap to a quarter. Both orders work."; "swipe
+    ///   vertically to access the upper and lower halves of those thirds"): a
+    ///   half becomes its bottom quarter; in 3 × 2 a third its lower sixth and
+    ///   two thirds the two sixths below; in 3 × 3 a third its bottom ninth
+    ///   and two thirds two-ninths.
     /// - A column swiped sideways keeps 3.3.1's table: away from its edge it
     ///   moves over (the other half, the next third; two thirds become the
     ///   opposite half); toward its edge it steps half → third → two thirds →
     ///   half with thirds on, and stays put in 2 × 2.
     /// - A full-width row (the top or bottom half, a row of the 3 × 3 grid)
     ///   swiped sideways takes its left or right end (a quarter, or a ninth in
-    ///   3 × 3); swiped up or down it moves a row; up from the top it
-    ///   maximizes and down from the bottom it puts the window back.
-    /// - Any other cell (a quarter, a sixth, a ninth and their spans) moves one
-    ///   cell in the swipe's direction. Swiped toward an edge it already
+    ///   3 × 3); swiped down it moves a row, and from the bottom it puts the
+    ///   window back.
+    /// - Any other cell (a quarter, a sixth, a ninth and their spans) swiped
+    ///   down or sideways moves one cell that way (a top quarter down: the
+    ///   bottom quarter of its column). Swiped toward an edge it already
     ///   touches it grows one cell along that edge, away from the corner (a
-    ///   cell in the middle of the edge spans all of it): a quarter becomes a
-    ///   half, a corner sixth or ninth two of them, and a corner two-ninths
-    ///   swiped toward its other edge four-ninths.
+    ///   cell in the middle of the edge spans all of it): a quarter swiped
+    ///   sideways becomes the left or right half, a corner sixth or ninth two
+    ///   of them, and a corner two-ninths swiped toward its other edge
+    ///   four-ninths.
     /// - An L-shaped or diagonal swipe picks a quarter outright, from anywhere.
     /// A place the options cannot produce (`usable`) is free-floating.
     static func step(from place: Place?, stroke: Stroke, grid: Grid, almost: Bool = false) -> Move {
@@ -286,9 +297,30 @@ extension SwishSnap {
         let direction = stroke.direction
         let long = stroke.tier >= 2
         let maximize: Move = almost ? .place(.almostMaximize) : .cell(.maximize)
+        if direction == .up {
+            // Already (almost-)maximized: up maximizes, so a second swipe up never shrinks it.
+            switch current {
+            case .almostMaximize?, .grid(.full)?: return .cell(.maximize)
+            default: return maximize
+            }
+        }
+        let move = chain(from: current, direction, long: long, grid: grid)
+        return isVerticalHalf(move.destination) ? .restore : move
+    }
+
+    /// Pure (N337): whether a place is the top or bottom half, which no
+    /// title-bar swipe produces (the layouts stay for presets, menus, hotkey
+    /// actions and snap zones).
+    static func isVerticalHalf(_ place: Place?) -> Bool {
+        guard case .grid(let cell)? = place else { return false }
+        return cell.layout == .topHalf || cell.layout == .bottomHalf
+    }
+
+    /// `step` for a swipe down or sideways from a usable place (or none).
+    private static func chain(from current: Place?, _ direction: Direction, long: Bool, grid: Grid) -> Move {
         switch current {
         case .grid(let cell)?:
-            return step(cell, direction, grid: grid, maximize: maximize)
+            return step(cell, direction, grid: grid)
         case .almostMaximize?:
             switch direction {
             case .left: return .cell(.leftHalf)
@@ -300,21 +332,17 @@ extension SwishSnap {
             switch direction {
             case .left: return .cell(grid.thirds && long ? .leftThird : .leftHalf)
             case .right: return .cell(grid.thirds && long ? .rightThird : .rightHalf)
-            // N334: the tier never reaches up, so a swipe up that grows past
-            // the longer-swipe distance shows and commits the same maximize.
-            case .up: return maximize
-            // N335: nor down. A quick flick or a long swipe down took the
-            // bottom half; Swish's bottom half is the double swipe down
-            // (`move(at:…doubleSwipe:)`).
+            case .up: return .cell(.maximize)
+            // N335: the tier never reaches down: a quick flick or a long
+            // swipe down took the bottom half.
             case .down: return current == .center ? .restore : .cell(.center)
             }
         }
     }
 
     /// From maximize (or almost-maximize) a swipe down puts the window back,
-    /// as in Swish, at any length (N335; 3.3.2–3.3.4 took a longer one to the
-    /// bottom half, now the double swipe down).
-    private static func step(_ cell: SwishGridCell, _ direction: Direction, grid: Grid, maximize: Move) -> Move {
+    /// as in Swish, at any length (N335). Up never gets here (`step`).
+    private static func step(_ cell: SwishGridCell, _ direction: Direction, grid: Grid) -> Move {
         if cell == .full {
             switch direction {
             case .left: return .cell(.leftHalf)
@@ -324,14 +352,15 @@ extension SwishSnap {
             }
         }
         if direction.axis == .vertical {
-            let up = direction == .up
+            // Only down gets here: `step` maximizes every swipe up.
+            guard direction == .down else { return .cell(.maximize) }
             if cell.fullHeight {
                 let rows = cell.columns == 3 ? grid.rowsForThirds : 2
                 return .to(.grid(SwishGridCell(columns: cell.columns, rows: rows, column: cell.column,
-                                               row: up ? 0 : rows - 1, columnSpan: cell.columnSpan)))
+                                               row: rows - 1, columnSpan: cell.columnSpan)))
             }
-            guard up ? cell.touchesTop : cell.touchesBottom else { return .to(.grid(cell.shifted(rows: up ? -1 : 1))) }
-            if cell.fullWidth { return up ? maximize : .restore }
+            guard cell.touchesBottom else { return .to(.grid(cell.shifted(rows: 1))) }
+            if cell.fullWidth { return .restore }
             return .to(.grid(cell.widened()))
         }
         let left = direction == .left
@@ -804,93 +833,6 @@ struct SwishWindowChain: Equatable {
     mutating func end() { link = nil }
 }
 
-// MARK: - Double swipe up (N334)
-
-extension SwishSnap {
-    /// Swish's double swipe up (N334): how soon after a swipe up's maximize
-    /// landed the second, separate swipe up on that window must engage to
-    /// take the top half.
-    static let doubleSwipeWindow: TimeInterval = 0.5
-}
-
-/// Swish's double swipe up (N334). A swipe up maximizes however long it is;
-/// the top half is a second swipe up: a new touch whose first gesture
-/// engages on the window the first swipe maximized, within
-/// `SwishSnap.doubleSwipeWindow` of that maximize landing. Only the first
-/// swipe to engage after the landing can be that second swipe. Every commit
-/// that ends re-arms it (a swipe up whose maximize landed with its follow-ups
-/// allowed) or disarms it (anything else, including a maximize that did not
-/// land or whose follow-ups `landingAllowed` refused). A further motion of
-/// the same touch, a re-armed touch and a swipe queued behind a commit still
-/// in flight are never the second swipe. Pure: windows are named by key,
-/// times are passed in; the service keeps one on the main actor.
-struct SwishDoubleSwipeUp: Equatable {
-    struct Landing: Equatable {
-        let key: String
-        let at: TimeInterval
-        /// The way the first swipe went (N335: down too, after a centre or a
-        /// restore); the second swipe must go the same way.
-        var direction: SwishSnap.Direction = .up
-    }
-
-    /// The last commit, while it was a swipe up that maximized and landed
-    /// (N335: or a swipe down that centred or restored the window).
-    private(set) var landing: Landing?
-
-    /// A commit ended at `now`. `upMaximize`: it was a swipe up that put
-    /// window `key` in the whole area, it landed and its follow-ups were
-    /// allowed. Anything else disarms.
-    mutating func commitEnded(key: String, upMaximize: Bool, at now: TimeInterval) {
-        commitEnded(key: key, vertical: upMaximize ? .up : nil, at: now)
-    }
-
-    /// N335: a commit ended at `now`; `vertical` is what it arms
-    /// (`arming(direction:place:action:)`, nil for anything else, a landing
-    /// that failed or a follow-up refused).
-    mutating func commitEnded(key: String, vertical: SwishSnap.Direction?, at now: TimeInterval) {
-        landing = vertical.map { Landing(key: key, at: now, direction: $0) }
-    }
-
-    /// A swipe engaged on window `key` at `now`; `newTouch`: it is its
-    /// touch's first gesture. True when it is the second half of the double
-    /// swipe up. The landing is used up either way.
-    mutating func swipeBegan(key: String, newTouch: Bool, at now: TimeInterval) -> Bool {
-        secondSwipe(key: key, newTouch: newTouch, at: now) == .up
-    }
-
-    /// N335: the way a swipe engaging now completes a double swipe, or nil.
-    /// The landing is used up either way.
-    mutating func secondSwipe(key: String, newTouch: Bool, at now: TimeInterval) -> SwishSnap.Direction? {
-        let armed = landing
-        landing = nil
-        guard newTouch, let armed, armed.key == key else { return nil }
-        let elapsed = now - armed.at
-        return elapsed >= 0 && elapsed <= SwishSnap.doubleSwipeWindow ? armed.direction : nil
-    }
-
-    /// The snap stopped, or the Mac slept or woke.
-    mutating func reset() { landing = nil }
-
-    /// Pure: whether a commit's plan is a swipe up that maximizes (not an
-    /// action, nor almost-maximize).
-    static func isUpMaximize(direction: SwishSnap.Direction?, place: SwishSnap.Place?,
-                             action: SwishSnap.WindowAction?) -> Bool {
-        direction == .up && action == nil && place == SwishSnap.Place.grid(.full)
-    }
-
-    /// Pure (N335): what a commit arms for a second, separate swipe: up after
-    /// a swipe up that maximized; down after a swipe down that centred the
-    /// window or put it back (`place` nil: its frame from before the snap).
-    /// A minimize leaves no window to swipe; actions and other places arm
-    /// nothing.
-    static func arming(direction: SwishSnap.Direction?, place: SwishSnap.Place?,
-                       action: SwishSnap.WindowAction?) -> SwishSnap.Direction? {
-        if isUpMaximize(direction: direction, place: place, action: action) { return .up }
-        guard direction == .down, action == nil, place == nil || place == .center else { return nil }
-        return .down
-    }
-}
-
 // MARK: - Delayed and batched window writes (audit S03, S05)
 
 /// Delayed window work that re-checks when it comes due (S05: the full-screen
@@ -1010,49 +952,18 @@ extension SwishSnap {
 
     /// Pure: the tooltip for a snap on show: the swipe's arrow and where the
     /// window goes ("← Left Half"); "Restore" when it goes back to its frame
-    /// from before the snap (place nil). `double` (N335): the second half of
-    /// a double swipe, shown with two arrows ("↑↑ Top Half").
-    static func tooltipText(direction: Direction?, place: Place?, double: Bool = false) -> String {
+    /// from before the snap (place nil). N337: one arrow always; the double
+    /// swipe's "↑↑ Top Half" and "↓↓ Bottom Half" are gone with it.
+    static func tooltipText(direction: Direction?, place: Place?) -> String {
         let name = place.map(placeName) ?? "Restore"
         guard let direction else { return name }
-        let arrows = double ? arrow(direction) + arrow(direction) : arrow(direction)
-        return "\(arrows) \(name)"
+        return "\(arrow(direction)) \(name)"
     }
 }
 
 // MARK: - Swish parity (N335)
 
 extension SwishSnap {
-    /// Pure (N335, Swish's multi-motion double swipe: "Double-swipe vertically
-    /// to snap to the top or bottom half of the screen"; "you can swipe … in
-    /// the same direction multiple times in a row without lifting your
-    /// fingers … Try swiping up twice"). A swipe on show rested, and the
-    /// fingers now swipe on (`next`). When the first swipe is a plain swipe
-    /// up that maximizes (or almost-maximizes) or a plain swipe down that
-    /// centres, minimizes or puts the window back, and `next` goes the same
-    /// way, the two are one double swipe: the first is not committed (no
-    /// maximize flashes up, no window is minimized) and `next` takes the top
-    /// or bottom half. Until 3.3.4 the first one committed and a second swipe
-    /// up stayed maximized, a second swipe down put a centred window back.
-    /// Returns that way, or nil: the first commits as before.
-    static func doubleSwipe(first: Stroke, firstMove: Move?, next: Stroke) -> Direction? {
-        guard first.direction.axis == .vertical, first.cross == nil, !first.held,
-              next.direction == first.direction, next.cross == nil, !next.held,
-              let firstMove else { return nil }
-        switch (first.direction, firstMove) {
-        case (.up, .cell(.maximize)), (.up, .place(.almostMaximize)): return .up
-        case (.down, .cell(.center)), (.down, .action(.minimize)), (.down, .restore): return .down
-        default: return nil
-        }
-    }
-
-    /// Pure (N335): whether a planned move is the second half of a double
-    /// swipe `double`, for the tooltip's two arrows.
-    static func isDoubleSwipeResult(_ move: Move?, stroke: Stroke, double: Direction?) -> Bool {
-        guard let double, stroke.direction == double, stroke.cross == nil else { return false }
-        return move == .cell(double == .up ? .topHalf : .bottomHalf)
-    }
-
     /// Pure (N335, Swish logs "Unsnap: Avoid cropping"): where a window goes
     /// back to when it is unsnapped. Its frame from before the snap, while the
     /// displays' areas (`areas`, the visible frames) still hold it whole;
