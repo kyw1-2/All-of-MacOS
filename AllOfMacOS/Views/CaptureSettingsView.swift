@@ -644,7 +644,6 @@ struct CaptureSettingsView: View {
                     Image(systemName: "rectangle.fill").imageScale(.large).foregroundStyle(AOMColor.textSecondary)
                 }
                 .frame(width: AOMRowControlMetrics.sliderWidth)
-                .controlSize(.small)
                 .help(overlaySize.displayName)
                 .accessibilityValue(overlaySize.displayName)
             }
