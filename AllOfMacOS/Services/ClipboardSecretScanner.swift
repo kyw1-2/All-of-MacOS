@@ -14,7 +14,11 @@ import Foundation
 /// - percent-encoding, HTML character references, zero-width characters and
 ///   compatibility forms (full-width letters) are undone before matching;
 /// - there is no length limit. Multi-megabyte forms are searched whole, in
-///   overlapping slices on several cores.
+///   overlapping slices on several cores;
+/// - credential names are recognised as quoted keys too (JSON
+///   `"password": "…"`, YAML `'token': '…'`) at any length, and JSON up to
+///   `structuredScanLimit` is also read key by key, at any depth (re-audit
+///   2026-10-30, N333-01).
 ///
 /// Base64 or encrypted blobs are not decoded: only credentials that look like
 /// credentials are recognised.
@@ -30,8 +34,11 @@ enum ClipboardSecretScanner {
         #"eyJ[A-Za-z0-9_-]{7,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#,
         // Provider API keys: sk-…, GitHub, Slack, AWS, Google.
         #"sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}"#,
-        // Inline credentials: password=…, token: …, api_key=…, ?access_token=….
-        #"(?i)(?<![a-z])(?:pass(?:word|wd|code)?|pwd|secret|token|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[:=]\s*\S"#,
+        // Inline credentials: password=…, token: …, api_key=…, ?access_token=…,
+        // and the same names as quoted keys: "password": "…", 'token': '…'.
+        inlineCredentials,
+        // Quoted camelCase keys: "accessToken": "…", "clientSecret": "…".
+        camelCaseCredentials,
         // Authorization headers.
         #"\bBearer [A-Za-z0-9._~+/=-]{20,}|\bBasic [A-Za-z0-9+/=]{8,}"#,
         // PEM private keys.
@@ -41,6 +48,57 @@ enum ClipboardSecretScanner {
         // Signed or authenticated URLs: X-Amz-Signature=…, &sig=…, &session_id=….
         #"(?i)[?&;#](?:[a-z0-9_.-]*(?:signature|credential|session_?id|auth_?key|access_?key|secret_?key)|sig|sid|auth)=[^&#\s]{6,}"#,
     ].map { try! NSRegularExpression(pattern: $0) }
+
+    // Quoted keys (N333-01). `{"password": "…"}` slipped past the inline
+    // pattern, which wanted `:` or `=` right after the name, not a quote.
+
+    /// A quote around a key or a value: straight, typographic, or escaped
+    /// (`\"`) as in JSON inside a JSON string.
+    private static let quote = #"\\?["'“”‘’]"#
+
+    /// Values that stand in for a credential rather than being one: masked
+    /// (`***`, `••••`), a template (`<redacted>`, `<your-token>`), this
+    /// scanner's own `placeholder`, `[REDACTED]`, `redacted`, `null`, `none`
+    /// and `n/a`. Shared by the patterns and `isPlaceholderValue(_:)`.
+    private static let placeholderShape =
+        #"(?:\*+|•+|<[^<>"'“”‘’\n]{0,62}>|\[(?:hidden|redacted)\b[^\]"'“”‘’\n]{0,62}\]|redacted|null|none|n/a)"#
+
+    /// What follows a quoted key: the separator and a value that can be a
+    /// credential. A quoted value must not be empty or a placeholder. A bare
+    /// one must not be a literal (`null`, `true`, `false`…), a number, a
+    /// placeholder, or an object or array, whose own keys are checked where
+    /// they stand, so a schema's `"password": {"type": "string"}` or a form
+    /// error's `"password": ["is too short"]` is not a credential.
+    private static let quotedKeyValue = #"\#(quote)\s*[:=]\s*(?:\#(quote)(?!\s*(?:\#(quote)|\#(placeholderShape)\s*\#(quote)))|(?!(?:null|true|false|none|nil|undefined|~|-?\d+(?:\.\d+)?|\*+|•+|<[^<>\n]{0,62}>|redacted)(?:[\s,;)}\]]|$))[^\s"'“”‘’\\,;(){}\[\]])"#
+
+    /// `password=…`, `token: …`, `api_key=…` as before, plus passphrase,
+    /// access_key and secret_key; every such name as a quoted key (JSON
+    /// `"password": "…"`, YAML `'token': '…'`, TOML `"secret" = "…"`,
+    /// `\"api_key\": \"…\"` inside a JSON string); and, only when quoted,
+    /// credential(s), authorization, auth and pin, so that
+    /// `fetch(url, { credentials: 'include' })` stays readable. The name must
+    /// end at the separator (`token_type`, `tokenizer` and `prompt_tokens`
+    /// never match) and must not continue a word (`bypass`, `oauth`). The
+    /// names are grouped by first letter, which keeps a 20 MB text within
+    /// about a quarter of the old inline pattern's cost (0.85 s against
+    /// 0.69 s on one core).
+    private static let inlineCredentials = #"(?i)(?<![a-z])(?:(?:p(?:ass(?:word|wd|code|phrase)?|wd|rivate[_-]?key)|secret(?:[_-]?key)?|token|a(?:pi|ccess)[_-]?key|client[_-]?secret)(?:\s*[:=]\s*\S|\#(quotedKeyValue))|(?:pin|auth(?:orization)?|credentials?)\#(quotedKeyValue))"#
+
+    /// Quoted camelCase names, which the word boundary above skips:
+    /// `"accessToken"`, `"clientSecret"`, `"userPassword"`, `"awsAccessKey"`.
+    /// The capital is matched case-sensitively, so matching only starts at a
+    /// lower-to-upper case step: 0.09 s for a 20 MB text on one core.
+    private static let camelCaseCredentials = #"(?<=[a-z])(?:P(?i:ass(?:word|wd|code|phrase)?|wd|in|rivate[_-]?key)|S(?i:ecret(?:[_-]?key)?)|T(?i:oken)|C(?i:redentials?|lient[_-]?secret)|A(?i:uthorization|uth|pi[_-]?key|ccess[_-]?key))(?i:\#(quotedKeyValue))"#
+
+    private static let placeholderValue = try! NSRegularExpression(pattern: #"(?i)^\#(placeholderShape)$"#)
+
+    /// True for a value that stands in for a credential (`placeholderShape`).
+    static func isPlaceholderValue(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        guard trimmed.utf16.count <= 80 else { return false }
+        return placeholderValue.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) != nil
+    }
 
     /// A lone password-like value: 12–64 characters without whitespace that
     /// mix letters, digits and symbols. Applied only to a plain-text item's
@@ -151,9 +209,10 @@ enum ClipboardSecretScanner {
 
     // MARK: Text
 
-    /// True when `text`, or one of its decoded forms, contains a credential.
+    /// True when `text`, or one of its decoded forms, contains a credential:
+    /// one the patterns recognise, or one found reading JSON key by key.
     static func containsSecret(inText text: String) -> Bool {
-        variants(of: text).contains(where: matchesPattern)
+        variants(of: text).contains { matchesPattern($0) || containsStructuredSecret($0) }
     }
 
     /// `text` plus the forms it decodes to, two levels deep (for example a
@@ -294,6 +353,155 @@ enum ClipboardSecretScanner {
         private var value = false
         var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
         func set() { lock.lock(); value = true; lock.unlock() }
+    }
+
+    // MARK: Structured text (JSON)
+
+    /// JSON up to this many UTF-8 bytes is also parsed and read key by key.
+    /// Longer JSON is still searched whole by the patterns, which see quoted
+    /// keys too; the bound keeps a 20 MB array from being parsed, and held in
+    /// memory twice, on every check.
+    static let structuredScanLimit = 2 * 1_024 * 1_024
+
+    /// Deeper JSON is left to the patterns, so neither the parser nor the
+    /// walk below recurses far on a background thread's small stack.
+    private static let structuredDepthLimit = 64
+
+    /// How many times JSON inside a JSON string is read in turn.
+    private static let structuredNestingLimit = 3
+
+    /// True when `text` is a JSON object or array holding a credential: a
+    /// string under a credential name (`isCredentialKey(_:)`) that is not a
+    /// placeholder, at any depth, however the JSON is spaced or escaped
+    /// (`"pass\u0077ord"`). Every decoded key and string is searched by the
+    /// patterns as well, so what JSON escaping hides from them
+    /// (`https:\/\/user:pw@…`, `…\npassword=…`) is read as written, and so
+    /// is JSON inside a string.
+    static func containsStructuredSecret(_ text: String) -> Bool {
+        containsStructuredSecret(text, nesting: 0)
+    }
+
+    private static func containsStructuredSecret(_ text: String, nesting: Int) -> Bool {
+        guard nesting < structuredNestingLimit, let root = jsonContainer(text) else { return false }
+        var strings: [String] = []
+        if containsCredential(in: root, key: nil, nesting: nesting, strings: &strings) { return true }
+        // U+001F is neither a space nor a separator to the patterns, so no
+        // match spans two strings.
+        return variants(of: strings.joined(separator: "\u{1F}")).contains(where: matchesPattern)
+    }
+
+    /// The parsed value when `text` is a JSON object or array within the
+    /// size and depth bounds. Anything else is rejected by its first byte.
+    private static func jsonContainer(_ text: String) -> Any? {
+        let bytes = text.utf8
+        guard let first = bytes.first(where: { !jsonWhitespace.contains($0) }),
+              first == UInt8(ascii: "{") || first == UInt8(ascii: "["),
+              bytes.count <= structuredScanLimit,
+              !nestsDeeper(bytes, than: structuredDepthLimit) else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(bytes))
+    }
+
+    private static let jsonWhitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D]
+
+    /// True when brackets outside strings nest deeper than `limit`.
+    private static func nestsDeeper(_ bytes: String.UTF8View, than limit: Int) -> Bool {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for byte in bytes {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if byte == UInt8(ascii: "\"") {
+                    inString = false
+                }
+            } else if byte == UInt8(ascii: "\"") {
+                inString = true
+            } else if byte == UInt8(ascii: "{") || byte == UInt8(ascii: "[") {
+                depth += 1
+                if depth > limit { return true }
+            } else if byte == UInt8(ascii: "}") || byte == UInt8(ascii: "]") {
+                depth -= 1
+            }
+        }
+        return false
+    }
+
+    /// Walks a parsed JSON value, collecting every key and string. Only a
+    /// string directly under a credential name counts as one: an object
+    /// there is judged by its own keys and array elements by their content,
+    /// as the patterns do, so a schema's `"password": {"type": "string"}` or
+    /// a form error's `"password": ["is too short"]` stays readable.
+    private static func containsCredential(in value: Any, key: String?, nesting: Int, strings: inout [String]) -> Bool {
+        switch value {
+        case let string as String:
+            if let key, isCredentialKey(key), !isPlaceholderValue(string) { return true }
+            strings.append(string)
+            return containsStructuredSecret(string, nesting: nesting + 1)
+        case let dictionary as [String: Any]:
+            for (name, element) in dictionary {
+                strings.append(name)
+                if containsCredential(in: element, key: name, nesting: nesting, strings: &strings) { return true }
+            }
+            return false
+        case let array as [Any]:
+            for element in array {
+                if containsCredential(in: element, key: nil, nesting: nesting, strings: &strings) { return true }
+            }
+            return false
+        default:
+            return false
+        }
+    }
+
+    /// Names whose string value is a credential when JSON is read key by
+    /// key. As in the patterns, the last word decides: `accessToken`,
+    /// `client_secret`, `X-API-Key`, `db_password` and `basicAuth` are
+    /// credentials; `token_type`, `tokenizer`, `prompt_tokens`, `secretName`
+    /// and `password_updated_at` are not.
+    static func isCredentialKey(_ key: String) -> Bool {
+        let folded = key.lowercased()
+        guard credentialStems.contains(where: { folded.contains($0) }) else { return false }
+        let words = keyWords(key)
+        guard let last = words.last else { return false }
+        if credentialWords.contains(last) { return true }
+        if words.count > 1, credentialWords.contains(words[words.count - 2] + last) { return true }
+        // Run-together names: dbpassword, apitoken, xapikey.
+        return credentialSuffixes.contains { last.hasSuffix($0) }
+    }
+
+    private static let credentialStems = ["pass", "pwd", "secret", "token", "cred", "auth", "key", "pin", "otp"]
+    private static let credentialWords: Set<String> = [
+        "password", "passwords", "passwd", "passphrase", "passcode", "pass", "pwd", "secret", "secrets", "token",
+        "credential", "credentials", "authorization", "auth", "apikey", "privatekey", "accesskey", "secretkey",
+        "pin", "pincode", "otp",
+    ]
+    private static let credentialSuffixes = [
+        "password", "passwd", "passphrase", "passcode", "secret", "token", "apikey", "privatekey", "accesskey",
+        "secretkey", "authorization",
+    ]
+
+    /// The words of a key name: `accessToken`, `access_token`, `Access-Token`
+    /// and `ACCESS_TOKEN` all read ["access", "token"]; `APIKey` reads
+    /// ["apikey"].
+    static func keyWords(_ key: String) -> [String] {
+        var words: [String] = []
+        var current = ""
+        var afterLowercase = false
+        for character in key {
+            guard character.isLetter || character.isNumber else {
+                if !current.isEmpty { words.append(current); current = "" }
+                afterLowercase = false
+                continue
+            }
+            if character.isUppercase, afterLowercase, !current.isEmpty { words.append(current); current = "" }
+            current += character.lowercased()
+            afterLowercase = character.isLowercase || character.isNumber
+        }
+        if !current.isEmpty { words.append(current) }
+        return words
     }
 
     // MARK: JSON replies (automation tools)
