@@ -18,7 +18,7 @@ struct LogSidePanel: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text("Console")
-                    .font(AOMFont.callout.weight(.semibold))
+                    .font(AOMFont.caption.weight(.semibold))
                     .foregroundStyle(AOMColor.text)
                 Spacer()
                 Button(action: { GestureLog.shared.entries.removeAll() }) {
@@ -32,8 +32,8 @@ struct LogSidePanel: View {
                 .help("Clear the console")
                 .accessibilityLabel("Clear console")
             }
-            .padding(.horizontal, AOMSpace.x3)
-            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+            .padding(.horizontal, AOMSpace.rowInset)
+            .padding(.vertical, AOMSpace.x1)
             .background(AOMColor.surface)
 
             AOMDivider()

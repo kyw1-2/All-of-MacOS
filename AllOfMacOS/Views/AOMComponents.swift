@@ -28,6 +28,10 @@ enum AOMPreviewHooks {
     static var scrollAnchor: UnitPoint? {
         PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-scroll-bottom") ? .bottom : nil
     }
+    /// `--aom-preview-setup-expanded` opens the Workspace setup strip's step list.
+    static var setupExpanded: Bool {
+        PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-setup-expanded")
+    }
 }
 
 /// The standard page (e.1): one vertical scroll view on the canvas, content
@@ -50,8 +54,8 @@ struct AOMPage<Content: View>: View {
             VStack(alignment: .leading, spacing: spacing) { content }
                 .frame(maxWidth: maxWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x4)
-                .padding(.bottom, AOMSpace.x6)
+                .padding(.top, AOMSpace.x3)
+                .padding(.bottom, AOMSpace.x5)
                 .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
@@ -105,13 +109,13 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x3) {
+        HStack(alignment: .center, spacing: AOMSpace.x2 + AOMSpace.x0_5) {
             if let module {
                 AOMModuleBadge(module, size: AOMIcon.headerBadge, active: active)
             } else if let symbol {
                 AOMModuleBadge(symbol: symbol, hue: nil, size: AOMIcon.headerBadge)
             }
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(title)
                         .font(AOMFont.pageStatus)
@@ -125,7 +129,7 @@ struct AOMPageHeader<Trailing: View>: View {
                 }
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(AOMFont.callout)
+                        .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -133,13 +137,13 @@ struct AOMPageHeader<Trailing: View>: View {
             }
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x3)
-            HStack(spacing: AOMSpace.x3) { trailing }
+            HStack(spacing: AOMSpace.x2) { trailing }
                 .fixedSize()
             if let help {
                 AOMInfoButton(help, topic: title)
             }
         }
-        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x2)
+        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x1)
         .accessibilityElement(children: .contain)
     }
 }
@@ -171,7 +175,7 @@ struct AOMSectionTitle<Accessory: View>: View {
                 .accessibilityAddTraits(.isHeader)
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -180,8 +184,8 @@ struct AOMSectionTitle<Accessory: View>: View {
             Spacer(minLength: AOMSpace.x2)
             accessory
         }
-        .padding(.horizontal, AOMSpace.x1)
-        .frame(minHeight: 22)
+        .padding(.horizontal, AOMSpace.x0_5)
+        .frame(minHeight: 18)
     }
 }
 
@@ -228,7 +232,7 @@ struct AOMSection<Content: View, Accessory: View>: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, AOMSpace.x1)
+                    .padding(.horizontal, AOMSpace.x0_5)
             }
         }
         .accessibilityElement(children: .contain)
@@ -337,7 +341,7 @@ struct AOMSettingRow<Control: View>: View {
         }
         .padding(.leading, AOMSpace.rowInset + (indent ? AOMSpace.x5 : 0))
         .padding(.trailing, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
+        .padding(.vertical, AOMSpace.x0_5 + 1)
         .frame(minHeight: hasDetail ? AOMSize.rowDetail : AOMSize.rowStandard)
         .overlay(alignment: .top) {
             if showsDivider { AOMRowDivider(inset: leadingInset) }
@@ -449,7 +453,7 @@ struct AOMInfoButton: View {
     var body: some View {
         Button { shown.toggle() } label: {
             Image(systemName: "info.circle")
-                .imageScale(.medium)
+                .font(.system(size: 11))
                 .foregroundStyle(AOMColor.textSecondary)
                 .frame(width: AOMIcon.row, height: AOMIcon.row)
                 .contentShape(Rectangle())
@@ -464,7 +468,7 @@ struct AOMInfoButton: View {
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(width: AOMSize.helpPopoverWidth, alignment: .leading)
-                .padding(AOMSpace.x4)
+                .padding(AOMSpace.x3)
         }
     }
 }
@@ -515,8 +519,8 @@ struct AOMStatusPill: View {
         }
         .font(AOMFont.badge.weight(.semibold))
         .foregroundStyle(filled ? Color.white : label)
-        .padding(.horizontal, AOMSpace.x2)
-        .frame(minHeight: 18)
+        .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
+        .frame(minHeight: 16)
         .background(filled ? AnyShapeStyle(fill) : AnyShapeStyle(fill.opacity(wash)), in: Capsule())
         .overlay { if increased { Capsule().strokeBorder(fill, lineWidth: 1) } }
         .fixedSize()
@@ -565,11 +569,10 @@ struct AOMModuleBadge: View {
     }
 }
 
-/// A Workspace module tile (d.4), laid out like a System Settings row: the
-/// badge leads a column of the name (Headline), one live value (Metric, Body
-/// semibold) and a one-line status (Callout); the one control sits at the
-/// trailing edge beside the badge. No spacer, so the tile is exactly as tall as
-/// its three lines (`AOMSize.tileHeight`). Clicking the tile opens the module
+/// A Workspace module tile (d.4), compact since 3.3.5: the badge, then the
+/// name (Headline) over one status line that starts with the live value
+/// ("3 automations · 2 on"), and the one control centred at the trailing
+/// edge. Exactly `AOMSize.tileHeight` tall. Clicking the tile opens the module
 /// page; the control is a separate target.
 struct AOMModuleTile<Control: View>: View {
     let module: AOMModule
@@ -595,9 +598,9 @@ struct AOMModuleTile<Control: View>: View {
         self.control = control()
     }
 
-    /// Kept free at the end of the name and value lines for the control
-    /// (a small "Create…" button is the widest one).
-    private static var controlRoom: CGFloat { AOMSpace.x12 + AOMSpace.x6 }
+    /// Kept free at the end of both lines for the control (a small
+    /// "Create…" button is the widest one).
+    private static var controlRoom: CGFloat { AOMSpace.x12 + AOMSpace.x2 }
 
     /// Warning, danger and recording statuses carry their glyph and text colour.
     private var emphasisedTone: AOMTone? {
@@ -606,14 +609,15 @@ struct AOMModuleTile<Control: View>: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .trailing) {
             Button(action: open) {
-                HStack(alignment: .top, spacing: AOMSpace.x3 - AOMSpace.x0_5) {
+                HStack(alignment: .center, spacing: AOMSpace.x2) {
                     AOMModuleBadge(module, active: active)
                         .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
                     lines
+                        .padding(.trailing, Self.controlRoom)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
             .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.cardPadding))
             .accessibilityLabel("\(module.title), \(value), \(status)")
@@ -621,10 +625,8 @@ struct AOMModuleTile<Control: View>: View {
             control
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .frame(minWidth: AOMIcon.hitArea, minHeight: AOMIcon.hitArea)
-                // Centred on the badge, so badge and control mirror each other.
-                .padding(.top, AOMSpace.cardPadding + (AOMIcon.tileBadge - AOMIcon.hitArea) / 2)
                 .padding(.trailing, AOMSpace.cardPadding)
         }
         .contextMenu {
@@ -639,22 +641,23 @@ struct AOMModuleTile<Control: View>: View {
                 .font(AOMFont.headline)
                 .foregroundStyle(AOMColor.text)
                 .lineLimit(1)
-                .padding(.trailing, Self.controlRoom)
-            Text(value)
-                .font(AOMFont.metric)
-                .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .padding(.trailing, Self.controlRoom)
             HStack(spacing: AOMSpace.x1) {
                 if let tone = emphasisedTone {
                     Image(systemName: tone.symbol)
-                        .imageScale(.small)
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(tone.color)
                         .accessibilityHidden(true)
                 }
+                // The value keeps its width; the status truncates first.
+                Text(value)
+                    .font(AOMFont.caption.weight(.medium).monospacedDigit())
+                    .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Text("·").font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary)
+                    .accessibilityHidden(true)
                 Text(status)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(emphasisedTone?.textColor ?? AOMColor.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -786,9 +789,9 @@ struct AOMNotice<Actions: View>: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-        HStack(alignment: .center, spacing: AOMSpace.x3) {
+        HStack(alignment: .center, spacing: AOMSpace.x2) {
             Image(systemName: semantic.symbol)
-                .font(AOMFont.pageStatus)
+                .font(AOMFont.bodyEmphasis)
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(semantic.color)
                 .frame(width: AOMIcon.row)
@@ -806,9 +809,9 @@ struct AOMNotice<Actions: View>: View {
                 .buttonStyle(.bordered)
                 .fixedSize()
         }
-        // Row density: 8 pt above and below, the row inset at the sides.
-        .padding(.horizontal, AOMSpace.x3)
-        .padding(.vertical, AOMSpace.x2)
+        // Row density: 6 pt above and below, the row inset at the sides.
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
         .background(semantic.wash(increasedContrast: contrast == .increased), in: shape)
         .overlay {
             shape.strokeBorder(semantic.color.opacity(contrast == .increased ? 0.85 : 0.22),

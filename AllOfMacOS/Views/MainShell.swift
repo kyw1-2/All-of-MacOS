@@ -59,11 +59,17 @@ struct AOMMainShell<Content: View>: View {
                 HStack(spacing: 0) {
                     content
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // Compact density for every page (3.3.5): 12 pt text
+                        // and small controls unless a view asks for more.
+                        .font(AOMFont.body)
+                        .controlSize(.small)
                     if drawerOpen && sideBySide {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
                             .background(AOMColor.canvas)
+                            .font(AOMFont.body)
+                            .controlSize(.small)
                     }
                 }
                 .overlay(alignment: .trailing) {
@@ -71,6 +77,8 @@ struct AOMMainShell<Content: View>: View {
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
                             .frame(maxHeight: .infinity)
+                            .font(AOMFont.body)
+                            .controlSize(.small)
                             .background(AOMColor.raised)
                             .overlay(alignment: .leading) { AOMDivider(axis: .vertical) }
                             .aomElevation(.raised)
@@ -80,6 +88,7 @@ struct AOMMainShell<Content: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AOMWorkspaceBackground())
             .navigationTitle(appState.selectedMainTab.title)
+            .modifier(AOMCompactToolbarTitle(title: appState.selectedMainTab.title))
         }
         .navigationSplitViewStyle(.balanced)
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
@@ -119,6 +128,8 @@ struct AOMSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        // Small rows (about 24 pt) like Finder's small sidebar setting.
+        .environment(\.sidebarRowSize, .small)
         .safeAreaInset(edge: .top, spacing: 0) {
             AOMSidebarSearchButton(showingCommandPalette: $showingCommandPalette)
         }
@@ -142,7 +153,11 @@ struct AOMSidebar: View {
     /// so the floating Liquid Glass sidebar matches Finder, Mail and Notes.
     private func navigationItem(_ tab: AOMMainTab) -> some View {
         HStack(spacing: 0) {
-            Label(tab.title, systemImage: tab.sidebarSymbol)
+            Label {
+                Text(tab.title).font(AOMFont.body)
+            } icon: {
+                Image(systemName: tab.sidebarSymbol).font(.system(size: 12))
+            }
             Spacer(minLength: AOMSpace.x1)
             statusBadge(for: tab)
         }
@@ -164,14 +179,14 @@ private struct AOMSidebarSearchButton: View {
     var body: some View {
         Button { showingCommandPalette = true } label: {
             HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                Image(systemName: "magnifyingglass").imageScale(.small)
+                Image(systemName: "magnifyingglass").font(.system(size: 11))
                 Text("Search").font(AOMFont.body)
                 Spacer(minLength: AOMSpace.x1)
                 AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
             .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
-            .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
-            .frame(height: AOMIcon.hitArea)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: AOMIcon.hitArea + AOMSpace.x0_5)
             .background(hovering ? AOMColor.sunken : AOMColor.track, in: Capsule())
             .overlay {
                 Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
@@ -182,11 +197,79 @@ private struct AOMSidebarSearchButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .aomAnimation(.quick, value: hovering)
-        .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
-        .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
-        .padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+        .padding(.top, AOMSpace.x1)
+        .padding(.bottom, AOMSpace.x1)
         .help("Search pages, settings and actions")
         .accessibilityLabel("Search")
+    }
+}
+
+/// The page title in the toolbar at 13 pt semibold instead of the system's
+/// larger title (macOS 26+, where the default title item can be replaced). The window
+/// title stays `navigationTitle`, so Mission Control and the Window menu
+/// still name the page.
+/// A page's one-line context beside the toolbar title ("All Apps · 3 of 5
+/// on"). Pages set it with `aomToolbarSubtitle(_:)`; the shell draws it.
+struct AOMToolbarSubtitleKey: PreferenceKey {
+    static let defaultValue: String? = nil
+    static func reduce(value: inout String?, nextValue: () -> String?) { value = nextValue() ?? value }
+}
+
+extension View {
+    /// The page's context line in the compact toolbar title. Also sets the
+    /// window subtitle, so macOS 14 (system title) shows it too.
+    func aomToolbarSubtitle(_ subtitle: String) -> some View {
+        navigationSubtitle(subtitle)
+            .preference(key: AOMToolbarSubtitleKey.self, value: subtitle.isEmpty ? nil : subtitle)
+    }
+}
+
+private struct AOMCompactToolbarTitle: ViewModifier {
+    let title: String
+    @State private var subtitle: String?
+
+    func body(content: Content) -> some View {
+        titled(content)
+            .onPreferenceChange(AOMToolbarSubtitleKey.self) { value in
+                if value != subtitle { subtitle = value }
+            }
+    }
+
+    @ViewBuilder
+    private func titled(_ content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            // A plain label, not a glass capsule: a title is not a control.
+            // The flexible space stands in for the one the system title
+            // brought, so each page's actions stay at the trailing edge.
+            content
+                .toolbar(removing: .title)
+                .toolbar {
+                    ToolbarItem(placement: .navigation) { label }
+                        .sharedBackgroundVisibility(.hidden)
+                    ToolbarSpacer(.flexible)
+                }
+        } else {
+            // macOS 14–15: the system title (no toolbar spacer before 26).
+            content
+        }
+    }
+
+    private var label: some View {
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            Text(title)
+                .font(AOMFont.pageStatus)
+                .foregroundStyle(AOMColor.text)
+                .accessibilityAddTraits(.isHeader)
+            if let subtitle {
+                Text(subtitle)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, AOMSpace.x1)
     }
 }
 

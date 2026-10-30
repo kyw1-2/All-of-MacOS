@@ -278,10 +278,10 @@ struct AOMCardLink: View {
                     Image(systemName: symbol).imageScale(.small)
                 }
             }
-            .font(AOMFont.callout.weight(.medium))
+            .font(AOMFont.caption.weight(.medium))
             .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
-            .padding(.horizontal, AOMSpace.x2)
-            .frame(minHeight: 22)
+            .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
+            .frame(minHeight: 18)
             .background(hovering ? AOMColor.track : .clear, in: Capsule())
             .contentShape(Capsule())
         }
@@ -311,7 +311,7 @@ struct AOMCardFooter<Leading: View, Trailing: View>: View {
                 trailing
             }
             .padding(.horizontal, AOMSpace.rowInset)
-            .frame(minHeight: AOMSize.rowDetail - AOMSpace.x2)
+            .frame(minHeight: AOMSize.rowStandard + AOMSpace.x0_5)
         }
     }
 }
@@ -360,12 +360,12 @@ struct AOMModeButton: View {
                 .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard - 2)
                 .contentShape(Rectangle())
             } else {
-                VStack(spacing: AOMSpace.x1 + 1) {
+                VStack(spacing: AOMSpace.x0_5 + 1) {
                     Image(systemName: symbol)
-                        .font(AOMFont.pageStatus.weight(.regular))
+                        .font(.system(size: 14))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(tint)
-                        .frame(height: 22)
+                        .frame(height: 18)
                     Text(title)
                         .font(AOMFont.caption.weight(.medium))
                         .foregroundStyle(AOMTheme.text)
@@ -379,7 +379,7 @@ struct AOMModeButton: View {
                         .opacity(shortcut == nil ? 0 : 1)
                 }
                 .padding(.horizontal, AOMSpace.x1)
-                .padding(.vertical, AOMSpace.x2)
+                .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
@@ -466,7 +466,7 @@ private struct AOMScopeChip<ID: Hashable>: View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x1 + 1) {
                 if let dot = item.dot {
-                    Circle().fill(dot).frame(width: 7, height: 7)
+                    Circle().fill(dot).frame(width: 6, height: 6)
                 } else if let symbol = item.symbol {
                     Image(systemName: symbol).imageScale(.small)
                 }
@@ -477,10 +477,10 @@ private struct AOMScopeChip<ID: Hashable>: View {
                         .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMTheme.textTertiary)
                 }
             }
-            .font(AOMFont.callout.weight(selected ? .semibold : .medium))
+            .font(AOMFont.caption.weight(selected ? .semibold : .medium))
             .foregroundStyle(selected ? Color.accentColor : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
-            .padding(.horizontal, AOMSpace.x3 - 2)
-            .frame(height: 26)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: 22)
             .background {
                 Capsule().fill(selected ? Color.accentColor.opacity(contrast == .increased ? 0.24 : 0.13)
                                         : (hovering ? AOMTheme.track : Color.clear))

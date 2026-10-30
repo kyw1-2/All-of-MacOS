@@ -98,10 +98,10 @@ private struct AOMToastPresenter: ViewModifier {
                         .symbolRenderingMode(.palette)
                         .foregroundStyle(AOMColor.success, AOMColor.text)
                         .labelStyle(AOMToastLabelStyle())
-                        .padding(.horizontal, AOMSpace.x4)
-                        .padding(.vertical, AOMSpace.x3 - 2)
-                        .aomChrome(radius: 22, role: .hud, inWindow: true)
-                        .padding(.bottom, AOMSpace.x5)
+                        .padding(.horizontal, AOMSpace.x3)
+                        .padding(.vertical, AOMSpace.x2 - 1)
+                        .aomChrome(radius: 18, role: .hud, inWindow: true)
+                        .padding(.bottom, AOMSpace.x4)
                         .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                         .accessibilityAddTraits(.updatesFrequently)
                         .onAppear {
@@ -142,8 +142,8 @@ private struct AOMToolbarButtonBody: View {
         configuration.label
             .font(AOMFont.body.weight(.medium))
             .foregroundStyle(AOMTheme.text)
-            .padding(.horizontal, AOMSpace.x3 - 2)
-            .frame(height: 26)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: 22)
             .background(configuration.isPressed ? AOMColor.track : (hovering ? AOMColor.sunken : .clear), in: shape)
             .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
             .contentShape(shape)
@@ -181,12 +181,12 @@ struct AOMStatStrip: View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 if rowIndex > 0 {
-                    AOMDivider().padding(.horizontal, AOMSpace.x4)
+                    AOMDivider().padding(.horizontal, AOMSpace.x3)
                 }
                 HStack(spacing: 0) {
                     ForEach(Array(row.enumerated()), id: \.element.id) { index, item in
                         if index > 0 {
-                            AOMDivider(axis: .vertical).padding(.vertical, AOMSpace.x4)
+                            AOMDivider(axis: .vertical).padding(.vertical, AOMSpace.x3)
                         }
                         AOMStatCell(item: item).padding(AOMSpace.x1)
                     }
@@ -215,7 +215,7 @@ private struct AOMStatCell: View {
     }
 
     private func content(navigates: Bool) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
             HStack(spacing: AOMSpace.x1 + 2) {
                 Image(systemName: item.systemImage)
                     .imageScale(.small)
@@ -223,7 +223,7 @@ private struct AOMStatCell: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text(item.title)
-                    .font(AOMFont.callout.weight(.medium))
+                    .font(AOMFont.caption.weight(.medium))
                     .foregroundStyle(AOMTheme.textSecondary)
                     .lineLimit(1)
                 if navigates {
@@ -256,7 +256,7 @@ private struct AOMStatCell: View {
                 }
             }
         }
-        .padding(AOMSpace.x3)
+        .padding(AOMSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
@@ -279,7 +279,7 @@ struct AOMActionTile: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x3) {
-                AOMIconBadge(systemImage: systemImage, tint: tint, size: 24, filled: true)
+                AOMIconBadge(systemImage: systemImage, tint: tint, size: AOMIcon.tileBadge, filled: true)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text(title).font(AOMType.bodyEmphasis).foregroundStyle(AOMTheme.text).lineLimit(1)
                     if let subtitle {
@@ -288,9 +288,9 @@ struct AOMActionTile: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
         }
-        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMDesign.tileRadius, padding: AOMSpace.x3))
+        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMDesign.tileRadius, padding: AOMSpace.cardPadding))
         .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
     }
 }

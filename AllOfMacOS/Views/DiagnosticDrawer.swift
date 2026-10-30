@@ -18,7 +18,7 @@ struct DiagnosticDrawerView: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text("Diagnostics")
-                    .font(AOMFont.headline)
+                    .font(AOMFont.section)
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
@@ -52,7 +52,7 @@ struct DiagnosticDrawerView: View {
                 .help("Close diagnostics panel")
                 .accessibilityLabel("Close diagnostics panel")
             }
-            .padding(.horizontal, AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.rowInset)
             .frame(height: AOMSize.rowStandard)
 
             AOMDivider()
