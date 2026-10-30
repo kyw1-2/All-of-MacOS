@@ -267,6 +267,8 @@ private struct AnnotationEditorView: View {
 
     @State private var colorPopover = false
     @State private var optionsPopover = false
+    /// The Text tool's Format popover (weight, emphasis, alignment, effects).
+    @State private var textFormatPopover = false
     /// Background Tool sidebar; "Remember Background tool open state".
     @AppStorage(AnnotationBackgroundPresetStore.panelOpenKey) private var backgroundPanelOpen = false
     /// Objects selected in addition to `selectedID` (⇧-click, ⌘A).
@@ -386,6 +388,16 @@ private struct AnnotationEditorView: View {
             session?.isBusy = { exportInFlight }
             session?.commit = { commitChanges() }
         }
+        // Isolated previews only: open on the Text tool (`--aom-preview-annotate-text`)
+        // and its Format popover (`--aom-preview-annotate-format`) for review.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            guard PresetManager.isUIPreview, args.contains("--aom-preview-annotate-text") else { return }
+            selectTool(.text)
+            guard args.contains("--aom-preview-annotate-format") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            textFormatPopover = true
+        }
         // "Apply Previous Settings" offers the last background used in an editor.
         .onDisappear { AnnotationBackgroundPresetStore.rememberPrevious(document.background) }
         .ignoresSafeArea(.container, edges: .top)
@@ -436,8 +448,8 @@ private struct AnnotationEditorView: View {
     /// segmented tool group in the middle, output actions on the right
     /// (Drag, Pin, Copy ⇧⌘C, Save ⌘S ▾ Save As ⇧⌘S, Done).
     private var toolbar: some View {
-        HStack(spacing: 8) {
-            Color.clear.frame(width: 68, height: 32)
+        HStack(spacing: AOMSpace.x2) {
+            Color.clear.frame(width: AOMFeatureSize.trafficLightsInset, height: AOMFeatureSize.barControlHeight)
             capsuleButton(AnnotationToolbarItem.crop.symbol, help: AnnotationToolbarItem.crop.help,
                           active: cropMode) { selectToolbarItem(.crop) }
             capsuleButton(AnnotationToolbarItem.background.symbol, help: AnnotationToolbarItem.background.help,
@@ -453,15 +465,15 @@ private struct AnnotationEditorView: View {
                 HStack(spacing: 0) {
                     ForEach(AnnotationToolbarItem.segments) { item in
                         if item == .marker {
-                            Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 1, height: 18)
-                                .padding(.horizontal, 3)
+                            AOMDivider(axis: .vertical).frame(height: AOMIcon.row)
+                                .padding(.horizontal, AOMSpace.x1)
                         }
                         toolButton(item)
                     }
                 }
-                .padding(2)
-                .background(Color.primary.opacity(0.065), in: Capsule())
-                .padding(.vertical, 2)
+                .padding(AOMSpace.x0_5)
+                .background(AOMColor.track, in: Capsule())
+                .padding(.vertical, AOMSpace.x0_5)
                 .background(NativeScrollChrome(.hidden))
             }
             .scrollIndicators(.hidden)
@@ -469,16 +481,16 @@ private struct AnnotationEditorView: View {
             moreMenu
             outputActions
         }
-        .padding(.horizontal, 12).frame(height: 50)
-        .background(.regularMaterial)
+        .padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowDetail)
+        .background(.bar)
     }
 
     private var outputActions: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
             Image(systemName: "hand.draw")
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 38, height: 32)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .font(AOMFont.body.weight(.semibold))
+                .frame(width: AOMFeatureSize.barButtonWidth, height: AOMFeatureSize.barControlHeight)
+                .background(AOMColor.track, in: Capsule())
                 .contentShape(Capsule())
                 .onDrag { dragProvider() }
                 .help("Drag the edited image to another app")
@@ -488,8 +500,9 @@ private struct AnnotationEditorView: View {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             HStack(spacing: 0) {
                 Button { saveToExportLocation() } label: {
-                    Text("Save").font(.system(size: 13, weight: .medium))
-                        .padding(.leading, 12).padding(.trailing, 6).frame(height: 32)
+                Text("Save").font(AOMFont.body.weight(.medium))
+                        .padding(.leading, AOMSpace.x3).padding(.trailing, AOMSpace.x1 + AOMSpace.x0_5)
+                        .frame(height: AOMFeatureSize.barControlHeight)
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut("s", modifiers: .command)
@@ -508,23 +521,24 @@ private struct AnnotationEditorView: View {
                     Button("Save Project") { saveProject(saveAs: false) }.keyboardShortcut("s", modifiers: [.command, .option])
                     Button("Save Project As…") { saveProject(saveAs: true) }
                 } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                    Image(systemName: "chevron.down").font(AOMFont.badge.weight(.bold))
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .padding(.trailing, 8).frame(height: 32)
+                .padding(.trailing, AOMSpace.x2).frame(height: AOMFeatureSize.barControlHeight)
                 .help("Save options")
                 .accessibilityLabel("Save options")
             }
-            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .background(AOMColor.track, in: Capsule())
             if let onApply {
                 Button("Apply to Clipboard") {
                     if let image = renderedImage() { onApply(image); markSaved(); status = "Updated clipboard image." }
                 }.buttonStyle(.bordered).controlSize(.large).fixedSize()
             }
             Button { done() } label: {
-                Text("Done").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
-                    .background(Color.accentColor, in: Capsule())
+                Text("Done").font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(AOMTheme.onAccent(AOMColor.accent))
+                    .padding(.horizontal, AOMSpace.x4).frame(height: AOMFeatureSize.barControlHeight)
+                    .background(AOMColor.accent, in: Capsule())
             }
             .buttonStyle(.plain).fixedSize()
             .help(onApply != nil ? "Apply to the clipboard and close" : "Save changes and close")
@@ -592,10 +606,10 @@ private struct AnnotationEditorView: View {
             Divider()
             Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
             Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
-        } label: { Image(systemName: "ellipsis").frame(width: 26, height: 30) }
+        } label: { Image(systemName: "ellipsis").frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea).contentShape(Rectangle()) }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .help("More Options").accessibilityLabel("More Options")
-        .popover(isPresented: $layersPopover) { layers.padding(16).frame(width: 280) }
+        .popover(isPresented: $layersPopover) { layers.padding(AOMSpace.x4).frame(width: AOMSize.drawerWidth.lowerBound) }
     }
 
     // MARK: - Properties bar
@@ -603,29 +617,34 @@ private struct AnnotationEditorView: View {
     /// Contextual properties for the active tool (or the selected object).
     private var propertiesBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: AOMSpace.x3) {
                 palette
                 propertyDivider
                 toolProperties
                 propertyDivider
                 propertySlider("Opacity", value: Binding(get: { CGFloat(style.opacity) }, set: { style.opacity = Double($0) }),
-                               range: 0.1...1, width: 70, label: "\(Int(style.opacity * 100))%")
+                               range: 0.1...1, width: AOMFeatureSize.sliderShort, label: "\(Int(style.opacity * 100))%")
                 Button { optionsPopover.toggle() } label: {
-                    Image(systemName: "slider.horizontal.3").frame(width: 26, height: 24)
+                    Image(systemName: "slider.horizontal.3")
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea - AOMSpace.x1)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help("More Tool Options").accessibilityLabel("More Tool Options")
-                .popover(isPresented: $optionsPopover) { toolOptions.padding(18).frame(width: 270) }
+                .popover(isPresented: $optionsPopover) {
+                    toolOptions.padding(AOMSpace.x4).frame(width: AOMFeatureSize.toolPopoverWidth)
+                }
                 if inspectedKind == .draw || inspectedKind == .drawHighlight {
                     Toggle(isOn: $canvasLocked) {
                         Image(systemName: canvasLocked ? "lock.fill" : "lock.open")
+                            .contentTransition(.symbolEffect(.replace))
                     }
                     .toggleStyle(.button).help("Lock Canvas").accessibilityLabel("Lock Canvas")
                 }
             }
-            .font(.system(size: 13))
+            .font(AOMFont.body)
             .controlSize(.small)
-            .padding(.horizontal, 14)
-            .frame(height: 36)
+            .padding(.horizontal, AOMSpace.x4)
+            .frame(height: AOMSize.rowStandard)
             .background(NativeScrollChrome(.hidden))
         }
         .scrollIndicators(.hidden)
@@ -633,11 +652,11 @@ private struct AnnotationEditorView: View {
     }
 
     private var propertyDivider: some View {
-        Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 1, height: 18)
+        AOMDivider(axis: .vertical).frame(height: AOMIcon.row)
     }
 
     private var palette: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: AOMSpace.x1) {
             ForEach(AnnotationColor.palette) { color in
                 Button {
                     style.color = color
@@ -645,11 +664,11 @@ private struct AnnotationEditorView: View {
                     applyStyleToSelection()
                 } label: {
                     Circle().fill(Color(nsColor: color.nsColor))
-                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
-                        .frame(width: 16, height: 16)
-                        .padding(2)
-                        .overlay(Circle().strokeBorder(Color.accentColor,
-                                                       lineWidth: style.customColorHex == nil && style.color == color ? 2 : 0))
+                        .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                        .frame(width: AOMFeatureSize.swatchSmall, height: AOMFeatureSize.swatchSmall)
+                        .padding(AOMSpace.x0_5)
+                        .overlay(Circle().strokeBorder(AOMColor.accent,
+                                                       lineWidth: style.customColorHex == nil && style.color == color ? AOMFeatureSize.swatchRing : 0))
                 }
                 .buttonStyle(.plain)
                 .help(color.displayName)
@@ -658,14 +677,16 @@ private struct AnnotationEditorView: View {
             }
             Button { colorPopover.toggle() } label: {
                 ZStack {
+                    // The colour wheel names the picker, so it shows the hues themselves.
                     Circle().fill(AngularGradient(colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
                                                   center: .center))
-                        .frame(width: 18, height: 18)
-                    Circle().fill(Color(nsColor: style.resolvedColor)).frame(width: 9, height: 9)
-                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
+                        .frame(width: AOMFeatureSize.swatchSmall + AOMSpace.x0_5, height: AOMFeatureSize.swatchSmall + AOMSpace.x0_5)
+                    Circle().fill(Color(nsColor: style.resolvedColor))
+                        .frame(width: AOMFeatureSize.swatchSmall / 2 + 1, height: AOMFeatureSize.swatchSmall / 2 + 1)
+                        .overlay(Circle().strokeBorder(AOMFeatureColor.onMedia, lineWidth: 1))
                 }
                 .padding(1)
-                .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: style.customColorHex != nil ? 2 : 0))
+                .overlay(Circle().strokeBorder(AOMColor.accent, lineWidth: style.customColorHex != nil ? AOMFeatureSize.swatchRing : 0))
             }
             .buttonStyle(.plain)
             .help("More colors, My Colors, hex/RGB and eyedropper")
@@ -691,19 +712,19 @@ private struct AnnotationEditorView: View {
         switch kind {
         case .rectangle, .ellipse, .line, .arrow, .draw, .drawHighlight, .highlighter, .spotlight:
             if kind != .spotlight && kind != .highlighter {
-                propertySlider("Thickness", value: $style.thickness, range: 1...20, width: 90,
+                propertySlider("Thickness", value: $style.thickness, range: 1...20, width: AOMFeatureSize.sliderStandard,
                                label: "\(Int(style.thickness)) pt")
             }
             if kind == .arrow {
                 Picker("Arrow style", selection: $style.arrowStyle) {
                     ForEach(ArrowStyle.allCases) { Text($0.displayName).tag($0) }
                 }
-                .labelsHidden().frame(width: 110)
+                .labelsHidden().frame(width: AOMFeatureSize.barPicker)
                 .help("Arrow style")
                 .onChange(of: style.arrowStyle) { _, _ in applyStyleToSelection() }
             }
             if kind == .rectangle {
-                propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
+                propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: AOMFeatureSize.sliderShort,
                                label: "\(Int(style.cornerRadius)) pt")
             }
             if kind == .spotlight {
@@ -714,58 +735,32 @@ private struct AnnotationEditorView: View {
                     Label("Rectangle", systemImage: "rectangle").tag(SpotlightShape.rectangle)
                     Label("Ellipse", systemImage: "circle").tag(SpotlightShape.ellipse)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 140)
+                .pickerStyle(.segmented).labelsHidden().frame(width: AOMFeatureSize.barPickerWide)
                 .help("Spotlight shape")
 
                 propertySlider("Dim Opacity", value: Binding(
                     get: { CGFloat(style.spotlightOpacity ?? 0.55) },
                     set: { style.spotlightOpacity = Double($0); applyStyleToSelection() }
-                ), range: 0.2...0.95, width: 90, label: "\(Int((style.spotlightOpacity ?? 0.55) * 100))%")
+                ), range: 0.2...0.95, width: AOMFeatureSize.sliderStandard, label: "\(Int((style.spotlightOpacity ?? 0.55) * 100))%")
             } else if kind == .highlighter {
-                Text("Rectangular marker").foregroundStyle(.secondary)
+                Text("Rectangular marker").foregroundStyle(AOMColor.textSecondary)
             }
         case .filledRectangle:
-            propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: 70,
+            propertySlider("Corners", value: $style.cornerRadius, range: 0...40, width: AOMFeatureSize.sliderShort,
                            label: "\(Int(style.cornerRadius)) pt")
         case .text:
+            // The Text tool keeps its most-used controls in the bar (one-click
+            // styles, size, the text itself); weight, emphasis, alignment and
+            // effects live in the Format popover, grouped.
             textStylePresetMenu
-            propertySlider("Font size", value: $style.fontSize, range: 10...96, width: 90,
+            propertySlider("Font size", value: $style.fontSize, range: 10...96, width: AOMFeatureSize.sliderStandard,
                            label: "\(Int(style.fontSize)) pt")
-            Picker("Weight", selection: Binding(
-                get: { style.resolvedFontWeight },
-                set: { style.fontWeight = $0; style.bold = $0.isBold; applyStyleToSelection() })) {
-                ForEach(AnnotationFontWeight.allCases) { Text($0.displayName).tag($0) }
+            Button { textFormatPopover.toggle() } label: {
+                Label("Format", systemImage: "textformat")
             }
-            .labelsHidden().frame(width: 100).help("Font weight")
-            Toggle("B", isOn: Binding(get: { style.resolvedFontWeight.isBold },
-                                      set: { style.fontWeight = nil; style.bold = $0; applyStyleToSelection() }))
-                .toggleStyle(.button).bold().help("Bold").accessibilityLabel("Bold")
-            Toggle("I", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
-                .toggleStyle(.button).italic().help("Italic").accessibilityLabel("Italic")
-            Picker("Alignment", selection: Binding(
-                get: { style.resolvedTextAlignment },
-                set: { style.textAlignment = $0 == .left ? nil : $0; applyStyleToSelection() })) {
-                ForEach(AnnotationTextAlignment.allCases) { alignment in
-                    Image(systemName: alignment.symbol).tag(alignment).help("Align \(alignment.displayName)")
-                }
-            }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 96)
-            .help("Text alignment").accessibilityLabel("Text alignment")
-            Picker("Background", selection: Binding(
-                get: { style.resolvedTextBackground },
-                set: { style.textBackground = $0 == .none ? nil : $0; applyStyleToSelection() })) {
-                ForEach(AnnotationTextBackground.allCases) { Label($0.displayName, systemImage: $0.symbol).tag($0) }
-            }
-            .labelsHidden().frame(width: 140)
-            .help("Text background: a box or speech bubble in the main colour (More Tool Options sets its own colour)")
-            .accessibilityLabel("Text background")
-            Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
-                .toggleStyle(.button).help("Outlined text style")
-            Toggle(isOn: Binding(get: { style.textShadow ?? false },
-                                 set: { style.textShadow = $0 ? true : nil; applyStyleToSelection() })) {
-                Image(systemName: "shadow")
-            }
-            .toggleStyle(.button).help("Drop shadow").accessibilityLabel("Text shadow")
+            .help("Weight, bold, italic, alignment, background, outline and shadow")
+            .accessibilityLabel("Text format")
+            .popover(isPresented: $textFormatPopover, arrowEdge: .bottom) { textFormatOptions }
             if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .text {
                 // 3.3.3: vertical axis, so ⌥↩ adds a line (the box grows to fit).
                 TextField("Text", text: Binding(
@@ -787,18 +782,18 @@ private struct AnnotationEditorView: View {
                 set: { eraserMode = $0; AnnotationSettings.setEraserMode($0) })) {
                 ForEach(AnnotationEraserMode.allCases) { Text($0.title).tag($0).help($0.help) }
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
             .help(eraserMode.help).accessibilityLabel("Eraser mode")
             propertySlider("Size", value: Binding(get: { eraserSize },
                                                   set: { eraserSize = $0; AnnotationSettings.setEraserSize($0) }),
-                           range: AnnotationEraser.radiusRange, width: 90, label: "\(Int(eraserSize * 2)) pt")
-            Text("\(eraserMode.help) · ⌘Z restores").foregroundStyle(.secondary)
+                           range: AnnotationEraser.radiusRange, width: AOMFeatureSize.sliderStandard, label: "\(Int(eraserSize * 2)) pt")
+            Text("\(eraserMode.help) · ⌘Z restores").foregroundStyle(AOMColor.textSecondary)
         case .image:
             if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .image {
                 propertySlider("Rotation", value: Binding(
                     get: { object.resolvedRotation * 180 / .pi },
                     set: { setRotation(of: id, radians: $0 * .pi / 180) }),
-                               range: -180...180, width: 110, label: "\(Int((object.resolvedRotation * 180 / .pi).rounded()))°")
+                               range: -180...180, width: AOMFeatureSize.sliderWide, label: "\(Int((object.resolvedRotation * 180 / .pi).rounded()))°")
                 Button("Upright") { setRotation(of: id, radians: 0) }
                     .disabled(object.resolvedRotation == 0).help("Reset the rotation")
                 Button { arrangeSelection(.bringToFront) } label: {
@@ -810,7 +805,7 @@ private struct AnnotationEditorView: View {
                 }
                 .buttonStyle(.plain).help("Send to Back (⇧⌘[)").accessibilityLabel("Send to Back")
                 Text("Corners resize (⇧ keeps the ratio) · the round handle rotates (⇧ snaps to 15°)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AOMColor.textSecondary)
             }
         case .counter:
             Picker("Counter Style", selection: Binding(
@@ -819,12 +814,12 @@ private struct AnnotationEditorView: View {
             )) {
                 ForEach(CounterStyle.allCases) { Text($0.displayName).tag($0) }
             }
-            .labelsHidden().frame(width: 110)
+            .labelsHidden().frame(width: AOMFeatureSize.barPicker)
             .help("Counter sequence style")
 
-            Text("Next").foregroundStyle(.secondary)
+            Text("Next").foregroundStyle(AOMColor.textSecondary)
             Stepper(value: $counterValue, in: 1...9999) {
-                Text((style.counterStyle ?? .numbers).format(counterValue)).monospacedDigit().frame(minWidth: 28)
+                Text((style.counterStyle ?? .numbers).format(counterValue)).monospacedDigit().frame(minWidth: AOMIcon.hitArea)
             }
             .help("Starting number")
             Button("Reset") { counterValue = 1 }.help("Restart numbering at 1")
@@ -837,11 +832,11 @@ private struct AnnotationEditorView: View {
                         .help(redaction.help).tag(redaction)
                 }
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 390)
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
             .help((AnnotationRedactionStyle(kind: kind) ?? .pixelate).help)
             .accessibilityLabel("Redaction style")
             if kind.isSecureRedaction {
-                Image(systemName: "checkmark.shield").foregroundStyle(.green)
+                Image(systemName: "checkmark.shield").foregroundStyle(AOMColor.successText)
                     .help("Exported pixels in this area are fully replaced")
                     .accessibilityLabel("Irreversible redaction")
             }
@@ -849,39 +844,107 @@ private struct AnnotationEditorView: View {
                 Picker("Block size", selection: $style.pixelBlockSize) {
                     ForEach([16, 24, 32, 48], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
                 }
-                .labelsHidden().frame(width: 80).help("Secure blur block size (larger hides more)")
+                .labelsHidden().frame(width: AOMFeatureSize.barPickerNarrow).help("Secure blur block size (larger hides more)")
                 .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
             }
             if kind == .pixelate {
                 Picker("Pixel size", selection: $style.pixelBlockSize) {
                     ForEach([8, 16, 32], id: \.self) { Text("\($0) px").tag(CGFloat($0)) }
                 }
-                .labelsHidden().frame(width: 80).help("Pixel block size")
+                .labelsHidden().frame(width: AOMFeatureSize.barPickerNarrow).help("Pixel block size")
                 .onChange(of: style.pixelBlockSize) { _, _ in applyStyleToSelection() }
             } else if kind == .blur {
-                propertySlider("Intensity", value: $style.blurRadius, range: 1...64, width: 80,
+                propertySlider("Intensity", value: $style.blurRadius, range: 1...64, width: AOMFeatureSize.barPickerNarrow,
                                label: "\(Int(style.blurRadius)) px")
             }
         case .move:
             Text(selectedID == nil ? "Select an object to edit it · Arrow keys nudge (⇧ 10 px)"
                                    : "Arrow keys nudge (⇧ 10 px) · ⌫ deletes")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AOMColor.textSecondary)
         default:
             EmptyView()
         }
     }
 
+    /// The Text tool's Format popover, grouped the way a text inspector is:
+    /// the font, the paragraph, then what is drawn behind and around the text.
+    /// Every control applies at once to the selected text and to new text.
+    private var textFormatOptions: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            AOMCardGroup("Font") {
+                AOMSettingRow("Weight", showsDivider: false) {
+                    Picker("Weight", selection: Binding(
+                        get: { style.resolvedFontWeight },
+                        set: { style.fontWeight = $0; style.bold = $0.isBold; applyStyleToSelection() })) {
+                        ForEach(AnnotationFontWeight.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .help("Font weight")
+                }
+                AOMSettingRow("Bold") {
+                    Toggle("Bold", isOn: Binding(get: { style.resolvedFontWeight.isBold },
+                                                 set: { style.fontWeight = nil; style.bold = $0; applyStyleToSelection() }))
+                        .help("Bold")
+                        .accessibilityLabel("Bold")
+                }
+                AOMSettingRow("Italic") {
+                    Toggle("Italic", isOn: Binding(get: { style.italic ?? false }, set: { style.italic = $0; applyStyleToSelection() }))
+                        .help("Italic")
+                        .accessibilityLabel("Italic")
+                }
+            }
+            AOMCardGroup("Paragraph") {
+                AOMSettingRow("Alignment", showsDivider: false) {
+                    Picker("Alignment", selection: Binding(
+                        get: { style.resolvedTextAlignment },
+                        set: { style.textAlignment = $0 == .left ? nil : $0; applyStyleToSelection() })) {
+                        ForEach(AnnotationTextAlignment.allCases) { alignment in
+                            Image(systemName: alignment.symbol).tag(alignment).help("Align \(alignment.displayName)")
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .help("Text alignment").accessibilityLabel("Text alignment")
+                }
+            }
+            AOMCardGroup("Background & effects", footer: "More Tool Options sets the text, box and outline colours and the outline width.") {
+                AOMSettingRow("Background", showsDivider: false) {
+                    Picker("Background", selection: Binding(
+                        get: { style.resolvedTextBackground },
+                        set: { style.textBackground = $0 == .none ? nil : $0; applyStyleToSelection() })) {
+                        ForEach(AnnotationTextBackground.allCases) { Label($0.displayName, systemImage: $0.symbol).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .help("Text background: a box or speech bubble in the main colour (More Tool Options sets its own colour)")
+                    .accessibilityLabel("Text background")
+                }
+                AOMSettingRow("Outline") {
+                    Toggle("Outline", isOn: Binding(get: { style.textOutline ?? true }, set: { style.textOutline = $0; applyStyleToSelection() }))
+                        .help("Outlined text style")
+                }
+                AOMSettingRow("Shadow") {
+                    Toggle("Text shadow", isOn: Binding(get: { style.textShadow ?? false },
+                                                        set: { style.textShadow = $0 ? true : nil; applyStyleToSelection() }))
+                        .help("Drop shadow")
+                        .accessibilityLabel("Text shadow")
+                }
+            }
+        }
+        .padding(AOMSpace.x4)
+        .frame(width: AOMFeatureSize.formatPopoverWidth)
+    }
+
     private func propertySlider(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>,
                                 width: CGFloat, label: String) -> some View {
-        HStack(spacing: 6) {
-            Text(title).foregroundStyle(.secondary)
+        HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            Text(title).foregroundStyle(AOMColor.textSecondary)
             Slider(value: Binding(get: { Double(value.wrappedValue) },
                                   set: { value.wrappedValue = CGFloat($0); applyStyleToSelection() }),
                    in: Double(range.lowerBound)...Double(range.upperBound))
                 .frame(width: width)
                 .accessibilityLabel(title)
                 .accessibilityValue(label)
-            Text(label).monospacedDigit().foregroundStyle(.secondary).frame(minWidth: 36, alignment: .leading)
+            Text(label).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
+                .frame(minWidth: AOMFeatureSize.sliderValue, alignment: .leading)
         }
     }
 
@@ -900,7 +963,7 @@ private struct AnnotationEditorView: View {
     private func selectToolbarItem(_ item: AnnotationToolbarItem) {
         switch item {
         case .background:
-            withAnimation(AOMDesign.animation(.easeOut(duration: 0.18))) { backgroundPanelOpen.toggle() }
+            withAnimation(AOMMotion.quick) { backgroundPanelOpen.toggle() }
         case .crop:
             selectTool(cropMode ? .move : .crop)
         case .redact:
@@ -915,12 +978,14 @@ private struct AnnotationEditorView: View {
     private func capsuleButton(_ symbol: String, help: String, active: Bool = false,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(active ? Color.white : Color.primary)
-                .frame(width: 38, height: 32)
-                .background(active ? Color.accentColor : Color(nsColor: .controlBackgroundColor), in: Capsule())
+            Image(systemName: symbol).font(AOMFont.section)
+                .foregroundStyle(active ? AOMTheme.onAccent(AOMColor.accent) : AOMColor.text)
+                .frame(width: AOMFeatureSize.barButtonWidth, height: AOMFeatureSize.barControlHeight)
+                // The same quiet track as the tool group, so every bar button reads as one.
+                .background(active ? AOMColor.accent : AOMColor.track, in: Capsule())
                 .contentShape(Capsule())
         }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+            .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private func highlightMatchingText() {
@@ -1006,10 +1071,10 @@ private struct AnnotationEditorView: View {
         let active = item.kinds.contains(tool) && !cropMode
         return Button { selectToolbarItem(item) } label: {
             Image(systemName: item.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 33, height: 29)
-                .background(active ? Color.accentColor : Color.clear, in: Capsule())
-                .foregroundStyle(active ? Color.white : Color.primary)
+                .font(AOMFont.section)
+                .frame(width: AOMIcon.headerBadge + 1, height: AOMIcon.hitArea + 1)
+                .background(active ? AOMColor.accent : Color.clear, in: Capsule())
+                .foregroundStyle(active ? AOMTheme.onAccent(AOMColor.accent) : AOMColor.text)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -1027,32 +1092,35 @@ private struct AnnotationEditorView: View {
                 }
             } label: {
                 Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit")
-                    .font(.system(size: 12, weight: .medium)).frame(width: 60, height: 30)
+                    .font(AOMFont.callout.weight(.medium)).monospacedDigit()
+                    .frame(width: AOMFeatureSize.barPickerNarrow - AOMSpace.x5, height: AOMSize.rowSingle)
             }
-            .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, 8)
-            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+            .menuStyle(.borderlessButton).fixedSize().padding(.horizontal, AOMSpace.x2)
+            .background(AOMColor.track, in: Capsule())
             .help("Zoom").accessibilityLabel("Zoom")
             if cropMode {
-                Toggle("Snap to edges", isOn: $snapToEdges).toggleStyle(.checkbox).font(.system(size: 12))
-                Text("Hold Command ⌘ to disable snapping.").font(.system(size: 11)).foregroundStyle(.secondary)
+                Toggle("Snap to edges", isOn: $snapToEdges).toggleStyle(.checkbox).font(AOMFont.callout)
+                Text("Hold Command ⌘ to disable snapping.").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             }
             Spacer()
             Text("\(document.croppedImage.width) × \(document.croppedImage.height) px")
-                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.secondary)
+                .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
             if !cropMode {
-                AnnotationShareButton(image: renderedImage(), scale: scale).frame(width: 38, height: 32)
+                AnnotationShareButton(image: renderedImage(), scale: scale)
+                    .frame(width: AOMFeatureSize.barButtonWidth, height: AOMFeatureSize.barControlHeight)
+                    .background(AOMColor.track, in: Capsule())
             }
         }
         // macOS 26 rounds windows more: keep the end controls clear of the
         // bottom corners.
-        .padding(.horizontal, 20).frame(height: 44)
-        .background(.regularMaterial)
+        .padding(.horizontal, AOMSpace.x5).frame(height: AOMSize.rowDouble)
+        .background(.bar)
     }
 
     private var cropToolbar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 12) {
-            Color.clear.frame(width: 68, height: 32)
+        HStack(spacing: AOMSpace.x3) {
+            Color.clear.frame(width: AOMFeatureSize.trafficLightsInset, height: AOMFeatureSize.barControlHeight)
             capsuleButton("crop", help: "Exit Crop", active: true) { cropMode = false }
             Picker("Aspect Ratio", selection: Binding<AnnotationCropPreset>(
                 get: {
@@ -1071,31 +1139,33 @@ private struct AnnotationEditorView: View {
                     cropRect = boundedCrop(AnnotationCropPreset.centredRect(ratio: cropAspect, in: bounds))
                 })) {
                 ForEach(AnnotationCropPreset.allCases) { Text($0.title).tag($0) }
-            }.labelsHidden().frame(width: 135)
+            }.labelsHidden().frame(width: AOMFeatureSize.barPicker + AOMSpace.x6)
                 .help("Aspect ratio of the crop")
             cropDimension("Width", width: true)
-            Image(systemName: "arrow.left.and.right").foregroundStyle(.secondary)
+            Image(systemName: "arrow.left.and.right").foregroundStyle(AOMColor.textSecondary)
             cropDimension("Height", width: false)
-            Divider().frame(height: 24)
-            Text("Image size:").foregroundStyle(.secondary)
+            Divider().frame(height: AOMSpace.x6)
+            Text("Image size:").foregroundStyle(AOMColor.textSecondary)
             Text("\(document.croppedImage.width) × \(document.croppedImage.height) px")
-                .padding(.horizontal, 12).frame(height: 32)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .monospacedDigit()
+                .padding(.horizontal, AOMSpace.x3).frame(height: AOMFeatureSize.barControlHeight)
+                .background(AOMColor.track, in: Capsule())
             Spacer()
             Button("Cancel") { selectTool(.move) }.buttonStyle(.plain)
-                .padding(.horizontal, 14).frame(height: 32)
-                .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                .padding(.horizontal, AOMSpace.x4).frame(height: AOMFeatureSize.barControlHeight)
+                .background(AOMColor.track, in: Capsule())
                 .keyboardShortcut(.escape, modifiers: [])
             Button { if let cropRect { applyCrop(cropRect) } } label: {
-                Text("Crop").foregroundStyle(.white).fontWeight(.semibold)
-                    .padding(.horizontal, 16).frame(height: 32).background(Color.accentColor, in: Capsule())
+                Text("Crop").foregroundStyle(AOMTheme.onAccent(AOMColor.accent)).fontWeight(.semibold)
+                    .padding(.horizontal, AOMSpace.x4).frame(height: AOMFeatureSize.barControlHeight)
+                    .background(AOMColor.accent, in: Capsule())
             }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: [])
                 .disabled(cropRect == nil || (cropRect?.width ?? 0) < 1 || (cropRect?.height ?? 0) < 1)
-        }.font(.system(size: 13)).padding(.horizontal, 12).frame(height: 50)
+        }.font(AOMFont.body).padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowDetail)
             .background(NativeScrollChrome(.hidden))
         }
         .scrollIndicators(.hidden)
-        .background(.regularMaterial)
+        .background(.bar)
     }
 
     private func cropDimension(_ label: String, width: Bool) -> some View {
@@ -1111,7 +1181,7 @@ private struct AnnotationEditorView: View {
                 }
                 cropRect = boundedCrop(rect)
             }), format: .number.precision(.fractionLength(0)))
-            .textFieldStyle(.roundedBorder).frame(width: 60).accessibilityLabel(label)
+            .textFieldStyle(.roundedBorder).frame(width: AOMFeatureSize.barPickerNarrow - AOMSpace.x5).accessibilityLabel(label)
     }
 
     private func boundedCrop(_ rect: CGRect) -> CGRect {
@@ -1198,9 +1268,10 @@ private struct AnnotationEditorView: View {
             .background(Color(nsColor: .underPageBackgroundColor))
             .overlay(alignment: .bottom) {
                 if let status {
-                    Text(status).font(.caption)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: Capsule()).padding(.bottom, 12)
+                    // A message over the canvas: the opaque capsule, not a material (c.4).
+                    Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.text)
+                        .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5).padding(.vertical, AOMSpace.x1 + 1)
+                        .aomInPanelCapsule().padding(.bottom, AOMSpace.x3)
                         .allowsHitTesting(false)
                 }
             }
@@ -1461,8 +1532,8 @@ private struct AnnotationEditorView: View {
     private var inspectedKind: AnnotationKind { selectedKind ?? tool }
 
     private var toolOptions: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Tool Options").font(.headline)
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            Text("Tool Options").font(AOMFont.headline).foregroundStyle(AOMColor.text)
             section("Thickness") {
                 slider(value: $style.thickness, range: 1...20, label: "\(Int(style.thickness)) pt")
             }
@@ -1496,7 +1567,7 @@ private struct AnnotationEditorView: View {
                                 .disabled(style.resolvedTextBackground == .none)
                             textColorPicker("Outline Color", keyPath: \.textOutlineHex, automatic: "Dark (55 %)")
                                 .disabled(!(style.textOutline ?? true))
-                            Text("Outline Width").font(.caption).foregroundStyle(.secondary)
+                            Text("Outline Width").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                             slider(value: Binding(get: { style.textOutlineWidth ?? 6 }, set: { style.textOutlineWidth = $0 }),
                                    range: 2...40, label: "\(Int(style.textOutlineWidth ?? 6)) %")
                                 .disabled(!(style.textOutline ?? true))
@@ -2285,8 +2356,6 @@ private struct AnnotationShareButton: NSViewRepresentable {
         let button = NSButton(image: NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")!,
                               target: context.coordinator, action: #selector(Coordinator.share(_:)))
         button.isBordered = false
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 16
         button.toolTip = "Share"
         button.setAccessibilityLabel("Share")
         return button
@@ -2297,7 +2366,9 @@ private struct AnnotationShareButton: NSViewRepresentable {
             NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale))
         }
         button.isEnabled = image != nil
-        button.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // The capsule behind the button is drawn by SwiftUI (`AOMColor.track`),
+        // so it follows the window's appearance; a layer colour resolved here
+        // came out dark in a light window when the main window was dark.
     }
 
     final class Coordinator: NSObject {

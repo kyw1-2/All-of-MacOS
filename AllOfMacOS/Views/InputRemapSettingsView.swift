@@ -19,7 +19,7 @@ struct HyperKeyRow: View {
                 HubRowShell(icon: "keyboard", tint: .orange, title: "Hyper Key Is", subtitle: "") {
                     Picker("", selection: $source) {
                         ForEach(HIDKey.hyperSources) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: 170)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
                 }
                 HubRowShell(icon: "escape", tint: .orange, title: "Tap Alone for Escape",
                             subtitle: "A quick press without another key sends Escape",
@@ -48,26 +48,30 @@ struct KeyRemapRow: View {
                     .disabled(remaps.count >= 32)
             }
             ForEach($remaps) { $remap in
-                HStack(spacing: 8) {
+                HStack(spacing: AOMSpace.x2) {
                     Picker("From", selection: $remap.from) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: 170)
-                    Image(systemName: "arrow.right").foregroundStyle(.secondary).accessibilityHidden(true)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
+                    Image(systemName: "arrow.right").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
                     Picker("To", selection: $remap.to) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: 170)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
                     Spacer()
                     Button {
                         remaps.removeAll { $0.id == remap.id }
-                    } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.secondary) }
+                    } label: { Image(systemName: "minus.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Remove \(HIDKey.title(remap.from)) remap")
                 }
-                .padding(.horizontal, 14).padding(.vertical, 4)
+                // Indented under "Remap Keys", past its 20 pt symbol (e.3).
+                .padding(.leading, AOMSpace.rowSymbolInset).padding(.trailing, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.x1)
             }
             if remaps.contains(where: { InputRemapSettings.hyperEnabled && $0.from == InputRemapSettings.hyperSource }) {
-                Text("The Hyper key takes precedence over a remap of the same key.")
-                    .font(.caption).foregroundStyle(.orange).padding(.horizontal, 14).padding(.bottom, 6)
+                Label("The Hyper key takes precedence over a remap of the same key.", systemImage: AOMTone.warning.symbol)
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.warningText)
+                    .padding(.leading, AOMSpace.rowSymbolInset).padding(.trailing, AOMSpace.rowInset)
+                    .padding(.bottom, AOMSpace.x2)
             }
         }
         .onChange(of: remaps) { _, value in InputRemapSettings.remaps = value; InputRemapService.shared.apply() }

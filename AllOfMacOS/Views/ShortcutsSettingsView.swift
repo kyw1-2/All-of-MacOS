@@ -6,7 +6,7 @@ import AppKit
 /// Provides interactive keyboard shortcut configuration for all capture tools,
 /// allowing individual hotkey recording, clearing, and restoring CleanShot X defaults.
 struct ShortcutsSettingsView: View {
-    /// The decorative banner; Settings' own pane header names the page.
+    /// The page header; Settings' own pane header names the page there.
     var showsBanner = true
     @ObservedObject private var shortcuts = CaptureShortcuts.shared
     @State private var recordingAction: CaptureShortcutAction? = nil
@@ -26,80 +26,51 @@ struct ShortcutsSettingsView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 if showsBanner { headerBanner }
 
                 ForEach(groups, id: \.name) { group in
-                    AppleSettingsGroup(group.name) {
-                        ForEach(Array(group.actions.enumerated()), id: \.element.id) { index, action in
-                            shortcutRow(for: action, showDivider: index < group.actions.count - 1)
+                    AOMSection(group.name, detail: "\(group.actions.filter { shortcuts.shortcut(for: $0) != nil }.count) of \(group.actions.count) set") {
+                        ForEach(group.actions) { action in
+                            shortcutRow(for: action)
                         }
                     }
                 }
 
-                // Bottom Controls
-                HStack {
-                    Button("Restore Capture Defaults") {
-                        // Scoped: capture & tool shortcuts only — pinning,
-                        // switching and Keep Awake assignments survive.
-                        shortcuts.resetCaptureDefaults()
+                AOMSection("Defaults",
+                           footer: "Tip: Disable system shortcuts in System Settings to override ⇧⌘3 / ⇧⌘4. Escape cancels recording; Delete clears a shortcut.") {
+                    AOMSettingRow("Restore capture defaults", detail: "Pinning, switching and Keep Awake keep their keys") {
+                        Button("Restore Capture Defaults") {
+                            // Scoped: capture & tool shortcuts only — pinning,
+                            // switching and Keep Awake assignments survive.
+                            shortcuts.resetCaptureDefaults()
+                        }
                     }
-                    .controlSize(.small)
-
-                    Spacer()
-
-                    Text("Tip: Disable system shortcuts in System Settings to override ⇧⌘3 / ⇧⌘4")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 4)
-                .padding(.top, 4)
             }
-            .padding(20)
+            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
+            .padding(.horizontal, AOMSpace.pageMargin)
+            .padding(.top, AOMSpace.x4)
+            .padding(.bottom, AOMSpace.x6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onDisappear {
             stopRecording()
         }
     }
 
-    // MARK: - Header Banner
+    // MARK: - Header
 
     private var headerBanner: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.gradient)
-                    .frame(width: 36, height: 36)
-                    .shadow(color: Color.accentColor.opacity(0.3), radius: 3, y: 1.5)
-                Image(systemName: "command")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Capture Shortcuts")
-                    .font(.system(size: 14, weight: .bold))
-                Text("Trigger screenshots and tools instantly from anywhere on your Mac")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(12)
-        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
+        AOMPageHeader("Capture shortcuts", symbol: "command",
+                      subtitle: "Trigger screenshots and tools instantly from anywhere on your Mac",
+                      help: "Click a shortcut, then press the new keys with at least one modifier. Escape cancels, and Delete clears the shortcut.")
     }
 
     // MARK: - Shortcut Row
 
-    private func shortcutRow(for action: CaptureShortcutAction, showDivider: Bool) -> some View {
-        AppleSettingsRow(
-            icon: action.iconName,
-            iconColor: iconColor(for: action),
-            title: action.displayName,
-            subtitle: subtitle(for: action),
-            showDivider: showDivider
-        ) {
+    private func shortcutRow(for action: CaptureShortcutAction) -> some View {
+        AOMSettingRow(action.displayName, detail: subtitle(for: action), symbol: action.iconName) {
             shortcutRecorder(for: action)
         }
     }
@@ -107,8 +78,9 @@ struct ShortcutsSettingsView: View {
     private func shortcutRecorder(for action: CaptureShortcutAction) -> some View {
         let isRecording = (recordingAction == action)
         let currentShortcut = shortcuts.shortcut(for: action)
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
 
-        return HStack(spacing: 6) {
+        return HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
             Button {
                 if isRecording {
                     stopRecording()
@@ -117,27 +89,21 @@ struct ShortcutsSettingsView: View {
                 }
             } label: {
                 if isRecording {
-                    HStack(spacing: 4) {
+                    HStack(spacing: AOMSpace.x1) {
                         Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 6, height: 6)
+                            .fill(AOMColor.accent)
+                            .frame(width: AOMIcon.dot, height: AOMIcon.dot)
                         Text("Type shortcut…")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
+                            .font(AOMFont.caption.weight(.medium))
+                            .foregroundStyle(AOMColor.accent)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.12))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.accentColor, lineWidth: 1.5)
-                    )
+                    .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+                    .padding(.vertical, AOMSpace.x1)
+                    .background(shape.fill(AOMColor.accent.opacity(0.12)))
+                    .overlay(shape.strokeBorder(AOMColor.accent, lineWidth: 1.5))
                 } else if let shortcut = currentShortcut {
-                    // Keycap style badges
-                    HStack(spacing: 3) {
+                    // One keycap per key, the shared keycap style.
+                    HStack(spacing: AOMSpace.x0_5 + 1) {
                         ForEach(modifierSymbols(for: shortcut.modifiers), id: \.self) { sym in
                             KeycapBadge(text: sym)
                         }
@@ -145,17 +111,15 @@ struct ShortcutsSettingsView: View {
                     }
                 } else {
                     Text("Record Shortcut")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
-                        )
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .padding(.horizontal, AOMSpace.x2)
+                        .padding(.vertical, AOMSpace.x1)
+                        .background(shape.fill(AOMColor.track))
                 }
             }
             .buttonStyle(.plain)
+            .help(isRecording ? "Press the new shortcut, or Escape to cancel" : "Click to record a new shortcut")
 
             // Clear button
             if !isRecording && currentShortcut != nil {
@@ -163,8 +127,8 @@ struct ShortcutsSettingsView: View {
                     shortcuts.setShortcut(nil, for: action)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary.opacity(0.7))
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Clear Shortcut")
@@ -227,28 +191,6 @@ struct ShortcutsSettingsView: View {
         return result
     }
 
-    private func iconColor(for action: CaptureShortcutAction) -> Color {
-        switch action {
-        case .captureArea: return .blue
-        case .captureFullscreen: return .indigo
-        case .captureWindow: return .cyan
-        case .recordScreen: return .red
-        case .pauseRecording: return .orange
-        case .allInOne: return .blue
-        case .openProject: return .purple
-        case .capturePreviousArea: return .teal
-        case .scrollingCapture: return .purple
-        case .ocr: return .orange
-        case .history: return .mint
-        case .toggleDesktopIcons: return .gray
-        case .pinLast, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows: return .pink
-        case .windowSwitcher: return .indigo
-        case .keepAwake: return .orange
-        case .appAudioMixer: return .green
-        case .muteFrontAppAudio: return .red
-        }
-    }
-
     private func subtitle(for action: CaptureShortcutAction) -> String {
         switch action {
         case .captureArea: return "Drag a rectangular selection"
@@ -279,23 +221,12 @@ struct ShortcutsSettingsView: View {
 
 // MARK: - Keycap Badge
 
+/// A key in a shortcut. Renders the one shared keycap (`AOMKeycap`), so
+/// shortcuts look the same in Settings, the ⌘K palette and Workspace.
 struct KeycapBadge: View {
     let text: String
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(.primary.opacity(0.85))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .shadow(color: Color.black.opacity(0.12), radius: 1, x: 0, y: 1)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(Color.primary.opacity(0.15), lineWidth: 0.75)
-            )
+        AOMKeycap(text: text)
     }
 }

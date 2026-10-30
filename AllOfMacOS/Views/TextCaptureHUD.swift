@@ -177,19 +177,20 @@ struct TextCaptureHUDView: View {
     let onHover: (Bool) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
                 Image(systemName: model.symbol)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.green)
+                    .font(AOMFont.pageStatus)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(AOMColor.success)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.title).font(.system(size: 13, weight: .semibold))
-                    Text(model.subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(model.title).font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                    Text(model.subtitle).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
                 }
-                Spacer(minLength: 4)
+                Spacer(minLength: AOMSpace.x1)
                 Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 14)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark.circle.fill").font(AOMFont.section.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .help("Close")
@@ -197,21 +198,22 @@ struct TextCaptureHUDView: View {
             }
 
             Text(model.text)
-                .font(.system(size: 12))
+                .font(AOMFont.callout)
+                .foregroundStyle(AOMColor.text)
                 .lineLimit(8)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                .padding(AOMSpace.x2)
+                .background(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).fill(AOMColor.sunken))
                 .accessibilityLabel("Recognized text")
 
             if !model.links.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5 + 1) {
                     ForEach(model.links.prefix(3), id: \.self) { url in
                         Button { onOpen(url) } label: {
                             Label(url.host ?? url.absoluteString, systemImage: "link")
-                                .font(.system(size: 11)).lineLimit(1)
+                                .font(AOMFont.caption).lineLimit(1)
                         }
                         .buttonStyle(.link)
                         .help(url.absoluteString)
@@ -219,29 +221,32 @@ struct TextCaptureHUDView: View {
                 }
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 hudButton("Copy", "doc.on.doc", action: onCopy)
                 hudButton("Edit", "square.and.pencil", action: onEdit)
                 hudButton(speech.isSpeaking ? "Stop" : "Speak",
                           speech.isSpeaking ? "stop.fill" : "speaker.wave.2", action: onSpeak)
                 ShareLink(item: model.text) {
-                    Label("Share", systemImage: "square.and.arrow.up").font(.system(size: 11))
+                    Label("Share", systemImage: "square.and.arrow.up").font(AOMFont.caption)
                 }
                 .controlSize(.small)
+                .aomGlassButton()
                 Spacer()
             }
         }
-        .padding(12)
-        .frame(width: 380)
+        .padding(AOMSpace.x3)
+        .frame(width: AOMFeatureSize.textHUDWidth)
         .aomFloatingSurface(.hud, radius: AOMRadius.hud)
         .onHover(perform: onHover)
     }
 
+    /// Buttons on the HUD's glass use the glass style (c.4).
     private func hudButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: symbol).font(.system(size: 11))
+            Label(title, systemImage: symbol).font(AOMFont.caption)
         }
         .controlSize(.small)
+        .aomGlassButton()
         .accessibilityLabel(title)
     }
 }
@@ -303,13 +308,13 @@ struct TextCaptureEditorView: View {
     let onCancel: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
             TextEditor(text: $model.text)
-                .font(.system(size: 13))
-                .frame(minWidth: 360, minHeight: 200)
+                .font(AOMFont.body)
+                .frame(minWidth: AOMFeatureSize.textEditorMin.width, minHeight: AOMFeatureSize.textEditorMin.height)
                 .accessibilityLabel("Recognized text")
             HStack {
-                Text("\(model.text.count) characters").font(.caption).foregroundStyle(.secondary)
+                Text("\(model.text.count) characters").font(AOMFont.caption).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
                 Spacer()
                 Button(speech.isSpeaking ? "Stop" : "Speak") {
                     speech.toggle(model.text, languageCode: model.languageCode)
@@ -319,6 +324,6 @@ struct TextCaptureEditorView: View {
                 Button("Copy") { onCopy(model.text) }.keyboardShortcut(.defaultAction)
             }
         }
-        .padding(14)
+        .padding(AOMSpace.x4)
     }
 }

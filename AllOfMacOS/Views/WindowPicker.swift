@@ -101,33 +101,36 @@ private struct WindowPickerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary)
                 TextField("Search windows", text: $search)
                     .textFieldStyle(.plain)
+                    .font(AOMFont.body)
             }
-            .padding(10)
-            Divider()
+            .padding(AOMSpace.x3)
+            AOMDivider()
 
             ScrollView(showsIndicators: false) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.tileMin - AOMSpace.x5), spacing: AOMSpace.tileGap)],
+                          spacing: AOMSpace.tileGap) {
                     ForEach(Array(filtered.enumerated()), id: \.offset) { _, window in
                         WindowCell(window: window, actionLabel: actionLabel, showsThumbnail: showsThumbnails) { onSelect(window) }
                     }
                 }
-                .padding(12)
+                .padding(AOMSpace.x3)
             }
 
-            Divider()
+            AOMDivider()
             HStack {
                 Text("\(filtered.count) window\(filtered.count == 1 ? "" : "s")")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
             }
-            .padding(10)
+            .padding(AOMSpace.x3)
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: AOMFeatureSize.windowPickerMin.width, minHeight: AOMFeatureSize.windowPickerMin.height)
+        .background(AOMColor.canvas)
     }
 }
 
@@ -154,35 +157,37 @@ private struct WindowCell: View {
 
     var body: some View {
         Button(action: onSelect) {
-            VStack(spacing: 6) {
+            VStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.primary.opacity(0.06))
+                    RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                        .fill(AOMColor.sunken)
                     if let thumbnail {
                         Image(nsImage: thumbnail).resizable().scaledToFit()
                     } else if let icon = appIcon {
                         Image(nsImage: icon)
                             .resizable()
-                            .frame(width: 48, height: 48)
+                            .frame(width: AOMFeatureSize.fileIcon, height: AOMFeatureSize.fileIcon)
                     } else {
                         Image(systemName: "macwindow")
-                            .font(.system(size: 34))
-                            .foregroundStyle(.secondary)
+                            .font(AOMFont.hero.weight(.regular))
+                            .imageScale(.large)
+                            .foregroundStyle(AOMColor.textSecondary)
                     }
                 }
-                .frame(height: 96)
+                .frame(height: AOMFeatureSize.windowPickerThumbnail)
 
                 Text(title)
-                    .font(.caption).fontWeight(.medium)
+                    .font(AOMFont.caption.weight(.medium))
+                    .foregroundStyle(AOMColor.text)
                     .lineLimit(1).truncationMode(.middle)
                 Text("\(appName) · \(Int(window.frame.width))×\(Int(window.frame.height))")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(AOMFont.badge.weight(.regular)).monospacedDigit().foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
             }
-            .padding(8)
+            .padding(AOMSpace.x2)
             .frame(maxWidth: .infinity)
-            .background(isHovering ? Color.accentColor.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 10))
+            .background(isHovering ? AOMColor.accent.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

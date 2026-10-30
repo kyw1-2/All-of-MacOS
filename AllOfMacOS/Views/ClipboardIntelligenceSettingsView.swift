@@ -29,66 +29,62 @@ struct ClipboardIntelligenceSettingsView: View {
     }
 
     var body: some View {
-        GroupBox("Intelligence") {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Intelligent Clipboard", isOn: $intelligent)
-                    .onChange(of: intelligent) { _, value in ClipboardIntelligence.shared.isEnabled = value }
-                Text("Suggests what you are about to paste, based on the field you are typing into and what you pasted there before. Suggested items appear first with ✦. Everything stays on your Mac.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("Never in password fields or while secure keyboard entry is on: nothing is suggested, read or learned there. Apps on the excluded list are not read for suggestions either, and items that look like passwords, tokens or keys are never suggested.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Look at the destination window with the on-device model",
-                       isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
-                                     set: { readsScreen = $0 }))
-                    .disabled(!intelligent || !ClipboardIntelligence.destinationModelAvailable)
+        AOMSection("Intelligence",
+                   help: "Never in password fields or while secure keyboard entry is on: nothing is suggested, read or learned there. Apps on the excluded list are not read for suggestions either, and items that look like passwords, tokens or keys are never suggested.") {
+            AOMToggleRow("Intelligent Clipboard",
+                         help: "Suggests what you are about to paste, based on the field you are typing into and what you pasted there before. Suggested items appear first with ✦. Everything stays on your Mac.",
+                         isOn: $intelligent)
+                .onChange(of: intelligent) { _, value in ClipboardIntelligence.shared.isEnabled = value }
+            Group {
+                AOMToggleRow("Look at the destination window with the on-device model",
+                             help: destinationModelCopy, indent: true,
+                             isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
+                                           set: { readsScreen = $0 }))
+                    .disabled(!ClipboardIntelligence.destinationModelAvailable)
                     .onChange(of: readsScreen) { _, value in
                         ClipboardIntelligence.shared.readsDestinationScreen = value
                         if value && !ScreenCaptureService.hasPermission { _ = ScreenCaptureService.requestPermission() }
                     }
-                Text(destinationModelCopy)
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .disabled(!intelligent)
+            .opacity(intelligent ? 1 : 0.55)
+            AOMSettingRow("Suggestion history", detail: "Which items you pasted into which apps") {
                 Button("Erase Suggestion History…") { eraseConfirmation = true }
                     .disabled(ClipboardIntelligence.shared.log(for: store).events.isEmpty)
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .confirmationDialog("Erase suggestion history?", isPresented: $eraseConfirmation) {
             Button("Erase", role: .destructive) { ClipboardIntelligence.shared.log(for: store).erase() }
         } message: { Text("AOM forgets which items you pasted into which apps. Clipboard items are not deleted.") }
 
-        GroupBox("MCP & AI Tools") {
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle("Enable MCP", isOn: $mcp.enabled)
-                Text("Allow AI apps such as Claude Code, Codex and Cursor to search and manage your clipboard items and pinboards. Only tools you connect here can access it, through a private local socket — nothing listens on the network. Items that look like passwords, tokens or keys are never shared.")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Text("Connected AI Tools").font(.headline)
-                    Spacer()
-                    Menu("Connect AI Tool…") {
-                        ForEach(ClipboardMCPSettings.Client.allCases) { client in
-                            Button(client.rawValue) { connecting = .init(client: client, name: client.rawValue) }
-                        }
-                    }.fixedSize()
-                }
-                if mcp.tools.isEmpty {
-                    Text("Nothing connected yet").foregroundStyle(.secondary).font(.callout)
-                } else {
-                    ForEach(mcp.tools) { tool in
-                        HStack {
-                            Image(systemName: "sparkle.magnifyingglass").foregroundStyle(Color.accentColor)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(tool.name)
-                                Text(tool.lastUsed.map { "Last used \($0.formatted(.relative(presentation: .named)))" } ?? "Never used")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Toggle("Automation", isOn: Binding(get: { tool.automationAccess == true },
-                                set: { mcp.setAutomationAccess($0, for: tool.id) }))
-                                .help("Allow this client to configure named triggers, run their actions and manage floating menus. This can run scripts and control other apps.")
-                            Button("Disconnect…") { pendingDisconnect = tool }
-                        }
+        AOMSection("MCP & AI tools",
+                   help: "Allow AI apps such as Claude Code, Codex and Cursor to search and manage your clipboard items and pinboards. Only tools you connect here can access it, through a private local socket — nothing listens on the network. Items that look like passwords, tokens or keys are never shared.") {
+            AOMToggleRow("Enable MCP", detail: "AI apps you connect can search and manage your clipboard", isOn: $mcp.enabled)
+            AOMSettingRow("Connected AI tools", detail: mcp.tools.isEmpty ? "Nothing connected yet" : nil) {
+                Menu("Connect AI Tool…") {
+                    ForEach(ClipboardMCPSettings.Client.allCases) { client in
+                        Button(client.rawValue) { connecting = .init(client: client, name: client.rawValue) }
                     }
                 }
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .menuStyle(.button)
+                .fixedSize()
+            }
+            ForEach(mcp.tools) { tool in
+                AOMSettingRow(tool.name,
+                              detail: tool.lastUsed.map { "Last used \($0.formatted(.relative(presentation: .named)))" } ?? "Never used",
+                              symbol: "sparkle.magnifyingglass", indent: true) {
+                    HStack(spacing: AOMSpace.x3) {
+                        HStack(spacing: AOMSpace.x2) {
+                            Text("Automation").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                                .accessibilityHidden(true)
+                            Toggle("Automation", isOn: Binding(get: { tool.automationAccess == true },
+                                set: { mcp.setAutomationAccess($0, for: tool.id) }))
+                        }
+                        .help("Allow this client to configure named triggers, run their actions and manage floating menus. This can run scripts and control other apps.")
+                        Button("Disconnect…") { pendingDisconnect = tool }
+                    }
+                }
+            }
         }
         .sheet(item: $connecting) { request in
             ClipboardMCPConnectSheet(request: request) { connecting = nil }
@@ -111,19 +107,20 @@ private struct ClipboardMCPConnectSheet: View {
     @State private var connectError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Connect \(request.client.rawValue)").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            Text("Connect \(request.client.rawValue)").font(AOMFont.pageStatus).foregroundStyle(AOMColor.text)
             if let token = request.token {
                 let instructions = ClipboardMCPSettings.instructions(for: request.client, token: token)
-                Text(instructions.summary).font(.callout)
+                Text(instructions.summary).font(AOMFont.callout).foregroundStyle(AOMColor.text)
                 ScrollView(showsIndicators: false) {
-                    Text(instructions.snippet).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                    Text(instructions.snippet).font(AOMFont.mono).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(AOMSpace.x3)
                 }
-                .frame(height: request.client == .claudeCode || request.client == .codex ? 70 : 170)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                .frame(height: request.client == .claudeCode || request.client == .codex
+                       ? AOMFeatureSize.snippetShort : AOMFeatureSize.snippetTall)
+                .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
                 Text("The token is shown only now and is stored only as a hash. Treat it like a password.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 HStack {
                     Button(copied ? "Copied" : "Copy") {
                         NSPasteboard.general.clearContents()
@@ -136,7 +133,7 @@ private struct ClipboardMCPConnectSheet: View {
             } else {
                 TextField("Name (e.g. My AI Tool)", text: $request.name).textFieldStyle(.roundedBorder)
                 if let connectError {
-                    Text(connectError).font(.caption).foregroundStyle(AOMTheme.danger)
+                    Text(connectError).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
                 }
                 HStack {
                     Spacer()
@@ -152,6 +149,6 @@ private struct ClipboardMCPConnectSheet: View {
                 }
             }
         }
-        .padding(22).frame(width: 520)
+        .padding(AOMSpace.x6).frame(width: AOMFeatureSize.sheetWide)
     }
 }

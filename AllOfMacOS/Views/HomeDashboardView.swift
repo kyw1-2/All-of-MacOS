@@ -100,6 +100,8 @@ struct AOMHomeView: View {
             search: { appState.selectedMainTab = .gestures },
             newTrigger: newAutomation))
         .task {
+            // Isolated previews only (`--aom-preview-panel-appearance`).
+            AOMFeaturePreview.applyPanelAppearance()
             while !Task.isCancelled {
                 refreshStatus()
                 try? await Task.sleep(for: .seconds(4))
@@ -455,7 +457,7 @@ struct AOMHomeView: View {
             .frame(height: Self.tileHeight)
         case .systemTools:
             AOMModuleTile(.systemTools,
-                          value: keepAwake.isActive ? "Keeping awake" : "12 tools",
+                          value: keepAwake.isActive ? "Keeping awake" : "\(SystemToolsInventory.count) tools",
                           status: keepAwake.isActive ? "Keep Awake \(keepAwake.remainingDescription ?? "on")"
                               : "Finder, PDF, media and cleanup",
                           active: true,

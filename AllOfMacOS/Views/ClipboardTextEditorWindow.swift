@@ -223,40 +223,45 @@ private struct ClipboardRichTextEditor: View {
     private var saveTitle: String { if case .newText = request.operation { return "Create" }; return "Save" }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1) {
                 Button("Cancel") { cancel() }
-                    .buttonStyle(ClipboardEditorPillStyle(prominent: false))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .keyboardShortcut(.cancelAction).help("Cancel (Esc)")
-                Spacer(minLength: 8)
+                Spacer(minLength: AOMSpace.x2)
                 formatButton("bold", title: "Bold (⌘B)", active: model.bold, formatting: .bold)
                 formatButton("italic", title: "Italic (⌘I)", active: model.italic, formatting: .italic)
                 formatButton("underline", title: "Underline (⌘U)", active: model.underline, formatting: .underline)
                 formatButton("strikethrough", title: "Strikethrough (⇧⌘X)", active: model.strike, formatting: .strike)
                 if #available(macOS 15.2, *) {
                     Button { model.showWritingTools() } label: {
-                        Image(systemName: "wand.and.sparkles").font(.system(size: 12)).frame(width: 24, height: 24)
+                        Image(systemName: "wand.and.sparkles").font(AOMFont.callout)
+                            .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).help("Writing Tools (⇧⌘E)").accessibilityLabel("Writing Tools")
+                    .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.control))
+                    .help("Writing Tools (⇧⌘E)").accessibilityLabel("Writing Tools")
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: AOMSpace.x2)
                 Button(saveTitle) { save() }
-                    .buttonStyle(ClipboardEditorPillStyle(prominent: true))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                     .disabled(!model.canSave).keyboardShortcut("s", modifiers: .command)
                     .help("\(saveTitle) (⌘S)")
-            }.padding(.horizontal, 10).frame(height: 36)
+            }.padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard + AOMSpace.x1)
             ClipboardAttributedTextView(model: model)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .padding(.horizontal, 5).padding(.top, 2)
+                .clipShape(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+                .padding(.horizontal, AOMSpace.x1).padding(.top, AOMSpace.x0_5)
             HStack {
-                Text(error ?? model.summary).font(.system(size: 11))
-                    .foregroundStyle(error == nil ? Color.secondary : Color.red)
+                Text(error ?? model.summary).font(AOMFont.caption)
+                    .foregroundStyle(error == nil ? AOMColor.textSecondary : AOMColor.dangerText)
                 Spacer(minLength: 0)
-            }.padding(.horizontal, 12).frame(height: 38)
+            }.padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .background(AOMColor.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
         .alert("Discard changes?", isPresented: $discardRequested) {
             Button("Keep Editing", role: .cancel) { model.textView?.window?.makeFirstResponder(model.textView) }
             Button("Discard", role: .destructive) { dismiss() }
@@ -264,8 +269,12 @@ private struct ClipboardRichTextEditor: View {
     }
     private func formatButton(_ symbol: String, title: String, active: Bool, formatting: ClipboardRichTextModel.Formatting) -> some View {
         Button { model.toggle(formatting) } label: {
-            Image(systemName: symbol).font(.system(size: 12)).frame(width: 24, height: 24)
-                .background(active ? Color.primary.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 5))
+            Image(systemName: symbol).font(AOMFont.callout.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? AOMColor.accent : AOMColor.text)
+                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                .background(active ? AOMColor.accent.opacity(0.13) : .clear,
+                            in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                .contentShape(Rectangle())
         }.buttonStyle(.plain).help(title).accessibilityLabel(title).accessibilityAddTraits(active ? [.isSelected] : [])
     }
     private func cancel() {
@@ -291,17 +300,6 @@ private struct ClipboardRichTextEditor: View {
             }
             dismiss()
         } catch { self.error = error.localizedDescription }
-    }
-}
-
-private struct ClipboardEditorPillStyle: ButtonStyle {
-    let prominent: Bool
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 12, weight: .medium))
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .padding(.horizontal, 12).frame(height: 24)
-            .background(prominent ? Color.accentColor : Color.primary.opacity(0.07), in: Capsule())
-            .opacity(configuration.isPressed ? 0.65 : 1)
     }
 }
 

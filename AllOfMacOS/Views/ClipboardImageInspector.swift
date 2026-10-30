@@ -32,11 +32,12 @@ struct ClipboardImageInspector: View {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 ForEach(Array(matches.enumerated()), id: \.offset) { _, box in
-                    let rect = ClipboardImageText.viewRect(for: box, in: fitted).insetBy(dx: -2, dy: -1)
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.yellow.opacity(0.32))
-                        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color.yellow, lineWidth: 1.5))
-                        .frame(width: max(4, rect.width), height: max(4, rect.height))
+                    let rect = ClipboardImageText.viewRect(for: box, in: fitted).insetBy(dx: -AOMSpace.x0_5, dy: -1)
+                    RoundedRectangle(cornerRadius: AOMRadius.keycap - 1, style: .continuous)
+                        .fill(AOMFeatureColor.findHighlight.opacity(0.32))
+                        .overlay(RoundedRectangle(cornerRadius: AOMRadius.keycap - 1, style: .continuous)
+                            .strokeBorder(AOMFeatureColor.findHighlight, lineWidth: 1.5))
+                        .frame(width: max(AOMSpace.x1, rect.width), height: max(AOMSpace.x1, rect.height))
                         .position(x: rect.midX, y: rect.midY)
                         .allowsHitTesting(false)
                 }
@@ -46,9 +47,9 @@ struct ClipboardImageInspector: View {
                         path.addRect(fitted)
                         path.addRect(rect)
                     }
-                    .fill(Color.black.opacity(0.35), style: FillStyle(eoFill: true))
+                    .fill(AOMFeatureColor.mediaDim, style: FillStyle(eoFill: true))
                     .allowsHitTesting(false)
-                    Rectangle().strokeBorder(Color.accentColor, lineWidth: 1.5)
+                    Rectangle().strokeBorder(AOMColor.accent, lineWidth: 1.5)
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)
                         .allowsHitTesting(false)
@@ -83,13 +84,13 @@ struct ClipboardImageInspector: View {
 
     @ViewBuilder private var regionBar: some View {
         if selection != nil {
-            HStack(spacing: 8) {
+            HStack(spacing: AOMSpace.x2) {
                 if reading {
                     ProgressView().controlSize(.small)
-                    Text("Reading text…").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("Reading text…").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 } else {
                     Text(regionText.map { $0.isEmpty ? "No text found in this area." : $0 } ?? "")
-                        .font(.system(size: 11)).lineLimit(2).truncationMode(.tail)
+                        .font(AOMFont.caption).foregroundStyle(AOMColor.text).lineLimit(2).truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
                 }
@@ -99,14 +100,16 @@ struct ClipboardImageInspector: View {
                     .help("Copy the text in the selected area (⌘C)")
                 Button("Copy Image") { copyImage() }
                     .help("Copy the selected area as an image")
-                Button { clear() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                Button { clear() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain).help("Clear Selection").accessibilityLabel("Clear Selection")
             }
-            .font(.system(size: 12, weight: .medium))
+            .font(AOMFont.callout.weight(.medium))
             .controlSize(.small)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .padding(8)
+            .buttonStyle(.bordered)
+            .padding(.horizontal, AOMSpace.x3).padding(.vertical, AOMSpace.x2)
+            .aomCard(radius: AOMRadius.well, padding: 0)
+            .aomElevation(.raised)
+            .padding(AOMSpace.x2)
         }
     }
 
@@ -158,9 +161,10 @@ struct ClipboardImageMatchOverlay: View {
             let fitted = ClipboardImageText.fittedRect(imageSize: imageSize, in: CGRect(origin: .zero, size: geometry.size))
             ForEach(Array(ClipboardImageText.matchBoxes(in: lines, terms: terms, limit: 40).enumerated()), id: \.offset) { _, box in
                 let rect = ClipboardImageText.viewRect(for: box, in: fitted).insetBy(dx: -1.5, dy: -1)
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(Color.yellow.opacity(0.35))
-                    .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).strokeBorder(Color.yellow, lineWidth: 1))
+                RoundedRectangle(cornerRadius: AOMRadius.keycap - 2, style: .continuous)
+                    .fill(AOMFeatureColor.findHighlight.opacity(0.35))
+                    .overlay(RoundedRectangle(cornerRadius: AOMRadius.keycap - 2, style: .continuous)
+                        .strokeBorder(AOMFeatureColor.findHighlight, lineWidth: 1))
                     .frame(width: max(3, rect.width), height: max(3, rect.height))
                     .position(x: rect.midX, y: rect.midY)
             }

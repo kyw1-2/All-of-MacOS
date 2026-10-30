@@ -35,8 +35,7 @@ struct CaptureStudioView: View {
 
     private var subtitle: String {
         guard let latest = history.entries.first else { return "Screenshots, recordings, annotation and text recognition" }
-        let count = history.entries.count
-        return "\(count) capture\(count == 1 ? "" : "s") in history · last \(AOMRelativeTime.string(latest.capturedAt).lowercased())"
+        return "Last capture \(AOMRelativeTime.string(latest.capturedAt).lowercased()) · screenshots, recordings and text"
     }
 
     /// Library thumbnail size: 0 small, 1 medium, 2 large (Bear, Nova).
@@ -54,32 +53,38 @@ struct CaptureStudioView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        AOMPage {
+            header
             if recordingService.isRecording {
-                activeRecordingBanner.padding(AOMSpace.s)
-                AOMDivider()
+                activeRecordingBanner
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.m) {
-                    captureLaunchpad
-                    filterBar
-                    gallerySection
+            AOMSection("Capture tools", padding: AOMSpace.x1) {
+                captureLaunchpad
+            }
+            VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                AOMSectionTitle("Recent captures", detail: history.entries.isEmpty ? nil : "\(history.entries.count)") {
+                    Picker("Thumbnail Size", selection: $density) {
+                        Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
+                        Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
+                        Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .controlSize(.small)
                 }
-                .padding(.horizontal, AOMSpace.l)
-                .padding(.top, AOMSpace.m)
-                .padding(.bottom, AOMSpace.l)
+                filterBar
+                gallerySection
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Capture")
-        .navigationSubtitle(subtitle)
+        .aomPage("Capture")
         .toolbar { toolbarContent }
         .sheet(isPresented: $showingSettingsSheet) {
             VStack(spacing: 0) {
                 CaptureSettingsView()
                 Divider()
                 HStack { Spacer(); Button("Done") { showingSettingsSheet = false }.keyboardShortcut(.defaultAction) }
-                    .padding(12)
+                    .padding(AOMSpace.x3)
             }
             .frame(minWidth: 620, idealWidth: 680, minHeight: 540, idealHeight: 640)
         }
@@ -93,6 +98,20 @@ struct CaptureStudioView: View {
             Text("Recent captures are removed from history. Screenshot and video files saved in Finder are not deleted.")
         }
         .aomToast(toast.message)
+    }
+
+    /// d.9: what Capture holds and when it last ran; recording is a status
+    /// (the pill and the strip below), not an error (e.6).
+    private var header: some View {
+        let count = history.entries.count
+        return AOMPageHeader(recordingService.isRecording ? "Recording the screen"
+                             : (count == 0 ? "No captures yet" : "\(count) capture\(count == 1 ? "" : "s") in history"),
+                             module: .capture, subtitle: subtitle,
+                             status: recordingService.isRecording
+                                ? AOMStatus(recordingService.isPaused ? "Paused" : "Rec",
+                                            tone: recordingService.isPaused ? .neutral : .recording, symbol: "record.circle")
+                                : nil,
+                             help: "Capture takes screenshots, recordings and text from any app. Each capture opens in Quick Access to copy, save, annotate or drag, and stays in history until you remove it.")
     }
 
     // MARK: - Toolbar (capture tools; CleanShot keeps them one click away)
@@ -164,7 +183,7 @@ struct CaptureStudioView: View {
     /// Every capture mode one click away, in CleanShot's order, the way the
     /// system screenshot toolbar lays them out: glyph, name, shortcut.
     private var captureLaunchpad: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 108), spacing: 4)], spacing: 4) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMFeatureSize.modeButtonMin), spacing: AOMSpace.x1)], spacing: AOMSpace.x1) {
             AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne), compact: true) {
                 CaptureCoordinator.shared.captureAllInOne()
             }
@@ -195,45 +214,36 @@ struct CaptureStudioView: View {
                 CaptureCoordinator.shared.captureQRCode()
             }
         }
-        .padding(.horizontal, AOMSpace.xs)
-        .padding(.vertical, AOMSpace.xxs)
-        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
     }
 
+    /// What the gallery shows; the thumbnail size sits in the section title.
     private var filterBar: some View {
-        HStack(spacing: AOMSpace.s) {
-            AOMScopeBar(items: CaptureFilter.allCases.map { filter in
-                AOMScopeItem(id: filter, title: filter.rawValue, count: count(filter))
-            }, selection: $selectedFilter, accessibilityLabel: "Show")
-            .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: AOMSpace.xs)
-            Picker("Thumbnail Size", selection: $density) {
-                Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
-                Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
-                Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .controlSize(.small)
-        }
-        .frame(minHeight: 28)
+        AOMScopeBar(items: CaptureFilter.allCases.map { filter in
+            AOMScopeItem(id: filter, title: filter.rawValue, count: count(filter))
+        }, selection: $selectedFilter, accessibilityLabel: "Show")
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minHeight: AOMSize.rowDense)
     }
 
     // MARK: - Active Recording Banner
 
+    /// A long-running capture adds a strip under the header (d.2): the
+    /// recording colour on the glyph only, the controls beside it.
     private var activeRecordingBanner: some View {
-        HStack(spacing: 14) {
-            Circle()
-                .fill(recordingService.isPaused ? AOMTheme.warning : AOMTheme.danger)
-                .frame(width: 10, height: 10)
+        HStack(spacing: AOMSpace.x3) {
+            Image(systemName: "record.circle")
+                .font(AOMFont.section)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(recordingService.isPaused ? AOMColor.paused : AOMColor.recording)
+                .symbolEffect(.pulse, options: .repeating, isActive: !recordingService.isPaused)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(recordingService.isPaused ? "Recording Paused" : "Recording Screen")
-                    .font(.headline)
+                    .font(AOMFont.headline)
+                    .foregroundStyle(AOMColor.text)
                 Text(formatElapsed(recordingService.elapsedSeconds))
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(AOMFont.callout.monospacedDigit())
+                    .foregroundStyle(AOMColor.textSecondary)
             }
             Spacer()
             Button {
@@ -255,14 +265,10 @@ struct CaptureStudioView: View {
                 Label("Stop", systemImage: "stop.fill")
             }
             .buttonStyle(.borderedProminent)
-            .tint(AOMTheme.danger)
+            .tint(AOMColor.recording)
         }
         .controlSize(.small)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(AOMTheme.danger.opacity(0.08), in: RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: AOMDesign.surfaceRadius, style: .continuous)
-            .strokeBorder(AOMTheme.danger.opacity(0.3), lineWidth: 0.5))
+        .aomCard()
     }
 
     // MARK: - Gallery Section
@@ -309,10 +315,10 @@ struct CaptureStudioView: View {
                     }
                 }
                 Text("Drag a capture into any app · double-click to edit · right-click for more")
-                    .font(AOMType.caption)
-                    .foregroundStyle(AOMTheme.textTertiary)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, AOMSpace.xs)
+                    .padding(.top, AOMSpace.x2)
             }
         }
     }
@@ -344,24 +350,24 @@ private struct CaptureCard: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
                 // A quiet well like every other inset surface on the sheet.
-                AOMTheme.cardAlt
+                AOMColor.sunken
                 Image(nsImage: entry.thumbnail)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .padding(8)
+                    .padding(AOMSpace.x2)
             }
             .aspectRatio(16 / 10, contentMode: .fit)
             .overlay(alignment: .topLeading) {
-                HStack(spacing: 4) {
-                    if entry.kind == .videoRecording { badge("Video", "play.fill", AOMTheme.danger) }
-                    if entry.isPinned { badge("Pinned", "pin.fill", AOMTheme.warning) }
+                HStack(spacing: AOMSpace.x1) {
+                    if entry.kind == .videoRecording { badge("Video", "play.fill", AOMColor.recording) }
+                    if entry.isPinned { badge("Pinned", "pin.fill", AOMColor.warning) }
                 }
-                .padding(8)
+                .padding(AOMSpace.x2)
             }
             .overlay(alignment: .bottom) {
                 if isHovered {
-                    HStack(spacing: 6) {
+                    HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                         hoverButton("doc.on.doc", "Copy", action: onCopy)
                         hoverButton("pencil", "Edit", action: onAnnotate)
                         if let onShowInFinder { hoverButton("folder", "Show in Finder", action: onShowInFinder) }
@@ -369,20 +375,20 @@ private struct CaptureCard: View {
                         Spacer(minLength: 0)
                         hoverButton("trash", "Remove from History", role: .destructive, action: onDelete)
                     }
-                    .padding(8)
+                    .padding(AOMSpace.x2)
                     .transition(.opacity)
                 }
             }
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMDesign.tileRadius, topTrailingRadius: AOMDesign.tileRadius,
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMRadius.card, topTrailingRadius: AOMRadius.card,
                                               style: .continuous))
             .onTapGesture(count: 2, perform: onAnnotate)
             .onDrag { CaptureItemActions.dragProvider(entry) }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5 + 1) {
+                HStack(spacing: AOMSpace.x2) {
                     Text(entry.displayName)
-                        .font(AOMType.bodyEmphasis)
-                        .foregroundStyle(AOMTheme.text)
+                        .font(AOMFont.bodyEmphasis)
+                        .foregroundStyle(AOMColor.text)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     Menu {
@@ -397,25 +403,26 @@ private struct CaptureCard: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .accessibilityLabel("Actions for \(entry.displayName)")
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     // The kind only when the title does not already say it.
                     if entry.kind.displayName != entry.displayName {
                         Text(entry.kind.displayName)
                         Text("·")
                     }
                     Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))").monospacedDigit()
-                    Spacer(minLength: 4)
-                    Text(AOMRelativeTime.string(entry.capturedAt))
+                    Spacer(minLength: AOMSpace.x1)
+                    Text(AOMRelativeTime.string(entry.capturedAt)).monospacedDigit()
                 }
-                .font(AOMType.caption)
-                .foregroundStyle(AOMTheme.textTertiary)
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
                 .lineLimit(1)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, AOMSpace.x3 + AOMSpace.x0_5)
+            .padding(.vertical, AOMSpace.x3)
         }
-        .aomSurface(radius: AOMDesign.tileRadius, padding: nil, highlighted: isHovered)
-        .animation(AOMDesign.animation(.easeOut(duration: 0.15)), value: isHovered)
+        // Hover shifts the fill only; cards never lift or outline (c.6).
+        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered)
+        .aomAnimation(.quick, value: isHovered)
         .contextMenu {
             Button("Copy", action: onCopy)
             Button("Edit", action: onAnnotate)
@@ -434,21 +441,24 @@ private struct CaptureCard: View {
     private func badge(_ title: String, _ symbol: String, _ tint: Color) -> some View {
         Label(title, systemImage: symbol)
             .labelStyle(.iconOnly)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(width: 20, height: 20)
+            .font(AOMFont.badge.weight(.bold))
+            .foregroundStyle(AOMFeatureColor.onMedia)
+            .frame(width: AOMFeatureSize.thumbnailBadge, height: AOMFeatureSize.thumbnailBadge)
             .background(tint, in: Circle())
             .help(title)
     }
 
+    /// Actions over the thumbnail: opaque plates, so they read on any capture
+    /// (no material over media in a scrolling grid).
     private func hoverButton(_ symbol: String, _ help: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
         Button(role: role, action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(role == .destructive ? AOMTheme.danger : Color.primary)
-                .frame(width: 28, height: 28)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+                .font(AOMFont.callout.weight(.semibold))
+                .foregroundStyle(role == .destructive ? AOMColor.dangerText : AOMColor.text)
+                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                .background(AOMColor.raised, in: Circle())
+                .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .help(help)

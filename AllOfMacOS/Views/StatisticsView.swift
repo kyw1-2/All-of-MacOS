@@ -82,48 +82,35 @@ struct StatisticsView: View {
         GeometryReader { geometry in
             let layout = Layout(width: geometry.size.width)
             let figures = figures
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.m) {
-                    overviewStrip(figures, columns: geometry.size.width >= 760 ? nil : 2)
-                        .padding(.horizontal, 2)
-                        .padding(.vertical, 2)
-                        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 4, elevated: false)
-                    if periodIsTruncated {
-                        // Day and week figures come from a bounded event log;
-                        // say so only when it actually cuts the period short.
-                        Label("These figures cover the latest \(GestureStatistics.recentEventLimit.formatted()) inputs, so earlier activity in this period isn't counted. All Time uses the full totals.",
-                              systemImage: "info.circle")
-                            .font(AOMType.caption)
-                            .foregroundStyle(AOMTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    switch layout {
-                    case .threeColumns, .twoColumns:
-                        HStack(alignment: .top, spacing: AOMSpace.m) {
-                            mostUsedCard(figures)
-                            VStack(alignment: .leading, spacing: AOMSpace.m) {
-                                inputsCard
-                                configurationCard
-                            }
-                            .frame(width: layout == .threeColumns ? 320 : 290)
-                        }
-                    case .stacked:
-                        mostUsedCard(figures)
-                        inputsCard
-                        configurationCard
-                    }
+            AOMPage {
+                header(figures)
+                // Day and week figures come from a bounded event log; the
+                // footer says so only when it actually cuts the period short.
+                AOMSection(footer: periodIsTruncated
+                           ? "These figures cover the latest \(GestureStatistics.recentEventLimit.formatted()) inputs, so earlier activity in this period isn't counted. All Time uses the full totals."
+                           : nil,
+                           padding: AOMSpace.x1) {
+                    overviewStrip(figures, columns: geometry.size.width >= Self.stripSingleRowWidth ? nil : 2)
                 }
-                .padding(.horizontal, layout == .stacked ? AOMSpace.m : AOMSpace.l)
-                .padding(.top, AOMSpace.m)
-                .padding(.bottom, AOMSpace.l)
-                .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
-                .frame(maxWidth: .infinity)
+                switch layout {
+                case .threeColumns, .twoColumns:
+                    HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
+                        mostUsedSection(figures)
+                        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                            inputsSection
+                            configurationSection
+                        }
+                        .frame(width: layout == .threeColumns ? AOMSize.tileMax : AOMSize.drawerWidth.lowerBound)
+                    }
+                case .stacked:
+                    mostUsedSection(figures)
+                    inputsSection
+                    configurationSection
+                }
             }
-            .suppressScrollerReservation()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("Insights")
-        .navigationSubtitle("Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))")
+        .aomPage("Insights")
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Picker("Period", selection: $period) {
@@ -145,28 +132,44 @@ struct StatisticsView: View {
         }
     }
 
-    private func mostUsedCard(_ figures: Figures) -> some View {
-        AOMSectionCard("Most Used", symbol: "chart.bar.fill", tint: AOMMainTab.insights.accentColor,
-                       detail: figures.entries.isEmpty ? nil
-                       : "\(figures.entries.count) inputs · \(period.rawValue.lowercased())") {
-            EmptyView()
-        } content: {
+    // MARK: - Header (d.9)
+
+    /// The page's one status: how many automations ran in the period, with
+    /// the counting start and the match rate as context. Insights has no
+    /// module hue and no master switch; the period lives in the toolbar.
+    private func header(_ figures: Figures) -> some View {
+        let scope = period == .all ? "so far" : "in the \(period.rawValue.lowercased())"
+        let title: String
+        if figures.fired == 0 && figures.detected == 0 {
+            title = period == .all ? "No activity yet" : "No activity \(scope)"
+        } else {
+            title = "\(figures.fired.formatted()) automation\(figures.fired == 1 ? "" : "s") ran \(scope)"
+        }
+        var context = ["Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))"]
+        if figures.detected > 0 { context.append("\(figures.matchRate) of inputs ran an automation") }
+        return AOMPageHeader(title, symbol: "chart.bar.xaxis", subtitle: context.joined(separator: " · "),
+                             help: "Insights counts the inputs AOM recognizes on this Mac and the automations they run. The last 24 hours and last 7 days come from the most recent \(GestureStatistics.recentEventLimit.formatted()) inputs; All Time uses running totals. Nothing leaves your Mac.")
+    }
+
+    /// Below this width the four figures wrap onto two rows.
+    static let stripSingleRowWidth: CGFloat = 760
+
+    private func mostUsedSection(_ figures: Figures) -> some View {
+        AOMSection("Most used",
+                   detail: figures.entries.isEmpty ? nil
+                   : "\(figures.entries.count) input\(figures.entries.count == 1 ? "" : "s") · \(period.rawValue.lowercased())") {
             gestureBreakdown(figures)
         }
     }
 
-    private var inputsCard: some View {
-        AOMSectionCard("Inputs", symbol: "hand.point.up.left", detail: "Automations on, by input") {
-            EmptyView()
-        } content: {
+    private var inputsSection: some View {
+        AOMSection("Inputs", detail: "Automations on, by input") {
             inputsList
         }
     }
 
-    private var configurationCard: some View {
-        AOMSectionCard("Configuration", symbol: "slider.horizontal.3") {
-            EmptyView()
-        } content: {
+    private var configurationSection: some View {
+        AOMSection("Configuration") {
             configurationList
         }
     }
@@ -190,21 +193,21 @@ struct StatisticsView: View {
     // MARK: - Gesture Breakdown
 
     private func gestureBreakdown(_ figures: Figures) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             if figures.entries.isEmpty {
                 AOMEmptyState(period == .all ? "No Gestures Recorded Yet" : "Nothing in the \(period.rawValue)", systemImage: "hand.tap",
                               message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.") {
                     if period != .all { Button("Show All Time") { period = .all } }
                 }
-                    .frame(minHeight: 240)
+                .padding(.vertical, AOMSpace.x8)
             } else {
                 let maxCount = max(1, figures.entries.map(\.totalCount).max() ?? 1)
-                VStack(spacing: 0) {
-                    ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
-                        if index > 0 { AOMDivider() }
-                        GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
-                                       accentColor: appState.accentColorChoice.color)
-                    }
+                ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
+                    GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
+                                   accentColor: appState.accentColorChoice.color)
+                        .overlay(alignment: .top) {
+                            if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.tileBadge + AOMSpace.x3) }
+                        }
                 }
             }
         }
@@ -214,46 +217,33 @@ struct StatisticsView: View {
 
     /// Enabled automations per input device.
     private var inputsList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(TriggerCategory.inputCategories.enumerated()), id: \.element) { index, category in
-                if index > 0 { AOMDivider() }
-                let all = triggers.filter { $0.input.category == category }
-                HStack(spacing: 10) {
-                    Image(systemName: category.iconName).frame(width: 20).foregroundStyle(GestureVisual.tint(category))
-                    Text(category.rawValue).foregroundStyle(AOMTheme.text)
-                    Spacer()
-                    Text("\(all.filter(\.isEnabled).count) of \(all.count)")
-                        .monospacedDigit().foregroundStyle(AOMTheme.textSecondary)
-                }
-                .font(AOMType.body)
-                .padding(.vertical, 10)
-                .accessibilityElement(children: .combine)
+        ForEach(TriggerCategory.inputCategories, id: \.self) { category in
+            let all = triggers.filter { $0.input.category == category }
+            AOMSettingRow(category.rawValue, symbol: category.iconName) {
+                Text("\(all.filter(\.isEnabled).count) of \(all.count)")
+                    .font(AOMFont.body)
+                    .monospacedDigit()
+                    .foregroundStyle(AOMColor.textSecondary)
             }
+            .accessibilityElement(children: .combine)
         }
     }
 
     /// Profiles, groups, zones and the size of the action library.
-    private var configurationList: some View {
-        VStack(spacing: 0) {
-            summaryRow("Application profiles", "\(appState.currentPreset.appTargets.filter { !$0.isGlobal }.count)", "app.badge")
-            AOMDivider()
-            summaryRow("Activation groups", "\(appState.currentPreset.activationGroups.count)", "square.stack.3d.up")
-            AOMDivider()
-            summaryRow("Snap zones", "\(appState.effectiveSnapZones.filter(\.isEnabled).count)", "rectangle.split.2x2")
-            AOMDivider()
-            summaryRow("Total actions", "\(triggers.reduce(0) { $0 + $1.actions.count })", "bolt")
-        }
+    @ViewBuilder private var configurationList: some View {
+        summaryRow("Application profiles", "\(appState.currentPreset.appTargets.filter { !$0.isGlobal }.count)", "app.badge")
+        summaryRow("Activation groups", "\(appState.currentPreset.activationGroups.count)", "square.stack.3d.up")
+        summaryRow("Snap zones", "\(appState.effectiveSnapZones.filter(\.isEnabled).count)", "rectangle.split.2x2")
+        summaryRow("Total actions", "\(triggers.reduce(0) { $0 + $1.actions.count })", "bolt")
     }
 
     private func summaryRow(_ title: String, _ value: String, _ symbol: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol).frame(width: 20).foregroundStyle(AOMTheme.textTertiary)
-            Text(title).foregroundStyle(AOMTheme.text)
-            Spacer()
-            Text(value).monospacedDigit().foregroundStyle(AOMTheme.textSecondary)
+        AOMSettingRow(title, symbol: symbol) {
+            Text(value)
+                .font(AOMFont.body)
+                .monospacedDigit()
+                .foregroundStyle(AOMColor.textSecondary)
         }
-        .font(AOMType.body)
-        .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
     }
 }
@@ -267,40 +257,41 @@ private struct GestureStatRow: View {
     let accentColor: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: AOMSpace.x3) {
             Text("\(rank)")
-                .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                .foregroundStyle(AOMTheme.textTertiary)
-                .frame(width: 24, alignment: .trailing)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(entry.gesture).font(AOMType.rowTitle).foregroundStyle(AOMTheme.text).lineLimit(1)
-                    Spacer()
+                .font(AOMFont.bodyEmphasis.monospacedDigit())
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMIcon.tileBadge, alignment: .trailing)
+            VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                    Text(entry.gesture).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
+                    Spacer(minLength: AOMSpace.x2)
                     if entry.firedCount > 0 {
                         Text("\(entry.firedCount) fired")
-                            .font(AOMType.caption.weight(.medium))
-                            .foregroundStyle(AOMTheme.positive)
+                            .font(AOMFont.caption.weight(.medium))
+                            .foregroundStyle(AOMColor.successText)
                     }
                     Text("\(entry.totalCount)")
-                        .font(AOMType.bodyEmphasis.monospacedDigit())
-                        .foregroundStyle(AOMTheme.text)
+                        .font(AOMFont.bodyEmphasis.monospacedDigit())
+                        .foregroundStyle(AOMColor.text)
                 }
                 GeometryReader { geo in
                     let fraction = CGFloat(entry.totalCount) / CGFloat(maxCount)
                     ZStack(alignment: .leading) {
-                        Capsule().fill(AOMTheme.track)
-                        Capsule().fill(accentColor).frame(width: max(4, geo.size.width * fraction))
+                        Capsule().fill(AOMColor.track)
+                        Capsule().fill(accentColor).frame(width: max(AOMSpace.x1, geo.size.width * fraction))
                     }
                 }
-                .frame(height: 6)
+                .frame(height: AOMFeatureSize.meter)
                 if let last = entry.lastDetected {
                     Text("Last used \(last, style: .relative) ago")
-                        .font(AOMType.caption)
-                        .foregroundStyle(AOMTheme.textTertiary)
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
                 }
             }
         }
-        .padding(.vertical, 10)
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x3)
         .accessibilityElement(children: .combine)
     }
 }

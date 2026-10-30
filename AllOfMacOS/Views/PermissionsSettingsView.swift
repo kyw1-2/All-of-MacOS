@@ -17,41 +17,35 @@ struct PermissionsSettingsView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 18) {
-                summaryCard
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                header
 
-                AppleSettingsGroup("Core Permissions") {
-                    ForEach(Array(requiredPermissions.enumerated()), id: \.element.id) { index, permission in
-                        permissionRow(permission, showDivider: index < requiredPermissions.count - 1)
-                    }
-                }
-
-                AppleSettingsGroup("Optional & Per-App Permissions") {
-                    ForEach(Array(optionalPermissions.enumerated()), id: \.element.id) { index, permission in
-                        permissionRow(permission, showDivider: index < optionalPermissions.count - 1)
-                    }
-                }
-
-                if let permissionChangeMessage {
-                    Label(permissionChangeMessage, systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
+                // Notices sit above the lists they are about (e.6).
                 if let settingsError {
-                    Label(settingsError, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(AOMTheme.warning)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    AOMNotice(.warning, settingsError)
+                }
+                if let permissionChangeMessage {
+                    AOMNotice(.info, permissionChangeMessage)
                 }
 
-                Text("This dashboard checks the permissions of the currently signed All of MacOS application. 'Check Manually' means macOS provides no safe general read-only check. A change may require restarting the app. Return to this tab or press Refresh after changing access.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                AOMSection("Core permissions", detail: "\(requiredGranted) of \(requiredPermissions.count)") {
+                    ForEach(requiredPermissions) { permission in
+                        permissionRow(permission)
+                    }
+                }
+
+                AOMSection("Optional & per-app permissions",
+                           footer: "'Check Manually' means macOS provides no safe general read-only check. A change may require restarting the app.") {
+                    ForEach(optionalPermissions) { permission in
+                        permissionRow(permission)
+                    }
+                }
             }
-            .padding(20)
+            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
+            .padding(.horizontal, AOMSpace.pageMargin)
+            .padding(.top, AOMSpace.x4)
+            .padding(.bottom, AOMSpace.x6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
@@ -62,55 +56,45 @@ struct PermissionsSettingsView: View {
         }
     }
 
-    private var summaryCard: some View {
-        HStack(spacing: 12) {
-            Image(systemName: requiredGranted == requiredPermissions.count
-                  ? "checkmark.shield.fill" : "shield.lefthalf.filled")
-                .font(.system(size: 25))
-                .foregroundStyle(requiredGranted == requiredPermissions.count ? AOMTheme.positive : AOMTheme.warning)
-                .frame(width: 36)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Privacy & Permissions")
-                    .font(.headline)
-                Text("\(requiredGranted) of \(requiredPermissions.count) required permissions granted")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
+    /// d.9: one sentence for the state of the required permissions, the
+    /// count as context, and Refresh at the trailing edge.
+    private var header: some View {
+        let missing = requiredPermissions.count - requiredGranted
+        return AOMPageHeader(missing == 0 ? "All required permissions are allowed"
+                             : "\(missing) required permission\(missing == 1 ? " needs" : "s need") setup",
+                             symbol: missing == 0 ? "checkmark.shield.fill" : "shield.lefthalf.filled",
+                             subtitle: "\(requiredGranted) of \(requiredPermissions.count) required permissions granted · checked \(refreshDate.formatted(date: .omitted, time: .shortened))",
+                             help: "This dashboard checks the permissions of the currently signed All of MacOS application. Return to this tab or press Refresh after changing access; AOM never changes access itself.") {
             Button {
                 refresh()
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .controlSize(.small)
         }
-        .padding(14)
-        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
     }
 
-    private func permissionRow(_ permission: AOMPermission, showDivider: Bool) -> some View {
+    private func tone(_ status: AOMPermissionStatus) -> AOMTone {
+        switch status {
+        case .granted: return .success
+        case .denied: return .warning
+        case .notDetermined, .manualReview: return .neutral
+        }
+    }
+
+    /// One permission: its symbol, name and what it allows, the state as a
+    /// pill, and "Open". The whole row is the button that opens its System
+    /// Settings pane, as before.
+    private func permissionRow(_ permission: AOMPermission) -> some View {
         let status = statuses[permission] ?? .manualReview
         return Button {
             openSettings(permission)
         } label: {
-            AppleSettingsRow(
-                icon: permission.icon,
-                iconColor: permission.essential ? .blue : .indigo,
-                title: permission.title,
-                subtitle: permission.explanation,
-                showDivider: showDivider
-            ) {
-                HStack(spacing: 9) {
-                    Label(status.label, systemImage: status.symbol)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(status.tint)
-                        .fixedSize()
+            AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
+                HStack(spacing: AOMSpace.x3) {
+                    AOMStatusPill(status.label, tone: tone(status), symbol: status.symbol)
                     Label("Open", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tint)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.accent)
                 }
             }
         }
