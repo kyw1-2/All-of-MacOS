@@ -45,13 +45,13 @@ struct AOMRowSlider: View {
 
     var body: some View {
         HStack(spacing: AOMSpace.x2) {
+            // A regular slider (design-336 b.6); the value in Callout digits.
             slider
-                .controlSize(.small)
                 .frame(width: AOMRowControlMetrics.sliderWidth)
                 .accessibilityLabel(title)
                 .accessibilityValue(format(value))
             Text(format(value))
-                .font(AOMFont.caption.monospacedDigit())
+                .font(AOMFont.callout.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
                 .lineLimit(1)
                 .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)

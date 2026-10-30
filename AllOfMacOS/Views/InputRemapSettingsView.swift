@@ -20,7 +20,7 @@ struct HyperKeyRow: View {
                 HubRowShell(icon: "keyboard", tint: .orange, title: "Key", subtitle: "", indent: true) {
                     Picker("", selection: $source) {
                         ForEach(HIDKey.hyperSources) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
                         .accessibilityLabel("Key for the Hyper key")
                 }
                 HubRowShell(icon: "escape", tint: .orange, title: "Tap alone for Escape",
@@ -46,18 +46,17 @@ struct KeyRemapRow: View {
                         subtitle: remaps.isEmpty ? "Turn one key into another on every keyboard while AOM runs"
                                                  : "\(remaps.count) remapped key\(remaps.count == 1 ? "" : "s"); removed when AOM quits") {
                 Button("Add") { remaps.append(KeyRemap(from: 0x39, to: 0x29)) }
-                    .controlSize(.small)
                     .disabled(remaps.count >= 32)
             }
             ForEach($remaps) { $remap in
                 HStack(spacing: AOMSpace.x2) {
                     Picker("From", selection: $remap.from) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
                     Image(systemName: "arrow.right").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
                     Picker("To", selection: $remap.to) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
                     Spacer()
                     Button {
                         remaps.removeAll { $0.id == remap.id }

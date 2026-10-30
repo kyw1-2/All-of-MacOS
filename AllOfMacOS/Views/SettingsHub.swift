@@ -191,44 +191,30 @@ struct HubRowShell<Control: View>: View {
     /// e.3, the `AOMSettingRow` geometry, so Settings rows line up with the
     /// Shortcuts and Permissions panes and every other page: a 20 pt
     /// monochrome symbol (the tint stays in the API but colour has no job
-    /// here), Body title, an optional Caption line, the control at the
-    /// trailing edge; row insets, one standard row tall, the description
-    /// beside the title when it fits (3.3.5) and under it when it does not.
+    /// here), Body title, an optional Caption line under it, the control at
+    /// the trailing edge; 36 pt tall, 48 pt with a description.
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             HStack(alignment: .center, spacing: AOMSpace.x2) {
                 Image(systemName: icon)
                     .font(AOMFont.body)
+                    .imageScale(.large)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row, height: AOMIcon.row)
                     .accessibilityHidden(true)
-                // One line when the description fits beside the title
-                // (3.3.5), the title over the description when it doesn't.
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
-                        Text(title)
-                            .font(AOMFont.body)
-                            .foregroundStyle(AOMColor.text)
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(AOMFont.caption)
-                                .foregroundStyle(AOMColor.textSecondary)
-                        }
-                    }
-                    .lineLimit(1)
-                    .fixedSize()
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(title)
-                            .font(AOMFont.body)
-                            .foregroundStyle(AOMColor.text)
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(AOMFont.caption)
-                                .foregroundStyle(AOMColor.textSecondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                // The title over its description, as System Settings draws a
+                // described row (design-336 #74; 3.3.5 put both on one line).
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(AOMFont.body)
+                        .foregroundStyle(AOMColor.text)
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(AOMFont.caption)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: AOMSpace.x3)
@@ -239,8 +225,8 @@ struct HubRowShell<Control: View>: View {
         }
         .padding(.leading, AOMSpace.rowInset + (indent ? AOMSpace.x5 : 0))
         .padding(.trailing, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: AOMSize.rowStandard)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .frame(minHeight: subtitle.isEmpty ? AOMSize.rowStandard : AOMSize.rowDetail)
     }
 }
 
@@ -292,7 +278,6 @@ struct HubChoiceRow: View {
                 }
             }
             .labelsHidden()
-            .controlSize(.small)
             .accessibilityLabel(title)
             if HubChoiceStyle.segmented(options.map(\.label)) {
                 picker.pickerStyle(.segmented).fixedSize()
@@ -323,7 +308,6 @@ struct HubIntChoiceRow: View {
                 }
             }
             .labelsHidden()
-            .controlSize(.small)
             .accessibilityLabel(title)
             if HubChoiceStyle.segmented(options.map(\.label)) {
                 picker.pickerStyle(.segmented).fixedSize()
@@ -604,7 +588,7 @@ enum SettingsCatalog {
                  ["quick access", "저장", "위치", "파일", "이름", "ocr", "언어", "after capture", "단축키", "오버레이"],
                  AnyView(HubActionRow(icon: "ellipsis.circle", tint: .gray, title: "All capture options",
                                       subtitle: "Quick Access, save location, file names, text recognition and shortcuts") {
-                Button("Open…") { NotificationCenter.default.post(name: .aomOpenCaptureOptions, object: nil) }.controlSize(.small)
+                Button("Open…") { NotificationCenter.default.post(name: .aomOpenCaptureOptions, object: nil) }
             })),
         ]
     }
@@ -620,7 +604,6 @@ enum SettingsCatalog {
             item("clipboardPlainModifier", .clipboard, "Plain text modifier", "Modifier for pasting without formatting", ["텍스트", "서식"], AnyView(HubChoiceRow(icon: "textformat", tint: .gray, title: "Plain text modifier", subtitle: "Modifier for pasting without formatting", key: "AOMClipboardPlainModifier", fallback: "shift", options: modifiers, width: 150))),
             item("clipboardStorage", .clipboard, "Storage & retention", "Retention, storage limits and excluded apps", ["저장", "용량", "보관", "히스토리", "shortcut", "hotkey", "단축키"], AnyView(HubActionRow(icon: "externaldrive", tint: .brown, title: "Storage & retention", subtitle: "Retention, storage limits and excluded apps") {
                 Button("Open…") { sheet.wrappedValue = .clipboardDetail }
-                    .controlSize(.small)
             })),
         ]
     }
@@ -628,13 +611,13 @@ enum SettingsCatalog {
     private static func automationItems(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         [
             item("gestures", .automation, "Gestures & triggers", "Edit gestures, actions and profiles", ["제스처", "트리거", "동작"], AnyView(HubActionRow(icon: "hand.draw", tint: .orange, title: "Gestures & triggers", subtitle: "Edit gestures, actions and profiles") {
-                Button("Edit…") { sheet.wrappedValue = .gestures }.controlSize(.small)
+                Button("Edit…") { sheet.wrappedValue = .gestures }
             })),
             item("shortcutRecorder", .shortcuts, "Capture shortcuts", "Record and change the keys for every capture tool", ["단축키", "키보드", "hotkey", "shortcut"], AnyView(HubActionRow(icon: "command", tint: .indigo, title: "Capture shortcuts", subtitle: "Record and change the keys for every capture tool") {
-                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.shortcuts.rawValue) }.controlSize(.small)
+                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.shortcuts.rawValue) }
             })),
             item("bttPreset", .automation, "Import BTT preset", "Import BetterTouchTool presets: .bttpreset files or copied JSON triggers", ["btt", "프리셋", "Import", "bttpreset", "bettertouchtool", "가져오기"], AnyView(HubActionRow(icon: "square.and.arrow.down", tint: .green, title: "Import BTT preset", subtitle: "Import BetterTouchTool .bttpreset files or copied JSON triggers") {
-                Button("Import…") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }.controlSize(.small)
+                Button("Import…") { NotificationCenter.default.post(name: .aomImportBTTPreset, object: nil) }
             })),
             item("forceTouchStageHysteresis", .automation, "Force Touch stage hysteresis", "How far the pressure must ease off before a Force Touch stage can fire again", ["force touch", "포스 터치", "pressure", "압력", "stage", "단계", "hysteresis", "히스테리시스", "deep press", "강한 클릭"], AnyView(HubSliderRow(icon: "hand.tap", tint: .orange, title: "Force Touch stage hysteresis", subtitle: "How far pressure eases off before a stage fires again", key: PressureStageTracker.hysteresisKey, fallback: PressureStageTracker.defaultHysteresis, range: PressureStageTracker.hysteresisRange, step: 0.01, percent: false, decimals: 2))),
             item("hyperKey", .automation, "Hyper key", "Hold Caps Lock or another key for ⌃⌥⇧⌘", ["hyper", "caps lock", "캡스락", "하이퍼", "modifier"], AnyView(HyperKeyRow())),
@@ -647,14 +630,14 @@ enum SettingsCatalog {
         [
             item("permissions", .permissions, "Permission dashboard", "Accessibility, Screen Recording and Input Monitoring", ["권한", "개인정보", "접근성"], AnyView(HubActionRow(icon: "checkmark.shield", tint: .green, title: "Permission dashboard", subtitle: "Accessibility, Screen Recording and Input Monitoring") {
                 PermissionSummaryBadge()
-                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.permissions.rawValue) }.controlSize(.small)
+                Button("Show") { NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.permissions.rawValue) }
             })),
             item("privacySettings", .permissions, "Open System Settings", "Open macOS privacy settings", ["시스템 설정", "개인정보"], AnyView(HubActionRow(icon: "gearshape.2", tint: .gray, title: "Open System Settings", subtitle: "Privacy & Security") {
                 Button("Open…") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
                         NSWorkspace.shared.open(url)
                     }
-                }.controlSize(.small)
+                }
             })),
         ]
     }
@@ -662,13 +645,13 @@ enum SettingsCatalog {
     private static func dataItems(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         [
             item("backups", .data, "Backups", "Automatic backups, retention and restore", ["백업", "복원", "스냅샷"], AnyView(HubActionRow(icon: "clock.arrow.circlepath", tint: .orange, title: "Backups", subtitle: "Automatic backups, retention and restore") {
-                Button("Manage…") { sheet.wrappedValue = .backups }.controlSize(.small)
+                Button("Manage…") { sheet.wrappedValue = .backups }
             })),
             item("tutorial", .data, "Onboarding Tour", "Show the introduction again", ["튜토리얼", "안내", "온보딩"], AnyView(HubActionRow(icon: "sparkles", tint: .pink, title: "Onboarding Tour", subtitle: "Show the introduction again") {
-                Button("Start") { NotificationCenter.default.post(name: .aomRestartTutorial, object: nil) }.controlSize(.small)
+                Button("Start") { NotificationCenter.default.post(name: .aomRestartTutorial, object: nil) }
             })),
             item("reset", .data, "Reset Preferences", "Restore default preferences", ["Reset", "리셋"], AnyView(HubActionRow(icon: "arrow.counterclockwise", tint: .red, title: "Reset Preferences", subtitle: "Restore default preferences; keep automations and data") {
-                Button("Reset", role: .destructive) { NotificationCenter.default.post(name: .aomResetPreferences, object: nil) }.controlSize(.small)
+                Button("Reset", role: .destructive) { NotificationCenter.default.post(name: .aomResetPreferences, object: nil) }
             })),
         ]
     }
@@ -678,7 +661,7 @@ enum SettingsCatalog {
         let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")
         return [
             item("version", .about, "Version", "\(version) (build \(build))", ["버전", "빌드"], AnyView(HubActionRow(icon: "app.badge", tint: .blue, title: "Version", subtitle: "\(version) (build \(build))") {
-                Button("Release Notes") { NotificationCenter.default.post(name: .aomOpenReleaseNotes, object: nil) }.controlSize(.small)
+                Button("Release Notes") { NotificationCenter.default.post(name: .aomOpenReleaseNotes, object: nil) }
             })),
         ]
     }
@@ -794,8 +777,8 @@ struct SettingsHubView: View {
             List(selection: sidebarSelection) {
                 ForEach(SettingsCategory.allCases) { cat in
                     HStack(spacing: AOMSpace.x2) {
-                        // The shared badge (hue, white 12 pt glyph, control
-                        // radius) at row-icon size, as System Settings draws it.
+                        // The shared squircle (hue, white glyph) at the 20 pt
+                        // size System Settings draws in its sidebar (#78).
                         Label { Text(cat.title) } icon: {
                             AOMModuleBadge(symbol: cat.symbol, hue: cat.tint, size: AOMIcon.row)
                         }
@@ -806,17 +789,14 @@ struct SettingsHubView: View {
                 }
             }
             .listStyle(.sidebar)
-            // The main window's sidebar density (3.3.5): small rows, 12 pt labels.
-            .environment(\.sidebarRowSize, .small)
-            .font(AOMFont.body)
+            // Row size and text follow the system sidebar size (design-336 b.10).
             .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal, max: AOMSize.sidebarMax)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             content
                 // The Settings window is not under MainShell, so it sets the
-                // shell's content defaults itself: 12 pt text, small controls.
+                // shell's content default itself: Body text, regular controls.
                 .font(AOMFont.body)
-                .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .background(AOMTheme.workspace)
                 .navigationTitle(isSearching ? "Search Results" : category.title)
@@ -834,8 +814,6 @@ struct SettingsHubView: View {
                 }
         }
         .searchable(text: $query, placement: .sidebar, prompt: "Search Settings")
-        // A small search field, as in the main window's sidebar.
-        .controlSize(.small)
         .frame(minWidth: SettingsHubMetrics.windowMinWidth, idealWidth: SettingsHubMetrics.windowIdealWidth,
                maxWidth: .infinity, minHeight: SettingsHubMetrics.windowMinHeight,
                idealHeight: SettingsHubMetrics.windowIdealHeight, maxHeight: .infinity)
@@ -883,8 +861,7 @@ struct SettingsHubView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         } else if visibleSections.isEmpty {
-            AOMCompactEmptyState("No Results for “\(query)”", systemImage: "magnifyingglass",
-                                 message: "Check the spelling or try a new search.")
+            ContentUnavailableView.search(text: query)
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
@@ -902,7 +879,7 @@ struct SettingsHubView: View {
                 // panes, so switching panes never moves the cards.
                 .frame(maxWidth: SettingsHubMetrics.column, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x3)
+                .padding(.top, AOMSpace.x4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 footer
                     .frame(maxWidth: SettingsHubMetrics.column, alignment: .leading)
@@ -1013,10 +990,10 @@ private enum SettingsHubMetrics {
     /// The readable column every pane uses (the Shortcuts and Permissions
     /// panes compute the same width).
     static let column = AOMSize.readableWidth - AOMSpace.pageMargin * 2
-    static let windowMinWidth: CGFloat = 780
-    static let windowIdealWidth: CGFloat = 860
-    static let windowMinHeight: CGFloat = 560
-    static let windowIdealHeight: CGFloat = 640
+    static let windowMinWidth: CGFloat = 800
+    static let windowIdealWidth: CGFloat = 920
+    static let windowMinHeight: CGFloat = 580
+    static let windowIdealHeight: CGFloat = 700
     static let sheetMinHeight: CGFloat = 560
     static let sheetIdealHeight: CGFloat = 620
 }
@@ -1034,7 +1011,7 @@ struct SettingsSheetHost: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, AOMSpace.x4)
-            .padding(.vertical, AOMSpace.x2)
+            .padding(.vertical, AOMSpace.x3)
             AOMDivider()
             content
         }

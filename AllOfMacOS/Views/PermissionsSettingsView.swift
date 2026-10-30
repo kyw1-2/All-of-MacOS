@@ -78,7 +78,7 @@ struct PermissionsSettingsView: View {
     }
 
     /// The status pill column: as wide as the widest pill ("Check Manually").
-    private static let pillColumn: CGFloat = 112
+    private static let pillColumn: CGFloat = 120
 
     private func tone(_ status: AOMPermissionStatus) -> AOMTone {
         switch status {
@@ -103,10 +103,10 @@ struct PermissionsSettingsView: View {
                 HStack(spacing: AOMSpace.x3) {
                     if !allowed {
                         Text("Allow…")
-                            .font(AOMFont.callout)
+                            .font(AOMFont.body)
                             .foregroundStyle(AOMColor.accent)
                     }
-                    // One pill column, so every "Allow…" lines up (3.3.5).
+                    // One pill column, so every "Allow…" lines up.
                     AOMStatusPill(status.label, tone: tone(status), symbol: status.symbol)
                         .frame(minWidth: Self.pillColumn, alignment: .leading)
                 }
