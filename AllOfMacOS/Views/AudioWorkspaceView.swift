@@ -170,7 +170,7 @@ struct AudioWorkspaceView: View {
                     .aomSectionCaps()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AOMSpace.rowInset)
-                    .padding(.top, AOMSpace.x3)
+                    .padding(.top, AOMSpace.x2)
                     .padding(.bottom, AOMSpace.x0_5)
                     .accessibilityAddTraits(.isHeader)
             }
@@ -181,11 +181,11 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    /// The card's empty states: the shared `AOMEmptyState`, as on Clipboard and Insights.
+    /// The card's empty states: the compact empty state, as on Clipboard and Insights.
     private func emptyState<Actions: View>(_ title: String, symbol: String, message: String,
                                            @ViewBuilder actions: () -> Actions = { EmptyView() }) -> some View {
-        AOMEmptyState(title, systemImage: symbol, message: message, actions: actions)
-            .padding(.vertical, AOMSpace.x6)
+        AOMCompactEmptyState(title, systemImage: symbol, message: message, centered: true, actions: actions)
+            .padding(.vertical, AOMSpace.x2)
     }
 
     private func pickAndAddApplication() {
@@ -212,8 +212,8 @@ private enum AudioRowMetrics {
     static let buttonWidth = AOMIcon.hitArea
     static let buttonHeight: CGFloat = 22
     /// A row's volume slider grows between these widths.
-    static let sliderMinWidth: CGFloat = 120
-    static let sliderMaxWidth: CGFloat = 260
+    static let sliderMinWidth: CGFloat = 110
+    static let sliderMaxWidth: CGFloat = 220
     /// Output and Input share one title width, so their device pickers line up.
     static let deviceTitleWidth = AOMSpace.x12
     /// An app's name column never narrows below this.
@@ -227,10 +227,11 @@ private enum AudioRowMetrics {
 }
 
 private extension View {
-    /// One device or app row: 12 pt insets, 8 pt above and below, at least 36 pt tall.
+    /// One device or app row: row insets, 4 pt above and below (3.3.5, was
+    /// 8), at least one standard row tall.
     func audioRowPadding() -> some View {
         padding(.horizontal, AOMSpace.rowInset)
-            .padding(.vertical, AOMSpace.x2)
+            .padding(.vertical, AOMSpace.x1)
             .frame(minHeight: AOMSize.rowStandard)
     }
 

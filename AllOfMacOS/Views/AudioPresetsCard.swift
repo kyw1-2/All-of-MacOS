@@ -136,12 +136,14 @@ struct HeadphoneEQCard: View {
     private var canDelete: Bool { !assigned.isEmpty && AudioDeviceEQ.userPresets()[assigned] != nil }
 
     private var section: some View {
+        // One row (3.3.5, was three): the output, its curve and the AutoEQ
+        // import side by side. `help` covers what the AutoEQ file is.
         AOMSection("Headphone EQ", help: Self.help, footer: message) {
-            AOMSettingRow("Output", symbol: "headphones") { outputPicker.frame(maxWidth: AOMSize.tileMin) }
-            AOMSettingRow("Curve", symbol: "slider.vertical.3") { curvePicker.frame(maxWidth: AOMSize.tileMin) }
-            AOMSettingRow("AutoEQ file", symbol: "doc.text",
-                          help: "AutoEQ publishes ParametricEQ.txt files for many headphones. AOM fits the file to its 10-band EQ and uses it for the output above.") {
+            AOMSettingRow("Output", symbol: "headphones") {
                 HStack(spacing: AOMSpace.x2) {
+                    outputPicker.frame(maxWidth: AOMSize.tileMin - AOMSpace.x5)
+                    Text("Curve").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    curvePicker.frame(maxWidth: AOMSize.tileMin - AOMSpace.x8)
                     importButton
                     if canDelete { deleteButton }
                 }

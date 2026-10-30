@@ -180,19 +180,19 @@ struct StatisticsView: View {
     // MARK: - Overview Cards
 
     private func overviewStrip(_ figures: Figures, columns: Int?) -> some View {
-        let period = period.rawValue.lowercased()
-        // Each figure's second line is the period, except where it adds a
-        // fact (the match rate); the titles already say what is counted.
+        // Two lines per figure (3.3.5): the header and the toolbar already
+        // name the period, so a figure's third line only adds a fact (the
+        // match rate), never the period again.
         return AOMStatStrip(items: [
             AOMStatItem(title: "Automations run", value: figures.fired.formatted(), unit: "runs",
-                        detail: period, systemImage: "bolt.fill", tint: AOMTheme.positive),
+                        systemImage: "bolt.fill", tint: AOMTheme.positive),
             AOMStatItem(title: "Inputs recognized", value: figures.detected.formatted(), unit: "inputs",
-                        detail: figures.detected > 0 ? "\(figures.matchRate) ran an automation" : period,
+                        detail: figures.detected > 0 ? "\(figures.matchRate) ran an automation" : nil,
                         systemImage: "hand.raised.fingers.spread", tint: AOMTheme.blue),
-            AOMStatItem(title: "Nothing assigned", value: (period == "all time" ? stats.unmatchedCount : figures.unmatched).formatted(),
-                        unit: "inputs", detail: period, systemImage: "questionmark.circle", tint: AOMTheme.orange),
+            AOMStatItem(title: "Nothing assigned", value: (period == .all ? stats.unmatchedCount : figures.unmatched).formatted(),
+                        unit: "inputs", systemImage: "questionmark.circle", tint: AOMTheme.orange),
             AOMStatItem(title: "Different inputs", value: figures.distinct.formatted(), unit: "inputs",
-                        detail: period, systemImage: "square.grid.2x2", tint: AOMTheme.purple)
+                        systemImage: "square.grid.2x2", tint: AOMTheme.purple)
         ], columns: columns)
     }
 
@@ -201,18 +201,19 @@ struct StatisticsView: View {
     private func gestureBreakdown(_ figures: Figures) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if figures.entries.isEmpty {
-                AOMEmptyState(period == .all ? "No Gestures Recorded Yet" : "Nothing in the \(period.rawValue)", systemImage: "hand.tap",
-                              message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.") {
+                AOMCompactEmptyState(period == .all ? "No Gestures Recorded Yet" : "Nothing in the \(period.rawValue)", systemImage: "hand.tap",
+                                     message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.",
+                                     centered: true) {
                     if period != .all { Button("Show All Time") { period = .all } }
                 }
-                .padding(.vertical, AOMSpace.x6)
+                .padding(.vertical, AOMSpace.x2)
             } else {
                 let maxCount = max(1, figures.entries.map(\.totalCount).max() ?? 1)
                 ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
                     GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
                                    accentColor: appState.accentColorChoice.color)
                         .overlay(alignment: .top) {
-                            if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.tileBadge + AOMSpace.x3) }
+                            if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.row + AOMSpace.x2) }
                         }
                 }
             }
@@ -282,12 +283,12 @@ private struct GestureStatRow: View {
     let accentColor: Color
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x3) {
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
             Text("\(rank)")
-                .font(AOMFont.bodyEmphasis.monospacedDigit())
+                .font(AOMFont.caption.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMIcon.tileBadge, alignment: .trailing)
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                .frame(width: AOMIcon.row, alignment: .trailing)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(entry.gesture).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
                         .layoutPriority(1)
@@ -319,7 +320,7 @@ private struct GestureStatRow: View {
             }
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
         .accessibilityElement(children: .combine)
     }
 }
