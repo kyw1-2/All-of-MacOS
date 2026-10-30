@@ -39,9 +39,8 @@ struct ModernGesturesWorkspace: View {
     enum ViewMode: String { case list, table }
 
     static let tableWidthRange: ClosedRange<Double> = 420...760
-    /// The input badge in the first-run choices: smaller than a Workspace
-    /// tile's, so a choice is one settings row (title over a caption) tall.
-    private static let choiceBadge: CGFloat = 24
+    /// The input badge in the first-run choices: one single-line row tall.
+    private static let choiceBadge: CGFloat = 18
 
     // MARK: Data
 
@@ -231,8 +230,8 @@ struct ModernGesturesWorkspace: View {
             AOMDivider()
             if rows.isEmpty {
                 if searchQuery.isEmpty {
-                    AOMEmptyState("No \(selectedDeviceCategory.rawValue) Automations", systemImage: selectedDeviceCategory.iconName,
-                                  message: "Nothing in \(scopeTitle) uses this input yet.") {
+                    AOMCompactEmptyState("No \(selectedDeviceCategory.rawValue) Automations", systemImage: selectedDeviceCategory.iconName,
+                                         message: "Nothing in \(scopeTitle) uses this input yet.") {
                         Button("New Automation") { presentAddTrigger(selectedDeviceCategory) }
                         Button("Show All Inputs") { selectedDeviceCategory = .all }
                     }
@@ -268,8 +267,8 @@ struct ModernGesturesWorkspace: View {
         }
         return AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
             .padding(.horizontal, AOMSpace.rowInset)
-            // One chip plus 8 pt above and below it.
-            .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
+            // One chip plus 4 pt above and below it.
+            .frame(height: AOMFeatureSize.chip + AOMSpace.x2)
     }
 
     private var list: some View {
@@ -412,23 +411,25 @@ struct ModernGesturesWorkspace: View {
                 }
                 .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x4)
-                .padding(.bottom, AOMSpace.x8)
+                .padding(.top, AOMSpace.x3)
+                .padding(.bottom, AOMSpace.x6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
             .background(AOMColor.canvas)
             .id(current.id)
         } else {
-            ContentUnavailableView("No Automation Selected", systemImage: "bolt",
-                                   description: Text("Select an automation to edit what starts it and what it does."))
+            AOMCompactEmptyState("No Automation Selected", systemImage: "bolt",
+                                 message: "Select an automation to edit what starts it and what it does.", centered: true)
         }
     }
 
     /// Name, App scope, Enabled — and the item menu.
+    /// One line (3.3.5): the name on the leading edge, where it applies and
+    /// its switch on the trailing edge; the name truncates first.
     private func editorHeader(_ trigger: Trigger) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            HStack(spacing: AOMSpace.x2) {
+        HStack(spacing: AOMSpace.x3) {
+            HStack(spacing: AOMSpace.x1) {
                 if editingName {
                     TextField("Name", text: Binding(
                         get: { trigger.name },
@@ -457,26 +458,29 @@ struct ModernGesturesWorkspace: View {
                         .onChange(of: trigger.id) { _, _ in editingName = false }
                 }
                 Menu { triggerMenu(trigger) } label: {
-                    Image(systemName: "ellipsis.circle").font(AOMFont.section.weight(.regular))
+                    Image(systemName: "ellipsis.circle").font(AOMFont.body)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
+                .tint(AOMColor.textSecondary)
                 .fixedSize()
                 .help("Pin, duplicate or delete")
                 .accessibilityLabel("More for \(trigger.displayName)")
             }
-            HStack(spacing: AOMSpace.x4) {
-                HStack(spacing: AOMSpace.x2) {
-                    Text("Applies to").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
-                    appScopePicker(trigger)
-                }
-                Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
-                                                set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                Spacer(minLength: 0)
+            .layoutPriority(1)
+            Spacer(minLength: AOMSpace.x2)
+            HStack(spacing: AOMSpace.x1) {
+                Text("Applies to").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                appScopePicker(trigger)
             }
+            Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
+                                            set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(AOMFont.caption)
+                .fixedSize()
         }
+        .frame(minHeight: AOMSize.rowStandard)
     }
 
     /// Where this automation works. Changing it moves the list's scope along,
@@ -523,21 +527,30 @@ struct ModernGesturesWorkspace: View {
         VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("When", help: "The input that starts this automation. Edit Input changes it and its own settings; Options tune how it runs.")
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: AOMSpace.x3) {
-                    AOMModuleBadge(symbol: trigger.input.category.iconName, hue: nil, size: AOMIcon.tileBadge)
-                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                        Text(trigger.input.category.rawValue)
+                // One line (3.3.5): glyph, input kind, the input itself, its
+                // modifiers, then Edit Input.
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: trigger.input.category.iconName)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row)
+                        .accessibilityHidden(true)
+                    Text(trigger.input.category.rawValue)
+                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                    if case .keyboardShortcut(let shortcut) = trigger.input {
+                        AOMShortcutKeys(shortcut: shortcut)
+                    } else {
+                        Text(trigger.input.displayName).font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(trigger.input.displayName)
+                    }
+                    if trigger.requiredModifiers != nil {
+                        Text("with \(trigger.modifierLabel.isEmpty ? "no modifiers" : trigger.modifierLabel)")
                             .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                        if case .keyboardShortcut(let shortcut) = trigger.input {
-                            AOMShortcutKeys(shortcut: shortcut)
-                        } else {
-                            Text(trigger.input.displayName).font(AOMFont.headline).foregroundStyle(AOMColor.text)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if trigger.requiredModifiers != nil {
-                            Text("With \(trigger.modifierLabel.isEmpty ? "no modifiers" : trigger.modifierLabel)")
-                                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                        }
+                            .lineLimit(1)
                     }
                     Spacer(minLength: AOMSpace.x2)
                     Button(showInputSettings ? "Done" : "Edit Input") {
@@ -547,8 +560,8 @@ struct ModernGesturesWorkspace: View {
                     .help(showInputSettings ? "Hide input settings" : "Change the input and its settings")
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
-                .padding(.vertical, AOMSpace.x3)
-                .frame(minHeight: AOMSize.rowDetail)
+                .padding(.vertical, AOMSpace.x1)
+                .frame(minHeight: AOMSize.rowStandard)
                 if showInputSettings {
                     // Its groups draw their own hairline above.
                     TriggerConfigView(trigger: trigger, part: .input)
@@ -585,16 +598,15 @@ struct ModernGesturesWorkspace: View {
                     Button { addAction() } label: {
                         HStack(spacing: AOMSpace.x3) {
                             Image(systemName: "plus.circle.fill")
-                                .font(AOMFont.section)
                                 .foregroundStyle(.tint)
-                                .frame(width: AOMIcon.tileBadge)
+                                .frame(width: AOMIcon.row)
                                 .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                                Text("Add the first action").font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
-                                Text("Shortcuts, window moves, app launches, scripts, captures and more.")
-                                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                                    .lineLimit(1)
-                            }
+                            // One line: the title, then what can go here.
+                            Text("Add the first action").font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                                .fixedSize()
+                            Text("Shortcuts, window moves, app launches, scripts, captures and more.")
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(1)
                             Spacer(minLength: AOMSpace.x2)
                             Image(systemName: "chevron.right")
                                 .font(AOMFont.caption.weight(.semibold))
@@ -602,7 +614,7 @@ struct ModernGesturesWorkspace: View {
                                 .accessibilityHidden(true)
                         }
                         .padding(.horizontal, AOMSpace.rowInset)
-                        .frame(minHeight: AOMSize.rowDetail)
+                        .frame(minHeight: AOMSize.rowStandard)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.card))
@@ -616,7 +628,7 @@ struct ModernGesturesWorkspace: View {
                             Image(systemName: "arrow.down")
                                 .font(AOMFont.badge)
                                 .foregroundStyle(AOMColor.textTertiary)
-                                .frame(width: AOMIcon.row, height: AOMSpace.x5)
+                                .frame(width: AOMIcon.row, height: AOMSpace.x3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.leading, AOMSpace.rowInset + CGFloat(row.depth) * AOMSpace.x5)
                                 .accessibilityHidden(true)
@@ -757,24 +769,25 @@ struct ModernGesturesWorkspace: View {
                 ]
                 ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
                     Button { presentAddTrigger(choice.0) } label: {
-                        HStack(spacing: AOMSpace.x3) {
+                        HStack(spacing: AOMSpace.x2) {
                             AOMModuleBadge(symbol: choice.0.iconName, hue: AOMModule.automation.hue, size: Self.choiceBadge)
-                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                                Text(choice.1).font(AOMFont.body).foregroundStyle(AOMColor.text)
-                                Text(choice.2).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                            }
+                            // One line per choice (3.3.5): the input, then what it covers.
+                            Text(choice.1).font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                                .fixedSize()
+                            Text(choice.2).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(1)
                             Spacer(minLength: AOMSpace.x2)
                             Image(systemName: "chevron.right")
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textTertiary)
                         }
                         .padding(.horizontal, AOMSpace.rowInset)
-                        .frame(minHeight: AOMSize.rowDetail)
+                        .frame(minHeight: AOMSize.rowStandard)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(AOMRowButtonStyle(radius: 0))
                     .accessibilityLabel("\(choice.1): \(choice.2)")
-                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.rowInset + Self.choiceBadge + AOMSpace.x3) }
+                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.rowInset + Self.choiceBadge + AOMSpace.x2) }
                 }
             }
         }

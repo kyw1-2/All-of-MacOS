@@ -57,16 +57,21 @@ struct ActionCardView: View {
                 .frame(width: AOMIcon.row)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            // Name and detail on one line (3.3.5); the detail truncates first
+            // and the full text stays in the tooltip.
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                 Text(action.displayName)
                     .font(AOMFont.bodyEmphasis)
                     .foregroundStyle(action.isEnabled ? AOMColor.text : AOMColor.textSecondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
                 if let detail = actionDetail {
                     Text(detail)
                         .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(detail)
                 }
             }
             .layoutPriority(1)
@@ -98,6 +103,7 @@ struct ActionCardView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .tint(AOMColor.textSecondary)
             .fixedSize()
             .help("Action options")
             .accessibilityLabel("Options for \(action.displayName)")
@@ -115,7 +121,7 @@ struct ActionCardView: View {
             .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .frame(minHeight: actionDetail == nil ? AOMSize.rowStandard : AOMSize.rowDetail)
+        .frame(minHeight: AOMSize.rowStandard)
         .contentShape(Rectangle())
         .onTapGesture { onToggleExpand() }
     }

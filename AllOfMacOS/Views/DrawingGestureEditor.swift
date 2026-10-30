@@ -69,8 +69,8 @@ struct DrawingStrokePad: View {
                 }.stroke(.secondary.opacity(0.13), style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 if current.isEmpty {
                     VStack(spacing: 6) {
-                        Image(systemName: "pencil.tip.crop.circle").font(.system(size: 28))
-                        Text("Draw a single continuous stroke").font(.caption)
+                        Image(systemName: "pencil.tip.crop.circle").font(.system(size: AOMFeatureSize.emptyGlyph))
+                        Text("Draw a single continuous stroke").font(AOMFont.caption)
                     }.foregroundStyle(.tertiary)
                 }
                 DrawingStrokePreview(sample: current)
@@ -248,7 +248,8 @@ private struct DrawingEditorSheet: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Configure Drawing Gesture").font(.title2.bold())
+            // The editor-title style every sheet uses (3.3.5, was Title 2 bold).
+            Text("Configure Drawing Gesture").font(AOMFont.title)
             ScrollView(showsIndicators: false) {
                 DrawingPatternComposer(name: $name, samples: $samples,
                                        certainty: $certainty, ignoreDirection: $ignoreDirection)
