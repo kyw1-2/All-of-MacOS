@@ -246,7 +246,7 @@ enum SystemToolCatalog {
         // System Info
         .init(id: .aboutMac, title: "About This Mac", symbol: "laptopcomputer", group: .info, keywords: ["model", "chip", "memory", "macos version", "build"], help: "Shows the model, chip, memory and macOS version and build, with Copy."),
         .init(id: .copySerial, title: "Copy Serial Number", symbol: "barcode", group: .info, keywords: ["serial", "warranty", "applecare"], help: "Copies this Mac's serial number."),
-        .init(id: .bootReasons, title: "Last Restart & Wake", symbol: "power.dotted", group: .info, keywords: ["uptime", "boot", "shutdown reason", "wake reason"], help: "Shows uptime and the codes macOS recorded for the last shutdown and wake (kern.shutdownreason, kern.wakereason). Apple doesn't document every code."),
+        .init(id: .bootReasons, title: "Last Restart & Wake", symbol: "arrow.counterclockwise.circle", group: .info, keywords: ["uptime", "boot", "shutdown reason", "wake reason"], help: "Shows uptime and the codes macOS recorded for the last shutdown and wake (kern.shutdownreason, kern.wakereason). Apple doesn't document every code."),
         .init(id: .settingsPane, title: "Open Settings Pane", symbol: "gearshape.2", group: .info, keywords: ["system settings", "preferences", "pane", "x-apple.systempreferences"], help: "Opens a System Settings pane directly: Battery, Displays, Storage, Login Items and more."),
     ]
     // swiftlint:enable line_length

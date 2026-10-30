@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// The System Tools page: a live status strip, then Favorites and Recent,
-/// then every tool as a compact one-click tile grouped by category. Toggle
-/// tiles show their current state; the toolbar search matches titles, group
-/// names, keywords and descriptions. Sidebar-only (the menu bar stays lean);
-/// each tool collects its own inputs via menus and panels. The engines live
-/// in Services/SystemTools and Services/MacMagic, the flows in
+/// The System Tools page (design-3.3.6): a live "This Mac" panel (Activity
+/// Monitor / Battery settings style), the Quick Toggles as Control Center
+/// tiles, Favorites and Recent, then every other tool as a one-row tile in
+/// titled sections. Toggle tiles show their current state; the toolbar
+/// search matches titles, group names, keywords and descriptions. Each tool
+/// collects its own inputs via menus and panels. The engines live in
+/// Services/SystemTools and Services/MacMagic, the flows in
 /// `SystemToolsModel`.
 struct SystemToolsView: View {
     @EnvironmentObject var appState: AppState
@@ -13,17 +14,25 @@ struct SystemToolsView: View {
     @StateObject private var status = SystemStatusMonitor()
     @ObservedObject private var keepAwake = KeepAwakeService.shared
     @ObservedObject private var keyboardLock = KeyboardCleaningLock.shared
+    @ObservedObject private var sleepTimer = SleepTimerService.shared
+    @ObservedObject private var appAwake = AppAwakeService.shared
     @State private var showActionLibrary = false
     @State private var query = ""
 
-    /// Wide enough for the longest name plus a state pill on one line; five
-    /// columns on a 1320 pt window, four in the narrowest.
-    private static let tileMinimumWidth: CGFloat = 186
+    /// Wide enough for the longest name ("Awake While App Runs") plus a
+    /// state pill on one line: four columns in a 1320 pt window.
+    private static let tileMinimumWidth: CGFloat = 228
+    /// Control Center tiles: five across in a 1320 pt window.
+    private static let toggleMinimumWidth: CGFloat = 188
     /// The no-match state's height, so the page doesn't collapse while typing.
     private static let emptyStateMinimumHeight: CGFloat = 240
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: Self.tileMinimumWidth), spacing: AOMSpace.tileGap)]
+    }
+
+    private var toggleColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: Self.toggleMinimumWidth), spacing: AOMSpace.tileGap)]
     }
 
     private var visibleGroups: [(group: SystemToolGroup, tools: [SystemToolInfo])] {
@@ -43,18 +52,23 @@ struct SystemToolsView: View {
     }
 
     var body: some View {
-        AOMPage(spacing: AOMSpace.x3) {
+        AOMPage {
             AOMPageHeader("\(SystemToolsInventory.count) tools in \(SystemToolGroup.allCases.count) groups",
                           module: .systemTools, subtitle: subtitle)
-            SystemStatusStrip(monitor: status)
             if showActionLibrary {
                 AOMSectionCard("All actions", symbol: "square.grid.3x3", accessory: {
-                    Button("Hide") { showActionLibrary = false }.controlSize(.small)
+                    Button("Hide") { showActionLibrary = false }
                 }) {
                     ActionLibraryView().environmentObject(appState)
                 }
             }
-            if query.isEmpty { shortcuts }
+            if query.isEmpty {
+                VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                    AOMSectionTitle("This Mac", detail: "live")
+                    SystemStatusPanel(monitor: status)
+                }
+                shortcuts
+            }
             let shown = visibleGroups
             if shown.isEmpty {
                 AOMEmptyState("No Tools Match “\(query)”", systemImage: "magnifyingglass",
@@ -64,17 +78,13 @@ struct SystemToolsView: View {
                 }
                 .frame(minHeight: Self.emptyStateMinimumHeight)
             } else {
-                VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                    ForEach(shown, id: \.group) { entry in
-                        VStack(alignment: .leading, spacing: AOMSpace.x1 + 2) {
-                            caption(entry.group.name, count: entry.tools.count)
-                            grid(entry.tools)
-                        }
+                ForEach(shown, id: \.group) { entry in
+                    VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                        AOMSectionTitle(entry.group.name, detail: "\(entry.tools.count)")
+                        if entry.group == .toggles { toggleGrid(entry.tools) } else { grid(entry.tools) }
                     }
+                    .accessibilityElement(children: .contain)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .aomCard(padding: AOMSpace.cardPadding)
-                .accessibilityElement(children: .contain)
             }
         }
         .aomPage("System Tools")
@@ -112,6 +122,8 @@ struct SystemToolsView: View {
         // Keep Awake and the keyboard lock also change from menus and timers.
         .onChange(of: keepAwake.current) { _, _ in model.refreshStates() }
         .onChange(of: keyboardLock.endsAt) { _, _ in model.refreshStates() }
+        .onChange(of: sleepTimer.firesAt) { _, _ in model.refreshStates() }
+        .onChange(of: appAwake.appName) { _, _ in model.refreshStates() }
         .onAppear { model.appear(); status.start() }
         .onDisappear { model.disappear(); status.stop() }
     }
@@ -122,50 +134,33 @@ struct SystemToolsView: View {
     private var shortcuts: some View {
         let favorites = model.favorites.map(SystemToolCatalog.info)
         let recent = model.recent.filter { !model.favorites.contains($0) }.map(SystemToolCatalog.info)
-        if !favorites.isEmpty || !recent.isEmpty {
-            VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                if !favorites.isEmpty {
-                    VStack(alignment: .leading, spacing: AOMSpace.x1 + 2) {
-                        caption("Favorites", count: favorites.count)
-                        grid(favorites)
-                    }
-                }
-                if !recent.isEmpty {
-                    HStack(spacing: AOMSpace.x2) {
-                        Text("Recent").aomSectionCaps().padding(.leading, AOMSpace.x1).accessibilityAddTraits(.isHeader)
-                        ForEach(recent) { info in
-                            Button { model.run(info.id) } label: {
-                                Label(info.title, systemImage: info.symbol)
-                                    .font(AOMFont.callout)
-                                    .lineLimit(1)
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(model.running.contains(info.id))
-                            .help(info.help)
-                            .contextMenu {
-                                Button("Add to Favorites") { model.toggleFavorite(info.id) }
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
+        if !favorites.isEmpty {
+            VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+                AOMSectionTitle("Favorites", detail: "\(favorites.count)")
+                grid(favorites)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .aomCard(padding: AOMSpace.cardPadding)
+        }
+        if !recent.isEmpty {
+            HStack(spacing: AOMSpace.x3) {
+                Text("Recent").font(AOMFont.section).foregroundStyle(AOMColor.text).accessibilityAddTraits(.isHeader)
+                ForEach(recent) { info in
+                    Button { model.run(info.id) } label: {
+                        Label(info.title, systemImage: info.symbol).font(AOMFont.body).lineLimit(1)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(model.running.contains(info.id))
+                    .help(info.help)
+                    .contextMenu {
+                        Button("Add to Favorites") { model.toggleFavorite(info.id) }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, AOMSpace.x0_5)
         }
     }
 
     // MARK: - Pieces
-
-    private func caption(_ name: String, count: Int) -> some View {
-        HStack(spacing: AOMSpace.x1) {
-            Text(name).aomSectionCaps()
-            Text("\(count)").font(AOMFont.badge).foregroundStyle(AOMColor.textTertiary)
-        }
-        .padding(.horizontal, AOMSpace.x1)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-    }
 
     private func grid(_ tools: [SystemToolInfo]) -> some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: AOMSpace.tileGap) {
@@ -173,6 +168,16 @@ struct SystemToolsView: View {
                 SystemToolTile(info: info, state: info.isToggle ? model.states[info.id] : nil,
                                isRunning: model.running.contains(info.id), isFavorite: model.isFavorite(info.id),
                                run: { model.run(info.id) }, toggleFavorite: { model.toggleFavorite(info.id) })
+            }
+        }
+    }
+
+    private func toggleGrid(_ tools: [SystemToolInfo]) -> some View {
+        LazyVGrid(columns: toggleColumns, alignment: .leading, spacing: AOMSpace.tileGap) {
+            ForEach(tools) { info in
+                SystemToggleTile(info: info, state: info.isToggle ? model.states[info.id] : nil,
+                                 isRunning: model.running.contains(info.id), isFavorite: model.isFavorite(info.id),
+                                 run: { model.run(info.id) }, toggleFavorite: { model.toggleFavorite(info.id) })
             }
         }
     }

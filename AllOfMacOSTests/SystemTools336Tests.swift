@@ -39,7 +39,7 @@ final class SystemTools336Tests: XCTestCase {
             XCTAssertGreaterThanOrEqual(SystemToolCatalog.tools(in: group).count, 4, group.name)
         }
         // The subtitle shares the Workspace tile's one line with the count.
-        XCTAssertLessThanOrEqual(SystemToolsInventory.subtitle.count, 32)
+        XCTAssertLessThanOrEqual(SystemToolsInventory.subtitle.count, 24, "About 26 characters fit beside the count at 1320 pt")
         XCTAssertFalse(SystemToolsInventory.subtitle.localizedCaseInsensitiveContains("dev"))
         // 3.3.5 ids that stayed keep their raw values (saved favorites).
         for kept in ["darkMode", "keepAwake", "ejectAll", "speedTest", "fileHash", "devJunk", "copyIP"] {

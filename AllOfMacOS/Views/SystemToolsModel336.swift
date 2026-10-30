@@ -21,7 +21,10 @@ extension SystemToolsModel {
         if let mode = DisplayControlService.currentMode(main) {
             next[.resolution] = .value("\(mode.pointWidth)×\(mode.pointHeight)")
         }
-        if let level = DisplayControlService.brightness(main) { next[.brightness] = .value(DisplaySoundState.percentText(level) ?? "—") }
+        // Without hardware brightness, no software dim means full brightness.
+        let level = DisplayControlService.supportsHardwareBrightness(main)
+            ? DisplayControlService.brightness(main) : (DisplayControlService.softwareDim(main) ?? 1)
+        if let text = DisplaySoundState.percentText(level) { next[.brightness] = .value(text) }
         if let screen = NSScreen.main, let url = NSWorkspace.shared.desktopImageURL(for: screen) {
             next[.wallpaper] = .value(DisplaySoundState.shortName(url.deletingPathExtension().lastPathComponent, limit: 12))
         }
@@ -36,7 +39,9 @@ extension SystemToolsModel {
         let timer = SleepTimerService.shared
         next[.sleepTimer] = timer.isActive ? .on("At " + (timer.firesAt?.formatted(date: .omitted, time: .shortened) ?? "")) : .off()
         let awake = AppAwakeService.shared
-        next[.awakeWhileApp] = awake.appName.map { .on(DisplaySoundState.shortName($0, limit: 10)) } ?? .off()
+        // "On" only: the app's name doesn't fit beside the title; the menu
+        // and the last-result line name it.
+        next[.awakeWhileApp] = SystemToolState(awake.isActive)
         next[.showLibrary] = SystemToolState(!Self.isLibraryHidden())
         for (id, state) in slowStates { next[id] = state }
     }
