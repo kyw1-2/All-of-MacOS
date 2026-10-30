@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 /// Insights: live gesture statistics plus an overview of what is configured,
@@ -97,8 +98,11 @@ struct StatisticsView: View {
                     HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
                         // Its own height, top-aligned: an empty list must not
                         // stretch to the taller column beside it.
-                        mostUsedSection(figures)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                            activitySection
+                            mostUsedSection(figures)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
                         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                             inputsSection
                             configurationSection
@@ -106,6 +110,7 @@ struct StatisticsView: View {
                         .frame(width: layout == .threeColumns ? AOMSize.tileMax : AOMSize.drawerWidth.lowerBound)
                     }
                 case .stacked:
+                    activitySection
                     mostUsedSection(figures)
                     inputsSection
                     configurationSection
@@ -157,6 +162,87 @@ struct StatisticsView: View {
     /// Below this width the four figures wrap onto two rows.
     static let stripSingleRowWidth: CGFloat = 760
 
+    // MARK: - Activity chart (design-336 #26–28, #70, #84)
+
+    /// One bar of the activity chart: automations that ran in an hour (last
+    /// 24 hours) or a day (last 7 days), from the recent event log.
+    struct ActivityBucket: Identifiable, Equatable {
+        let start: Date
+        let runs: Int
+        let isCurrent: Bool
+        var id: Date { start }
+    }
+
+    /// Hourly buckets for the last 24 hours, daily ones for the last 7 days.
+    /// All Time charts the last 7 days too: the event log behind the chart is
+    /// bounded, the running totals are not per day.
+    static func activityBuckets(events: [GestureEvent], hourly: Bool, now: Date = Date(),
+                                calendar: Calendar = .current) -> [ActivityBucket] {
+        let unit: Calendar.Component = hourly ? .hour : .day
+        let count = hourly ? 24 : 7
+        guard let current = calendar.dateInterval(of: unit, for: now)?.start else { return [] }
+        let starts = (0..<count).reversed().compactMap { calendar.date(byAdding: unit, value: -$0, to: current) }
+        guard let first = starts.first else { return [] }
+        var runs = [Date: Int]()
+        for event in events where event.fired && event.timestamp >= first && event.timestamp <= now {
+            if let start = calendar.dateInterval(of: unit, for: event.timestamp)?.start { runs[start, default: 0] += 1 }
+        }
+        return starts.map { ActivityBucket(start: $0, runs: runs[$0] ?? 0, isCurrent: $0 == current) }
+    }
+
+    private var activitySection: some View {
+        let hourly = period == .day
+        let buckets = Self.activityBuckets(events: stats.events, hourly: hourly)
+        let total = buckets.reduce(0) { $0 + $1.runs }
+        let span = hourly ? "last 24 hours" : "last 7 days"
+        // The title states the chart's message (HIG Charts): the total.
+        return AOMSection("Activity", detail: "\(total.formatted()) run\(total == 1 ? "" : "s") in the \(span)",
+                          help: "Automations that ran per \(hourly ? "hour" : "day"), from the most recent \(GestureStatistics.recentEventLimit.formatted()) inputs. The current \(hourly ? "hour" : "day") is in the accent colour.",
+                          padding: total == 0 ? 0 : AOMSpace.cardPadding) {
+            if total == 0 {
+                AOMCardEmptyRow("No automations ran in the \(span).", systemImage: "chart.bar")
+            } else {
+                activityChart(buckets, hourly: hourly, total: total, span: span)
+            }
+        }
+    }
+
+    private func activityChart(_ buckets: [ActivityBucket], hourly: Bool, total: Int, span: String) -> some View {
+        Chart(buckets) { bucket in
+            BarMark(x: .value(hourly ? "Hour" : "Day", bucket.start, unit: hourly ? .hour : .day),
+                    y: .value("Runs", bucket.runs))
+                .foregroundStyle(bucket.isCurrent ? Color.accentColor : Color.accentColor.opacity(0.4))
+                .cornerRadius(AOMRadius.keycap)
+                .accessibilityLabel(hourly ? bucket.start.formatted(date: .omitted, time: .shortened)
+                                           : bucket.start.formatted(.dateTime.weekday(.wide)))
+                .accessibilityValue("\(bucket.runs) run\(bucket.runs == 1 ? "" : "s")")
+        }
+        // Bars start at zero with few grid lines (HIG Charts, axes).
+        .chartYAxis {
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AOMFont.caption)
+            }
+        }
+        .chartXAxis {
+            if hourly {
+                AxisMarks(values: .stride(by: .hour, count: 6)) { _ in
+                    AxisValueLabel(format: .dateTime.hour(), centered: true).font(AOMFont.caption)
+                }
+            } else {
+                AxisMarks(values: .stride(by: .day)) { _ in
+                    AxisValueLabel(format: .dateTime.weekday(.abbreviated), centered: true).font(AOMFont.caption)
+                }
+            }
+        }
+        .frame(height: StatisticsMetrics.chartHeight)
+        // Room above the top grid line for its label.
+        .padding(.top, AOMSpace.x2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Automations run per \(hourly ? "hour" : "day")")
+        .accessibilityValue("\(total) in the \(span)")
+    }
+
     private func mostUsedSection(_ figures: Figures) -> some View {
         AOMSection("Most used",
                    detail: figures.entries.isEmpty ? nil
@@ -180,14 +266,14 @@ struct StatisticsView: View {
     // MARK: - Overview Cards
 
     private func overviewStrip(_ figures: Figures, columns: Int?) -> some View {
-        // Two lines per figure (3.3.5): the header and the toolbar already
-        // name the period, so a figure's third line only adds a fact (the
-        // match rate), never the period again.
+        // Two lines per figure: the header and the toolbar already name the
+        // period and the match rate.
         return AOMStatStrip(items: [
             AOMStatItem(title: "Automations run", value: figures.fired.formatted(), unit: "runs",
                         systemImage: "bolt.fill", tint: AOMTheme.positive),
+            // The match rate is in the header line, so no figure carries a
+            // third line and the four values stay on one baseline.
             AOMStatItem(title: "Inputs recognized", value: figures.detected.formatted(), unit: "inputs",
-                        detail: figures.detected > 0 ? "\(figures.matchRate) ran an automation" : nil,
                         systemImage: "hand.raised.fingers.spread", tint: AOMTheme.blue),
             AOMStatItem(title: "Nothing assigned", value: (period == .all ? stats.unmatchedCount : figures.unmatched).formatted(),
                         unit: "inputs", systemImage: "questionmark.circle", tint: AOMTheme.orange),
@@ -201,19 +287,19 @@ struct StatisticsView: View {
     private func gestureBreakdown(_ figures: Figures) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if figures.entries.isEmpty {
-                AOMCompactEmptyState(period == .all ? "No Gestures Recorded Yet" : "Nothing in the \(period.rawValue)", systemImage: "hand.tap",
-                                     message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.",
-                                     centered: true) {
+                // design-336 b.9: one row in the card, one button.
+                AOMCardEmptyRow(period == .all ? "No inputs recorded yet." : "No inputs in the \(period.rawValue.lowercased()).",
+                                detail: "Your gestures, shortcuts and mouse buttons appear here as you use them.",
+                                systemImage: "hand.tap") {
                     if period != .all { Button("Show All Time") { period = .all } }
                 }
-                .padding(.vertical, AOMSpace.x2)
             } else {
                 let maxCount = max(1, figures.entries.map(\.totalCount).max() ?? 1)
                 ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
                     GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
                                    accentColor: appState.accentColorChoice.color)
                         .overlay(alignment: .top) {
-                            if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.row + AOMSpace.x2) }
+                            if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + StatisticsMetrics.rankColumn + AOMSpace.x3) }
                         }
                 }
             }
@@ -283,18 +369,19 @@ private struct GestureStatRow: View {
     let accentColor: Color
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x3) {
             Text("\(rank)")
-                .font(AOMFont.caption.monospacedDigit())
+                .font(AOMFont.headline.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMIcon.row, alignment: .trailing)
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                .frame(width: StatisticsMetrics.rankColumn, alignment: .trailing)
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(entry.gesture).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
                         .layoutPriority(1)
                     Spacer(minLength: AOMSpace.x2)
                     if let last = entry.lastDetected {
-                        Text("Last used \(last, style: .relative) ago")
+                        // "Last used 3 min. ago", not the long "3 min, 12 sec ago".
+                        Text("Last used \(AOMRelativeTime.string(last))")
                             .font(AOMFont.caption)
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(1)
@@ -320,7 +407,15 @@ private struct GestureStatRow: View {
             }
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.x2)
         .accessibilityElement(children: .combine)
     }
+}
+
+/// Insights sizes the shared scale does not name.
+private enum StatisticsMetrics {
+    /// The activity chart: tall enough for three grid lines over 13 pt labels.
+    static let chartHeight: CGFloat = 150
+    /// The rank column in Most used (two digits of Headline).
+    static let rankColumn: CGFloat = 24
 }

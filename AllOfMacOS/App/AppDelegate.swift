@@ -200,6 +200,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // own preview path never reads or records the last-seen version.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { WhatsNew.presentIfUpdated() } }
         }
+        // Isolated previews only: `--aom-preview-insights-sample` fills the
+        // preview's own statistics with a few inputs and runs from now, so
+        // Insights' chart and Most used list can be reviewed in screenshots.
+        // Real launches never take this path.
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-insights-sample") {
+            MainActor.assumeIsolated {
+                let stats = GestureStatistics.shared
+                stats.reset()
+                let sample: [(String, Int, Int)] = [("3 Finger Swipe Up", 14, 12), ("⌃⌥←", 9, 9),
+                                                    ("Button 4", 6, 5), ("3 Finger Tap", 4, 0)]
+                for (gesture, detected, fired) in sample {
+                    for _ in 0..<detected { stats.recordDetection(gesture) }
+                    for _ in 0..<fired { stats.recordFire(gesture) }
+                }
+            }
+        }
         // Monitor start-up is owned by AppState (see AppState.init) — it runs
         // whether or not a window is ever shown, which is what an LSUIElement
         // menu-bar app needs.
