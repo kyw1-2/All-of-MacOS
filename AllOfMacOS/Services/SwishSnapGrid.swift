@@ -248,9 +248,12 @@ extension SwishSnap {
     /// Swish-style chaining on a grid: a swipe moves the window on from the
     /// place it is in.
     /// - Free-floating or centred: sideways a half (a longer swipe a third
-    ///   when the grid has thirds); up maximizes (a longer swipe: the top
-    ///   half); down centres the window, and on a centred one puts it back
-    ///   (a longer swipe: the bottom half).
+    ///   when the grid has thirds); up maximizes, however long the swipe
+    ///   (N334: until then a longer one took the top half, which a quick
+    ///   swipe up reached before the maximize the user meant; the top half
+    ///   is Swish's double swipe up, `SwishDoubleSwipeUp`); down centres the
+    ///   window, and on a centred one puts it back (a longer swipe: the
+    ///   bottom half).
     /// - Maximized: sideways a half, up stays, down puts the window back.
     /// - Almost maximize on: every swipe that would maximize almost-maximizes
     ///   instead (a free window or the top half swiped up), and an
@@ -297,7 +300,9 @@ extension SwishSnap {
             switch direction {
             case .left: return .cell(grid.thirds && long ? .leftThird : .leftHalf)
             case .right: return .cell(grid.thirds && long ? .rightThird : .rightHalf)
-            case .up: return long ? .cell(.topHalf) : maximize
+            // N334: the tier never reaches up, so a swipe up that grows past
+            // the longer-swipe distance shows and commits the same maximize.
+            case .up: return maximize
             case .down: return current == .center ? .restore : .cell(long ? .bottomHalf : .center)
             }
         }
@@ -366,8 +371,10 @@ extension SwishSnap {
     /// third it overflows least, as `cell(of:)` finds it. Sixths and ninths
     /// are only matched exactly: AOM's history keeps the place of a
     /// size-limited window it snapped there. Nil: free-floating.
+    /// `overflowing` false (N334, a swipe up): only a cell the frame fills,
+    /// never one it merely overflows.
     static func place(of frame: CGRect, visible: CGRect, margin: CGFloat, grid: Grid,
-                      almost: Bool = false, tolerance: CGFloat = 16) -> Place? {
+                      almost: Bool = false, tolerance: CGFloat = 16, overflowing: Bool = true) -> Place? {
         func error(_ rect: CGRect) -> CGFloat {
             max(abs(rect.minX - frame.minX), abs(rect.minY - frame.minY),
                 abs(rect.maxX - frame.maxX), abs(rect.maxY - frame.maxY))
@@ -382,7 +389,8 @@ extension SwishSnap {
         if let cell = grid.cells.first(where: { fits(targetFrame(place: .grid($0), visible: visible, margin: margin)) }) {
             return .grid(cell)
         }
-        return cell(of: frame, visible: visible, margin: margin, tolerance: tolerance, thirds: grid.thirds)
+        return cell(of: frame, visible: visible, margin: margin, tolerance: tolerance, thirds: grid.thirds,
+                    overflowing: overflowing)
             .flatMap(Place.init)
     }
 
@@ -784,6 +792,64 @@ struct SwishWindowChain: Equatable {
     }
 
     mutating func end() { link = nil }
+}
+
+// MARK: - Double swipe up (N334)
+
+extension SwishSnap {
+    /// Swish's double swipe up (N334): how soon after a swipe up's maximize
+    /// landed the second, separate swipe up on that window must engage to
+    /// take the top half.
+    static let doubleSwipeWindow: TimeInterval = 0.5
+}
+
+/// Swish's double swipe up (N334). A swipe up maximizes however long it is;
+/// the top half is a second swipe up: a new touch whose first gesture
+/// engages on the window the first swipe maximized, within
+/// `SwishSnap.doubleSwipeWindow` of that maximize landing. Only the first
+/// swipe to engage after the landing can be that second swipe. Every commit
+/// that ends re-arms it (a swipe up whose maximize landed with its follow-ups
+/// allowed) or disarms it (anything else, including a maximize that did not
+/// land or whose follow-ups `landingAllowed` refused). A further motion of
+/// the same touch, a re-armed touch and a swipe queued behind a commit still
+/// in flight are never the second swipe. Pure: windows are named by key,
+/// times are passed in; the service keeps one on the main actor.
+struct SwishDoubleSwipeUp: Equatable {
+    struct Landing: Equatable {
+        let key: String
+        let at: TimeInterval
+    }
+
+    /// The last commit, while it was a swipe up that maximized and landed.
+    private(set) var landing: Landing?
+
+    /// A commit ended at `now`. `upMaximize`: it was a swipe up that put
+    /// window `key` in the whole area, it landed and its follow-ups were
+    /// allowed. Anything else disarms.
+    mutating func commitEnded(key: String, upMaximize: Bool, at now: TimeInterval) {
+        landing = upMaximize ? Landing(key: key, at: now) : nil
+    }
+
+    /// A swipe engaged on window `key` at `now`; `newTouch`: it is its
+    /// touch's first gesture. True when it is the second half of the double
+    /// swipe. The landing is used up either way.
+    mutating func swipeBegan(key: String, newTouch: Bool, at now: TimeInterval) -> Bool {
+        let armed = landing
+        landing = nil
+        guard newTouch, let armed, armed.key == key else { return false }
+        let elapsed = now - armed.at
+        return elapsed >= 0 && elapsed <= SwishSnap.doubleSwipeWindow
+    }
+
+    /// The snap stopped, or the Mac slept or woke.
+    mutating func reset() { landing = nil }
+
+    /// Pure: whether a commit's plan is a swipe up that maximizes (not an
+    /// action, nor almost-maximize).
+    static func isUpMaximize(direction: SwishSnap.Direction?, place: SwishSnap.Place?,
+                             action: SwishSnap.WindowAction?) -> Bool {
+        direction == .up && action == nil && place == SwishSnap.Place.grid(.full)
+    }
 }
 
 // MARK: - Delayed and batched window writes (audit S03, S05)

@@ -232,7 +232,7 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(SwishSnap.layout(for: .right, tier: 1), .rightHalf)
         XCTAssertEqual(SwishSnap.layout(for: .right, tier: 2), .rightThird)
         XCTAssertEqual(SwishSnap.layout(for: .up, tier: 1), .maximize)
-        XCTAssertEqual(SwishSnap.layout(for: .up, tier: 2), .topHalf)
+        XCTAssertEqual(SwishSnap.layout(for: .up, tier: 2), .maximize, "N334: a longer swipe up is no top half")
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 1), .center)
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .bottomHalf)
     }

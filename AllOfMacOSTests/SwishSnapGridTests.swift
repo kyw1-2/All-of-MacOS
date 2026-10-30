@@ -258,7 +258,8 @@ final class SwishSnapGridTests: XCTestCase {
         XCTAssertEqual(step(at(.topHalf), .up, .threeByTwo, almost: true), .place(.almostMaximize))
         XCTAssertEqual(step(at(SwishGridCell(columns: 1, rows: 3, column: 0, row: 0)), .up, .threeByThree, almost: true),
                        .place(.almostMaximize))
-        XCTAssertEqual(step(nil, .up, .twoByTwo, almost: true, tier: 2), .cell(.topHalf), "a longer swipe is still the top half")
+        XCTAssertEqual(step(nil, .up, .twoByTwo, almost: true, tier: 2), .place(.almostMaximize),
+                       "N334: a longer swipe almost-maximizes too, never the top half")
         XCTAssertEqual(step(.almostMaximize, .down, .twoByTwo, almost: true), .restore)
         XCTAssertEqual(step(.almostMaximize, .left, .twoByTwo, almost: true), .cell(.leftHalf))
         XCTAssertEqual(step(.almostMaximize, .right, .threeByThree, almost: true), .cell(.rightHalf))
