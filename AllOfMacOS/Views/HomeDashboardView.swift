@@ -100,6 +100,8 @@ struct AOMHomeView: View {
             search: { appState.selectedMainTab = .gestures },
             newTrigger: newAutomation))
         .task {
+            // Isolated previews only (`--aom-preview-panel-appearance`).
+            AOMFeaturePreview.applyPanelAppearance()
             while !Task.isCancelled {
                 refreshStatus()
                 try? await Task.sleep(for: .seconds(4))

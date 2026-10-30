@@ -253,6 +253,24 @@ struct AOMFilterChip: View {
     }
 }
 
+// MARK: - Preview hooks
+
+/// Isolated UI previews (`--aom-ui-preview`) can show floating panels and
+/// editor windows in the appearance under review. `AOMAppearance` styles the
+/// main and Settings windows only; panels follow the system. With
+/// `--aom-preview-panel-appearance` the whole preview app follows
+/// `AOMAppearance` instead. Real launches never take this path.
+enum AOMFeaturePreview {
+    @MainActor static func applyPanelAppearance() {
+        guard PresetManager.isUIPreview,
+              ProcessInfo.processInfo.arguments.contains("--aom-preview-panel-appearance") else { return }
+        let choice = UserDefaults.standard.string(forKey: "AOMAppearance") ?? "system"
+        let appearance: NSAppearance? = choice == "dark" ? NSAppearance(named: .darkAqua)
+            : choice == "light" ? NSAppearance(named: .aqua) : nil
+        if NSApp.appearance?.name != appearance?.name { NSApp.appearance = appearance }
+    }
+}
+
 // MARK: - Capsules and badges on chrome and media
 
 extension View {
