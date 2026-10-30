@@ -1,3 +1,35 @@
+## 3.3.5 (2026-10-30)
+
+System Tools grows from 12 to 69 tools, Swish's double swipes and a cancellable swipe on title bars, and a compact main window (12 pt text). Benchmarks, the tool list and what each tool runs: docs/system-tools-3.3.5.md; gestures: docs/window-snap-3.3.5.md. Nothing below was tried on a real trackpad, and the toggles, power, maintenance and cleanup tools were not run against the real system.
+
+Tests: only new and changed tests were run; tests that had passed were not re-run. 29 new System Tools tests (SystemTools335Tests) and 16 new title-bar tests (N335SwishParityTests) with the 5 existing tests whose expectations changed, 0 failures. The Swish run also included 5 existing classes that call the changed recognizer and queue directly (214 tests in that run, 0 failures).
+
+### System Tools (57 new)
+
+- Groups: Quick Toggles, Power & Session, Finder & Dock, Screenshots, Maintenance, Cleanup, Files, PDF & Media, Text & Developer, Network. Benchmarked on One Switch, Raycast system commands, OnyX, TinkerTool, Stats/iStat Menus, AppCleaner/Pearcleaner, DevUtils and Boop.
+- Toggles show their live state: Dark Mode, Keep Awake (durations), Hidden Files, Desktop Icons, Dock Auto-Hide, Wi-Fi, Mute Sound, Mute Microphone, Lock Keyboard (for cleaning, ends by itself), Finder extensions/path bar/status bar/full path, Dock open-apps-only/instant/recents, screenshot shadow, format and folder. Bluetooth Device connects paired devices; Focus runs your "Toggle Focus" shortcut and says its state can't be read.
+- Power & Session: Lock Screen, Sleep, Sleep Displays, Screen Saver, Restart, Shut Down, Log Out, Quit All Apps (each session-ending one asks first), Hide Other Apps, Eject All Disks.
+- Maintenance: Restart Menu Bar, Rebuild Open With (Launch Services), Reindex Spotlight and Purge Disk Cache (administrator), Clear Font Caches.
+- Cleanup: Uninstall App with its ~/Library leftovers, Large Files, Old Downloads, Xcode Junk; each shows a checklist with sizes and only moves to the Trash.
+- Files: Batch Rename, Lock Files, Hide Files, What's Using a File, File SHA-256. Text & Developer (clipboard): Format JSON, Base64, URL Encode, Change Case, Clean Up Text, Count Words, New UUID, Unix Time, Pick Color, Hash Text. Network: Speed Test (networkQuality), What's Using a Port (lsof), Copy IP Address.
+- The page has a live status strip (CPU, memory and pressure, free disk, battery with health and cycles, uptime, thermal state, local IP), Favorites (right-click a tile), Recent, the last result under the title, and search over names, groups, keywords and descriptions.
+- Skipped because they need private frameworks or a privileged helper: Night Shift, Bluetooth power, battery charge limit, fan and sensor readings.
+
+### Swish title bar (new defaults)
+
+- A swipe down on a free window is your Down action (Minimize or Center) at any length; on a maximized window it restores at any length. Long or quick swipes no longer take the bottom half.
+- Swish's double swipe: swipe up or down, rest until the trackpad taps, and swipe the same way again for the top or bottom half, in one touch. The first motion is never applied (no maximize, centre or minimize first). Lifting and swiping down again within 0.5 s after a centre or restore also takes the bottom half, as 3.3.4 did for up.
+- Taking a swipe back to where it started cancels it; swiping out again past the engage distance picks the new place.
+- Unsnap (swipe down, double tap, menu-bar double tap) keeps the window whole on a display (Swish's "Avoid cropping").
+- The rest haptic plays only when something would happen; double swipes show two arrows in the tooltip.
+
+### Main window
+
+- Fixed type scale: body 12 pt, captions 11, section titles 12 semibold, page sentences 15, page headers 13; rows 22/26/34 pt, tiles 52 pt, smaller icons, padding and radii; small controls on every page and in Settings.
+- Shell: smaller sidebar (12 pt, narrower), a 13 pt toolbar title on macOS 26 and later.
+- Workspace: a one-line status with real counts, a slim setup strip with progress, two-line module tiles, compact attention rows, chips and recent activity.
+- Pages: one-line Automation editor header, "When" card and steps; denser Window Tiling; six capture thumbnails a row; one-line Clipboard library rows; one-row Headphone EQ; two-line Insights figures; one-line Settings, Shortcuts and Permissions rows; compact empty states; denser palette, What's New and tour.
+
 ## 3.3.4 (2026-10-30)
 
 Fixes for the 3.3.3 re-audit of 2026-10-30 (N333-01 to N333-08), a title-bar swipe up that took the top half instead of maximizing, the HomePod crackle in boosted passages, and a denser main window. docs/release-3.3.4-audit-resolution.md maps every re-audit ID to its commit and tests; docs/window-snap-3.3.4.md and the 3.3.4 addendum of docs/airplay-crackle-3.3.2.md have the details. Nothing below was tried on a real trackpad or listened to on a HomePod.

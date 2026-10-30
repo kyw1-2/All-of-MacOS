@@ -126,7 +126,7 @@ struct ModernGesturesWorkspace: View {
         }
         .aomPane()
         .navigationTitle("Automation")
-        .navigationSubtitle(subtitle)
+        .aomToolbarSubtitle(subtitle)
         .searchable(text: $searchQuery, isPresented: $searchPresented, placement: .toolbar, prompt: "Search names or actions")
         .toolbar { toolbarContent }
         // File ▸ New Automation (⌘N) and Edit ▸ Search Automations (⌘F) act on

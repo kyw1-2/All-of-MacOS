@@ -273,7 +273,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                .help("A short swipe down on a window that is not snapped. A longer swipe down still snaps it to the bottom half; a snapped window keeps moving between cells.")
+                .help("A swipe down on a window that is not snapped, at any length. For the bottom half, swipe down, rest until the trackpad taps, and swipe down again; a snapped window keeps moving between cells.")
             }
             .dependentSetting(on: trackpadSnapOn)
             // Swish's cancel: rest the fingers without moving. Shared by the

@@ -21,22 +21,17 @@ enum WhatsNew {
     }
 
     /// Highlights of the current version, bundled so the panel works offline.
-    /// 3.3.4: a swipe up on a title bar now always maximizes (the top half is
-    /// a second quick swipe up), which is a new default; the item says so.
+    /// 3.3.5: the swipe-down and double-swipe changes alter defaults people
+    /// already use; that item says so.
     static let items: [Item] = [
-        Item(symbol: "arrow.up.left.and.arrow.down.right", title: "Swipe up maximizes",
-             detail: "A two-finger swipe up on a title bar now maximizes however long or fast it is, also for large windows near a corner. For the top half, swipe up again on the maximized window within half a second (Swish's double swipe up).",
+        Item(symbol: "wrench.and.screwdriver", title: "69 System Tools",
+             detail: "Quick toggles with live state (Dark Mode, Keep Awake, Wi-Fi, mutes, Dock auto-hide, keyboard lock for cleaning), power and session commands, Finder, Dock and screenshot settings, maintenance, an app uninstaller and cleanup scans that only move items to the Trash, clipboard text and developer tools, a speed test and port lookup. A live status strip, favorites and recent tools sit on top.",
+             module: .systemTools),
+        Item(symbol: "arrow.up.and.down", title: "Swish double swipes",
+             detail: "Swipe up or down, rest until the trackpad taps, and swipe the same way again for the top or bottom half. A swipe down no longer turns into the bottom half when it is long or quick, taking a swipe back to where it started cancels it, and unsnapped windows stay whole on a display.",
              module: .tiling, note: "New default"),
-        Item(symbol: "hifispeaker.fill", title: "Cleaner HomePod and AirPlay sound",
-             detail: "AirPlay outputs level loud clicks and consonants over 10 ms before the limiter, so Magic Boost no longer makes the bass crackle in loud passages, and near-silent noise is no longer raised in quiet ones. Audio diagnostics now say which stage reduced the level.",
-             module: .audio),
-        Item(symbol: "rectangle.compress.vertical", title: "A denser main window",
-             detail: "Smaller headings, a one-line Workspace status, shorter rows, tiles and sheets on every page, and the same names and sentence case in Settings and on each page."),
-        Item(symbol: "lock.shield", title: "Privacy and safety fixes",
-             detail: "AI tools over MCP no longer read passwords and tokens written as JSON or YAML. Suggestions check excluded apps and secure input again before they appear. Tab detach checks the tab right before moving it, and a snap that lands after a pause no longer activates the window or moves the pointer.",
-             module: .clipboard),
-        Item(symbol: "arrow.counterclockwise", title: "Reset Preferences resets everything",
-             detail: "Every preference goes back to its default, including the title-bar, Dock, recording, clipboard and audio settings; automations, history, captures, layouts and backups are kept. Dock and menu-bar gestures no longer also run your own two-finger triggers.")
+        Item(symbol: "rectangle.compress.vertical", title: "A compact main window",
+             detail: "12 pt text, a smaller sidebar and toolbar title, a slim setup strip, two-line module tiles, one-line rows in Automation, Clipboard, Settings and Shortcuts, six capture thumbnails a row, and a denser palette, What's New and tour.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.

@@ -454,7 +454,7 @@ struct AOMHomeView: View {
             AOMModuleTile(.systemTools,
                           value: keepAwake.isActive ? "Keeping awake" : "\(SystemToolsInventory.count) tools",
                           status: keepAwake.isActive ? "Keep Awake \(keepAwake.remainingDescription ?? "on")"
-                              : "Finder, PDF, media and cleanup",
+                              : SystemToolsInventory.subtitle,
                           active: true,
                           open: { appState.selectedMainTab = .tools }) {
                 WorkspaceTileChevron()

@@ -14,6 +14,7 @@ enum SystemToolsInventory {
     /// Counted the way the page header counts: every tool in every group.
     static var count: Int { SystemToolCatalog.all.count }
 
-    /// A one-line summary for the Workspace tile.
-    static let subtitle = "Toggles, power, Finder & Dock, cleanup, files, text and network"
+    /// A one-line summary for the Workspace tile, short enough to share the
+    /// tile's single "value · status" line with the count.
+    static let subtitle = "Toggles, cleanup, dev and more"
 }

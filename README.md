@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.5
+
+System Tools grows from 12 to 69 tools in nine groups (live toggles, power and session, Finder, Dock and screenshot settings, maintenance, an uninstaller and Trash-only cleanup scans, clipboard text and developer tools, network), with a live status strip, favorites and recent tools. Title-bar gestures follow Swish's double swipes (up or down, rest, the same way again for the top or bottom half), a swipe down is the Down action at any length, a swipe taken back cancels, and unsnapped windows stay on screen. The main window uses 12 pt text with compact rows on every page. See CHANGELOG.md, docs/system-tools-3.3.5.md and docs/window-snap-3.3.5.md.
+
 ## Version 3.3.4
 
 Fixes for the 3.3.3 re-audit (N333-01 to N333-08): MCP withholds passwords and tokens written as JSON or YAML, the Audio Unit effect hand-off can no longer use a released host, suggestions re-check excluded apps and secure input before they appear, failed volume and brightness writes are retried, tab detach and landing snaps re-check their target and the pause, Reset Preferences resets every preference, and Dock and menu-bar gestures no longer also run your two-finger triggers. A swipe up on a title bar now always maximizes (a quick second swipe up gives the top half), AirPlay outputs level boosted transients before the limiter so loud passages no longer crackle on a HomePod, and the main window is denser, with smaller headings and shorter rows and tiles. See CHANGELOG.md, docs/release-3.3.4-audit-resolution.md, docs/window-snap-3.3.4.md and docs/airplay-crackle-3.3.2.md.
