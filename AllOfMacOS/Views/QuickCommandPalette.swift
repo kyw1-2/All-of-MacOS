@@ -315,18 +315,17 @@ struct QuickCommandPalette: View {
                 if items.isEmpty {
                     VStack(spacing: AOMSpace.x2) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: AOMFeatureSize.emptyGlyph))
+                            .font(AOMFont.title.weight(.regular)).imageScale(.large)
                             .foregroundStyle(AOMColor.textSecondary)
                             .padding(.bottom, AOMSpace.x1)
                         Text("No results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                         Text("Try an automation name, an app or a word you copied.")
-                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                         // The empty state needs a mouse-reachable way out too.
                         Button("Clear Search") {
                             query = ""
                             isFieldFocused = true
                         }
-                        .controlSize(.small)
                         .buttonStyle(.borderless)
                         .padding(.top, AOMSpace.x2)
                     }
@@ -342,15 +341,15 @@ struct QuickCommandPalette: View {
                                             .font(AOMFont.caption.weight(.semibold))
                                             .foregroundStyle(AOMColor.textSecondary)
                                             .padding(.horizontal, AOMSpace.x2)
-                                            .padding(.top, index == 0 ? AOMSpace.x0_5 : AOMSpace.x2)
-                                            .padding(.bottom, AOMSpace.x0_5)
+                                            .padding(.top, index == 0 ? AOMSpace.x1 : AOMSpace.x3)
+                                            .padding(.bottom, AOMSpace.x1)
                                             .accessibilityAddTraits(.isHeader)
                                     }
                                     row(item, selected: item.id == selected?.id)
                                         .id(item.id)
                                 }
                             }
-                            .padding(AOMSpace.x1 + AOMSpace.x0_5)
+                            .padding(AOMSpace.x2)
                         }
                         .onChange(of: selectedID) { _, id in
                             if let id { proxy.scrollTo(id, anchor: nil) }
@@ -400,7 +399,7 @@ struct QuickCommandPalette: View {
         } label: {
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: item.icon)
-                    .font(AOMFont.caption.weight(.semibold))
+                    .font(AOMFont.callout.weight(.semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
                     .frame(width: PaletteMetrics.rowBadge, height: PaletteMetrics.rowBadge)
@@ -411,7 +410,7 @@ struct QuickCommandPalette: View {
                     .foregroundStyle(AOMColor.text)
                     .lineLimit(1)
                 Text(item.subtitle)
-                    .font(AOMFont.caption)
+                    .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: AOMSpace.x2)
@@ -421,7 +420,7 @@ struct QuickCommandPalette: View {
                 if let keys = item.shortcut { AOMKeycap(text: keys) }
             }
             .padding(.horizontal, AOMSpace.x2)
-            .frame(height: AOMSize.rowDense + AOMSpace.x0_5)
+            .frame(height: PaletteMetrics.rowHeight)
             .background(selected ? AOMColor.accent.opacity(0.12) : .clear,
                         in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
             .contentShape(Rectangle())
@@ -549,8 +548,9 @@ enum PaletteApplications {
     }
 }
 
-/// The palette's row badge (3.3.5: 18 pt, was a 24 pt tile badge), so a
-/// row is one dense line and the list shows more commands at once.
+/// The palette's rows, Spotlight-sized (3.3.6; 3.3.5 had an 18 pt badge on
+/// 24 pt rows): a 28 pt badge on a 40 pt row.
 private enum PaletteMetrics {
-    static let rowBadge: CGFloat = 18
+    static let rowBadge: CGFloat = 28
+    static let rowHeight: CGFloat = 40
 }

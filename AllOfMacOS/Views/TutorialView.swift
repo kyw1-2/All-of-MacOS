@@ -72,8 +72,8 @@ struct TutorialOverlayView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let pageCount = 3
-    /// A feature's module badge: as tall as its two lines (3.3.5, was 24 pt).
-    private static let featureBadge: CGFloat = 20
+    /// A feature's module squircle: the Workspace tile size (design-336 b.7).
+    private static let featureBadge: CGFloat = AOMIcon.tileBadge
 
     var body: some View {
         ZStack {
@@ -89,9 +89,9 @@ struct TutorialOverlayView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, AOMSpace.x5)
-                .padding(.top, AOMSpace.x5)
-                .padding(.bottom, AOMSpace.x3)
+                .padding(.horizontal, AOMSpace.x6)
+                .padding(.top, AOMSpace.x6)
+                .padding(.bottom, AOMSpace.x4)
                 .transition(.opacity)
                 .id(page)
                 AOMDivider()
@@ -114,22 +114,22 @@ struct TutorialOverlayView: View {
     // MARK: Pages
 
     private func pageTitle(_ title: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
             Text(title)
-                .font(AOMFont.title)
+                .font(AOMFont.heroSentence)
                 .foregroundStyle(AOMColor.text)
                 .accessibilityAddTraits(.isHeader)
             Text(detail)
-                .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                .font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     /// The six tools in the sidebar, each with its module badge.
     private var welcomePage: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             pageTitle("Welcome to All of MacOS", "Six tools that work together, one shortcut away.")
-            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 feature(.capture, "Capture your screen", "Screenshots, recordings and text, with a preview to copy, edit or drag.")
                 feature(.clipboard, "Keep everything you copy", "A searchable clipboard shelf, encrypted on this Mac.")
                 feature(.gestures, "Automate what you repeat", "Turn gestures, keys and mouse buttons into actions.")
@@ -142,13 +142,13 @@ struct TutorialOverlayView: View {
 
     /// Each tool with its module badge, the same identity the Workspace tiles use.
     private func feature(_ tab: AOMMainTab, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: AOMSpace.x2) {
+        HStack(alignment: .top, spacing: AOMSpace.x3) {
             if let module = AOMModule(tab: tab) {
                 AOMModuleBadge(module, size: Self.featureBadge)
             }
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text(title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
-                Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                Text(detail).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -156,7 +156,7 @@ struct TutorialOverlayView: View {
     }
 
     private var permissionsPage: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             pageTitle("Allow what you'll use",
                       "macOS asks you to approve each kind of access in System Settings. AOM only reads whether it was given.")
             // On the overlay's glass: a card group, whose first row draws no divider.
@@ -176,7 +176,6 @@ struct TutorialOverlayView: View {
             } else {
                 // The one verb for opening a permission's pane, as on Workspace.
                 Button("Allow…") { _ = permission.openSettings() }
-                    .controlSize(.small)
                     .help("Opens System Settings › Privacy & Security › \(permission.title)")
                     .accessibilityLabel("Allow \(permission.title) in System Settings")
             }
@@ -184,7 +183,7 @@ struct TutorialOverlayView: View {
     }
 
     private var readyPage: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             pageTitle("You're set", "These shortcuts work from any app. Change them any time in Settings.")
             AOMCardGroup {
                 shortcutRow("Capture an area", symbol: "viewfinder",
@@ -242,9 +241,8 @@ struct TutorialOverlayView: View {
             .keyboardShortcut(.defaultAction)
         }
         // The page's own margin, so Skip and Continue line up with its text.
-        .padding(.horizontal, AOMSpace.x5)
+        .padding(.horizontal, AOMSpace.x6)
         .frame(height: AOMSize.rowDetail + AOMSpace.x1)
-        .controlSize(.small)
     }
 
     private func refresh() {

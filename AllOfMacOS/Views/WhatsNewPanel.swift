@@ -21,8 +21,7 @@ enum WhatsNew {
     }
 
     /// Highlights of the current version, bundled so the panel works offline.
-    /// 3.3.5: the swipe-down and double-swipe changes alter defaults people
-    /// already use; that item says so.
+    /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
         Item(symbol: "wrench.and.screwdriver", title: "69 System Tools",
              detail: "Quick toggles with live state (Dark Mode, Keep Awake, Wi-Fi, mutes, Dock auto-hide, keyboard lock for cleaning), power and session commands, Finder, Dock and screenshot settings, maintenance, an app uninstaller and cleanup scans that only move items to the Trash, clipboard text and developer tools, a speed test and port lookup. A live status strip, favorites and recent tools sit on top.",
@@ -30,8 +29,8 @@ enum WhatsNew {
         Item(symbol: "arrow.up.and.down", title: "Swish double swipes",
              detail: "Swipe up or down, rest until the trackpad taps, and swipe the same way again for the top or bottom half. A swipe down no longer turns into the bottom half when it is long or quick, taking a swipe back to where it started cancels it, and unsnapped windows stay whole on a display.",
              module: .tiling, note: "New default"),
-        Item(symbol: "rectangle.compress.vertical", title: "A compact main window",
-             detail: "12 pt text, a smaller sidebar and toolbar title, a slim setup strip, two-line module tiles, one-line rows in Automation, Clipboard, Settings and Shortcuts, six capture thumbnails a row, and a denser palette, What's New and tour.")
+        Item(symbol: "textformat.size", title: "Standard macOS text and controls",
+             detail: "Every page and Settings use the system text sizes (13 pt body) and regular controls again, with the sidebar following your sidebar size in System Settings. Settings rows put their description under the title, Automation, Window Tiling and Audio rows have room again, Capture shows larger thumbnails, Insights charts the runs of each day, and the palette, What's New and tour are sized like Spotlight and Apple's own panels.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.
@@ -102,10 +101,10 @@ final class WhatsNewPanelController {
 /// per item (module badge, title, optional pill, detail), and the actions.
 /// Floating chrome outside, opaque cards inside, as on every AOM page.
 private struct WhatsNewView: View {
-    /// 3.3.5: 420 → 380 wide, 560 → 500 tall at most (smaller type fits more).
-    static let width: CGFloat = 380
+    /// 3.3.6: 380 → 460 wide, 500 → 600 tall at most, for 13 pt text.
+    static let width: CGFloat = 460
     /// The panel grows with its list up to this height, then the list scrolls.
-    static let maxHeight: CGFloat = 500
+    static let maxHeight: CGFloat = 600
     /// A floor for the measured height (the header, one row and the buttons).
     static let minHeight: CGFloat = 200
 
@@ -125,7 +124,7 @@ private struct WhatsNewView: View {
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+        VStack(alignment: .leading, spacing: AOMSpace.x5) {
             ForEach(sections, id: \.title) { section in
                 // A card group, not `AOMSection`: the section's first-divider
                 // cover is drawn past the card's corners and showed as a
@@ -137,7 +136,7 @@ private struct WhatsNewView: View {
                 }
             }
             Text("Items marked New default change how something you already use behaves; each one says where to turn it off.")
-                .font(AOMFont.caption)
+                .font(AOMFont.callout)
                 .foregroundStyle(AOMColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, AOMSpace.x1)
@@ -146,34 +145,39 @@ private struct WhatsNewView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("What's New")
-                        .font(AOMFont.pageStatus)
+                        .font(AOMFont.heroSentence)
                         .foregroundStyle(AOMColor.text)
                     Text("All of MacOS \(version)")
-                        .font(AOMFont.caption)
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMColor.textSecondary)
                 }
                 Spacer(minLength: AOMSpace.x2)
                 Button(action: close) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(AOMFont.body)
+                        .font(AOMFont.title.weight(.regular))
+                        .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(AOMColor.textSecondary)
                         .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
+                .help("Close")
                 .accessibilityLabel("Close What's New")
             }
             // The whole list when it fits (the panel is then exactly as tall
             // as it), a scroll view once the panel reaches `maxHeight`.
             ViewThatFits(in: .vertical) {
                 list
+                // No scroller: with "Show scroll bars: Always" a legacy
+                // scroller drew a black track on the panel's glass, and
+                // `.hidden` still shows it under that setting; `.never` doesn't.
                 ScrollView { list }
-                    .scrollIndicators(.automatic)
+                    .scrollIndicators(.never)
             }
             HStack(spacing: AOMSpace.x2) {
                 Button("Full Release Notes") {
@@ -184,9 +188,8 @@ private struct WhatsNewView: View {
                     .keyboardShortcut(.defaultAction)
                     .aomPrimaryButton()
             }
-            .controlSize(.small)
         }
-        .padding(AOMSpace.x3)
+        .padding(AOMSpace.x5)
         .frame(width: Self.width)
         .aomFloatingSurface(.panel, radius: AOMRadius.panel)
     }
@@ -198,11 +201,11 @@ private struct WhatsNewView: View {
 private struct WhatsNewRow: View {
     let item: WhatsNew.Item
     var showsDivider = true
-    /// The row's module badge: one title line tall (3.3.5, was 24 pt).
-    static let badge: CGFloat = 18
+    /// The row's module squircle: the Workspace tile size (design-336 b.7).
+    static let badge: CGFloat = AOMIcon.tileBadge
 
     var body: some View {
-        HStack(alignment: .top, spacing: AOMSpace.x2) {
+        HStack(alignment: .top, spacing: AOMSpace.x3) {
             AOMModuleBadge(symbol: item.symbol, hue: item.module?.hue ?? AOMColor.accent, size: Self.badge)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
@@ -213,16 +216,16 @@ private struct WhatsNewRow: View {
                     if let note = item.note { AOMStatusPill(note, tone: .info) }
                 }
                 Text(item.detail)
-                    .font(AOMFont.caption)
+                    .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.vertical, AOMSpace.x3)
         .overlay(alignment: .top) {
-            if showsDivider { AOMRowDivider(inset: AOMSpace.rowInset + Self.badge + AOMSpace.x2) }
+            if showsDivider { AOMRowDivider(inset: AOMSpace.rowInset + Self.badge + AOMSpace.x3) }
         }
         .accessibilityElement(children: .combine)
     }
