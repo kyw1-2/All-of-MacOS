@@ -415,9 +415,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: AppAudioMixerView(service: self))
         if let screen = NSScreen.main {
-            // 3.3.3: a little taller for the preset row and the output effects
-            // (they scroll with the controls), never taller than the screen.
-            let size = CGSize(width: 640, height: max(620, min(760, screen.visibleFrame.height - 48)))
+            let size = CGSize(width: 640, height: 700)
             let frame = NSRect(origin: screen.visibleFrame.origin, size: size)
                 .offsetBy(dx: screen.visibleFrame.width - size.width - 24,
                           dy: (screen.visibleFrame.height - size.height) / 2)
