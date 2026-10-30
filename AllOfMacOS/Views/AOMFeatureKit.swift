@@ -15,38 +15,37 @@ import SwiftUI
 // MARK: - Feature sizes
 
 enum AOMFeatureSize {
-    /// Filter chips (3.3.5: 26 → 22, one small control high).
-    static let chip: CGFloat = 22
-    /// `AOMCompactEmptyState`: its glyph and the width its message wraps at.
-    static let emptyGlyph: CGFloat = 24
-    static let emptyMessageWidth: CGFloat = 340
+    /// Filter chips: one regular control high (design-336 b.6; 22 in 3.3.5).
+    static let chip: CGFloat = 28
+    /// `AOMCardEmptyRow`: the glyph frame (design-336 b.9: 20 pt).
+    static let emptyRowGlyph: CGFloat = 20
     /// Pinboard and filter dots inside chips.
-    static let chipDot: CGFloat = 7
+    static let chipDot: CGFloat = 8
     /// App icons inside chips.
-    static let chipIcon: CGFloat = 14
+    static let chipIcon: CGFloat = 16
     /// A source-app icon in a list row, a preview header or a menu item.
-    static let appIcon: CGFloat = 16
+    static let appIcon: CGFloat = 20
     /// Colour swatches people pick from (pinboard colours, annotation colours).
     static let swatch: CGFloat = 20
     /// The outline that marks the selected swatch.
     static let swatchRing: CGFloat = 2
-    /// Usage bars in lists (Insights › Most used).
-    static let meter: CGFloat = 4
+    /// Usage bars in lists (Insights › Most used): 6 pt, readable beside 13 pt text.
+    static let meter: CGFloat = 6
     /// A preview pane beside a list (Clipboard): shown from this page width,
     /// sized 42% of it within this range.
     static let previewPaneMinimumWidth: CGFloat = 640
-    static let previewPane: ClosedRange<CGFloat> = 300...420
+    static let previewPane: ClosedRange<CGFloat> = 320...460
     static let previewPaneShare: CGFloat = 0.42
     /// The picture area of a gallery card (Clipboard › Gallery).
-    static let galleryPreview: CGFloat = 112
+    static let galleryPreview: CGFloat = 144
     /// Finder file icons in previews and cards.
-    static let fileIcon: CGFloat = 40
+    static let fileIcon: CGFloat = 48
     static let fileIconLarge: CGFloat = 64
     /// Fixed-width sheets: a name and a colour; a short text or form.
-    static let sheetCompact: CGFloat = 380
-    static let sheetStandard: CGFloat = 460
+    static let sheetCompact: CGFloat = 420
+    static let sheetStandard: CGFloat = 500
     /// Shortcut recorder buttons keep one width while their label changes.
-    static let recorderMinWidth: CGFloat = 130
+    static let recorderMinWidth: CGFloat = 150
     /// A short multi-line field inside a card (a list of bundle IDs).
     static let textEditorShort: CGFloat = 90
     /// A sheet that shows code or configuration (MCP connection snippets).
@@ -96,7 +95,7 @@ enum AOMFeatureSize {
     /// Numeric fields in an editor row (time, duration).
     static let numberField: CGFloat = 70
     /// Key pickers in Settings (Hyper key source, remap from / to).
-    static let keyPicker: CGFloat = 170
+    static let keyPicker: CGFloat = 190
     /// Quick Access: the Copy / Save pills and the inset of the hover controls
     /// (the capture overlay's hit areas; keep these exact).
     static let quickAccessPill: CGFloat = 110
@@ -107,7 +106,7 @@ enum AOMFeatureSize {
     static let historySearchField: CGFloat = 190
     static let historyFilterStrip: CGFloat = 470
     /// The ⌘K palette's height (the width is `AOMSize.paletteWidth`).
-    static let paletteHeight: CGFloat = 420
+    static let paletteHeight: CGFloat = 480
     /// The window switcher's thumbnails.
     static let switcherThumbnail = CGSize(width: 176, height: 112)
     /// The Copy Text HUD.
@@ -121,11 +120,11 @@ enum AOMFeatureSize {
     static let windowPickerMin = CGSize(width: 520, height: 360)
     static let windowPickerThumbnail: CGFloat = 96
     /// The welcome overlay.
-    static let welcomeWidth: CGFloat = 500
+    static let welcomeWidth: CGFloat = 580
     /// Capture's mode buttons (Area, Window, Record…) in the launchpad grid.
-    static let modeButtonMin: CGFloat = 96
+    static let modeButtonMin: CGFloat = 112
     /// Small round badges on a capture thumbnail (Video, Pinned).
-    static let thumbnailBadge: CGFloat = 16
+    static let thumbnailBadge: CGFloat = 20
 }
 
 // MARK: - Feature colours
@@ -258,68 +257,61 @@ struct AOMFilterChip: View {
     }
 }
 
-// MARK: - Compact empty state
+// MARK: - Empty row inside a card
 
-/// A small empty state for page content (3.3.5): a 24 pt glyph, a 13 pt title,
-/// one line or two of message and small buttons, placed near the top of the
-/// space instead of centred in it. `ContentUnavailableView` draws a ~40 pt
-/// glyph and title-size text that ignore the page's type scale.
-struct AOMCompactEmptyState<Actions: View>: View {
-    let title: String
-    let systemImage: String
+/// An empty state inside a card (design-336 b.9): a 20 pt hierarchical glyph,
+/// one sentence in Body secondary and at most one button, leading-aligned in
+/// a 48 pt row. An optional detail line (Callout) says what makes the row
+/// fill. A page with nothing in it uses `AOMEmptyState` instead.
+struct AOMCardEmptyRow<Action: View>: View {
     let message: String
-    /// Centre in the available space (narrow columns, sheets) instead of
-    /// sitting a short way below the top edge.
-    var centered = false
-    @ViewBuilder var actions: Actions
+    var detail: String?
+    let systemImage: String
+    @ViewBuilder var action: Action
 
-    init(_ title: String, systemImage: String, message: String, centered: Bool = false,
-         @ViewBuilder actions: () -> Actions = { EmptyView() }) {
-        self.title = title
-        self.systemImage = systemImage
+    init(_ message: String, detail: String? = nil, systemImage: String,
+         @ViewBuilder action: () -> Action = { EmptyView() }) {
         self.message = message
-        self.centered = centered
-        self.actions = actions()
+        self.detail = detail
+        self.systemImage = systemImage
+        self.action = action()
     }
 
     var body: some View {
-        VStack(spacing: AOMSpace.x2) {
+        HStack(spacing: AOMSpace.x3) {
             Image(systemName: systemImage)
-                .font(.system(size: AOMFeatureSize.emptyGlyph, weight: .regular))
+                .font(AOMFont.body)
+                .imageScale(.large)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(AOMColor.textTertiary)
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMFeatureSize.emptyRowGlyph)
                 .accessibilityHidden(true)
-            VStack(spacing: AOMSpace.x0_5) {
-                Text(title)
-                    .font(AOMFont.bodyEmphasis)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(message)
-                    .font(AOMFont.caption)
+                    .font(AOMFont.body)
                     .foregroundStyle(AOMColor.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textTertiary)
+                }
             }
-            .frame(maxWidth: AOMFeatureSize.emptyMessageWidth)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: AOMSpace.x2) { actions }
-                VStack(spacing: AOMSpace.x1) { actions }
-            }
-            .controlSize(.small)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            action
         }
-        .padding(AOMSpace.x4)
-        .padding(.top, centered ? 0 : AOMSpace.x8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: centered ? .center : .top)
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x2)
+        .frame(minHeight: AOMSize.rowDetail)
         .accessibilityElement(children: .contain)
     }
 }
 
-// MARK: - Inline setting row
+// MARK: - Described setting row
 
-/// A setting row whose description sits beside the title when both fit
-/// (3.3.5), and under it only when they don't: the Settings pane rows'
-/// layout, for panes with many described rows (Shortcuts, Permissions).
+/// A setting row with a description under its title, as System Settings
+/// draws one (design-336 #74: 48 pt with a description, the control
+/// trailing). 3.3.5 squeezed the description beside the title on 26 pt rows.
 /// Geometry matches `AOMSettingRow` (symbol column, insets, top divider).
 struct AOMInlineSettingRow<Control: View>: View {
     let title: String
@@ -338,22 +330,18 @@ struct AOMInlineSettingRow<Control: View>: View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             if let symbol {
                 Image(systemName: symbol)
+                    .font(AOMFont.body)
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row)
                     .accessibilityHidden(true)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
-                    Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
+                if !detail.isEmpty {
                     Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                }
-                .lineLimit(1)
-                .fixedSize()
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
-                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
-                        .lineLimit(1).truncationMode(.tail)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .layoutPriority(1)
@@ -363,8 +351,8 @@ struct AOMInlineSettingRow<Control: View>: View {
                 .fixedSize()
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: AOMSize.rowStandard)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .frame(minHeight: detail.isEmpty ? AOMSize.rowStandard : AOMSize.rowDetail)
         .overlay(alignment: .top) {
             AOMRowDivider(inset: symbol == nil ? AOMSpace.rowInset : AOMSpace.rowSymbolInset)
         }
