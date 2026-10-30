@@ -2,13 +2,15 @@
 
 Fixes for the three 3.3.2 audit reports of 2026-10-29 (the main report, the Swish REA comparison, and the Swish deep report with its CleanShot X, BetterTouchTool and Paste appendix), and a redesign of the main window. docs/release-3.3.3-audit-resolution.md maps every audit ID to its fix or says why it is open; docs/window-snap-3.3.3.md has the gesture details. Backups cover every new setting; the audio diagnostics reset request and the recording camera and microphone stay out on purpose. Nothing below was tried on a real trackpad, MIDI controller, HomePod or in a real recording; the last section lists what still needs that.
 
+Tests: the full suite ran once on the integrated tree: 1,614 tests, 3 skipped (environment-dependent), 1 failure. The failing case (`TitleBarSnapTests.testMovingToANewZoneKeepsTheGestureAlive`) assumed one gesture per touch; it now pins the multi-motion pause off and passed when re-run alone. Tests that had passed were not re-run.
+
 ### UI redesign
 
 - One token file (`AOMTokens.swift`, 4 pt grid) and one opaque card, section, row, page header, notice and status pill for every page. Liquid Glass only on the toolbar, sidebar, ⌘K palette and floating chrome (macOS 26+, material before), following Reduce Transparency, Increase Contrast and Reduce Motion.
 - Workspace: a hero with running, paused, blocked and setup states, Needs attention, module tiles with their main switch, quick actions, recent activity and a first-run checklist.
 - Sidebar: search at the top, no footer switch; new Controls › Pause AOM / Resume AOM and Window › Diagnostics Console / Touch Visualizer commands.
-- Window Tiling: the Trackpad Gestures card is now six sections (Title-bar snap, Gestures, Grid & layout, Keyboard, Dock & menu bar, Advanced) with captions moved into ⓘ; every setting is kept.
-- Automation shows a notice when Accessibility or Input Monitoring is missing or AOM is paused, and a new empty state. Audio has the App Audio switch in its header. Settings has section titles above cards and groups General's ten loose rows. System Tools has a page header with the tool count. What's New uses the same sections, badges and pills.
+- Window Tiling: the Trackpad Gestures card is now seven sections (Title-bar snap, Gestures, Modifiers, Grid & layout, Keyboard, Dock & menu bar, Advanced) with captions moved into ⓘ; every setting is kept.
+- Automation shows a notice when Accessibility or Input Monitoring is missing or AOM is paused, and a new empty state. Audio has the App Audio switch in its header. Settings has section titles above cards and groups General's loose rows under Mission Control, Title-Bar Snap, Title-Bar Gestures and Dock & Menu Bar. System Tools has a page header with the tool count. What's New uses the same sections, badges and pills.
 
 ### Swish title bar
 
