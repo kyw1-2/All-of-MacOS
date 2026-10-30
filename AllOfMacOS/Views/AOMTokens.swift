@@ -1,7 +1,9 @@
 import AppKit
 import SwiftUI
 
-// AOM 3.3.3 design tokens (work/ux-refs-3.3.3.md §c.1–c.9).
+// AOM 3.3.3 design tokens (work/ux-refs-3.3.3.md §c.1–c.9), compact density
+// since 3.3.5: 12 pt body like Xcode, Finder and Raycast settings, so a page
+// shows about a third more at once (aom-335-kit/tokens-335.md).
 //
 // This is the one file allowed raw numbers and colours. Views use the roles
 // below (`AOMSpace.pageMargin`, `AOMFont.section`, `AOMColor.surface`,
@@ -43,16 +45,16 @@ enum AOMSpace {
     static let x10: CGFloat = 40
     static let x12: CGFloat = 48
 
-    // System Settings density: 16 pt margins, 20 pt between sections, 12 pt
-    // inside cards, 8 pt between tiles.
+    // Compact density (3.3.5): 16 pt margins, 14 pt between sections, 10 pt
+    // inside cards, 6 pt between tiles and under section titles.
     static let pageMargin = x4
-    static let sectionGap = x5
-    static let titleGap = x2
-    static let cardPadding = x3
-    static let tileGap = x2
-    static let rowInset = x3
-    /// Divider inset for rows with a leading 20 pt symbol: 12 + 20 + 8.
-    static let rowSymbolInset = x3 + AOMIcon.row + x2
+    static let sectionGap: CGFloat = 14
+    static let titleGap: CGFloat = 6
+    static let cardPadding: CGFloat = 10
+    static let tileGap: CGFloat = 6
+    static let rowInset: CGFloat = 10
+    /// Divider inset for rows with a leading 16 pt symbol: 10 + 16 + 8.
+    static let rowSymbolInset = rowInset + AOMIcon.row + x2
 
     // 3.2 names, remapped onto the grid (c.1 migration table).
     /// was 4
@@ -61,34 +63,34 @@ enum AOMSpace {
     static let xs = x2
     /// was 10
     static let s = x3
-    /// was 13
-    static let m = x3
-    /// was 18
-    static let l = x4
-    /// was 24
-    static let xl = x6
+    /// was 13 (12 until 3.3.4)
+    static let m: CGFloat = 10
+    /// was 18 (16 until 3.3.4)
+    static let l: CGFloat = 14
+    /// was 24 (24 until 3.3.4)
+    static let xl = x5
 }
 
 // MARK: - Layout sizes (c.1)
 
 enum AOMSize {
-    /// Global sidebar (d.6: 200 minimum, 220 ideal, 260 maximum).
-    static let sidebarMin: CGFloat = 200
-    static let sidebarIdeal: CGFloat = 220
-    static let sidebarMax: CGFloat = 260
+    /// Global sidebar: narrower since 3.3.5 (12 pt labels need less room).
+    static let sidebarMin: CGFloat = 176
+    static let sidebarIdeal: CGFloat = 192
+    static let sidebarMax: CGFloat = 240
     /// Row heights: dense list or table, standard single line, title + one
     /// line (System Settings: a 24 pt control or a title over a caption with
     /// 4 pt above and below).
-    static let rowDense: CGFloat = 28
-    static let rowStandard: CGFloat = 32
-    static let rowDetail: CGFloat = 44
+    static let rowDense: CGFloat = 22
+    static let rowStandard: CGFloat = 26
+    static let rowDetail: CGFloat = 34
     /// Legacy one- and two-line list rows (AOMListRow).
-    static let rowSingle: CGFloat = 30
-    static let rowDouble: CGFloat = 40
+    static let rowSingle: CGFloat = 24
+    static let rowDouble: CGFloat = 34
     /// A two-line row inside a `List`, including the list's own insets
-    /// (`rowDouble` + 6). Used as the list's minimum row height so rows
+    /// (`rowDouble` + 4). Used as the list's minimum row height so rows
     /// inserted at the top (a new copy, a new automation) are never measured short.
-    static let listRowDouble: CGFloat = 46
+    static let listRowDouble: CGFloat = 38
     /// The Automation list column; the editor takes the rest.
     static let listColumnRange: ClosedRange<Double> = 270...380
     static let listColumnIdeal: Double = 312
@@ -101,14 +103,14 @@ enum AOMSize {
     /// One maximum content width for every page, centred.
     static let contentMaxWidth: CGFloat = 1120
     /// Workspace module tiles.
-    static let tileMin: CGFloat = 220
-    static let tileMax: CGFloat = 320
-    /// A Workspace tile: three lines (name, value, status) and the card padding.
-    static let tileHeight: CGFloat = 76
+    static let tileMin: CGFloat = 200
+    static let tileMax: CGFloat = 300
+    /// A Workspace tile: two lines (name, status) and the card padding.
+    static let tileHeight: CGFloat = 52
     /// The ⌘K palette.
-    static let paletteWidth: CGFloat = 640
+    static let paletteWidth: CGFloat = 600
     /// Inline help popover width.
-    static let helpPopoverWidth: CGFloat = 300
+    static let helpPopoverWidth: CGFloat = 280
     /// The one main-window minimum (content size).
     static let windowMinWidth: CGFloat = 980
     static let windowMinHeight: CGFloat = 600
@@ -123,38 +125,39 @@ enum AOMSize {
 
 // MARK: - Type ramp (c.2: macOS text styles)
 
-/// System Settings density: nothing in a normal page is larger than 17 pt.
-/// Sentences in the Workspace hero and in editor titles are Title 2
-/// semibold, page headers Title 3 semibold, section titles Body semibold.
+/// Compact macOS density (3.3.5, like Xcode, Finder and Raycast settings):
+/// body text is 12 pt and nothing in a normal page is larger than 15 pt
+/// (Insights figures 17). Fixed sizes on purpose: the macOS text styles
+/// (`.body` = 13) are what made every page read large.
 enum AOMFont {
-    /// 26/32: large glyphs only (empty states, play badges over media).
-    /// No text uses it; the Workspace hero sentence is `heroSentence`.
+    /// 26 pt bold: large glyphs only (empty-state and thumbnail placeholders).
+    /// No text uses it; the Workspace sentence is `heroSentence`.
     static let hero = Font.largeTitle.weight(.bold)
-    /// 17/22 semibold: the Workspace hero sentence, once per window.
-    static let heroSentence = Font.title2.weight(.semibold)
-    /// 17/22 semibold: onboarding steps, the first-run checklist, editor titles.
-    static let title = Font.title2.weight(.semibold)
-    /// 15/20 semibold: the module page header sentence.
-    static let pageStatus = Font.title3.weight(.semibold)
-    /// 13/16 semibold: section titles ("Needs attention", "Rules").
-    static let section = Font.body.weight(.semibold)
-    /// 13/16 bold: card and tile titles, emphasised row titles.
-    static let headline = Font.headline
-    /// 13/16: rows, sentences, buttons.
-    static let body = Font.body
-    static let bodyEmphasis = Font.body.weight(.semibold)
-    /// 12/15: one-line descriptions inside cards.
-    static let callout = Font.callout
+    /// 15/19 semibold: the Workspace status sentence, once per window.
+    static let heroSentence = Font.system(size: 15, weight: .semibold)
+    /// 15/19 semibold: onboarding steps, editor titles.
+    static let title = Font.system(size: 15, weight: .semibold)
+    /// 13/16 semibold: the module page header sentence.
+    static let pageStatus = Font.system(size: 13, weight: .semibold)
+    /// 12/15 semibold: section titles ("Needs attention", "Rules").
+    static let section = Font.system(size: 12, weight: .semibold)
+    /// 12/15 semibold: card and tile titles, emphasised row titles.
+    static let headline = Font.system(size: 12, weight: .semibold)
+    /// 12/15: rows, sentences, buttons.
+    static let body = Font.system(size: 12)
+    static let bodyEmphasis = Font.system(size: 12, weight: .semibold)
+    /// 11.5/14: one-line descriptions inside cards.
+    static let callout = Font.system(size: 11.5)
     /// 11/14: metadata (time, counts), section footers of at most 2 lines.
-    static let caption = Font.subheadline
-    /// 10/13 medium: badges and keycaps, never sentences.
-    static let badge = Font.caption.weight(.medium)
+    static let caption = Font.system(size: 11)
+    /// 10/12 medium: badges and keycaps, never sentences.
+    static let badge = Font.system(size: 10, weight: .medium)
     /// Key codes, paths, logs, JSON.
-    static let mono = Font.system(.callout, design: .monospaced)
-    /// Live tile values (Body semibold); any changing number also gets `.monospacedDigit()`.
-    static let metric = Font.body.weight(.semibold).monospacedDigit()
-    /// Large summary figures (Insights): Title 2 semibold, monospaced digits.
-    static let metricLarge = Font.title2.weight(.semibold).monospacedDigit()
+    static let mono = Font.system(size: 11, design: .monospaced)
+    /// Live tile values; any changing number also gets `.monospacedDigit()`.
+    static let metric = Font.system(size: 12, weight: .semibold).monospacedDigit()
+    /// Large summary figures (Insights): 17 pt semibold, monospaced digits.
+    static let metricLarge = Font.system(size: 17, weight: .semibold).monospacedDigit()
 }
 
 // MARK: - Corner radii (c.3: continuous corners everywhere)
@@ -163,13 +166,14 @@ enum AOMRadius {
     /// Keycaps, tiny chips.
     static let keycap: CGFloat = 4
     /// Thumbnails and wells inside cards, tile icon badges; minimum concentric radius.
-    static let control: CGFloat = 6
+    static let control: CGFloat = 5
     /// Layout diagrams and previews inside cards, row hover and selection fills.
-    static let well: CGFloat = 8
-    /// Cards, Workspace tiles, section groups.
-    static let card: CGFloat = 12
+    static let well: CGFloat = 7
+    /// Cards, Workspace tiles, section groups (12 until 3.3.4; smaller cards
+    /// read heavy with a large radius).
+    static let card: CGFloat = 10
     /// ⌘K palette, large HUDs, quick-access overlay, floating panels.
-    static let panel: CGFloat = 20
+    static let panel: CGFloat = 18
 
     // 3.2 names (c.3 migration).
     /// HUDs, toasts and the recording bar (was 16).
@@ -444,23 +448,23 @@ extension View {
 // MARK: - Icons (c.8)
 
 enum AOMIcon {
-    /// Row icon frame at Body.
-    static let row: CGFloat = 20
-    /// Workspace tile badge (control radius), glyph 12 pt semibold.
-    static let tileBadge: CGFloat = 24
-    static let tileGlyph: CGFloat = 12
-    /// Page-header badge (well radius), glyph 14 pt.
-    static let headerBadge: CGFloat = 28
-    static let headerGlyph: CGFloat = 14
-    /// Workspace hero status glyph: its frame and the symbol's point size.
-    static let hero: CGFloat = 28
-    static let heroGlyph: CGFloat = 22
+    /// Row icon frame at Body (12 pt text).
+    static let row: CGFloat = 16
+    /// Workspace tile badge (control radius), glyph 11 pt semibold.
+    static let tileBadge: CGFloat = 22
+    static let tileGlyph: CGFloat = 11
+    /// Page-header badge (well radius), glyph 12 pt.
+    static let headerBadge: CGFloat = 24
+    static let headerGlyph: CGFloat = 12
+    /// Workspace status glyph: its frame and the symbol's point size.
+    static let hero: CGFloat = 20
+    static let heroGlyph: CGFloat = 16
     /// Empty-state glyph.
-    static let empty: CGFloat = 40
-    /// Minimum hit area for icon buttons and tile switches.
-    static let hitArea: CGFloat = 28
+    static let empty: CGFloat = 32
+    /// Minimum hit area for icon buttons and tile switches (a small control).
+    static let hitArea: CGFloat = 22
     /// Status dot inside pills and badges.
-    static let dot: CGFloat = 6
+    static let dot: CGFloat = 5
 }
 
 // MARK: - Dynamic colours
