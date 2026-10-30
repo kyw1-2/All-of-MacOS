@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-// AOM 3.3.3 design tokens (work/ux-refs-3.3.3.md §c.1–c.9), compact density
-// since 3.3.5: 12 pt body like Xcode, Finder and Raycast settings, so a page
-// shows about a third more at once (aom-335-kit/tokens-335.md).
+// AOM design tokens. 3.3.6 (docs/design-3.3.6.md) returns to the macOS text
+// styles (13 pt body) and regular controls after the fixed 12 pt / small
+// controls of 3.3.5 read too small, and spaces pages on an 8 pt rhythm.
 //
 // This is the one file allowed raw numbers and colours. Views use the roles
 // below (`AOMSpace.pageMargin`, `AOMFont.section`, `AOMColor.surface`,
@@ -45,15 +45,15 @@ enum AOMSpace {
     static let x10: CGFloat = 40
     static let x12: CGFloat = 48
 
-    // Compact density (3.3.5): 16 pt margins, 14 pt between sections, 10 pt
-    // inside cards, 6 pt between tiles and under section titles.
-    static let pageMargin = x4
-    static let sectionGap: CGFloat = 14
-    static let titleGap: CGFloat = 6
-    static let cardPadding: CGFloat = 10
-    static let tileGap: CGFloat = 6
-    static let rowInset: CGFloat = 10
-    /// Divider inset for rows with a leading 16 pt symbol: 10 + 16 + 8.
+    // 3.3.6 (design-3.3.6 b.2): 24 pt margins and section gaps, 16 pt inside
+    // cards, 12 pt between tiles (HIG: ~12 pt around bezeled elements).
+    static let pageMargin = x6
+    static let sectionGap = x6
+    static let titleGap = x2
+    static let cardPadding = x4
+    static let tileGap = x3
+    static let rowInset = x3
+    /// Divider inset for rows with a leading 20 pt symbol: 12 + 20 + 8.
     static let rowSymbolInset = rowInset + AOMIcon.row + x2
 
     // 3.2 names, remapped onto the grid (c.1 migration table).
@@ -63,10 +63,10 @@ enum AOMSpace {
     static let xs = x2
     /// was 10
     static let s = x3
-    /// was 13 (12 until 3.3.4)
-    static let m: CGFloat = 10
-    /// was 18 (16 until 3.3.4)
-    static let l: CGFloat = 14
+    /// was 13 (10 in 3.3.5)
+    static let m = x3
+    /// was 18 (14 in 3.3.5)
+    static let l = x4
     /// was 24 (24 until 3.3.4)
     static let xl = x5
 }
@@ -74,23 +74,23 @@ enum AOMSpace {
 // MARK: - Layout sizes (c.1)
 
 enum AOMSize {
-    /// Global sidebar: narrower since 3.3.5 (12 pt labels need less room).
-    static let sidebarMin: CGFloat = 176
-    static let sidebarIdeal: CGFloat = 192
-    static let sidebarMax: CGFloat = 240
-    /// Row heights: dense list or table, standard single line, title + one
-    /// line (System Settings: a 24 pt control or a title over a caption with
-    /// 4 pt above and below).
-    static let rowDense: CGFloat = 22
-    static let rowStandard: CGFloat = 26
-    static let rowDetail: CGFloat = 34
+    /// Global sidebar, sized for the system's medium sidebar rows.
+    static let sidebarMin: CGFloat = 200
+    static let sidebarIdeal: CGFloat = 220
+    static let sidebarMax: CGFloat = 280
+    /// Row heights: dense list or table (the system table row), a grouped-form
+    /// row with a regular control, and a title over a one-line description
+    /// (System Settings).
+    static let rowDense: CGFloat = 24
+    static let rowStandard: CGFloat = 36
+    static let rowDetail: CGFloat = 48
     /// Legacy one- and two-line list rows (AOMListRow).
-    static let rowSingle: CGFloat = 24
-    static let rowDouble: CGFloat = 34
+    static let rowSingle: CGFloat = 28
+    static let rowDouble: CGFloat = 44
     /// A two-line row inside a `List`, including the list's own insets
     /// (`rowDouble` + 4). Used as the list's minimum row height so rows
     /// inserted at the top (a new copy, a new automation) are never measured short.
-    static let listRowDouble: CGFloat = 38
+    static let listRowDouble: CGFloat = 48
     /// The Automation list column; the editor takes the rest.
     static let listColumnRange: ClosedRange<Double> = 270...380
     static let listColumnIdeal: Double = 312
@@ -100,13 +100,15 @@ enum AOMSize {
     static let readableWidth: CGFloat = 760
     /// Readable text (paragraphs, help popovers stay well under this).
     static let readableText: CGFloat = 640
-    /// One maximum content width for every page, centred.
-    static let contentMaxWidth: CGFloat = 1120
-    /// Workspace module tiles.
-    static let tileMin: CGFloat = 200
-    static let tileMax: CGFloat = 300
-    /// A Workspace tile: two lines (name, status) and the card padding.
-    static let tileHeight: CGFloat = 52
+    /// Dashboards and grids fill the detail column up to this, centred beyond.
+    static let contentMaxWidth: CGFloat = 1200
+    /// Workspace module tiles: three columns from 3 × 240 + 2 × 12 pt.
+    static let tileMin: CGFloat = 240
+    static let tileMax: CGFloat = 420
+    /// A Workspace tile: the squircle row (name over status) and the count line.
+    static let tileHeight: CGFloat = 104
+    /// The Workspace side column (Today, This Mac) beside quick actions and activity.
+    static let sideColumn: CGFloat = 340
     /// The ⌘K palette.
     static let paletteWidth: CGFloat = 600
     /// Inline help popover width.
@@ -123,55 +125,53 @@ enum AOMSize {
         CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
 }
 
-// MARK: - Type ramp (c.2: macOS text styles)
+// MARK: - Type ramp (design-3.3.6 b.1: macOS text styles)
 
-/// Compact macOS density (3.3.5, like Xcode, Finder and Raycast settings):
-/// body text is 12 pt and nothing in a normal page is larger than 15 pt
-/// (Insights figures 17). Fixed sizes on purpose: the macOS text styles
-/// (`.body` = 13) are what made every page read large.
+/// The macOS built-in text styles (HIG Typography): Body 13, Callout 12,
+/// Subheadline 11, Headline 13 bold, Title 3 15, Title 2 17, Title 22. Styles,
+/// not fixed sizes, so optical sizing, tracking and the system text-size
+/// settings apply. Nothing in a sentence is below 11 pt.
 enum AOMFont {
     /// 26 pt bold: large glyphs only (empty-state and thumbnail placeholders).
-    /// No text uses it; the Workspace sentence is `heroSentence`.
     static let hero = Font.largeTitle.weight(.bold)
-    /// 15/19 semibold: the Workspace status sentence, once per window.
-    static let heroSentence = Font.system(size: 15, weight: .semibold)
-    /// 15/19 semibold: onboarding steps, editor titles.
-    static let title = Font.system(size: 15, weight: .semibold)
-    /// 13/16 semibold: the module page header sentence.
-    static let pageStatus = Font.system(size: 13, weight: .semibold)
-    /// 12/15 semibold: section titles ("Needs attention", "Rules").
-    static let section = Font.system(size: 12, weight: .semibold)
-    /// 12/15 semibold: card and tile titles, emphasised row titles.
-    static let headline = Font.system(size: 12, weight: .semibold)
-    /// 12/15: rows, sentences, buttons.
-    static let body = Font.system(size: 12)
-    static let bodyEmphasis = Font.system(size: 12, weight: .semibold)
-    /// 11.5/14: one-line descriptions inside cards.
-    static let callout = Font.system(size: 11.5)
-    /// 11/14: metadata (time, counts), section footers of at most 2 lines.
-    static let caption = Font.system(size: 11)
-    /// 10/12 medium: badges and keycaps, never sentences.
-    static let badge = Font.system(size: 10, weight: .medium)
+    /// Title 2 (17) semibold: the Workspace status sentence, once per window.
+    static let heroSentence = Font.title2.weight(.semibold)
+    /// Title 3 (15) semibold: onboarding steps, editor and sheet titles.
+    static let title = Font.title3.weight(.semibold)
+    /// Title 3 (15) semibold: the module page header sentence.
+    static let pageStatus = Font.title3.weight(.semibold)
+    /// Headline (13 bold): section titles ("Needs attention", "Rules").
+    static let section = Font.headline
+    /// Headline (13 bold): card and tile titles, emphasised row titles.
+    static let headline = Font.headline
+    /// Body (13): rows, sentences, buttons.
+    static let body = Font.body
+    static let bodyEmphasis = Font.body.weight(.semibold)
+    /// Callout (12): one-line descriptions, tile status lines.
+    static let callout = Font.callout
+    /// Subheadline (11): metadata (time, counts), section footers.
+    static let caption = Font.subheadline
+    /// Caption (10) medium: badges and keycaps, never sentences.
+    static let badge = Font.caption.weight(.medium)
     /// Key codes, paths, logs, JSON.
-    static let mono = Font.system(size: 11, design: .monospaced)
-    /// Live tile values; any changing number also gets `.monospacedDigit()`.
-    static let metric = Font.system(size: 12, weight: .semibold).monospacedDigit()
-    /// Large summary figures (Insights): 17 pt semibold, monospaced digits.
-    static let metricLarge = Font.system(size: 17, weight: .semibold).monospacedDigit()
+    static let mono = Font.callout.monospaced()
+    /// Live values in rows; any changing number also gets `.monospacedDigit()`.
+    static let metric = Font.body.weight(.semibold).monospacedDigit()
+    /// Title (22) semibold: tile counts and summary figures (Workspace, Insights).
+    static let metricLarge = Font.title.weight(.semibold).monospacedDigit()
 }
 
 // MARK: - Corner radii (c.3: continuous corners everywhere)
 
 enum AOMRadius {
     /// Keycaps, tiny chips.
-    static let keycap: CGFloat = 4
-    /// Thumbnails and wells inside cards, tile icon badges; minimum concentric radius.
-    static let control: CGFloat = 5
+    static let keycap: CGFloat = 5
+    /// Thumbnails and wells inside cards; minimum concentric radius.
+    static let control: CGFloat = 6
     /// Layout diagrams and previews inside cards, row hover and selection fills.
-    static let well: CGFloat = 7
-    /// Cards, Workspace tiles, section groups (12 until 3.3.4; smaller cards
-    /// read heavy with a large radius).
-    static let card: CGFloat = 10
+    static let well: CGFloat = 8
+    /// Cards, Workspace tiles, section groups.
+    static let card: CGFloat = 12
     /// ⌘K palette, large HUDs, quick-access overlay, floating panels.
     static let panel: CGFloat = 18
 
@@ -182,6 +182,9 @@ enum AOMRadius {
     static let bar = card
     /// Tiles and thumbnails inside a card (was 9).
     static let tile = well
+
+    /// Module and status squircles: the app-icon proportion (22.5% of the side).
+    static func squircle(_ size: CGFloat) -> CGFloat { (size * 0.225).rounded() }
 
     /// Inner radius that stays concentric inside `outer` at `inset`, never below `control`.
     static func concentric(_ outer: CGFloat, inset: CGFloat) -> CGFloat { max(control, outer - inset) }
@@ -204,12 +207,18 @@ enum AOMColor {
     static let canvasNSColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.157, alpha: 1) : .white
     }
-    /// Cards, tiles, section groups: grouped section, #F8F8F8 / #313131.
-    static let surface = Color.aomDynamic(light: NSColor(white: 0.973, alpha: 1), dark: NSColor(white: 0.192, alpha: 1),
+    /// Cards, tiles, section groups: #F4F4F6 / #323234, a step stronger than
+    /// 3.3.5's #F8F8F8 so cards read without leaning on the hairline.
+    static let surface = Color.aomDynamic(light: NSColor(srgbRed: 0.957, green: 0.957, blue: 0.965, alpha: 1),
+                                          dark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.204, alpha: 1),
                                           highContrastLight: NSColor(white: 0.985, alpha: 1),
                                           highContrastDark: NSColor(white: 0.17, alpha: 1))
     /// A card under the pointer: the fill shifts, the card never lifts.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(white: 0.950, alpha: 1), dark: NSColor(white: 0.220, alpha: 1))
+    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.929, green: 0.929, blue: 0.937, alpha: 1),
+                                               dark: NSColor(srgbRed: 0.231, green: 0.231, blue: 0.239, alpha: 1))
+    /// Pressed tiles and cards.
+    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.902, green: 0.902, blue: 0.910, alpha: 1),
+                                                 dark: NSColor(srgbRed: 0.267, green: 0.267, blue: 0.275, alpha: 1))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.
@@ -448,23 +457,23 @@ extension View {
 // MARK: - Icons (c.8)
 
 enum AOMIcon {
-    /// Row icon frame at Body (12 pt text).
-    static let row: CGFloat = 16
-    /// Workspace tile badge (control radius), glyph 11 pt semibold.
-    static let tileBadge: CGFloat = 22
-    static let tileGlyph: CGFloat = 11
-    /// Page-header badge (well radius), glyph 12 pt.
-    static let headerBadge: CGFloat = 24
-    static let headerGlyph: CGFloat = 12
-    /// Workspace status glyph: its frame and the symbol's point size.
-    static let hero: CGFloat = 20
-    static let heroGlyph: CGFloat = 16
+    /// Row icon frame at Body (13 pt text); the glyph takes the row's text style.
+    static let row: CGFloat = 20
+    /// Workspace tile and quick-action squircle, glyph 16 pt semibold.
+    static let tileBadge: CGFloat = 32
+    static let tileGlyph: CGFloat = 16
+    /// Page-header squircle, glyph 20 pt.
+    static let headerBadge: CGFloat = 40
+    static let headerGlyph: CGFloat = 20
+    /// Workspace status squircle and its glyph.
+    static let hero: CGFloat = 40
+    static let heroGlyph: CGFloat = 22
     /// Empty-state glyph.
-    static let empty: CGFloat = 32
-    /// Minimum hit area for icon buttons and tile switches (a small control).
-    static let hitArea: CGFloat = 22
+    static let empty: CGFloat = 40
+    /// Minimum hit area for icon buttons (the default macOS control, HIG).
+    static let hitArea: CGFloat = 28
     /// Status dot inside pills and badges.
-    static let dot: CGFloat = 5
+    static let dot: CGFloat = 6
 }
 
 // MARK: - Dynamic colours

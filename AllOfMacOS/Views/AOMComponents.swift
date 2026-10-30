@@ -555,11 +555,12 @@ struct AOMModuleBadge: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size >= AOMIcon.headerBadge ? AOMRadius.well : AOMRadius.control,
-                                     style: .continuous)
+        // An app-icon squircle at any size; the glyph is half the side
+        // (16 pt in a 32 pt tile badge, 20 pt in a 40 pt header badge).
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
         let tinted = active && hue != nil
         Image(systemName: symbol)
-            .font(.system(size: size >= AOMIcon.headerBadge ? AOMIcon.headerGlyph : AOMIcon.tileGlyph, weight: .semibold))
+            .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(tinted ? Color.white : AOMColor.textSecondary)
             .frame(width: size, height: size)
