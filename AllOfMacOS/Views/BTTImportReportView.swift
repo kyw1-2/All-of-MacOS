@@ -4,110 +4,159 @@ import SwiftUI
 /// approximately and why, and what was skipped, with BTT names and IDs.
 /// Presented as the accessory of the import review alert by
 /// `AppState.reviewCompatiblePresetImport(from:)`.
+///
+/// Layout (e.2): the summary with an ⓘ, at most two notices, then one section
+/// per group: its title with a status pill for the count above an opaque card
+/// of entry rows. Each group collapses from its title.
 struct BTTImportReportView: View {
     let report: BTTPresetImport.Report
     var namedTriggerCollisions: [String] = []
     @State private var collapsed: Set<BTTPresetImport.Entry.Group> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
             header
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     ForEach(BTTPresetImport.Entry.Group.allCases) { group in
                         let entries = report.entries(in: group)
                         if !entries.isEmpty { section(group, entries) }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, AOMSpace.x1)
             }
         }
-        .frame(minWidth: 560, minHeight: 360)
+        .frame(minWidth: AOMEditorSize.importReport.width, minHeight: AOMEditorSize.importReport.height)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("BetterTouchTool import report")
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
             if let name = report.presetName {
-                Text("Preset “\(name)”").font(.headline)
+                Text("Preset “\(name)”")
+                    .font(AOMFont.headline)
+                    .foregroundStyle(AOMColor.text)
             }
-            Text(report.summary).font(.callout)
-            Text("Exact matches keep their BTT enabled state. Approximate matches and every script step are added disabled. Nothing runs during import, and your current preset is kept.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1) {
+                Text(report.summary)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                AOMInfoButton("Exact matches keep their BTT enabled state. Approximate matches and every script step are added disabled. Nothing runs during import, and your current preset is kept.",
+                              topic: "the import")
+            }
             if report.reviewCount > 0 {
-                Label("\(report.reviewCount) item(s) contain scripts, Shortcuts, executable files or app links. Read them before enabling.",
-                      systemImage: "exclamationmark.shield")
-                    .font(.caption).foregroundStyle(.orange)
+                AOMNotice(.warning, "\(report.reviewCount) item(s) contain scripts, Shortcuts, executable files or app links.",
+                          detail: "Read them before enabling.")
             }
             if !namedTriggerCollisions.isEmpty {
-                Label("Named triggers that already exist: \(namedTriggerCollisions.joined(separator: ", ")). Rename or remove duplicates before enabling.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
+                AOMNotice(.warning, "Named triggers that already exist: \(namedTriggerCollisions.joined(separator: ", ")).",
+                          detail: "Rename or remove duplicates before enabling.")
             }
         }
     }
 
     private func section(_ group: BTTPresetImport.Entry.Group, _ entries: [BTTPresetImport.Entry]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                if collapsed.contains(group) { collapsed.remove(group) } else { collapsed.insert(group) }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: collapsed.contains(group) ? "chevron.right" : "chevron.down").font(.caption.weight(.semibold))
-                    Image(systemName: icon(group)).foregroundStyle(tint(group))
-                    Text("\(group.rawValue) (\(entries.count))").font(.subheadline.weight(.semibold))
+        let open = !collapsed.contains(group)
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle(group.rawValue, help: Self.help(group)) {
+                AOMStatusPill("\(entries.count)", tone: Self.tone(group), symbol: Self.symbol(group))
+                Button { toggle(group) } label: {
+                    Image(systemName: "chevron.right")
+                        .imageScale(.small)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(open ? "Hide \(group.rawValue)" : "Show \(group.rawValue)")
+                .accessibilityLabel("\(group.rawValue), \(entries.count) items")
+                .accessibilityValue(open ? "Expanded" : "Collapsed")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(group.rawValue), \(entries.count) items")
-            if !collapsed.contains(group) {
-                ForEach(entries) { entry in row(entry) }
+            if open {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        row(entry, showsDivider: index > 0)
+                    }
+                }
+                .aomCard(padding: 0)
+                .transition(.opacity)
             }
         }
     }
 
-    private func row(_ entry: BTTPresetImport.Entry) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(entry.title).font(.callout.weight(.medium)).lineLimit(2)
+    private func row(_ entry: BTTPresetImport.Entry, showsDivider: Bool) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                Text(entry.title)
+                    .font(AOMFont.body)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(2)
                 if entry.needsReview {
-                    Text("Review").font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange.opacity(0.2)))
-                        .foregroundStyle(.orange)
+                    AOMStatusPill("Review", tone: .warning, symbol: "exclamationmark.shield")
                 }
-                Spacer(minLength: 8)
-                Text(entry.scope).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: AOMSpace.x2)
+                Text(entry.scope)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
             }
             Text("BTT \(entry.kind.rawValue.lowercased()): \(entry.bttName) · \(entry.bttID)")
-                .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
+                .textSelection(.enabled)
             if !entry.detail.isEmpty {
-                Text(entry.detail).font(.caption).foregroundStyle(.secondary)
+                Text(entry.detail)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
             }
             ForEach(Array(entry.reasons.enumerated()), id: \.offset) { _, reason in
-                Text("• " + reason).font(.caption).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text("• " + reason)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x2)
+        .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail, alignment: .leading)
+        .overlay(alignment: .top) { if showsDivider { AOMRowDivider() } }
         .accessibilityElement(children: .combine)
     }
 
-    private func icon(_ group: BTTPresetImport.Entry.Group) -> String {
+    private func toggle(_ group: BTTPresetImport.Entry.Group) {
+        withAnimation(AOMMotion.standard) {
+            if collapsed.contains(group) { collapsed.remove(group) } else { collapsed.insert(group) }
+        }
+    }
+
+    private static func symbol(_ group: BTTPresetImport.Entry.Group) -> String {
         switch group {
         case .imported: return "checkmark.circle.fill"
         case .approximate: return "arrow.triangle.branch"
         case .skipped: return "xmark.circle.fill"
         }
     }
-    private func tint(_ group: BTTPresetImport.Entry.Group) -> Color {
+
+    private static func tone(_ group: BTTPresetImport.Entry.Group) -> AOMTone {
         switch group {
-        case .imported: return .green
-        case .approximate: return .orange
-        case .skipped: return .secondary
+        case .imported: return .success
+        case .approximate: return .warning
+        case .skipped: return .neutral
+        }
+    }
+
+    private static func help(_ group: BTTPresetImport.Entry.Group) -> String {
+        switch group {
+        case .imported:
+            return "Exact matches. They keep their BTT names, notes, app scope and enabled state; script steps still arrive disabled."
+        case .approximate:
+            return "Close matches that AOM can't reproduce exactly. They arrive disabled, and each reason is kept in the trigger's notes."
+        case .skipped:
+            return "BTT triggers and actions with no AOM equivalent, by BTT name and ID. A dropped step stays in its trigger as a disabled placeholder."
         }
     }
 }

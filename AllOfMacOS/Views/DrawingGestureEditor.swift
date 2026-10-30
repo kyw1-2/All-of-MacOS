@@ -207,28 +207,24 @@ struct DrawingSamplesConfiguration: View {
     let save: (String, [[DrawingPoint]], Double, Bool) -> Void
     @State private var showingEditor = false
     var body: some View {
-        GroupBox("Drawing Gesture") {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
-                    if let first = trigger.drawingSamples.first {
-                        DrawingStrokePreview(sample: first).frame(width: 94, height: 82)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(trigger.input.displayName).font(.subheadline.weight(.semibold))
-                        Text("\(trigger.drawingSamples.count) variations · \(Int(trigger.drawingCertainty*100))% certainty")
-                            .font(.caption).foregroundStyle(.secondary)
-                        if trigger.drawingIgnoreDirection {
-                            Text("Direction ignored").font(.caption2).foregroundStyle(.secondary)
-                        }
+        AOMEditorGroup("Drawing gesture", help: "Control + Option + drag to draw. Edit samples, test recognition or adjust certainty.") {
+            HStack(spacing: AOMSpace.x2) {
+                if let first = trigger.drawingSamples.first {
+                    DrawingStrokePreview(sample: first).frame(width: AOMSize.rowDetail * 2 - AOMSpace.x2, height: AOMSize.rowDetail + AOMSpace.x6)
+                }
+                VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    Text(trigger.input.displayName).font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                    Text("\(trigger.drawingSamples.count) variations · \(Int(trigger.drawingCertainty*100))% certainty")
+                        .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    if trigger.drawingIgnoreDirection {
+                        Text("Direction ignored").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                     }
                 }
-                Button { showingEditor = true } label: {
-                    Label("Configure Drawing…", systemImage: "pencil.and.scribble")
-                        .frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent)
-                Text("Control + Option + drag to draw. Edit samples, test recognition or adjust certainty.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }.padding(8)
+            }
+            Button { showingEditor = true } label: {
+                Label("Configure Drawing…", systemImage: "pencil.and.scribble")
+                    .frame(maxWidth: .infinity)
+            }.buttonStyle(.borderedProminent)
         }
         .sheet(isPresented: $showingEditor) {
             DrawingEditorSheet(trigger: trigger, save: save)

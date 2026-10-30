@@ -1,12 +1,15 @@
 import SwiftUI
 
-// 3.3.3 BTT input editors. New file so the views owned by the UI stream stay
-// untouched; see work/integration-333/btt-input.md for where each one goes.
-// Plain Form controls, so the shared design system can restyle them.
+// 3.3.3 BTT input editors in the shared row style (`AOMSettingRow`, ⓘ help
+// instead of captions). Wired by integ-automation: the MIDI fields in the
+// new-trigger sheet, the value binding in the trigger's Options, the stage
+// hysteresis in Settings › Gestures & Triggers › Force Click; see
+// work/integration-333/btt-input.md.
 
 /// Filters for a MIDI trigger, covering every channel-voice message. Replaces
 /// the `systemEventKind == "midi"` block of the trigger editor; the values map
-/// one-to-one onto `SystemTriggerKind.midiMessage`.
+/// one-to-one onto `SystemTriggerKind.midiMessage`. Emits setting rows, so it
+/// sits inside a section card.
 struct MIDITriggerFilterFields: View {
     @Binding var status: Int
     @Binding var channel: Int
@@ -17,8 +20,11 @@ struct MIDITriggerFilterFields: View {
     private var type: MIDIMessageType { MIDIMessageType(rawValue: status) ?? .noteOn }
 
     var body: some View {
-        Picker("Message", selection: $status) {
-            ForEach(MIDIMessageType.allCases) { Text($0.title).tag($0.rawValue) }
+        AOMSettingRow("Message", help: help) {
+            Picker("Message", selection: $status) {
+                ForEach(MIDIMessageType.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            .pickerStyle(.menu)
         }
         .onChange(of: status) { _, newValue in
             let next = MIDIMessageType(rawValue: newValue) ?? .noteOn
@@ -27,25 +33,37 @@ struct MIDITriggerFilterFields: View {
             maximum = next.valueRange.upperBound
             if !next.hasNumber { number = 0 }
         }
-        Stepper("Channel: \(channel == 0 ? "Any" : String(channel))", value: $channel, in: 0...16)
+        AOMSettingRow("Channel") {
+            AOMRowStepper("Channel", value: $channel, in: 0...16, display: channel == 0 ? "Any" : String(channel))
+        }
         if let title = type.numberTitle {
-            Stepper("\(title): \(number < 0 ? "Any" : String(number))", value: $number, in: MIDIMessageType.anyNumber...127)
+            AOMSettingRow(title) {
+                AOMRowStepper(title, value: $number, in: MIDIMessageType.anyNumber...127,
+                              display: number < 0 ? "Any" : String(number))
+            }
         }
         if let title = type.valueTitle {
             let range = type.valueRange
             let step = type == .pitchBend ? 128 : 1
-            Stepper("Minimum \(title.lowercased()): \(minimum)", value: $minimum,
-                    in: range.lowerBound...max(range.lowerBound, min(maximum, range.upperBound)), step: step)
-            Stepper("Maximum \(title.lowercased()): \(maximum)", value: $maximum,
-                    in: min(max(minimum, range.lowerBound), range.upperBound)...range.upperBound, step: step)
+            let low = "Minimum \(title.lowercased())"
+            let high = "Maximum \(title.lowercased())"
+            AOMSettingRow(low) {
+                AOMRowStepper(low, value: $minimum,
+                              in: range.lowerBound...max(range.lowerBound, min(maximum, range.upperBound)),
+                              step: step, display: String(minimum))
+            }
+            AOMSettingRow(high) {
+                AOMRowStepper(high, value: $maximum,
+                              in: min(max(minimum, range.lowerBound), range.upperBound)...range.upperBound,
+                              step: step, display: String(maximum))
+            }
         }
-        Text(help).font(.caption).foregroundStyle(.secondary)
     }
 
     private var help: String {
         switch type {
         case .noteOn, .noteOff: return "Note On with velocity 0 counts as Note Off. Choose Any to react to every note."
-        case .controlChange: return "Controller value 0–127. Turn on a value binding below to drive volume or brightness with it."
+        case .controlChange: return "Controller value 0–127. To drive volume or brightness with it, turn on Value Binding in the automation's Options."
         case .programChange: return "Fires when the device selects this program (Any = every program)."
         case .channelPressure: return "Aftertouch for the whole channel, 0–127."
         case .polyPressure: return "Aftertouch of one key, 0–127."
@@ -54,8 +72,10 @@ struct MIDITriggerFilterFields: View {
     }
 }
 
-/// The value-binding section of the trigger editor. Shows nothing for inputs
-/// that cannot drive a value, so it can be placed under every trigger.
+/// The value-binding rows of the trigger editor. Shows nothing for inputs
+/// that cannot drive a value, so it can be placed under every trigger. The
+/// switch comes first; its dependent rows are indented and stay visible but
+/// disabled while it is off (e.3).
 struct ContinuousValueBindingEditor: View {
     @Binding var binding: ContinuousValueBinding?
     let input: TriggerInput
@@ -71,37 +91,51 @@ struct ContinuousValueBindingEditor: View {
 
     var body: some View {
         if ContinuousValueBinding.supports(input) {
-            Toggle("Drive a value instead of running actions", isOn: Binding(
-                get: { binding != nil },
-                set: { binding = $0 ? (binding ?? ContinuousValueBinding()) : nil }))
-            if let current = binding {
-                Picker("Target", selection: field(\.target)) {
-                    ForEach(ContinuousValueBinding.Target.allCases) { Text($0.title).tag($0) }
+            AOMToggleRow("Drive a value instead of running actions",
+                         help: "The input sets the system volume, an app's volume or the display brightness directly, through the range and curve below. While this is on, the trigger's actions don't run.",
+                         isOn: Binding(
+                            get: { binding != nil },
+                            set: { binding = $0 ? (binding ?? ContinuousValueBinding()) : nil }))
+            let current = binding ?? ContinuousValueBinding()
+            Group {
+                AOMSettingRow("Target", indent: true, help: current.target.help) {
+                    Picker("Target", selection: field(\.target)) {
+                        ForEach(ContinuousValueBinding.Target.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
                 }
-                Text(current.target.help).font(.caption).foregroundStyle(.secondary)
                 if current.target == .appVolume {
-                    TextField("App bundle ID (empty = frontmost app)", text: field(\.appBundleID))
+                    AOMSettingRow("App", indent: true,
+                                  help: "The app's bundle ID, such as com.apple.Music. Leave it empty to follow the frontmost app.") {
+                        TextField("App bundle ID (empty = frontmost app)", text: field(\.appBundleID))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: AOMEditorSize.rowField)
+                    }
                 }
                 if isScroll {
-                    slider("Sensitivity", field(\.scrollSensitivity), in: 0.05...2, format: { String(format: "%.2f", $0) })
-                    Text("Scrolling moves the value; Scroll Up raises it when you scroll up, Scroll Down when you scroll down.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    slider("Sensitivity", field(\.scrollSensitivity), in: 0.05...2, format: { String(format: "%.2f", $0) },
+                           help: "Scrolling moves the value; Scroll Up raises it when you scroll up, Scroll Down when you scroll down.")
                 } else {
                     slider("Input from", field(\.inputMinimum), in: 0...1, format: Self.percent)
                     slider("Input to", field(\.inputMaximum), in: 0...1, format: Self.percent)
                 }
                 slider("Output from", field(\.outputMinimum), in: 0...1, format: Self.percent)
                 slider("Output to", field(\.outputMaximum), in: 0...1, format: Self.percent)
-                Picker("Curve", selection: field(\.curve)) {
-                    ForEach(ContinuousValueBinding.Curve.allCases) { Text($0.title).tag($0) }
+                AOMSettingRow("Curve", indent: true) {
+                    Picker("Curve", selection: field(\.curve)) {
+                        ForEach(ContinuousValueBinding.Curve.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
                 }
-                Toggle("Invert", isOn: field(\.inverted))
+                AOMToggleRow("Invert", indent: true, isOn: field(\.inverted))
                 if isPressure {
-                    Toggle("Keep the strongest press after letting go", isOn: field(\.holdPeak))
+                    AOMToggleRow("Keep the strongest press after letting go", indent: true, isOn: field(\.holdPeak))
                 }
-                if let problem = current.problem(for: input) {
-                    Text(problem).font(.caption).foregroundStyle(.red)
-                }
+            }
+            .disabled(binding == nil)
+            .opacity(binding == nil ? 0.55 : 1)
+            if let problem = binding?.problem(for: input) {
+                AOMEditorNote(problem, tone: .danger).aomRowInset()
             }
         }
     }
@@ -109,11 +143,15 @@ struct ContinuousValueBindingEditor: View {
     private static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded())) %" }
 
     private func slider(_ title: String, _ value: Binding<Double>, in range: ClosedRange<Double>,
-                        format: @escaping (Double) -> String) -> some View {
-        HStack {
-            Text(title)
-            Slider(value: value, in: range)
-            Text(format(value.wrappedValue)).monospacedDigit().frame(minWidth: 48, alignment: .trailing)
+                        format: @escaping (Double) -> String, help: String? = nil) -> some View {
+        AOMSettingRow(title, indent: true, help: help) {
+            HStack(spacing: AOMSpace.x2) {
+                Slider(value: value, in: range)
+                    .frame(width: AOMEditorSize.rowSlider)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(format(value.wrappedValue))
+                AOMRowValue(format(value.wrappedValue))
+            }
         }
     }
 
@@ -140,18 +178,29 @@ enum BTTInputTriggerKinds {
     }
 }
 
-/// Settings row for the stage hysteresis (Trackpad / Force Touch settings).
+/// Settings row for the stage hysteresis (Settings › Gestures & Triggers ›
+/// Force Click). A grouped-form row: label with its ⓘ, then the slider and
+/// its value.
 struct ForceTouchStageSettingsRow: View {
     @AppStorage(PressureStageTracker.hysteresisKey) private var hysteresis = PressureStageTracker.defaultHysteresis
+
+    private var value: String { String(format: "%.2f", hysteresis) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Force Touch stage hysteresis")
+        LabeledContent {
+            HStack(spacing: AOMSpace.x2) {
                 Slider(value: $hysteresis, in: PressureStageTracker.hysteresisRange)
-                Text(String(format: "%.2f", hysteresis)).monospacedDigit()
+                    .frame(width: AOMEditorSize.rowSlider)
+                    .accessibilityLabel("Force Touch stage hysteresis")
+                    .accessibilityValue(value)
+                AOMRowValue(value)
             }
-            Text("How far the pressure must ease off before a stage can fire again. Stage 2 needs Force Click and haptic feedback turned on in Trackpad settings.")
-                .font(.caption).foregroundStyle(.secondary)
+        } label: {
+            HStack(spacing: AOMSpace.x1) {
+                Text("Force Touch stage hysteresis")
+                AOMInfoButton("How far the pressure must ease off before a stage can fire again. Stage 2 needs Force Click and haptic feedback turned on in Trackpad settings.",
+                              topic: "Force Touch stage hysteresis")
+            }
         }
     }
 }

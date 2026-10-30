@@ -157,12 +157,17 @@ struct ModernGesturesWorkspace: View {
         .onAppear {
             reconcileSelection()
             showInputSettings = selectedTrigger?.actions.isEmpty == true
+            applyPreviewEditorHook()
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-add-midi-trigger") {
+                presentAddTrigger(.otherTriggers)
+            }
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
             expandedActionIDs.removeAll()
             showInputSettings = selectedTrigger?.actions.isEmpty == true
             showOptions = false
+            applyPreviewEditorHook()
         }
         .onDeleteCommand { if let trigger = selectedTrigger { pendingDeletion = trigger } }
     }
@@ -387,7 +392,8 @@ struct ModernGesturesWorkspace: View {
     @ViewBuilder private func editorPane(compact: Bool) -> some View {
         if let current = selectedTrigger {
             ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.l) {
+                // e.1: section title → card → footer, 24 pt apart.
+                VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     if compact {
                         Button { compactShowsEditor = false } label: {
                             Label("All Automations", systemImage: "chevron.left")
@@ -401,12 +407,13 @@ struct ModernGesturesWorkspace: View {
                     optionsSection(current)
                 }
                 .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
-                .padding(.horizontal, AOMSpace.l)
-                .padding(.top, AOMSpace.l)
-                .padding(.bottom, AOMSpace.xl)
+                .padding(.horizontal, AOMSpace.pageMargin)
+                .padding(.top, AOMSpace.x4)
+                .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(AOMTheme.workspace)
+            .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
+            .background(AOMColor.canvas)
             .id(current.id)
         } else {
             ContentUnavailableView("No Automation Selected", systemImage: "bolt",
@@ -416,16 +423,15 @@ struct ModernGesturesWorkspace: View {
 
     /// Name, App scope, Enabled — and the item menu.
     private func editorHeader(_ trigger: Trigger) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.s) {
-            HStack(spacing: AOMSpace.s - 2) {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            HStack(spacing: AOMSpace.x2) {
                 if editingName {
                     TextField("Name", text: Binding(
                         get: { trigger.name },
                         set: { value in var updated = trigger; updated.name = value; appState.updateTrigger(updated) }),
-                              prompt: Text(trigger.input.displayName).foregroundStyle(AOMTheme.text))
+                              prompt: Text(trigger.input.displayName).foregroundStyle(AOMColor.text))
                         .textFieldStyle(.plain)
-                        .font(AOMType.title1)
-                        .tracking(-0.3)
+                        .font(AOMFont.title)
                         .focused($nameFieldFocused)
                         .onSubmit { editingName = false }
                         .onExitCommand { editingName = false }
@@ -434,9 +440,8 @@ struct ModernGesturesWorkspace: View {
                         .onChange(of: trigger.id) { _, _ in editingName = false }
                 } else {
                     Text(trigger.name.isEmpty ? trigger.input.displayName : trigger.name)
-                        .font(AOMType.title1)
-                        .tracking(-0.3)
-                        .foregroundStyle(trigger.name.isEmpty ? AOMTheme.textSecondary : AOMTheme.text)
+                        .font(AOMFont.title)
+                        .foregroundStyle(trigger.name.isEmpty ? AOMColor.textSecondary : AOMColor.text)
                         .lineLimit(1)
                         .contentShape(Rectangle())
                         .onTapGesture {
@@ -448,7 +453,7 @@ struct ModernGesturesWorkspace: View {
                         .onChange(of: trigger.id) { _, _ in editingName = false }
                 }
                 Menu { triggerMenu(trigger) } label: {
-                    Image(systemName: "ellipsis.circle").font(.system(size: 15))
+                    Image(systemName: "ellipsis.circle").font(AOMFont.section.weight(.regular))
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -456,9 +461,9 @@ struct ModernGesturesWorkspace: View {
                 .help("Pin, duplicate or delete")
                 .accessibilityLabel("More for \(trigger.displayName)")
             }
-            HStack(spacing: AOMSpace.l) {
-                HStack(spacing: AOMSpace.xs) {
-                    Text("Applies to").font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
+            HStack(spacing: AOMSpace.x4) {
+                HStack(spacing: AOMSpace.x2) {
+                    Text("Applies to").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
                     appScopePicker(trigger)
                 }
                 Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
@@ -508,67 +513,56 @@ struct ModernGesturesWorkspace: View {
         .help("App-specific automations override groups; groups override All Applications.")
     }
 
+    /// When: the input as one row in an opaque card; Edit Input opens the
+    /// input's own settings as groups inside the same card.
     private func whenSection(_ trigger: Trigger) -> some View {
-        let tint = GestureVisual.tint(trigger.input.category)
-        return VStack(alignment: .leading, spacing: AOMSpace.xs) {
-            workflowHeading("When", detail: "The input that starts this workflow")
+        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle("When", help: "The input that starts this automation. Edit Input changes it and its own settings; Options tune how it runs.")
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: AOMSpace.s) {
-                    Image(systemName: trigger.input.category.iconName)
-                        .font(.system(size: 19, weight: .regular))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(tint)
-                        .frame(width: 40, height: 40)
-                        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: AOMRadius.tile, style: .continuous))
-                    VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: AOMSpace.x3) {
+                    AOMModuleBadge(symbol: trigger.input.category.iconName, hue: nil, size: AOMIcon.tileBadge)
+                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         Text(trigger.input.category.rawValue)
-                            .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         if case .keyboardShortcut(let shortcut) = trigger.input {
                             AOMShortcutKeys(shortcut: shortcut)
                         } else {
-                            Text(trigger.input.displayName).font(AOMType.headline)
+                            Text(trigger.input.displayName).font(AOMFont.headline).foregroundStyle(AOMColor.text)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if trigger.requiredModifiers != nil {
                             Text("With \(trigger.modifierLabel.isEmpty ? "no modifiers" : trigger.modifierLabel)")
-                                .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         }
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: AOMSpace.x2)
                     Button(showInputSettings ? "Done" : "Edit Input") {
                         withAnimation(AOMMotion.panel) { showInputSettings.toggle() }
                     }
                     .controlSize(.small)
                     .help(showInputSettings ? "Hide input settings" : "Change the input and its settings")
                 }
-                .padding(AOMSpace.s + 2)
+                .padding(.horizontal, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.x3)
+                .frame(minHeight: AOMSize.rowDetail)
                 if showInputSettings {
-                    AOMDivider()
+                    // Its groups draw their own hairline above.
                     TriggerConfigView(trigger: trigger, part: .input)
                         .id(trigger.id)
-                        .padding(AOMSpace.m)
                 }
             }
-            .aomCardStyle(.paper, padding: 0, elevated: false)
+            .aomCard(padding: 0)
         }
     }
 
-    private func workflowHeading(_ title: String, detail: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.xs) {
-            Text(title).font(AOMType.title3)
-            Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary).lineLimit(1)
-        }
-        .accessibilityAddTraits(.isHeader)
-    }
-
+    /// Then: the steps in order, as cards joined by arrows; Test and its
+    /// last result sit at the trailing end of the section title.
     private func doSection(_ trigger: Trigger) -> some View {
         let rows = ActionTree.rows(trigger.actions)
         let runState = runStates[trigger.id] ?? .idle
-        return VStack(alignment: .leading, spacing: AOMSpace.xs) {
-            HStack(alignment: .center, spacing: AOMSpace.xs) {
-                workflowHeading("Then", detail: rows.isEmpty ? "What it does"
-                                : "\(rows.count) step\(rows.count == 1 ? "" : "s"), in order")
-                Spacer(minLength: AOMSpace.xs)
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle("Then", detail: rows.isEmpty ? nil : "\(rows.count) step\(rows.count == 1 ? "" : "s")",
+                            help: "The steps run in order, top to bottom. Test runs them now; each step's options open from its chevron.") {
                 AOMRunStatusView(state: runState)
                 if !trigger.actions.isEmpty {
                     Button { test(trigger) } label: {
@@ -579,35 +573,48 @@ struct ModernGesturesWorkspace: View {
                     .help(ActionTree.problem(trigger.actions) ?? "Run this workflow now")
                 }
             }
+            if trigger.valueBinding != nil, ContinuousValueBinding.supports(trigger.input) {
+                valueBindingNotice
+            }
             if rows.isEmpty {
-                Button { addAction() } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: "plus.circle.fill").font(.system(size: 22)).foregroundStyle(.tint)
-                        Text("Add the first action").font(AOMType.bodyEmphasis)
-                        Text("Shortcuts, window moves, app launches, scripts, captures and more.")
-                            .font(AOMType.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                AOMSection {
+                    Button { addAction() } label: {
+                        HStack(spacing: AOMSpace.x3) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(AOMFont.section)
+                                .foregroundStyle(.tint)
+                                .frame(width: AOMIcon.tileBadge)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                                Text("Add the first action").font(AOMFont.bodyEmphasis).foregroundStyle(AOMColor.text)
+                                Text("Shortcuts, window moves, app launches, scripts, captures and more.")
+                                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: AOMSpace.x2)
+                            Image(systemName: "chevron.right")
+                                .font(AOMFont.caption.weight(.semibold))
+                                .foregroundStyle(AOMColor.textTertiary)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.horizontal, AOMSpace.rowInset)
+                        .frame(minHeight: AOMSize.rowDetail)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 22)
-                    .background(Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AOMTheme.cardRadius, style: .continuous)
-                            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5]))
-                            .foregroundStyle(Color.accentColor.opacity(0.4))
-                    )
-                    .contentShape(Rectangle())
+                    .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.card))
+                    .accessibilityLabel("Add the first action")
                 }
-                .buttonStyle(.plain)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         if index > 0 {
+                            // Centred under the step numbers of the cards it joins.
                             Image(systemName: "arrow.down")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(AOMTheme.textTertiary)
-                                .frame(width: 18, height: 22)
+                                .font(AOMFont.badge)
+                                .foregroundStyle(AOMColor.textTertiary)
+                                .frame(width: AOMIcon.row, height: AOMSpace.x5)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.leading, 14 + CGFloat(row.depth) * 14)
+                                .padding(.leading, AOMSpace.rowInset + CGFloat(row.depth) * AOMSpace.x5)
                                 .accessibilityHidden(true)
                         }
                         actionCard(row: row, index: index, trigger: trigger)
@@ -666,23 +673,47 @@ struct ModernGesturesWorkspace: View {
         )
     }
 
+    /// A value-bound trigger drives its value and never runs its steps
+    /// (SystemTriggerMonitor / TrackpadMonitor), so the steps say so.
+    private var valueBindingNotice: some View {
+        AOMNotice(.info, "Actions don't run while a value binding is on.",
+                  detail: "The input sets the bound value instead. Turn the binding off in Options to run these steps again.") {
+            Button("Show Binding") { withAnimation(AOMMotion.panel) { showOptions = true } }
+        }
+    }
+
+    /// Options: one disclosure row in its own section (e.1 "Advanced"), naming
+    /// what is inside for this input; the groups open in the same card.
     private func optionsSection(_ trigger: Trigger) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            DisclosureGroup(isExpanded: $showOptions) {
+        AOMSection("Options",
+                   help: "How this automation runs. Only the settings that apply to its input are shown.") {
+            AOMDisclosureRows("Advanced", detail: Self.optionsSummary(trigger), isExpanded: $showOptions) {
                 TriggerConfigView(trigger: trigger, part: .options)
                     .id(trigger.id)
-                    .padding(.top, AOMSpace.xs)
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.xs) {
-                    Text("Options").font(AOMType.headline).foregroundStyle(AOMTheme.text)
-                    Text("Execution, modifiers and sensitivity").font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { withAnimation(AOMMotion.panel) { showOptions.toggle() } }
             }
         }
-        .padding(AOMSpace.s + 2)
-        .aomCardStyle(.paper, padding: 0, elevated: false)
+    }
+
+    /// "Execution, modifiers, sensitivity and value binding" for what applies.
+    static func optionsSummary(_ trigger: Trigger) -> String {
+        let category = trigger.input.category
+        var parts = ["Execution"]
+        if category == .trackpad || category == .normalMouse { parts.append("modifiers") }
+        if category == .trackpad { parts.append("sensitivity") }
+        if ContinuousValueBinding.supports(trigger.input) { parts.append("value binding") }
+        guard parts.count > 1, let last = parts.popLast() else { return parts.joined() }
+        return parts.joined(separator: ", ") + " and " + last
+    }
+
+    /// Isolated UI previews can open the editor's input settings, options and
+    /// first step (`--aom-preview-editor-open`), so the inner editors can be
+    /// reviewed in screenshots.
+    private func applyPreviewEditorHook() {
+        guard PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-editor-open"),
+              let trigger = selectedTrigger else { return }
+        showInputSettings = true
+        showOptions = true
+        if let first = ActionTree.rows(trigger.actions).first { expandedActionIDs = [first.id] }
     }
 
     private func test(_ trigger: Trigger) {

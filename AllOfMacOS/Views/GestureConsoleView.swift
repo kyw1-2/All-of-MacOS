@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// The last few gesture log lines in one quiet well (monospaced, a status dot
+/// per line in the level's tone).
 struct GestureConsoleView: View {
     let entries: [GestureLogEntry]
 
@@ -10,54 +12,51 @@ struct GestureConsoleView: View {
     }()
 
     var body: some View {
-        HStack(spacing: 6) {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+        HStack(spacing: AOMSpace.x2) {
             Image(systemName: "terminal.fill")
-                .foregroundStyle(.green)
-                .font(.system(size: 11))
+                .imageScale(.small)
+                .foregroundStyle(AOMColor.textSecondary)
+                .accessibilityHidden(true)
 
             if entries.isEmpty {
                 Text("No gestures detected yet")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .font(AOMFont.mono)
+                    .foregroundStyle(AOMColor.textTertiary)
             } else {
                 let recent = entries.suffix(5)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     ForEach(Array(recent)) { entry in
-                        HStack(spacing: 4) {
+                        HStack(spacing: AOMSpace.x1) {
                             Circle()
                                 .fill(colorForLevel(entry.level))
-                                .frame(width: 5, height: 5)
+                                .frame(width: AOMIcon.dot, height: AOMIcon.dot)
+                                .accessibilityHidden(true)
                             Text(Self.timeFormatter.string(from: entry.timestamp))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AOMColor.textSecondary)
                             Text(entry.message)
                                 .foregroundStyle(colorForLevel(entry.level))
                         }
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(AOMFont.mono)
                         .lineLimit(1)
                     }
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(nsColor: .textBackgroundColor).opacity(0.9))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
-                )
-        )
-        .frame(minWidth: 350, maxWidth: 550)
+        .padding(.horizontal, AOMSpace.x3)
+        .padding(.vertical, AOMSpace.x2)
+        .background(AOMColor.raised, in: shape)
+        .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+        .frame(minWidth: AOMEditorSize.console.lowerBound, maxWidth: AOMEditorSize.console.upperBound)
     }
 
     private func colorForLevel(_ level: LogLevel) -> Color {
         switch level {
-        case .detect:  return .cyan
-        case .fire:    return .green
-        case .action:  return .orange
-        case .noMatch: return Color(nsColor: .tertiaryLabelColor)
-        case .error:   return .red
+        case .detect:  return AOMColor.info
+        case .fire:    return AOMColor.successText
+        case .action:  return AOMColor.warningText
+        case .noMatch: return AOMColor.textTertiary
+        case .error:   return AOMColor.dangerText
         }
     }
 }

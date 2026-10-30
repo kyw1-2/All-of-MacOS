@@ -11,7 +11,7 @@ struct ParityActionForm: View {
     @State private var pinboards: [String] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) { content }
+        VStack(alignment: .leading, spacing: AOMSpace.x2) { content }
     }
 
     @ViewBuilder private var content: some View {
@@ -26,7 +26,7 @@ struct ParityActionForm: View {
             }
             if let transform = TextTransform(rawValue: p.textTransform ?? TextTransform.uppercase.rawValue) {
                 Text("Example: “\(transform.apply("hello world. second LINE"))”")
-                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .font(AOMFont.mono).foregroundStyle(AOMColor.textSecondary)
             }
             note(action.actionType == .transformSelectedText
                  ? "Pastes the result over the selection, then restores your clipboard."
@@ -137,7 +137,7 @@ struct ParityActionForm: View {
                 TextField("Port", value: Binding(get: { p.oscPort ?? 8000 },
                                                  set: { value in save { $0.parameters.oscPort = min(65_535, max(1, value)) } }),
                           format: .number.grouping(.never))
-                    .textFieldStyle(.roundedBorder).frame(width: 80)
+                    .textFieldStyle(.roundedBorder).frame(width: AOMEditorSize.numberField)
             }
             TextField("Address, e.g. /scene/1/go", text: string(\.oscAddress, default: "/aom")).textFieldStyle(.roundedBorder)
             TextField("Arguments, e.g. 1 0.5 \"two words\" true", text: string(\.text, default: "")).textFieldStyle(.roundedBorder)
@@ -188,7 +188,7 @@ struct ParityActionForm: View {
     }
 
     private func note(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        AOMEditorNote(text)
             .onAppear { loadLists() }
     }
 
