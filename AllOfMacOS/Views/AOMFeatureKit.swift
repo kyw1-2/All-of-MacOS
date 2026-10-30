@@ -61,8 +61,10 @@ enum AOMFeatureSize {
     static let barControlHeight: CGFloat = 32
     /// Colour dots in a palette row.
     static let swatchSmall: CGFloat = 16
-    /// Tool and format popovers (Annotate › More Tool Options, Text Format).
+    /// Tool and format popovers (Annotate › More Tool Options).
     static let toolPopoverWidth: CGFloat = 300
+    /// Annotate › Text › Format: wide enough for "Background" beside its menu.
+    static let formatPopoverWidth: CGFloat = 340
     /// Fixed widths for pickers in the editor bars, so the bar doesn't shift
     /// when a selection's name changes length.
     static let barPickerNarrow: CGFloat = 80
@@ -250,6 +252,42 @@ struct AOMFilterChip: View {
         .aomAnimation(.quick, value: selected)
         .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+// MARK: - Card group on glass
+
+/// A titled card of rows for content on glass (popovers, the welcome
+/// overlay): the `AOMSection` look without its first-divider cover, which is
+/// drawn past the card's rounded top corners and shows on glass. The first
+/// row passes `showsDivider: false` instead.
+struct AOMCardGroup<Content: View>: View {
+    var title: String?
+    var footer: String?
+    @ViewBuilder var content: Content
+
+    init(_ title: String? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.footer = footer
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            if let title { AOMSectionTitle(title) }
+            VStack(alignment: .leading, spacing: 0) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .aomCard(padding: 0)
+            if let footer, !footer.isEmpty {
+                Text(footer)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, AOMSpace.x1)
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
