@@ -121,9 +121,9 @@ struct ModernWindowSnappingView: View {
                                 zonesSection
                             }
                             // Grows a little on wide windows so rows wrap less;
-                            // never below 280 pt (3.3.5: narrower, so the
-                            // left column's rows aren't stretched).
-                            .frame(width: min(340, max(280, geometry.size.width * 0.3)))
+                            // never below 320 pt, so the layout gallery's
+                            // diagrams and the zone rows have room at 13 pt.
+                            .frame(width: min(400, max(320, geometry.size.width * 0.33)))
                         }
                     } else {
                         dragSection
@@ -142,7 +142,7 @@ struct ModernWindowSnappingView: View {
                 }
                 .padding(.horizontal, AOMSpace.pageMargin)
                 .padding(.top, AOMSpace.x3)
-                .padding(.bottom, AOMSpace.x6)
+                .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
@@ -561,13 +561,13 @@ struct ModernWindowSnappingView: View {
                         .foregroundStyle(item.ready ? AOMColor.success : AOMColor.warning)
                         .frame(width: AOMIcon.row)
                         .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(item.title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
                         Text(item.detail)
                             .font(AOMFont.caption)
                             .foregroundStyle(AOMColor.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .help(item.detail)
                     .accessibilityElement(children: .ignore)
@@ -576,13 +576,12 @@ struct ModernWindowSnappingView: View {
                     if let fix = item.fix {
                         Button("Open…") { TrackpadReadiness.open(fix) }
                             .buttonStyle(.bordered)
-                            .controlSize(.small)
                             .help("Open the System Settings pane that fixes this")
                             .accessibilityLabel("Open settings for \(item.title)")
                     }
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
-                .padding(.vertical, AOMSpace.x1)
+                .padding(.vertical, AOMSpace.x2)
                 .frame(minHeight: AOMSize.rowDetail)
                 .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowSymbolInset) }
             }
@@ -643,10 +642,10 @@ struct ModernWindowSnappingView: View {
         AOMSection("Tile the front window",
                    help: "Point at a layout to preview it, click to move the frontmost window there right away.",
                    padding: AOMSpace.cardPadding) {
-            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 layoutPreview
                     .frame(height: compact ? TilingGalleryMetrics.previewHeightCompact : TilingGalleryMetrics.previewHeight)
-                Grid(alignment: .leading, horizontalSpacing: AOMSpace.x1, verticalSpacing: AOMSpace.x0_5) {
+                Grid(alignment: .leading, horizontalSpacing: AOMSpace.x2, verticalSpacing: AOMSpace.x2) {
                     ForEach(layoutGroups) { group in
                         GridRow {
                             Text(group.title)
@@ -703,7 +702,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .overlay {
                         Image(systemName: layout == .nextDisplay ? "display.2" : "macwindow")
-                            .font(AOMFont.body.weight(.light))
+                            .font(AOMFont.title.weight(.light))
                             .foregroundStyle(Color.accentColor.opacity(hoveredLayout == nil ? 0.5 : 1))
                     }
                     .frame(width: max(0, region.width), height: max(0, region.height))
@@ -746,14 +745,16 @@ struct ModernWindowSnappingView: View {
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row)
-                // One line (3.3.5): the title, then its detail, which truncates first.
-                Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1).fixedSize()
-                Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                // The title over its detail, a System Settings navigation row.
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
+                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                }
                 Spacer(minLength: AOMSpace.x2)
                 Image(systemName: "chevron.right").imageScale(.small).foregroundStyle(AOMColor.textTertiary)
             }
             .padding(.horizontal, AOMSpace.rowInset)
-            .frame(minHeight: AOMSize.rowStandard)
+            .frame(minHeight: AOMSize.rowDetail)
             .contentShape(Rectangle())
         }
         .buttonStyle(AOMRowButtonStyle(radius: 0))
@@ -844,7 +845,6 @@ struct ModernWindowSnappingView: View {
         HStack(spacing: AOMSpace.x2) {
             Slider(value: value, in: range, step: step)
                 .frame(width: AOMRowControlMetrics.sliderWidth)
-                .controlSize(.small)
                 .accessibilityLabel(label)
                 .accessibilityValue("\(Int(value.wrappedValue.rounded())) points")
             Text("\(Int(value.wrappedValue.rounded())) pt")
@@ -913,13 +913,14 @@ struct ModernWindowSnappingView: View {
 /// them): the screen miniature, the group-name column and a layout's diagram,
 /// in the side column (`compact`) and full width.
 private enum TilingGalleryMetrics {
-    // 3.3.5: a shorter miniature and smaller diagrams (was 88 / 112, 64 / 80, 40 / 34).
-    static let previewHeightCompact: CGFloat = 60
-    static let previewHeight: CGFloat = 76
-    static let groupLabelCompact: CGFloat = 60
-    static let groupLabel: CGFloat = 72
-    static let chipDiagramCompact: CGFloat = 30
-    static let chipDiagram: CGFloat = 28
+    // 3.3.6: back to a miniature and diagrams you can read beside 13 pt
+    // labels (3.3.5 had 60 / 76, 60 / 72, 30 / 28).
+    static let previewHeightCompact: CGFloat = 88
+    static let previewHeight: CGFloat = 112
+    static let groupLabelCompact: CGFloat = 76
+    static let groupLabel: CGFloat = 88
+    static let chipDiagramCompact: CGFloat = 40
+    static let chipDiagram: CGFloat = 34
 }
 
 /// One layout in the gallery: its miniature and a short label (diagram only
@@ -948,7 +949,7 @@ private struct SnapLayoutChip: View {
                 }
             }
             .padding(.horizontal, compact ? AOMSpace.x1 : AOMSpace.x2)
-            .frame(maxWidth: .infinity, minHeight: compact ? AOMSize.rowDense : AOMSize.rowDense + AOMSpace.x1)
+            .frame(maxWidth: .infinity, minHeight: compact ? AOMSize.rowSingle : AOMSize.rowSingle + AOMSpace.x1)
             .contentShape(Rectangle())
         }
         .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))

@@ -8,14 +8,14 @@ struct WindowPinningCard: View {
     var body: some View {
         // The count only while something is pinned; an empty card needs no "Ready".
         AOMSection("Always on Top", detail: service.pins.isEmpty ? nil : "\(service.pins.count) pinned",
-                   // The shortcut hint moved from a footer line into the ⓘ (3.3.5).
-                   help: "Pin a window above other apps. Move, resize and use its original window while it stays pinned. A Window Management action in an automation can pin windows too. Set shortcuts in Settings › Shortcuts.",
-                   padding: AOMSpace.x2) {
+                   help: "Pin a window above other apps. Move, resize and use its original window while it stays pinned. A Window Management action in an automation can pin windows too.",
+                   footer: "Set shortcuts in Settings › Shortcuts.",
+                   padding: AOMSpace.cardPadding) {
             Button { showsOptions = true } label: { Image(systemName: "slider.horizontal.3") }
                 .buttonStyle(.borderless).help("Always on Top options")
                 .accessibilityLabel("Always on Top options")
         } content: {
-            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 // Two equal secondary buttons: pinning is not this page's
                 // primary action, so neither one is prominent.
                 ViewThatFits(in: .horizontal) {
@@ -23,7 +23,6 @@ struct WindowPinningCard: View {
                     VStack(alignment: .leading, spacing: AOMSpace.x2) { chooseButton; selectButton }
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
                 .disabled(service.isChoosingWindow)
                 if let error = service.lastError {
                     Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText).textSelection(.enabled)
@@ -33,7 +32,7 @@ struct WindowPinningCard: View {
                     PinnedWindowRow(pin: pin)
                 }
                 if !service.pins.isEmpty {
-                    Button("Unpin All Windows") { service.unpinAll() }.controlSize(.small)
+                    Button("Unpin All Windows") { service.unpinAll() }
                 }
             }
         }
