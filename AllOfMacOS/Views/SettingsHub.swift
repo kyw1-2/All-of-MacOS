@@ -192,7 +192,8 @@ struct HubRowShell<Control: View>: View {
     /// Shortcuts and Permissions panes and every other page: a 20 pt
     /// monochrome symbol (the tint stays in the API but colour has no job
     /// here), Body title, an optional Caption line, the control at the
-    /// trailing edge; 12 pt insets, 32 pt tall, 44 with a description.
+    /// trailing edge; row insets, one standard row tall, the description
+    /// beside the title when it fits (3.3.5) and under it when it does not.
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
             HStack(alignment: .center, spacing: AOMSpace.x2) {
@@ -202,15 +203,32 @@ struct HubRowShell<Control: View>: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: AOMIcon.row, height: AOMIcon.row)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                    Text(title)
-                        .font(AOMFont.body)
-                        .foregroundStyle(AOMColor.text)
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(AOMFont.caption)
-                            .foregroundStyle(AOMColor.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                // One line when the description fits beside the title
+                // (3.3.5), the title over the description when it doesn't.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                        Text(title)
+                            .font(AOMFont.body)
+                            .foregroundStyle(AOMColor.text)
+                        if !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(AOMFont.caption)
+                                .foregroundStyle(AOMColor.textSecondary)
+                        }
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title)
+                            .font(AOMFont.body)
+                            .foregroundStyle(AOMColor.text)
+                        if !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(AOMFont.caption)
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 Spacer(minLength: AOMSpace.x3)
@@ -222,7 +240,7 @@ struct HubRowShell<Control: View>: View {
         .padding(.leading, AOMSpace.rowInset + (indent ? AOMSpace.x5 : 0))
         .padding(.trailing, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: subtitle.isEmpty ? AOMSize.rowStandard : AOMSize.rowDetail)
+        .frame(minHeight: AOMSize.rowStandard)
     }
 }
 
@@ -788,10 +806,17 @@ struct SettingsHubView: View {
                 }
             }
             .listStyle(.sidebar)
+            // The main window's sidebar density (3.3.5): small rows, 12 pt labels.
+            .environment(\.sidebarRowSize, .small)
+            .font(AOMFont.body)
             .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal, max: AOMSize.sidebarMax)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             content
+                // The Settings window is not under MainShell, so it sets the
+                // shell's content defaults itself: 12 pt text, small controls.
+                .font(AOMFont.body)
+                .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .background(AOMTheme.workspace)
                 .navigationTitle(isSearching ? "Search Results" : category.title)
@@ -809,6 +834,8 @@ struct SettingsHubView: View {
                 }
         }
         .searchable(text: $query, placement: .sidebar, prompt: "Search Settings")
+        // A small search field, as in the main window's sidebar.
+        .controlSize(.small)
         .frame(minWidth: SettingsHubMetrics.windowMinWidth, idealWidth: SettingsHubMetrics.windowIdealWidth,
                maxWidth: .infinity, minHeight: SettingsHubMetrics.windowMinHeight,
                idealHeight: SettingsHubMetrics.windowIdealHeight, maxHeight: .infinity)
@@ -856,8 +883,8 @@ struct SettingsHubView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         } else if visibleSections.isEmpty {
-            ContentUnavailableView.search(text: query)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            AOMCompactEmptyState("No Results for “\(query)”", systemImage: "magnifyingglass",
+                                 message: "Check the spelling or try a new search.")
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
@@ -916,7 +943,7 @@ struct SettingsHubView: View {
             .font(AOMFont.caption)
             .foregroundStyle(AOMColor.textSecondary)
             .padding(.leading, AOMSpace.x1)
-            .padding(.top, AOMSpace.x4)
+            .padding(.top, AOMSpace.x2)
     }
 
     private func flashSaved() {
@@ -987,9 +1014,9 @@ private enum SettingsHubMetrics {
     /// panes compute the same width).
     static let column = AOMSize.readableWidth - AOMSpace.pageMargin * 2
     static let windowMinWidth: CGFloat = 780
-    static let windowIdealWidth: CGFloat = 920
+    static let windowIdealWidth: CGFloat = 860
     static let windowMinHeight: CGFloat = 560
-    static let windowIdealHeight: CGFloat = 700
+    static let windowIdealHeight: CGFloat = 640
     static let sheetMinHeight: CGFloat = 560
     static let sheetIdealHeight: CGFloat = 620
 }
@@ -1007,7 +1034,7 @@ struct SettingsSheetHost: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, AOMSpace.x4)
-            .padding(.vertical, AOMSpace.x3)
+            .padding(.vertical, AOMSpace.x2)
             AOMDivider()
             content
         }

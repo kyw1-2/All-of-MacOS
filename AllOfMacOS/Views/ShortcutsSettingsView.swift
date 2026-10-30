@@ -78,7 +78,7 @@ struct ShortcutsSettingsView: View {
     // MARK: - Shortcut Row
 
     private func shortcutRow(for action: CaptureShortcutAction) -> some View {
-        AOMSettingRow(action.displayName, detail: subtitle(for: action), symbol: action.iconName) {
+        AOMInlineSettingRow(action.displayName, detail: subtitle(for: action), symbol: action.iconName) {
             shortcutRecorder(for: action)
         }
     }
