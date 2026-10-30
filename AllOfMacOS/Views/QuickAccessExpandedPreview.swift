@@ -51,34 +51,38 @@ struct CapturePreviewContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 9) {
-                if fullSizeChrome { Color.clear.frame(width: 68, height: 32) }
-                Text(entry.displayName).font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 8)
+            HStack(spacing: AOMSpace.x2) {
+                if fullSizeChrome {
+                    Color.clear.frame(width: AOMFeatureSize.trafficLightsInset, height: AOMFeatureSize.barControlHeight)
+                }
+                Text(entry.displayName).font(AOMFont.callout.weight(.medium))
+                    .foregroundStyle(AOMColor.textSecondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: AOMSpace.x2)
                 Button { CapturePreviewActions.edit(entry); onClose() } label: {
                     Label(isVideo ? "Edit Recording" : "Annotate", systemImage: isVideo ? "film.stack" : "pencil")
-                        .font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 13).frame(height: 32)
-                        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                        .font(AOMFont.callout.weight(.medium))
+                        .foregroundStyle(AOMColor.text)
+                        .padding(.horizontal, AOMSpace.x3).frame(height: AOMFeatureSize.barControlHeight)
+                        .background(AOMColor.track, in: Capsule())
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(isVideo && entry.playableVideoURL == nil)
                 Button { saveAs() } label: {
-                    Text("Save as…").font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white).padding(.horizontal, 15).frame(height: 32)
-                        .background(Color.accentColor, in: Capsule())
+                    Text("Save as…").font(AOMFont.bodyEmphasis)
+                        .foregroundStyle(AOMTheme.onAccent(AOMColor.accent))
+                        .padding(.horizontal, AOMSpace.x4).frame(height: AOMFeatureSize.barControlHeight)
+                        .background(AOMColor.accent, in: Capsule())
                 }.keyboardShortcut("s", modifiers: .command)
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 12).frame(height: 50)
-            .background(.regularMaterial)
-            Divider()
+            .padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowDetail)
+            .background(.bar)
+            AOMDivider()
             canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .underPageBackgroundColor))
-            Divider()
-            HStack(spacing: 9) {
+            AOMDivider()
+            HStack(spacing: AOMSpace.x2) {
                 if !isVideo {
                     Menu {
                         Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
@@ -86,14 +90,14 @@ struct CapturePreviewContent: View {
                             Button("\(percent)%") { zoom = CGFloat(percent) / 100 }
                         }
                     } label: {
-                        Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit").font(.system(size: 12))
-                            .padding(.horizontal, 12).frame(height: 30)
+                        Text(zoom.map { "\(Int($0 * 100))%" } ?? "Fit").font(AOMFont.callout).monospacedDigit()
+                            .padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowSingle)
                     }
                     .menuStyle(.borderlessButton).fixedSize()
-                    .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+                    .background(AOMColor.track, in: Capsule())
                     .help("Zoom")
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: AOMSpace.x2)
                 if !isVideo {
                     Button { pin() } label: {
                         previewAction("pin.fill")
@@ -116,10 +120,10 @@ struct CapturePreviewContent: View {
                     }
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 12).frame(height: 50)
-            .background(.regularMaterial)
+            .padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowDetail)
+            .background(.bar)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AOMColor.canvas)
         .background(CaptureKeyEventHandler { event in
             let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
             if (event.keyCode == 49 && modifiers.isEmpty) ||
@@ -165,29 +169,31 @@ struct CapturePreviewContent: View {
     }
 
     private func previewAction(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.system(size: 14, weight: .medium))
-            .frame(width: 36, height: 30)
-            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+        Image(systemName: symbol).font(AOMFont.body.weight(.medium))
+            .foregroundStyle(AOMColor.text)
+            .frame(width: AOMFeatureSize.barButtonWidth - AOMSpace.x0_5, height: AOMSize.rowSingle)
+            .background(AOMColor.track, in: Capsule())
+            .contentShape(Capsule())
     }
 
     @ViewBuilder private var canvas: some View {
         if isVideo {
             if let player {
-                VideoPlayer(player: player).padding(16)
+                VideoPlayer(player: player).padding(AOMSpace.x4)
             } else {
                 ContentUnavailableView("Recording Missing", systemImage: "video.slash",
                     description: Text("The recorded MP4 file can no longer be found."))
             }
         } else {
             GeometryReader { geometry in
-                let fit = min(max(1, geometry.size.width - 32) / max(1, entry.pointSize.width),
-                              max(1, geometry.size.height - 32) / max(1, entry.pointSize.height))
+                let fit = min(max(1, geometry.size.width - AOMSpace.x8) / max(1, entry.pointSize.width),
+                              max(1, geometry.size.height - AOMSpace.x8) / max(1, entry.pointSize.height))
                 let factor = zoom ?? min(1, fit)
                 ScrollView([.horizontal, .vertical], showsIndicators: false) {
                     captureImage
                         .frame(width: entry.pointSize.width * factor, height: entry.pointSize.height * factor)
                         .background(TransparencyGrid())
-                        .padding(16)
+                        .padding(AOMSpace.x4)
                         .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
                         .background(NativeScrollChrome(.overlay))
                 }
@@ -198,7 +204,7 @@ struct CapturePreviewContent: View {
     private var captureImage: some View {
         Image(decorative: entry.image, scale: entry.scale)
             .resizable().interpolation(.high)
-            .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+            .aomElevation(.raised)
     }
 }
 
@@ -399,14 +405,15 @@ struct CaptureKeyEventHandler: NSViewRepresentable {
 
 struct CaptureDragHandle: View {
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal").font(.system(size: 9)).opacity(0.35)
-            Text("Drag Me").font(.system(size: 12, weight: .medium))
-            Image(systemName: "line.3.horizontal").font(.system(size: 9)).opacity(0.35)
+        HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
+            Image(systemName: "line.3.horizontal").font(AOMFont.badge).foregroundStyle(AOMColor.textTertiary)
+            Text("Drag Me").font(AOMFont.callout.weight(.medium))
+            Image(systemName: "line.3.horizontal").font(AOMFont.badge).foregroundStyle(AOMColor.textTertiary)
         }
-        .foregroundStyle(.secondary).padding(.horizontal, 14).frame(height: 32)
-        .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+        .foregroundStyle(AOMColor.textSecondary).padding(.horizontal, AOMSpace.x3 + AOMSpace.x0_5)
+        .frame(height: AOMFeatureSize.barControlHeight)
+        .background(AOMColor.track, in: Capsule())
+        .overlay(Capsule().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
         .accessibilityLabel("Drag image to another app")
     }
 }
