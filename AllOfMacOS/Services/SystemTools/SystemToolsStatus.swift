@@ -245,8 +245,12 @@ final class SystemStatusMonitor: ObservableObject {
     @Published private(set) var uptime: TimeInterval = 0
     @Published private(set) var thermal: ProcessInfo.ThermalState = .nominal
     @Published private(set) var address: SystemStatus.InterfaceAddress?
+    /// Mounted volumes for the storage bars; refreshed every fifth sample
+    /// (10 s), since mounting is rarer than CPU changes.
+    @Published private(set) var volumes: [DiskTools.Volume] = []
 
     private var lastTicks: SystemStatus.CPUTicks?
+    private var sampleCount = 0
     private var timer: Timer?
 
     func start() {
@@ -274,5 +278,7 @@ final class SystemStatusMonitor: ObservableObject {
         uptime = SystemStatus.secondsSinceBoot() ?? ProcessInfo.processInfo.systemUptime
         thermal = ProcessInfo.processInfo.thermalState
         address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
+        if sampleCount % 5 == 0 { volumes = DiskTools.volumes() }
+        sampleCount += 1
     }
 }

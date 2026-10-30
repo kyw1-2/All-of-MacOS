@@ -45,6 +45,8 @@ final class SystemToolsModel: ObservableObject {
         let detail: String
         let candidates: [CleanupCandidate]
         var selected: Set<String>
+        /// False for read-only lists (Folder Sizes): no checkboxes, no Trash.
+        var allowsTrash = true
     }
 
     /// Processes that hold a port or a file, with Quit.
@@ -61,34 +63,54 @@ final class SystemToolsModel: ObservableObject {
     nonisolated static let recentLimit = 6
 
     @Published private(set) var states: [SystemToolID: SystemToolState] = [:]
-    @Published private(set) var running: Set<SystemToolID> = []
+    @Published var running: Set<SystemToolID> = []
     @Published private(set) var favorites: [SystemToolID]
     @Published private(set) var recent: [SystemToolID]
-    @Published private(set) var lastResult: ToolResult?
+    @Published var lastResult: ToolResult?
     @Published var toast: String?
     @Published var cleanupReview: CleanupReview?
     @Published var processReview: ProcessReview?
+    /// States read from helper processes (nvram, tmutil, osascript), filled
+    /// in off the main thread and merged into `states`.
+    var slowStates: [SystemToolID: SystemToolState] = [:]
+    var slowRefreshRunning = false
 
-    private let service = MacMagicSystemToolService.shared
-    private let preferences: SystemPreferenceStore = CFPreferenceStore()
+    let service = MacMagicSystemToolService.shared
+    let preferences: SystemPreferenceStore = CFPreferenceStore()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        favorites = (defaults.stringArray(forKey: Self.favoritesKey) ?? []).compactMap(SystemToolID.init(rawValue:))
-        recent = (defaults.stringArray(forKey: Self.recentKey) ?? []).compactMap(SystemToolID.init(rawValue:))
+        favorites = Self.storedTools(defaults.stringArray(forKey: Self.favoritesKey))
+        recent = Array(Self.storedTools(defaults.stringArray(forKey: Self.recentKey)).prefix(Self.recentLimit))
+        // Rewrite lists that held ids of removed tools (3.3.5's Text &
+        // Developer group), so they don't linger in the user's defaults.
+        if let stored = defaults.stringArray(forKey: Self.favoritesKey), stored != favorites.map(\.rawValue) {
+            defaults.set(favorites.map(\.rawValue), forKey: Self.favoritesKey)
+        }
+        if let stored = defaults.stringArray(forKey: Self.recentKey), stored != recent.map(\.rawValue) {
+            defaults.set(recent.map(\.rawValue), forKey: Self.recentKey)
+        }
+    }
+
+    /// A stored favorites or recent list: unknown ids (removed tools, typos,
+    /// a newer version's tools) are dropped silently, duplicates once.
+    nonisolated static func storedTools(_ raw: [String]?) -> [SystemToolID] {
+        var seen = Set<SystemToolID>()
+        return (raw ?? []).compactMap(SystemToolID.init(rawValue:)).filter { seen.insert($0).inserted }
     }
 
     // MARK: - Lifecycle
 
     func appear() {
         refreshStates()
+        refreshSlowStates()
         guard refreshTimer == nil else { return }
         // Other apps and System Settings change these too; a slow poll keeps
         // the pills honest without observers on every domain.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshStates() }
+            Task { @MainActor in self?.refreshStates(); self?.refreshSlowStates() }
         }
     }
 
@@ -139,12 +161,13 @@ final class SystemToolsModel: ObservableObject {
         for (id, tweak) in tweaks { next[id] = SystemToolState(tweak.isOn(in: preferences) ?? false) }
         next[.shotformat] = .value((SystemTweak.screenshotFormat.currentString(in: preferences) ?? "png").uppercased())
         next[.shotfolder] = .value(URL(fileURLWithPath: SystemTweak.screenshotFolder.currentString(in: preferences) ?? "~/Desktop").lastPathComponent)
+        refresh336States(into: &next)
         if next != states { states = next }
     }
 
     /// System changes land a moment after the command returns (Finder
     /// relaunching, System Events applying the appearance).
-    private func refreshSoon() {
+    func refreshSoon() {
         refreshStates()
         for delay in [0.6, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refreshStates() }
@@ -153,14 +176,14 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Reporting
 
-    private func succeed(_ id: SystemToolID, _ message: String) {
+    func succeed(_ id: SystemToolID, _ message: String) {
         lastResult = ToolResult(tool: id, message: message, succeeded: true, date: Date())
         toast = message
         refreshSoon()
     }
 
     /// Failures that need reading stay on screen until dismissed.
-    private func fail(_ id: SystemToolID, _ title: String, _ message: String) {
+    func fail(_ id: SystemToolID, _ title: String, _ message: String) {
         lastResult = ToolResult(tool: id, message: "\(title): \(message)", succeeded: false, date: Date())
         refreshSoon()
         let alert = NSAlert()
@@ -170,13 +193,13 @@ final class SystemToolsModel: ObservableObject {
         alert.runModal()
     }
 
-    private func fail(_ id: SystemToolID, _ error: Error) {
+    func fail(_ id: SystemToolID, _ error: Error) {
         fail(id, "\(SystemToolCatalog.info(id).title.replacingOccurrences(of: "…", with: "")) Didn't Finish", error.localizedDescription)
     }
 
     /// Long jobs run off the main thread, show a spinner on their tile and
     /// can't be started twice.
-    private func runInBackground<T>(_ id: SystemToolID, _ work: @escaping () throws -> T,
+    func runInBackground<T>(_ id: SystemToolID, _ work: @escaping () throws -> T,
                                     then done: @escaping (T) -> Void) {
         guard !running.contains(id) else { return }
         running.insert(id)
@@ -194,7 +217,7 @@ final class SystemToolsModel: ObservableObject {
 
     /// Runs one of AOM's existing actions (the same code the Automation page
     /// uses) and reports on its completion.
-    private func runAction(_ id: SystemToolID, _ type: ActionType, configure: (inout ActionParameters) -> Void = { _ in },
+    func runAction(_ id: SystemToolID, _ type: ActionType, configure: (inout ActionParameters) -> Void = { _ in },
                            success: String?, failure: String) {
         var parameters = type.defaultParameters
         configure(&parameters)
@@ -250,6 +273,18 @@ final class SystemToolsModel: ObservableObject {
             runAction(id, .toggleDoNotDisturb, success: "Focus shortcut ran",
                       failure: "Create a shortcut named “Toggle Focus” in the Shortcuts app with one Set Focus action, then try again.")
         case .keyboardClean: lockKeyboard()
+        case .lowPower: toggleLowPowerMode()
+        case .hideMenuBar: toggleHideMenuBar()
+        // Display & Sound
+        case .resolution: resolutionMenu()
+        case .brightness: brightnessMenu()
+        case .wallpaper: chooseWallpaper()
+        case .reduceTransparency, .reduceMotion: openPane(id, .accessibility)
+        case .soundOutput: soundOutputMenu()
+        case .soundInput: soundInputMenu()
+        case .volume: volumeMenu()
+        case .alertVolume: alertVolumeMenu()
+        case .startupChime: toggleStartupChime()
         // Power & Session
         case .lockScreen: runAction(id, .lockScreen, success: nil, failure: "The screen could not be locked.")
         case .sleep: runAction(id, .sleepComputer, success: nil, failure: "pmset could not put the Mac to sleep.")
@@ -262,7 +297,25 @@ final class SystemToolsModel: ObservableObject {
             runAction(id, .logOut, success: nil, failure: "The log-out was cancelled or refused.")
         case .quitAll: quitAllApps()
         case .hideOthers: runAction(id, .hideOtherApps, success: "Other apps hidden", failure: "Other apps could not be hidden.")
+        // Battery & Energy
+        case .batteryDetails: showBatteryDetails()
+        case .sleepTimer: sleepTimerMenu()
+        case .awakeWhileApp: awakeWhileAppMenu()
+        case .awakeReasons: showAwakeReasons()
+        // Apps & Processes
+        case .forceQuit: forceQuitMenu()
+        case .topCPU: showTopProcesses(.cpu)
+        case .topMemory: showTopProcesses(.memory)
+        case .relaunchApp: relaunchAppMenu()
+        case .loginItems: showLoginItems()
+        case .resetSavedState: resetSavedState()
+        // Disk & Storage
         case .ejectAll: runAction(id, .ejectAllDisks, success: "Disks ejected (or none to eject)", failure: "A disk could not be ejected; a file on it may be open.")
+        case .ejectDisk: ejectDiskMenu()
+        case .verifyDisk: verifyStartupDisk()
+        case .backupNow: backUpNow()
+        case .backupStatus: showBackupStatus()
+        case .snapshots: showLocalSnapshots()
         // Finder & Dock
         case .finder: Task { await service.restartFinder(); succeed(id, "Finder restarted") }
         case .extensions: toggleTweak(id, .showAllExtensions, on: "File extensions shown", off: "File extensions as Finder decides")
@@ -274,6 +327,10 @@ final class SystemToolsModel: ObservableObject {
         case .dockrecents: toggleTweak(id, .dockRecentApps, on: "Recent apps in the Dock", off: "No recent apps in the Dock")
         case .restartDock:
             runInBackground(id, { try SystemToolsCommand.restartProcesses(["Dock"]) }) { _ in self.succeed(id, "Dock restarted") }
+        case .showLibrary: toggleLibraryFolder()
+        case .copyFinderPath: copyFinderSelection()
+        case .newTextFile: newTextFileInFinder()
+        case .terminalHere: openTerminalInFinder()
         // Screenshots
         case .shotshadow: toggleTweak(id, .screenshotShadows, on: "Window screenshots keep their shadow", off: "Window screenshots without shadow")
         case .shotformat: screenshotFormatMenu()
@@ -324,41 +381,29 @@ final class SystemToolsModel: ObservableObject {
             setFlag(id, verbs: ("Hide", "Show"), done: ("Hidden", "Shown")) { try self.service.setFileHidden(url: $0, hidden: $1) }
         case .whoLocks: whatIsUsingFile()
         case .fileHash: hashFile()
-        // Text & Developer
-        case .formatJSON:
-            clipboardMenu(id, [("Pretty Print", DevTextTools.prettyJSON), ("Minify", DevTextTools.minifiedJSON)])
-        case .base64:
-            clipboardMenu(id, [("Encode", { DevTextTools.base64Encode($0) }), ("Decode", DevTextTools.base64Decode)])
-        case .urlCode:
-            clipboardMenu(id, [TextTransform.urlEncode, .urlDecode].map(transformItem))
-        case .changeCase:
-            clipboardMenu(id, [TextTransform.uppercase, .lowercase, .titleCase, .sentenceCase, .camelCase, .snakeCase, .kebabCase].map(transformItem))
-        case .cleanText:
-            clipboardMenu(id, [TextTransform.plainText, .trimWhitespace, .collapseSpaces, .removeLineBreaks, .sortLines, .reverseLines,
-                               .removeDuplicateLines].map(transformItem))
-        case .textStats:
-            guard let text = clipboardText(id) else { return }
-            let stats = DevTextTools.stats(text)
-            lastResult = ToolResult(tool: id, message: stats.summary, succeeded: true, date: Date())
-            toast = stats.summary
-        case .uuid: copy(id, UUID().uuidString, message: "UUID copied")
-        case .timestamp: unixTime()
-        case .pickColor:
-            ActionExecutor.executeActions([TriggerAction(actionType: .pickScreenColor, parameters: ActionType.pickScreenColor.defaultParameters)]) { ok in
-                DispatchQueue.main.async {
-                    // A cancelled sampler is not a failure worth an alert.
-                    if ok { self.succeed(id, "Copied \(NSPasteboard.general.string(forType: .string) ?? "the colour")") }
-                }
-            }
-        case .hashText:
-            guard let text = clipboardText(id) else { return }
-            copy(id, DevTextTools.sha256Hex(text), message: "SHA-256 of the clipboard text copied")
+        case .duplicates: findDuplicates()
+        case .folderSizes: scanFolderSizes()
         // Network
         case .dns: flushDNS()
         case .speedTest:
             toast = "Testing the connection (about 20 s)…"
             runInBackground(id, { try NetworkTools.runSpeedTest() }) { self.succeed(id, $0.summary) }
         case .portLookup: portLookup()
+        case .wifiDetails: showWiFiDetails()
+        case .publicIP: fetchPublicIP()
+        case .ping: pingHost()
+        case .dnsServers: showDNSServers()
+        case .renewDHCP: renewDHCP()
+        case .listeningPorts: showListeningPorts()
+        case .airDropSettings: openPane(id, .airDrop)
+        case .bluetoothSettings: openPane(id, .bluetooth)
+        // System Info
+        case .aboutMac: showAboutMac()
+        case .copySerial:
+            guard let serial = SystemInfo.serialNumber() else { fail(id, "No Serial Number", "macOS didn't report a serial number."); return }
+            copy(id, serial, message: "Serial number copied")
+        case .bootReasons: showBootReasons()
+        case .settingsPane: settingsPaneMenu()
         case .copyIP:
             guard let address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses()) else {
                 fail(id, "No IP Address", "No network interface has an IPv4 address right now."); return
@@ -486,7 +531,7 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Power & Session
 
-    private func confirm(_ title: String, _ message: String, button: String, destructive: Bool = true) -> Bool {
+    func confirm(_ title: String, _ message: String, button: String, destructive: Bool = true) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = destructive ? .warning : .informational
         alert.messageText = title
@@ -531,7 +576,7 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Maintenance
 
-    private func administrator(_ id: SystemToolID, title: String, message: String, button: String,
+    func administrator(_ id: SystemToolID, title: String, message: String, button: String,
                                commands: [MacMagicSystemToolService.ToolCommand], success: String) {
         guard confirm(title, message + " macOS asks for an administrator password.", button: button, destructive: false) else { return }
         switch SystemToolsCommand.runAsAdministrator(commands) {
@@ -554,7 +599,7 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Cleanup
 
-    private func review(_ id: SystemToolID, title: String, detail: String, items: [CleanupCandidate], preselect: Bool, empty: String) {
+    func review(_ id: SystemToolID, title: String, detail: String, items: [CleanupCandidate], preselect: Bool, empty: String) {
         guard !items.isEmpty else { succeed(id, empty); return }
         cleanupReview = CleanupReview(tool: id, title: title, detail: detail, candidates: items,
                                       selected: preselect ? Set(items.map(\.id)) : [])
@@ -781,9 +826,9 @@ final class SystemToolsModel: ObservableObject {
 
     private func hashFile() {
         guard let url = pickFiles(types: [.item], multiple: false)?.first else { return }
-        let expected = DevTextTools.expectedHash(in: NSPasteboard.general.string(forType: .string))
+        let expected = FileTools.expectedHash(in: NSPasteboard.general.string(forType: .string))
         toast = "Hashing \(url.lastPathComponent)…"
-        runInBackground(.fileHash, { try DevTextTools.sha256Hex(fileAt: url) }) { hash in
+        runInBackground(.fileHash, { try FileTools.sha256Hex(fileAt: url) }) { hash in
             if let expected {
                 // Keep the hash the user pasted; just say whether it matches.
                 if expected == hash { self.succeed(.fileHash, "SHA-256 matches the clipboard ✓") }
@@ -794,33 +839,7 @@ final class SystemToolsModel: ObservableObject {
         }
     }
 
-    // MARK: - Text & Developer
-
-    private func transformItem(_ transform: TextTransform) -> (String, (String) throws -> String) {
-        (transform.title, { transform.apply($0) })
-    }
-
-    private func clipboardText(_ id: SystemToolID) -> String? {
-        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
-            fail(id, "No Text on the Clipboard", "Copy some text first, then run \(SystemToolCatalog.info(id).title) again.")
-            return nil
-        }
-        return text
-    }
-
-    private func clipboardMenu(_ id: SystemToolID, _ items: [(String, (String) throws -> String)]) {
-        let menu = NSMenu()
-        for (title, transform) in items {
-            menu.addItem(SystemToolMenuItem(title: title) {
-                guard let text = self.clipboardText(id) else { return }
-                do {
-                    let result = try transform(text)
-                    self.copy(id, result, message: "\(title): \(Self.preview(result))")
-                } catch { self.fail(id, "Clipboard Not Changed", error.localizedDescription) }
-            })
-        }
-        popUp(menu)
-    }
+    // MARK: - Clipboard
 
     /// One line, at most 48 characters, for toasts and the last-result line.
     static func preview(_ text: String) -> String {
@@ -828,23 +847,12 @@ final class SystemToolsModel: ObservableObject {
         return line.count > 48 ? String(line.prefix(47)) + "…" : line
     }
 
-    private func copy(_ id: SystemToolID, _ text: String, message: String) {
+    func copy(_ id: SystemToolID, _ text: String, message: String) {
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.setString(text, forType: .string) else {
             fail(id, "Clipboard Not Changed", "macOS didn't accept the new clipboard text."); return
         }
         succeed(id, message)
-    }
-
-    private func unixTime() {
-        let text = NSPasteboard.general.string(forType: .string) ?? ""
-        if let stamp = DevTextTools.timestamp(from: text) {
-            let local = stamp.date.formatted(date: .abbreviated, time: .standard)
-            copy(.timestamp, DevTextTools.iso8601(stamp.date), message: "\(text.trimmingCharacters(in: .whitespacesAndNewlines)) = \(local); ISO 8601 copied")
-        } else {
-            let now = DevTextTools.unixSeconds(Date())
-            copy(.timestamp, now, message: "Current Unix time \(now) copied")
-        }
     }
 
     // MARK: - Network
@@ -905,11 +913,11 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Panels
 
-    private func popUp(_ menu: NSMenu) {
+    func popUp(_ menu: NSMenu) {
         _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
-    private func promptText(_ title: String, _ message: String, placeholder: String) -> String? {
+    func promptText(_ title: String, _ message: String, placeholder: String) -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -923,7 +931,7 @@ final class SystemToolsModel: ObservableObject {
         return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func pickFiles(types: [UTType], multiple: Bool, directories: Bool = false, message: String? = nil) -> [URL]? {
+    func pickFiles(types: [UTType], multiple: Bool, directories: Bool = false, message: String? = nil) -> [URL]? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = types
         panel.allowsMultipleSelection = multiple
@@ -933,7 +941,7 @@ final class SystemToolsModel: ObservableObject {
         return panel.urls
     }
 
-    private func pickFolder(message: String) -> URL? {
+    func pickFolder(message: String) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

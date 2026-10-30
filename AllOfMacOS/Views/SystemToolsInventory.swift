@@ -16,5 +16,5 @@ enum SystemToolsInventory {
 
     /// A one-line summary for the Workspace tile, short enough to share the
     /// tile's single "value · status" line with the count.
-    static let subtitle = "Toggles, cleanup, dev and more"
+    static let subtitle = "Toggles, power and disk"
 }
