@@ -8,14 +8,14 @@ struct WindowPinningCard: View {
     var body: some View {
         // The count only while something is pinned; an empty card needs no "Ready".
         AOMSection("Always on Top", detail: service.pins.isEmpty ? nil : "\(service.pins.count) pinned",
-                   help: "Pin a window above other apps. Move, resize and use its original window while it stays pinned. A Window Management action in an automation can pin windows too.",
-                   footer: "Set shortcuts in Settings › Shortcuts.",
-                   padding: AOMSpace.cardPadding) {
+                   // The shortcut hint moved from a footer line into the ⓘ (3.3.5).
+                   help: "Pin a window above other apps. Move, resize and use its original window while it stays pinned. A Window Management action in an automation can pin windows too. Set shortcuts in Settings › Shortcuts.",
+                   padding: AOMSpace.x2) {
             Button { showsOptions = true } label: { Image(systemName: "slider.horizontal.3") }
                 .buttonStyle(.borderless).help("Always on Top options")
                 .accessibilityLabel("Always on Top options")
         } content: {
-            VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            VStack(alignment: .leading, spacing: AOMSpace.x2) {
                 // Two equal secondary buttons: pinning is not this page's
                 // primary action, so neither one is prominent.
                 ViewThatFits(in: .horizontal) {
