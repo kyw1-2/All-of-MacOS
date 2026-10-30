@@ -23,12 +23,11 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
-        Item(symbol: "wrench.and.screwdriver", title: "69 System Tools",
-             detail: "Quick toggles with live state (Dark Mode, Keep Awake, Wi-Fi, mutes, Dock auto-hide, keyboard lock for cleaning), power and session commands, Finder, Dock and screenshot settings, maintenance, an app uninstaller and cleanup scans that only move items to the Trash, clipboard text and developer tools, a speed test and port lookup. A live status strip, favorites and recent tools sit on top.",
+        Item(symbol: "rectangle.grid.2x2", title: "A redesigned Workspace",
+             detail: "A status header, setup steps side by side, module tiles with live counts, quick-action tiles, and an overview of recent activity, today's actions with a 7-day chart, and this Mac's CPU, memory, disk and battery."),
+        Item(symbol: "wrench.and.screwdriver", title: "104 System Tools",
+             detail: "New Display & Sound (resolution, brightness, wallpaper, output and input devices, volume, startup sound), Battery & Energy (battery details, sleep timer, stay awake while an app runs), Apps & Processes (force quit, top CPU and memory, relaunch, login items), Disk & Storage (eject a disk, verify, Time Machine, snapshots), Network (Wi-Fi details, ping, DNS, public IP, listening ports) and System Info groups, plus Low Power Mode, Hide Menu Bar and Finder tools. Text & Developer tools are gone. This Mac gauges and Control Center–style toggles sit on top.",
              module: .systemTools),
-        Item(symbol: "arrow.up.and.down", title: "Swish double swipes",
-             detail: "Swipe up or down, rest until the trackpad taps, and swipe the same way again for the top or bottom half. A swipe down no longer turns into the bottom half when it is long or quick, taking a swipe back to where it started cancels it, and unsnapped windows stay whole on a display.",
-             module: .tiling, note: "New default"),
         Item(symbol: "textformat.size", title: "Standard macOS text and controls",
              detail: "Every page and Settings use the system text sizes (13 pt body) and regular controls again, with the sidebar following your sidebar size in System Settings. Settings rows put their description under the title, Automation, Window Tiling and Audio rows have room again, Capture shows larger thumbnails, Insights charts the runs of each day, and the palette, What's New and tour are sized like Spotlight and Apple's own panels.")
     ]

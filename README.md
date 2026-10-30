@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.6
+
+Every page is redesigned on Apple's design guidance (docs/design-3.3.6.md, 95 references): macOS text styles with a 13 pt body, regular controls, the system sidebar and toolbar title, and a Workspace with module tiles, quick-action tiles and an overview of recent activity, today's actions and this Mac. System Tools drops the text and developer tools and grows to 104 tools in 13 groups, adding display, sound, battery, apps and processes, disk and Time Machine, network and system info tools (docs/system-tools-3.3.6.md).
+
 ## Version 3.3.5
 
 System Tools grows from 12 to 69 tools in nine groups (live toggles, power and session, Finder, Dock and screenshot settings, maintenance, an uninstaller and Trash-only cleanup scans, clipboard text and developer tools, network), with a live status strip, favorites and recent tools. Title-bar gestures follow Swish's double swipes (up or down, rest, the same way again for the top or bottom half), a swipe down is the Down action at any length, a swipe taken back cancels, and unsnapped windows stay on screen. The main window uses 12 pt text with compact rows on every page. See CHANGELOG.md, docs/system-tools-3.3.5.md and docs/window-snap-3.3.5.md.

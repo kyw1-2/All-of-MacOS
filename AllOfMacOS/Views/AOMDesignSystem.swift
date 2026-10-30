@@ -183,7 +183,9 @@ struct AOMStatStrip: View {
                 if rowIndex > 0 {
                     AOMDivider().padding(.horizontal, AOMSpace.x3)
                 }
-                HStack(spacing: 0) {
+                // Top-aligned: a cell with a detail line must not push its
+                // neighbours' values down half a line.
+                HStack(alignment: .top, spacing: 0) {
                     ForEach(Array(row.enumerated()), id: \.element.id) { index, item in
                         if index > 0 {
                             AOMDivider(axis: .vertical).padding(.vertical, AOMSpace.x3)

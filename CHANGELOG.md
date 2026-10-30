@@ -1,3 +1,36 @@
+## 3.3.6 (2026-10-30)
+
+An Apple-style redesign of every page, built on a spec with 95 references from the Human Interface Guidelines, WWDC sessions, Apple sample code and Apple's own Mac apps (docs/design-3.3.6.md). System Tools drops Text & Developer and grows to 104 tools in 13 groups (docs/system-tools-3.3.6.md). The toggles and system-changing tools were not run against the real system.
+
+Tests: only new and changed tests were run; tests that had passed were not re-run. SystemTools336Tests (24 new) and SystemTools335Tests (23, text cases removed): 47 tests, 0 failures. InsightsActivityTests (3 new): 0 failures.
+
+### Design system and shell
+
+- Text uses the macOS text styles again: body 13 pt, section titles Headline, page sentences Title 3, the Workspace sentence Title 2, figures 22 pt. No fixed 11–12 pt text.
+- Regular controls by default; the page-wide small controls, the small sidebar rows and the custom toolbar title from 3.3.5 are gone (system sidebar size and system title).
+- 8 pt rhythm: 24 pt margins and section gaps, 16 pt card padding, 12 pt tile gaps, 36/48 pt rows, 28 pt icon hit areas, squircle badges (32 pt tiles, 40 pt headers).
+
+### Workspace
+
+- A status header with a 40 pt squircle and one primary action; setup as a card with three step columns; 44 pt attention rows.
+- Module tiles (104 pt) with the name, status, control and a large live count; off modules are grey.
+- Quick-action launch tiles in the module colours.
+- An overview row that fills the window: Recent activity, Today (actions, captures and copies with a 7-day chart) and This Mac (CPU, memory, disk, battery).
+
+### Pages
+
+- Automation: squircle input card and first-run choices, two-line step cards, a larger action picker.
+- Window Tiling: readable layout gallery, two-line rows, wider side column. Capture: mode strip like the screenshot toolbar, four cards a row. Clipboard: roomier rows, bars, preview and cards. Audio: regular sliders, three-row Headphone EQ.
+- Insights: a Swift Charts bar chart of runs per day (per hour for the last 24 hours).
+- Settings: body-size text, regular controls, title over description rows. ⌘K palette with 40 pt rows; wider What's New and tour.
+
+### System Tools (104)
+
+- Removed: Text & Developer (Format JSON, Base64, URL Encode, Change Case, Clean Up Text, Count Words, New UUID, Unix Time, Pick Color, Hash Text). Saved favorites and recents of removed tools are dropped silently.
+- New groups: Display & Sound (resolution and refresh rate, brightness, wallpaper, reduce transparency/motion state, sound output and input, volume, alert volume, startup sound), Battery & Energy (battery details, sleep timer, stay awake while an app runs, what keeps the Mac awake), Apps & Processes (force quit, top CPU, top memory, relaunch, login items, reset window state), Disk & Storage (eject all or one disk, verify the startup disk, Time Machine back up now and status, local snapshots), System Info (about this Mac, serial number, last restart and wake, open a Settings pane).
+- Also new: Low Power Mode and Hide Menu Bar toggles; Library folder, Copy Finder Path, New Text File Here and Terminal Here; Find Duplicates and Folder Sizes; Wi-Fi details, public IP (only on click), ping, DNS servers, renew DHCP, listening ports, AirDrop and Bluetooth settings.
+- The page has This Mac gauges, Control Center–style toggle tiles and titled sections.
+
 ## 3.3.5 (2026-10-30)
 
 System Tools grows from 12 to 69 tools, Swish's double swipes and a cancellable swipe on title bars, and a compact main window (12 pt text). Benchmarks, the tool list and what each tool runs: docs/system-tools-3.3.5.md; gestures: docs/window-snap-3.3.5.md. Nothing below was tried on a real trackpad, and the toggles, power, maintenance and cleanup tools were not run against the real system.
