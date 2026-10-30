@@ -388,6 +388,16 @@ private struct AnnotationEditorView: View {
             session?.isBusy = { exportInFlight }
             session?.commit = { commitChanges() }
         }
+        // Isolated previews only: open on the Text tool (`--aom-preview-annotate-text`)
+        // and its Format popover (`--aom-preview-annotate-format`) for review.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            guard PresetManager.isUIPreview, args.contains("--aom-preview-annotate-text") else { return }
+            selectTool(.text)
+            guard args.contains("--aom-preview-annotate-format") else { return }
+            try? await Task.sleep(for: .seconds(1))
+            textFormatPopover = true
+        }
         // "Apply Previous Settings" offers the last background used in an editor.
         .onDisappear { AnnotationBackgroundPresetStore.rememberPrevious(document.background) }
         .ignoresSafeArea(.container, edges: .top)
@@ -861,8 +871,8 @@ private struct AnnotationEditorView: View {
     /// Every control applies at once to the selected text and to new text.
     private var textFormatOptions: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            AOMSection("Font") {
-                AOMSettingRow("Weight") {
+            AOMCardGroup("Font") {
+                AOMSettingRow("Weight", showsDivider: false) {
                     Picker("Weight", selection: Binding(
                         get: { style.resolvedFontWeight },
                         set: { style.fontWeight = $0; style.bold = $0.isBold; applyStyleToSelection() })) {
@@ -881,8 +891,8 @@ private struct AnnotationEditorView: View {
                         .help("Italic")
                 }
             }
-            AOMSection("Paragraph") {
-                AOMSettingRow("Alignment") {
+            AOMCardGroup("Paragraph") {
+                AOMSettingRow("Alignment", showsDivider: false) {
                     Picker("Alignment", selection: Binding(
                         get: { style.resolvedTextAlignment },
                         set: { style.textAlignment = $0 == .left ? nil : $0; applyStyleToSelection() })) {
@@ -894,8 +904,8 @@ private struct AnnotationEditorView: View {
                     .help("Text alignment").accessibilityLabel("Text alignment")
                 }
             }
-            AOMSection("Background & effects", footer: "More Tool Options sets the text, box and outline colours and the outline width.") {
-                AOMSettingRow("Background") {
+            AOMCardGroup("Background & effects", footer: "More Tool Options sets the text, box and outline colours and the outline width.") {
+                AOMSettingRow("Background", showsDivider: false) {
                     Picker("Background", selection: Binding(
                         get: { style.resolvedTextBackground },
                         set: { style.textBackground = $0 == .none ? nil : $0; applyStyleToSelection() })) {
@@ -917,7 +927,7 @@ private struct AnnotationEditorView: View {
             }
         }
         .padding(AOMSpace.x4)
-        .frame(width: AOMFeatureSize.toolPopoverWidth)
+        .frame(width: AOMFeatureSize.formatPopoverWidth)
     }
 
     private func propertySlider(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>,
