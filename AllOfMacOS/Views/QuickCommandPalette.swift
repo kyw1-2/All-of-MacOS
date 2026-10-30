@@ -294,7 +294,7 @@ struct QuickCommandPalette: View {
                     Image(systemName: "magnifyingglass")
                         .font(AOMFont.body.weight(.medium))
                         .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.tileBadge)
+                        .frame(width: PaletteMetrics.rowBadge)
                     TextField("Search commands, apps, files…", text: $query)
                         .textFieldStyle(.plain)
                         .font(AOMFont.pageStatus.weight(.regular))
@@ -308,14 +308,14 @@ struct QuickCommandPalette: View {
                     }
                 }
                 .padding(.horizontal, AOMSpace.x4)
-                .frame(height: AOMSize.rowDetail + AOMSpace.x1)
+                .frame(height: AOMSize.rowDetail)
 
                 AOMDivider()
 
                 if items.isEmpty {
                     VStack(spacing: AOMSpace.x2) {
                         Image(systemName: "magnifyingglass")
-                            .font(AOMFont.title.weight(.regular))
+                            .font(.system(size: AOMFeatureSize.emptyGlyph))
                             .foregroundStyle(AOMColor.textSecondary)
                             .padding(.bottom, AOMSpace.x1)
                         Text("No results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
@@ -342,15 +342,15 @@ struct QuickCommandPalette: View {
                                             .font(AOMFont.caption.weight(.semibold))
                                             .foregroundStyle(AOMColor.textSecondary)
                                             .padding(.horizontal, AOMSpace.x2)
-                                            .padding(.top, index == 0 ? AOMSpace.x1 : AOMSpace.x3)
-                                            .padding(.bottom, AOMSpace.x1)
+                                            .padding(.top, index == 0 ? AOMSpace.x0_5 : AOMSpace.x2)
+                                            .padding(.bottom, AOMSpace.x0_5)
                                             .accessibilityAddTraits(.isHeader)
                                     }
                                     row(item, selected: item.id == selected?.id)
                                         .id(item.id)
                                 }
                             }
-                            .padding(AOMSpace.x2)
+                            .padding(AOMSpace.x1 + AOMSpace.x0_5)
                         }
                         .onChange(of: selectedID) { _, id in
                             if let id { proxy.scrollTo(id, anchor: nil) }
@@ -400,10 +400,10 @@ struct QuickCommandPalette: View {
         } label: {
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: item.icon)
-                    .font(AOMFont.callout.weight(.semibold))
+                    .font(AOMFont.caption.weight(.semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
-                    .frame(width: AOMIcon.tileBadge, height: AOMIcon.tileBadge)
+                    .frame(width: PaletteMetrics.rowBadge, height: PaletteMetrics.rowBadge)
                     .background(selected ? AOMColor.accent.opacity(0.14) : AOMColor.track,
                                 in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
                 Text(item.title)
@@ -421,7 +421,7 @@ struct QuickCommandPalette: View {
                 if let keys = item.shortcut { AOMKeycap(text: keys) }
             }
             .padding(.horizontal, AOMSpace.x2)
-            .frame(height: AOMSize.rowStandard)
+            .frame(height: AOMSize.rowDense + AOMSpace.x0_5)
             .background(selected ? AOMColor.accent.opacity(0.12) : .clear,
                         in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
             .contentShape(Rectangle())
@@ -450,7 +450,7 @@ struct QuickCommandPalette: View {
             }
         }
         .padding(.horizontal, AOMSpace.x4)
-        .frame(height: AOMSize.rowStandard + AOMSpace.x1)
+        .frame(height: AOMSize.rowStandard)
         .background(AOMColor.track)
     }
 
@@ -547,4 +547,10 @@ enum PaletteApplications {
         }
         return ordered.prefix(8).map { $0.app }
     }
+}
+
+/// The palette's row badge (3.3.5: 18 pt, was a 24 pt tile badge), so a
+/// row is one dense line and the list shows more commands at once.
+private enum PaletteMetrics {
+    static let rowBadge: CGFloat = 18
 }

@@ -107,9 +107,10 @@ final class WhatsNewPanelController {
 /// per item (module badge, title, optional pill, detail), and the actions.
 /// Floating chrome outside, opaque cards inside, as on every AOM page.
 private struct WhatsNewView: View {
-    static let width: CGFloat = 420
+    /// 3.3.5: 420 → 380 wide, 560 → 500 tall at most (smaller type fits more).
+    static let width: CGFloat = 380
     /// The panel grows with its list up to this height, then the list scrolls.
-    static let maxHeight: CGFloat = 560
+    static let maxHeight: CGFloat = 500
     /// A floor for the measured height (the header, one row and the buttons).
     static let minHeight: CGFloat = 200
 
@@ -129,10 +130,15 @@ private struct WhatsNewView: View {
     }
 
     private var list: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
             ForEach(sections, id: \.title) { section in
-                AOMSection(section.title) {
-                    ForEach(section.items) { WhatsNewRow(item: $0) }
+                // A card group, not `AOMSection`: the section's first-divider
+                // cover is drawn past the card's corners and showed as a
+                // white line on the panel's glass.
+                AOMCardGroup(section.title) {
+                    ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
+                        WhatsNewRow(item: item, showsDivider: index > 0)
+                    }
                 }
             }
             Text("Items marked New default change how something you already use behaves; each one says where to turn it off.")
@@ -145,20 +151,20 @@ private struct WhatsNewView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
-                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text("What's New")
                         .font(AOMFont.pageStatus)
                         .foregroundStyle(AOMColor.text)
                     Text("All of MacOS \(version)")
-                        .font(AOMFont.callout)
+                        .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.textSecondary)
                 }
                 Spacer(minLength: AOMSpace.x2)
                 Button(action: close) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(AOMFont.pageStatus)
+                        .font(AOMFont.body)
                         .foregroundStyle(AOMColor.textSecondary)
                         .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
@@ -183,9 +189,9 @@ private struct WhatsNewView: View {
                     .keyboardShortcut(.defaultAction)
                     .aomPrimaryButton()
             }
-            .controlSize(.regular)
+            .controlSize(.small)
         }
-        .padding(AOMSpace.x4)
+        .padding(AOMSpace.x3)
         .frame(width: Self.width)
         .aomFloatingSurface(.panel, radius: AOMRadius.panel)
     }
@@ -196,11 +202,14 @@ private struct WhatsNewView: View {
 /// read once, so nothing is truncated).
 private struct WhatsNewRow: View {
     let item: WhatsNew.Item
+    var showsDivider = true
+    /// The row's module badge: one title line tall (3.3.5, was 24 pt).
+    static let badge: CGFloat = 18
 
     var body: some View {
-        HStack(alignment: .top, spacing: AOMSpace.x3) {
-            AOMModuleBadge(symbol: item.symbol, hue: item.module?.hue ?? AOMColor.accent)
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+        HStack(alignment: .top, spacing: AOMSpace.x2) {
+            AOMModuleBadge(symbol: item.symbol, hue: item.module?.hue ?? AOMColor.accent, size: Self.badge)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(item.title)
                         .font(AOMFont.headline)
@@ -209,15 +218,17 @@ private struct WhatsNewRow: View {
                     if let note = item.note { AOMStatusPill(note, tone: .info) }
                 }
                 Text(item.detail)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2)
-        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.tileBadge + AOMSpace.x3) }
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .overlay(alignment: .top) {
+            if showsDivider { AOMRowDivider(inset: AOMSpace.rowInset + Self.badge + AOMSpace.x2) }
+        }
         .accessibilityElement(children: .combine)
     }
 }
