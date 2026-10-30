@@ -13,6 +13,8 @@ import AppKit
 enum AudioCapturePreviewHooks {
     private static var arguments: [String] { ProcessInfo.processInfo.arguments }
     private static var started = false
+    /// The poll at which the Settings window was first seen on screen.
+    private static var settingsSeenAt: Int?
 
     /// The Capture Options section to scroll to, if a preview asked for one.
     static var captureSection: String? {
@@ -26,16 +28,29 @@ enum AudioCapturePreviewHooks {
     static func start() {
         guard PresetManager.isUIPreview, !started else { return }
         started = true
-        if arguments.contains("--aom-preview-capture-options") { requestCaptureOptions(attempt: 0) }
+        if arguments.contains("--aom-preview-capture-options") { requestCaptureOptions(poll: 0) }
     }
 
-    /// Settings opens a moment after the main window, so the request repeats
-    /// every half second until a sheet is on screen, for at most 20 seconds.
-    private static func requestCaptureOptions(attempt: Int) {
-        guard attempt < 40, !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) else { return }
-        NotificationCenter.default.post(name: .aomOpenCaptureOptions, object: nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            MainActor.assumeIsolated { requestCaptureOptions(attempt: attempt + 1) }
+    /// Settings opens a moment after the main window. The request goes out
+    /// only once Settings has been on screen for a second (asking earlier can
+    /// keep the window from opening), and repeats every half second until the
+    /// sheet shows, for at most 30 seconds.
+    private static func requestCaptureOptions(poll: Int) {
+        guard poll < 60, !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) else { return }
+        if settingsSeenAt == nil, NSApp.windows.contains(where: { $0.isVisible && isSettingsWindow($0) }) {
+            settingsSeenAt = poll
         }
+        if let seen = settingsSeenAt, poll >= seen + 2 {
+            NotificationCenter.default.post(name: .aomOpenCaptureOptions, object: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            MainActor.assumeIsolated { requestCaptureOptions(poll: poll + 1) }
+        }
+    }
+
+    /// SwiftUI's Settings scene window (its identifier and frame autosave name).
+    private static func isSettingsWindow(_ window: NSWindow) -> Bool {
+        let name = "com_apple_SwiftUI_Settings_window"
+        return window.identifier?.rawValue == name || window.frameAutosaveName == name
     }
 }
