@@ -380,8 +380,10 @@ private struct GestureStatRow: View {
                         .layoutPriority(1)
                     Spacer(minLength: AOMSpace.x2)
                     if let last = entry.lastDetected {
-                        // "Last used 3 min. ago", not the long "3 min, 12 sec ago".
-                        Text("Last used \(AOMRelativeTime.string(last))")
+                        // "Last used 3 min. ago", not the long "3 min, 12 sec ago";
+                        // mid-sentence, so "Just now" starts lower case.
+                        let when = AOMRelativeTime.string(last)
+                        Text("Last used \(when.prefix(1).lowercased() + when.dropFirst())")
                             .font(AOMFont.caption)
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(1)
