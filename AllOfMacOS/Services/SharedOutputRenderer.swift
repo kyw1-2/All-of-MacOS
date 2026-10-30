@@ -1,5 +1,8 @@
 import AppKit
 import AVFoundation
+#if canImport(Synchronization)
+import Synchronization
+#endif
 
 /// A stable graph per hardware output. App membership changes only the render
 /// bus, never AVAudioEngine's connections while media is playing.
@@ -407,34 +410,68 @@ final class AppAudioRenderBus {
     /// guard the output. A change crossfades over 10 ms from the previous
     /// effect (or dry); a replaced host is released by the control thread
     /// once the render thread has stopped using it, never on the render thread.
-    private let effectSlot = AudioAtomicCounter()
-    /// What the render thread uses: written before it starts and after it
-    /// stops using a host (previous first when a crossfade starts).
-    private let effectInUse = AudioAtomicCounter()
-    private let effectPreviousInUse = AudioAtomicCounter()
+    ///
+    /// N333-02 (3.3.3 re-audit): the hand-off is a hazard-pointer protocol.
+    /// The render thread names a host in `effectCandidate` and adopts it only
+    /// if the slot still holds it afterwards (`adoptEffect`); a control
+    /// thread reads every hazard after it took a host out of the slot and
+    /// keeps the hosts they name (`releaseRetiredEffects`). Each side stores
+    /// and then loads, an order acquire/release alone does not keep, so the
+    /// slot and the hazards are sequentially consistent (`AudioSeqCstWord`).
+    private let effectSlot = AudioSeqCstWord()
+    /// The render thread's hazards: the host it checks before adopting it,
+    /// the one it runs and the one it fades out. A host moves between them
+    /// destination first (candidate → current → previous), and a scan reads
+    /// them in that order, so it never misses a host on the move.
+    private let effectCandidate = AudioSeqCstWord()
+    private let effectInUse = AudioSeqCstWord()
+    private let effectPreviousInUse = AudioSeqCstWord()
     // Render thread only.
     private var effectBits: UInt64 = 0
     private var previousEffectBits: UInt64 = 0
     private var effectFadeRemaining = 0
     static let effectFadeFrames = 480
+    /// Hazard checks per render cycle (N333-02). A control thread replacing
+    /// the effect between every hazard and its check leaves the cycle with
+    /// the effect (and crossfade) it had; the next cycle looks again.
+    static let effectAdoptionAttempts = 4
     private let effectOldLeft: UnsafeMutablePointer<Float>
     private let effectOldRight: UnsafeMutablePointer<Float>
     /// Control threads only: hosts replaced but perhaps still in use.
     private let retiredLock = NSLock()
     private var retiredEffects: [UInt64] = []
 
+    /// N333-02: where the render thread calls `effectAdoptionHook`.
+    enum EffectAdoptionPoint {
+        /// Right after the slot was read; no hazard names that host yet.
+        case loaded
+        /// Right after that host was published as the candidate hazard,
+        /// before the slot is read again.
+        case hazardPublished
+    }
+
+    /// Test only (N333-02): called on the render thread at each
+    /// `EffectAdoptionPoint` with the host's bits, so a test can run a
+    /// control thread's swap and reclamation exactly there. nil in the app:
+    /// one read and nil check per render cycle. Set it before rendering
+    /// starts; clear it after the render thread stopped.
+    var effectAdoptionHook: ((EffectAdoptionPoint, UInt64) -> Void)?
+
     /// Control thread: hosts `effect` on this output (nil: none).
+    /// Retains: `passRetained` here is the slot's one retain; the exchange
+    /// hands the replaced host's retain to `retiredEffects`, and only
+    /// `releaseRetiredEffects` (a control thread) gives it back.
     func setEffect(_ effect: AudioUnitEffectHost?) {
         let bits = effect.map { UInt64(UInt(bitPattern: Unmanaged.passRetained($0).toOpaque())) } ?? 0
-        var old = effectSlot.load()
-        while !effectSlot.compareExchange(expected: old, desired: bits) { old = effectSlot.load() }
+        let old = effectSlot.exchange(bits)
         if old != 0 {
             retiredLock.lock(); retiredEffects.append(old); retiredLock.unlock()
         }
         releaseRetiredEffects()
     }
 
-    /// The hosted effect now published (control thread).
+    /// The hosted effect now published (control thread). The caller gets
+    /// its own strong reference (`takeUnretainedValue`); the slot keeps its retain.
     var effect: AudioUnitEffectHost? {
         let bits = effectSlot.load()
         guard bits != 0, let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) else { return nil }
@@ -444,14 +481,25 @@ final class AppAudioRenderBus {
     /// Releases replaced hosts the render thread no longer uses; checks
     /// again later while one is still in use (an idle output keeps it until
     /// it renders again or goes away).
+    ///
+    /// N333-02: every host listed here left the slot before this scan (the
+    /// exchange in `setEffect` comes first in its thread, and `retiredLock`
+    /// orders it before any other scan). The hazards are read after that,
+    /// sequentially consistent, in the order the render thread hands a host
+    /// on; a host one of them names stays for a later scan.
     func releaseRetiredEffects(attempt: Int = 0) {
         retiredLock.lock()
-        let current = effectInUse.load(), previous = effectPreviousInUse.load(), published = effectSlot.load()
-        let free = retiredEffects.filter { $0 != current && $0 != previous && $0 != published }
+        let candidate = effectCandidate.load()
+        let current = effectInUse.load()
+        let previous = effectPreviousInUse.load()
+        let published = effectSlot.load()
+        let free = retiredEffects.filter { $0 != candidate && $0 != current && $0 != previous && $0 != published }
         retiredEffects.removeAll { free.contains($0) }
         let waiting = !retiredEffects.isEmpty
         retiredLock.unlock()
         for bits in free {
+            // The retain `setEffect` took; when it is the last, deinit runs
+            // here, on this control thread.
             if let pointer = UnsafeRawPointer(bitPattern: UInt(bits)) {
                 Unmanaged<AudioUnitEffectHost>.fromOpaque(pointer).release()
             }
@@ -464,19 +512,72 @@ final class AppAudioRenderBus {
     }
 
     /// Render thread, once per buffer: takes up a newly published effect.
+    ///
+    /// N333-02 (3.3.3 re-audit): the slot used to be read and only then
+    /// marked in use, so a control thread swapping in between released a
+    /// host this thread went on to adopt and run. Now (a) the slot is read,
+    /// (b) that host is published in `effectCandidate`, (c) the slot is read
+    /// again, and only a host still published at (c) is adopted. A scan
+    /// that could release it reads the hazards after the exchange that
+    /// retired it, which follows (c), which follows (b): it sees (b) or the
+    /// hazard the host moved to. A host replaced before (c) is let go and
+    /// the newer value checked, at most `effectAdoptionAttempts` times.
+    /// With the hook nil (the app): atomic loads and stores only, no wait,
+    /// lock, allocation, retain or release.
     @inline(__always)
     private func adoptEffect() {
-        let published = effectSlot.load()
-        guard published != effectBits else { return }
-        // The outgoing host is marked in use before the incoming one, so a
-        // control thread that sees the new one also sees the old one held.
+        let hook = effectAdoptionHook
+        var candidate = effectSlot.load()                               // (a)
+        hook?(.loaded, candidate)
+        // The adopted host: named by `effectInUse` ever since, so the same
+        // bits are that same live host.
+        guard candidate != effectBits else { return }
+        var attempt = 0
+        while candidate != 0 {
+            effectCandidate.store(candidate)                            // (b)
+            hook?(.hazardPublished, candidate)
+            let published = effectSlot.load()                           // (c)
+            if published == candidate { break }
+            attempt += 1
+            guard published != effectBits, attempt < Self.effectAdoptionAttempts else {
+                // Back to the adopted host, or replaced at every check:
+                // this cycle keeps what it has.
+                effectCandidate.store(0)
+                return
+            }
+            candidate = published
+        }
+        // `candidate` is none or named by `effectCandidate`. Each host stays
+        // named as it moves, destination first: the outgoing one into the
+        // previous hazard before the current one changes, the incoming one
+        // into the current hazard before the candidate clears.
         effectPreviousInUse.store(effectBits)
         previousEffectBits = effectBits
-        effectBits = published
-        effectInUse.store(published)
+        effectInUse.store(candidate)
+        effectCandidate.store(0)
+        effectBits = candidate
         effectFadeRemaining = Self.effectFadeFrames
     }
 
+    /// Test support (N333-02): the hosts the render thread runs (bits; 0:
+    /// none) and the crossfade frames left. Render-thread state: read it on
+    /// that thread (from the hook) or after it stopped.
+    var effectRenderState: (current: UInt64, previous: UInt64, fadeRemaining: Int) {
+        (effectBits, previousEffectBits, effectFadeRemaining)
+    }
+
+    /// Test support (N333-02): the hazards a scan reads, in its order.
+    var effectHazards: (candidate: UInt64, current: UInt64, previous: UInt64) {
+        (effectCandidate.load(), effectInUse.load(), effectPreviousInUse.load())
+    }
+
+    /// The bits `setEffect` publishes for `host`, for comparing only.
+    static func effectBitPattern(of host: AudioUnitEffectHost) -> UInt64 {
+        UInt64(UInt(bitPattern: Unmanaged.passUnretained(host).toOpaque()))
+    }
+
+    /// Render thread. `bits` is named by a hazard (`adoptEffect`), so the
+    /// host is alive: borrowed without a retain or release.
     @inline(__always)
     private static func runEffect(_ bits: UInt64, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,
                                   frames: Int) {
@@ -744,4 +845,60 @@ final class AppAudioRenderBus {
             }
         }
     }
+}
+
+// MARK: - N333-02: sequentially consistent words for the effect hand-off
+
+private protocol AudioSeqCstStorage: AnyObject {
+    func load() -> UInt64
+    func store(_ value: UInt64)
+    func exchange(_ value: UInt64) -> UInt64
+}
+
+#if canImport(Synchronization)
+@available(macOS 15.0, *)
+private final class ModernSeqCstWord: AudioSeqCstStorage {
+    private let value: Atomic<UInt64>
+    init(_ initial: UInt64) { value = Atomic(initial) }
+    func load() -> UInt64 { value.load(ordering: .sequentiallyConsistent) }
+    func store(_ new: UInt64) { value.store(new, ordering: .sequentiallyConsistent) }
+    func exchange(_ new: UInt64) -> UInt64 { value.exchange(new, ordering: .sequentiallyConsistent) }
+}
+#endif
+
+/// macOS 14: the OSAtomic barrier forms are sequentially consistent
+/// (<libkern/OSAtomicDeprecated.h>: memory_order_seq_cst), as in
+/// AudioAtomicCounter's fallback; storage is allocated at init.
+private final class LegacySeqCstWord: AudioSeqCstStorage {
+    private let value: UnsafeMutablePointer<Int64>
+    init(_ initial: UInt64) { value = .allocate(capacity: 1); value.initialize(to: Int64(bitPattern: initial)) }
+    deinit { value.deinitialize(count: 1); value.deallocate() }
+    func load() -> UInt64 { UInt64(bitPattern: OSAtomicAdd64Barrier(0, value)) }
+    func store(_ new: UInt64) { _ = exchange(new) }
+    func exchange(_ new: UInt64) -> UInt64 {
+        var old = OSAtomicAdd64Barrier(0, value)
+        while !OSAtomicCompareAndSwap64Barrier(old, Int64(bitPattern: new), value) { old = OSAtomicAdd64Barrier(0, value) }
+        return UInt64(bitPattern: old)
+    }
+}
+
+/// A 64-bit word whose loads, stores and exchanges are all sequentially
+/// consistent: one total order that keeps each thread's program order.
+/// `AudioAtomicCounter` loads acquire and stores release, which lets a
+/// load complete before an earlier store to another word is visible; the
+/// hazard-pointer hand-off (`AppAudioRenderBus.adoptEffect`) relies on
+/// exactly that store-then-load order on both sides. Lock-free and
+/// allocation-free after init, so the render thread may use it.
+private final class AudioSeqCstWord {
+    private let storage: AudioSeqCstStorage
+    init(_ initial: UInt64 = 0) {
+#if canImport(Synchronization)
+        if #available(macOS 15.0, *) { storage = ModernSeqCstWord(initial); return }
+#endif
+        storage = LegacySeqCstWord(initial)
+    }
+    func load() -> UInt64 { storage.load() }
+    func store(_ value: UInt64) { storage.store(value) }
+    /// Stores `value` and returns the value it replaced.
+    @discardableResult func exchange(_ value: UInt64) -> UInt64 { storage.exchange(value) }
 }
