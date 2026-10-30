@@ -82,23 +82,26 @@ struct PermissionsSettingsView: View {
     }
 
     /// One permission: its symbol, name and what it allows, the state as a
-    /// pill, and the button that opens its System Settings pane.
+    /// pill, and "Open". The whole row is the button that opens its System
+    /// Settings pane, as before.
     private func permissionRow(_ permission: AOMPermission) -> some View {
         let status = statuses[permission] ?? .manualReview
-        return AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
-            HStack(spacing: AOMSpace.x2) {
-                AOMStatusPill(status.label, tone: tone(status), symbol: status.symbol)
-                Button {
-                    openSettings(permission)
-                } label: {
+        return Button {
+            openSettings(permission)
+        } label: {
+            AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
+                HStack(spacing: AOMSpace.x3) {
+                    AOMStatusPill(status.label, tone: tone(status), symbol: status.symbol)
                     Label("Open", systemImage: "arrow.up.right.square")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.accent)
                 }
-                .controlSize(.small)
-                .help("Open \(permission.title) in macOS System Settings")
-                .accessibilityLabel("Open \(permission.title) settings")
-                .accessibilityIdentifier("AOMPermissionOpen_\(permission.rawValue)")
             }
         }
+        .buttonStyle(.plain)
+        .help("Open \(permission.title) in macOS System Settings")
+        .accessibilityLabel("Open \(permission.title) settings")
+        .accessibilityIdentifier("AOMPermissionOpen_\(permission.rawValue)")
     }
 
     private func openSettings(_ permission: AOMPermission) {
