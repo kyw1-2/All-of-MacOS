@@ -57,6 +57,9 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         private(set) var readies = 0
         private var start: SwishSnap.Place?
         private var second = false
+        /// N335: the double swipe in one touch (`commit(continuingWith:)`).
+        private var carried: SwishSnap.Direction?
+        private var double: SwishSnap.Direction?
         private var stroke: SwishSnap.Stroke?
         private var now: Double = 0
 
@@ -68,12 +71,15 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
                 self.start = self.place
                 self.second = self.tracker.swipeBegan(key: self.key, newTouch: self.recognizer.motionIndex == 0,
                                                       at: self.now)
+                self.double = self.carried
+                self.carried = nil
                 self.gestures.append([])
                 self.show(stroke)
             }
             recognizer.onUpdate = { [unowned self] stroke in self.show(stroke) }
             recognizer.onCommit = { [unowned self] in self.commit() }
-            recognizer.onCancel = { [unowned self] in self.stroke = nil; self.second = false }
+            recognizer.onMotionCommit = { [unowned self] next in self.commit(continuingWith: next) }
+            recognizer.onCancel = { [unowned self] in self.stroke = nil; self.second = false; self.double = nil }
             recognizer.onMotionReady = { [unowned self] in self.readies += 1 }
         }
 
@@ -83,7 +89,8 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         }
 
         private func plan(_ stroke: SwishSnap.Stroke) -> SwishSnap.Move? {
-            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options, secondSwipeUp: second)
+            SwishSnap.move(at: start, stroke: stroke, modifiers: [], options: options, secondSwipeUp: second,
+                           doubleSwipe: double)
         }
 
         private func show(_ stroke: SwishSnap.Stroke) {
@@ -93,9 +100,14 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
             gestures[gestures.count - 1].append(Self.label(plan(stroke), stroke.direction))
         }
 
-        private func commit() {
+        private func commit(continuingWith next: SwishSnap.Stroke? = nil) {
             guard let stroke else { return }
             let move = plan(stroke)
+            if let next, let direction = SwishSnap.doubleSwipe(first: stroke, firstMove: move, next: next) {
+                carried = direction
+                self.stroke = nil
+                return
+            }
             committed.append(Self.label(move, stroke.direction))
             switch move {
             case .cell?, .place?, .restore?:
@@ -108,6 +120,7 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
             }
             self.stroke = nil
             second = false
+            double = nil
         }
 
         static func label(_ move: SwishSnap.Move?, _ direction: SwishSnap.Direction) -> String {
@@ -244,26 +257,29 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
         XCTAssertEqual(SwishSnap.cell(of: large, visible: visible, margin: 0, thirds: false), .topLeft, "the default is unchanged")
     }
 
+    /// N335: down lost its longer swipe as up did in N334 (Swish: "Swipe
+    /// down once to minimize a window"; the bottom half is the double swipe
+    /// down). Sideways keeps its longer swipe for thirds.
     func testDownAndSidewaysKeepTheirLongerSwipes() {
         XCTAssertEqual(move(nil, .init(.down)), .action(.minimize))
         XCTAssertEqual(move(.center, .init(.down)), .action(.minimize))
-        XCTAssertEqual(move(nil, .init(.down, tier: 2)), .cell(.bottomHalf))
+        XCTAssertEqual(move(nil, .init(.down, tier: 2)), .action(.minimize))
         XCTAssertEqual(move(at(.maximize), .init(.down)), .restore)
-        XCTAssertEqual(move(at(.maximize), .init(.down, tier: 2)), .cell(.bottomHalf))
-        XCTAssertEqual(move(.almostMaximize, .init(.down, tier: 2), .init(almostMaximize: true)), .cell(.bottomHalf))
+        XCTAssertEqual(move(at(.maximize), .init(.down, tier: 2)), .restore)
+        XCTAssertEqual(move(.almostMaximize, .init(.down, tier: 2), .init(almostMaximize: true)), .restore)
         var center = swish
         center.downAction = .center
         XCTAssertEqual(move(nil, .init(.down), center), .cell(.center))
-        XCTAssertEqual(move(nil, .init(.down, tier: 2), center), .cell(.bottomHalf))
+        XCTAssertEqual(move(nil, .init(.down, tier: 2), center), .cell(.center))
         let thirds = SwishSnap.GestureOptions(thirds: true)
         XCTAssertEqual(move(nil, .init(.left, tier: 2), thirds), .cell(.leftThird))
         XCTAssertEqual(move(nil, .init(.right, tier: 2), thirds), .cell(.rightThird))
         XCTAssertEqual(move(nil, .init(.left, tier: 2)), .cell(.leftHalf), "2 × 2: no thirds")
-        XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .bottomHalf)
+        XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .center)
         XCTAssertEqual(SwishSnap.layout(for: .right, tier: 2), .rightThird)
-        // The double swipe is only for up.
+        // `secondSwipeUp` is only for up (down has `doubleSwipe`, N335).
         XCTAssertEqual(move(at(.maximize), .init(.down), second: true), .restore)
-        XCTAssertEqual(move(at(.maximize), .init(.down, tier: 2), second: true), .cell(.bottomHalf))
+        XCTAssertEqual(move(at(.maximize), .init(.down, tier: 2), second: true), .restore)
     }
 
     /// The ⌃⌥ hotkeys send a plain swipe, so ⌃⌥↑ still maximizes and ⌃⌥⇧↑
@@ -392,26 +408,30 @@ final class N334SwipeUpMaximizeTests: XCTestCase {
     }
 
     /// Swish's multi-motion: up, a pause that locks it (haptic), then up again
-    /// in the same touch. The locked maximize commits, and the second swipe,
-    /// from the maximized window, stays maximized: it is a further motion of
-    /// the same touch, never the second half of a double swipe.
-    func testAPauseLockThenMoreSwipeUpInTheSameTouchStaysMaximized() {
+    /// in the same touch. N335: that is Swish's double swipe up ("Try swiping
+    /// up twice on the titlebar"): the locked maximize is not committed and
+    /// the second swipe shows and commits the top half. Until 3.3.5 the
+    /// maximize committed and the second swipe stayed maximized. It is still
+    /// a further motion of the touch, never the second of two separate swipes.
+    func testAPauseLockThenMoreSwipeUpInTheSameTouchIsTheDoubleSwipe() {
         let desk = Desk()
         desk.feed(pair(0.5, 0.80), at: 0)
         desk.feed(pair(0.5, 0.70), at: 0.05)               // engages up
         desk.feed(pair(0.5, 0.66), at: 0.07)
         for t in [0.10, 0.15, 0.20, 0.25, 0.30, 0.35] { desk.feed(pair(0.5, 0.66), at: t) }
         XCTAssertEqual(desk.readies, 1, "the pause locked the swipe")
-        desk.feed(pair(0.5, 0.60), at: 0.40)               // moves on: commits the lock, begins again
-        XCTAssertEqual(desk.committed, ["↑ Maximize"])
-        XCTAssertNil(desk.tracker.landing, "the further motion used the landing up and was no second swipe")
+        desk.feed(pair(0.5, 0.60), at: 0.40)               // moves on: the double swipe, nothing committed
+        XCTAssertEqual(desk.committed, [], "the maximize never lands")
+        XCTAssertNil(desk.tracker.landing)
         desk.feed(pair(0.5, 0.40), at: 0.42)               // 0.26 from the pause: tier 2
         desk.feed([], at: 0.45)
         XCTAssertEqual(desk.recognizer.motionIndex, 1, "the touch's second gesture")
         XCTAssertTrue(desk.strokes.contains(up(2)))
         XCTAssertEqual(desk.gestures.count, 2)
-        XCTAssertEqual(desk.committed, ["↑ Maximize", "↑ Maximize"])
-        XCTAssertEqual(desk.gestures.flatMap { $0 }.filter { $0 != "↑ Maximize" }, [], "no frame showed anything else")
+        XCTAssertEqual(Set(desk.gestures[0]), ["↑ Maximize"])
+        XCTAssertEqual(Set(desk.gestures[1]), ["↑ Top Half"], "every frame of the second swipe")
+        XCTAssertEqual(desk.committed, ["↑ Top Half"])
+        XCTAssertEqual(desk.place, at(.topHalf))
     }
 
     // MARK: Frames from the pad: Swish's double swipe up
