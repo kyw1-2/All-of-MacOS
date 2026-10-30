@@ -278,10 +278,10 @@ struct AOMCardLink: View {
                     Image(systemName: symbol).imageScale(.small)
                 }
             }
-            .font(AOMFont.caption.weight(.medium))
+            .font(AOMFont.callout.weight(.medium))
             .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
-            .padding(.horizontal, AOMSpace.x1 + AOMSpace.x0_5)
-            .frame(minHeight: 18)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(minHeight: AOMIcon.row + AOMSpace.x0_5)
             .background(hovering ? AOMColor.track : .clear, in: Capsule())
             .contentShape(Capsule())
         }

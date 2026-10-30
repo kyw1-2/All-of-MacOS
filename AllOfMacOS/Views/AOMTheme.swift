@@ -194,6 +194,7 @@ struct AOMCardSurface: ViewModifier {
     var radius: CGFloat = AOMRadius.card
     var padding: CGFloat? = AOMSpace.cardPadding
     var hovering = false
+    var pressed = false
     /// Kept for source compatibility; elevation is tone, not shadow.
     var elevated = true
     @Environment(\.colorSchemeContrast) private var contrast
@@ -206,7 +207,7 @@ struct AOMCardSurface: ViewModifier {
         case .paper:
             content
                 .padding(padding ?? 0)
-                .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: shape)
+                .background(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface), in: shape)
                 .overlay {
                     shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
                                        lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
@@ -399,9 +400,12 @@ private struct AOMCardTileBody: View {
     var body: some View {
         configuration.label
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .aomCardStyle(style, radius: radius, padding: padding, hovering: hovering && isEnabled)
+            // Press darkens the fill (HIG Buttons: always a press state);
+            // the content stays at full contrast.
+            .modifier(AOMCardSurface(style: style, radius: radius, padding: padding,
+                                     hovering: hovering && isEnabled, pressed: configuration.isPressed && isEnabled))
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.5)
+            .opacity(isEnabled ? 1 : 0.5)
             .aomAnimation(.quick, value: configuration.isPressed)
             .aomAnimation(.quick, value: hovering)
             .onHover { hovering = $0 }
@@ -472,7 +476,7 @@ struct AOMChip: View {
             }
             Text(text).lineLimit(1)
         }
-        .font(AOMFont.badge)
+        .font(AOMFont.caption.weight(.medium))
         .foregroundStyle(tint)
         .padding(.horizontal, AOMSpace.x2)
         .frame(minHeight: AOMIcon.row)
@@ -496,7 +500,7 @@ struct AOMKeycap: View {
             .lineLimit(1)
             .fixedSize()
             .padding(.horizontal, AOMSpace.x1 + 1)
-            .frame(minWidth: 18, minHeight: 18)
+            .frame(minWidth: AOMIcon.row, minHeight: AOMIcon.row)
             .background(onSelection ? Color.white.opacity(0.18) : AOMColor.sunken, in: shape)
             .overlay {
                 shape.strokeBorder(onSelection ? Color.white.opacity(0.35)

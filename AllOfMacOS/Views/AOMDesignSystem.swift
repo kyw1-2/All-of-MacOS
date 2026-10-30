@@ -142,8 +142,8 @@ private struct AOMToolbarButtonBody: View {
         configuration.label
             .font(AOMFont.body.weight(.medium))
             .foregroundStyle(AOMTheme.text)
-            .padding(.horizontal, AOMSpace.x2)
-            .frame(height: 22)
+            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+            .frame(height: AOMIcon.hitArea)
             .background(configuration.isPressed ? AOMColor.track : (hovering ? AOMColor.sunken : .clear), in: shape)
             .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
             .contentShape(shape)
