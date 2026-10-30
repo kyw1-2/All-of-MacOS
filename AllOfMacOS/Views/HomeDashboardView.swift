@@ -249,7 +249,13 @@ struct AOMHomeView: View {
                                detail: "Connect a gesture, key or mouse button to an action.",
                                done: !triggers.isEmpty, actionTitle: "New Automation", action: newAutomation)
         ]
-        return WorkspaceSetupCard(steps: steps, expanded: $setupExpanded,
+        // The header's prominent "Allow Accessibility…" already asks for step 1;
+        // one prominent button per action, so the step's own stays bordered then.
+        var heroAsksForNext = false
+        if case .blocked(let permission, _) = snapshot.hero, permission == .accessibility, accessibility != .granted {
+            heroAsksForNext = true
+        }
+        return WorkspaceSetupCard(steps: steps, expanded: $setupExpanded, prominentNext: !heroAsksForNext,
                                   skip: { withAnimation(AOMMotion.standard) { setupSkipped = true } },
                                   tour: { appState.showTutorialRequested = true })
     }
@@ -990,6 +996,7 @@ struct WorkspaceSetupItem: Identifiable {
 private struct WorkspaceSetupCard: View {
     let steps: [WorkspaceSetupItem]
     @Binding var expanded: Bool
+    var prominentNext = true
     let skip: () -> Void
     let tour: () -> Void
     @Environment(\.colorSchemeContrast) private var contrast
@@ -1006,7 +1013,7 @@ private struct WorkspaceSetupCard: View {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                         if index > 0 { AOMDivider(axis: .vertical).padding(.vertical, AOMSpace.x3) }
-                        WorkspaceSetupStep(item: step, isNext: step.number == next?.number)
+                        WorkspaceSetupStep(item: step, isNext: step.number == next?.number, prominent: prominentNext)
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
@@ -1056,9 +1063,11 @@ private struct WorkspaceSetupCard: View {
             .layoutPriority(1)
             Spacer(minLength: AOMSpace.x2)
             if let next, !expanded {
-                Button(next.actionTitle, action: next.action)
-                    .buttonStyle(.borderedProminent)
-                    .help(next.detail)
+                if prominentNext {
+                    Button(next.actionTitle, action: next.action).buttonStyle(.borderedProminent).help(next.detail)
+                } else {
+                    Button(next.actionTitle, action: next.action).buttonStyle(.bordered).help(next.detail)
+                }
             }
             Button("Show the Tour", action: tour)
                 .buttonStyle(.link)
@@ -1080,6 +1089,7 @@ private struct WorkspaceSetupCard: View {
 private struct WorkspaceSetupStep: View {
     let item: WorkspaceSetupItem
     let isNext: Bool
+    var prominent = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
@@ -1113,7 +1123,7 @@ private struct WorkspaceSetupStep: View {
                     .font(AOMFont.body)
                     .foregroundStyle(AOMColor.successText)
                     .frame(minHeight: AOMIcon.hitArea - AOMSpace.x0_5)
-            } else if isNext {
+            } else if isNext && prominent {
                 Button(item.actionTitle, action: item.action).buttonStyle(.borderedProminent)
             } else {
                 Button(item.actionTitle, action: item.action).buttonStyle(.bordered)

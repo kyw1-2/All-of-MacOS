@@ -104,6 +104,8 @@ struct AOMMainShell<Content: View>: View {
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
+    /// The selection is the accent only in the key window; elsewhere it is grey.
+    @Environment(\.controlActiveState) private var controlActiveState
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -154,6 +156,8 @@ struct AOMSidebar: View {
             Label(tab.title, systemImage: tab.sidebarSymbol)
             Spacer(minLength: AOMSpace.x1)
             statusBadge(for: tab)
+                .environment(\.aomOnAccentSelection,
+                             tab == appState.selectedMainTab && controlActiveState == .key)
         }
         .tag(tab)
         .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")

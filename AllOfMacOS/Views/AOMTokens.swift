@@ -107,8 +107,6 @@ enum AOMSize {
     static let tileMax: CGFloat = 420
     /// A Workspace tile: the squircle row (name over status) and the count line.
     static let tileHeight: CGFloat = 104
-    /// The Workspace side column (Today, This Mac) beside quick actions and activity.
-    static let sideColumn: CGFloat = 340
     /// The ⌘K palette.
     static let paletteWidth: CGFloat = 600
     /// Inline help popover width.

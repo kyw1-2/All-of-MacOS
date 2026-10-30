@@ -3,7 +3,7 @@ import SwiftUI
 
 // AOM 3.3.3 components: one implementation per job (ux-refs-3.3.3 §b.5, e.1–e.7).
 //
-//   AOMPage            standard page scroll: canvas, 16 pt margins, 1120 pt max, 20 pt between sections
+//   AOMPage            standard page scroll: canvas, 24 pt margins, 1200 pt max, 24 pt between sections
 //   AOMPageHeader      module badge · status sentence · context line · status pill · trailing controls · ⓘ
 //   AOMSection         section title above an opaque card, optional ⓘ and footer under the card
 //   AOMSettingRow      label · optional secondary line · trailing control · optional ⓘ popover
@@ -28,14 +28,10 @@ enum AOMPreviewHooks {
     static var scrollAnchor: UnitPoint? {
         PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-scroll-bottom") ? .bottom : nil
     }
-    /// `--aom-preview-setup-expanded` opens the Workspace setup strip's step list.
-    static var setupExpanded: Bool {
-        PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-setup-expanded")
-    }
 }
 
 /// The standard page (e.1): one vertical scroll view on the canvas, content
-/// centred at most 1120 pt wide with 16 pt margins and 20 pt between sections.
+/// at most 1200 pt wide (centred beyond) with 24 pt margins and 24 pt between sections.
 /// The page name lives in the toolbar (`navigationTitle`), never repeated here.
 struct AOMPage<Content: View>: View {
     var maxWidth: CGFloat = AOMSize.contentMaxWidth
@@ -54,8 +50,8 @@ struct AOMPage<Content: View>: View {
             VStack(alignment: .leading, spacing: spacing) { content }
                 .frame(maxWidth: maxWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x3)
-                .padding(.bottom, AOMSpace.x5)
+                .padding(.top, AOMSpace.x5)
+                .padding(.bottom, AOMSpace.x6)
                 .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
@@ -487,6 +483,11 @@ struct AOMStatusPill: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    /// `.increased` inside a selected row of an active list (the sidebar's
+    /// accent selection): tone colours on accent read poorly, so the pill
+    /// turns white there, like Mail's counts.
+    @Environment(\.backgroundProminence) private var prominence
+    @Environment(\.aomOnAccentSelection) private var onAccentSelection
 
     init(_ text: String, tone: AOMTone = .neutral, symbol: String? = nil) {
         self.text = text
@@ -503,10 +504,11 @@ struct AOMStatusPill: View {
 
     var body: some View {
         let increased = contrast == .increased
-        let fill = customTint ?? tone.color
-        let label = customTint ?? tone.textColor
+        let onSelection = prominence == .increased || onAccentSelection
+        let fill = onSelection ? Color.white : (customTint ?? tone.color)
+        let label = onSelection ? Color.white : (customTint ?? tone.textColor)
         // A 13% wash disappears on dark sidebars and cards; dark mode gets 20%.
-        let wash = increased ? 0.22 : (scheme == .dark ? 0.2 : 0.13)
+        let wash = increased || onSelection ? 0.22 : (scheme == .dark ? 0.2 : 0.13)
         HStack(spacing: AOMSpace.x1) {
             if let symbol {
                 Image(systemName: symbol).imageScale(.small)
@@ -526,6 +528,19 @@ struct AOMStatusPill: View {
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
+    }
+}
+
+private struct AOMOnAccentSelectionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True inside a row drawn on the accent selection (the selected sidebar
+    /// row of the key window), where pills switch to white.
+    var aomOnAccentSelection: Bool {
+        get { self[AOMOnAccentSelectionKey.self] }
+        set { self[AOMOnAccentSelectionKey.self] = newValue }
     }
 }
 

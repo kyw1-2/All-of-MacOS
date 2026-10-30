@@ -100,7 +100,7 @@ is paraphrased here, not quoted. App patterns are described from the shipping ma
 | 81 | Home, accessory tiles | Icon, name and state. Off accessories are dimmed. The tile toggles, the name opens details | Off modules show a grey squircle. The tile opens the page and the switch is a separate target. |
 | 82 | Control Center, toggle modules | The glyph fills with the accent when the module is on | A tile's squircle shows its hue only while the module is on. |
 | 83 | Activity Monitor, CPU/Memory footer | Live load and memory figures with a pressure graph | "This Mac" shows live CPU % and memory with a pressure-coloured bar. |
-| 84 | Screen Time, weekly chart | Big total above a bar chart for the week, with today highlighted | Today card: big counts, then 7 bars with today in the accent colour. |
+| 84 | Screen Time, weekly chart | Big total above a bar chart for the week, with today highlighted | Today card: big counts, then 7 stacked bars. Today's weekday label is bold. |
 | 85 | Shortcuts, gallery and library | Rounded action tiles: glyph on the leading side, title, one click runs it | Quick actions are a grid of equal tiles with the glyph, the name and the shortcut. |
 | 86 | Music and TV, shelves | Headers with a trailing "See All" | "Recent activity … View All ›". |
 | 87 | Xcode Organizer, Metrics | A metric title, a big number and a small chart in one card | The Today card follows this pattern. |
@@ -169,9 +169,9 @@ or `.imageScale(.small/.large)`. No body text below 13 pt. No sentence below 11 
 
 - Dashboards (Workspace, Insights, System Tools) fill the detail column up to 1200 pt, leading-aligned
   and centred beyond that. At 1320×820 that is the full column (about 1050 pt).
-- Workspace must use the height of a 1320×820 window. Its lower area is two columns: Quick actions
-  and Recent activity on the left, Today and This Mac on the right (340 pt). Below about 900 pt of
-  column width they stack into one column.
+- Workspace must use the height of a 1320×820 window. Below the modules it has a row of quick-action
+  tiles and an overview row of three equal cards (Recent activity, Today, This Mac). Narrower
+  columns go to two columns, then one.
 - Forms (settings-like pages) cap at 760 pt. When the column is wider than about 1100 pt, put two
   related groups side by side instead of leaving one narrow centred column.
 - Every number shown is real data from an existing service. If a value isn't known yet, show "…",
@@ -249,9 +249,11 @@ Order (top to bottom), each part shown only when it has real content:
 3. Needs attention: list rows (glyph, Body sentence, one button, dismiss for suggestions).
 4. Modules: tiles in 3 columns × 2 rows (2 × 3 when narrow) with a squircle, the name, a status line,
    a large count and one control.
-5. Lower area, two columns:
-   - Left: Quick actions (a grid of tiles: glyph, name, shortcut; pinned automations after them),
-     then Recent activity (rows, "View All ›" to Insights).
-   - Right: Today (actions run, captures and copies today, big numbers; a 7-day bar chart of AOM
-     actions with today in the accent colour), then This Mac (CPU, memory bar, startup disk bar,
-     battery) from the System Tools monitor, with "System Tools ›".
+5. Quick actions: a grid of launch tiles (squircle in the module hue, name, shortcut), pinned
+   automations after them. One row of five at 1320×820.
+6. Overview, three equal cards in a row (two columns plus a full-width Recent activity below about
+   960 pt, one column below 600 pt):
+   - Recent activity (rows, "View All ›" to Insights; a centred empty state when there is none).
+   - Today (actions run, captures and copies today, big numbers; a 7-day stacked bar chart of AOM
+     actions, captures and copies stacked in their module hues, today's label bold), then This Mac
+     (CPU, memory bar, startup disk bar, battery) from the System Tools monitor, with "System Tools ›".
