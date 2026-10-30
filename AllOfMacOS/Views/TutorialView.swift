@@ -154,17 +154,18 @@ struct TutorialOverlayView: View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             pageTitle("Allow what you'll use",
                       "macOS asks you to approve each kind of access in System Settings. AOM only reads whether it was given.")
-            AOMSection(footer: "You can skip this and allow access later in Settings › Permissions.") {
-                ForEach(AOMPermission.required) { permission in
-                    permissionRow(permission)
+            // On the overlay's glass: a card group, whose first row draws no divider.
+            AOMCardGroup(footer: "You can skip this and allow access later in Settings › Permissions.") {
+                ForEach(Array(AOMPermission.required.enumerated()), id: \.element.id) { index, permission in
+                    permissionRow(permission, first: index == 0)
                 }
             }
         }
     }
 
-    private func permissionRow(_ permission: AOMPermission) -> some View {
+    private func permissionRow(_ permission: AOMPermission, first: Bool) -> some View {
         let status = statuses[permission] ?? .notDetermined
-        return AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
+        return AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon, showsDivider: !first) {
             if status == .granted {
                 AOMStatusPill("Allowed", tone: .success, symbol: "checkmark.circle.fill")
             } else {
@@ -178,23 +179,25 @@ struct TutorialOverlayView: View {
     private var readyPage: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             pageTitle("You're set", "These shortcuts work from any app. Change them any time in Settings.")
-            AOMSection {
+            AOMCardGroup {
                 shortcutRow("Capture an area", symbol: "viewfinder",
-                            keys: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString)
+                            keys: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString, first: true)
                 shortcutRow("Open the clipboard shelf", symbol: "doc.on.clipboard",
                             keys: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString)
                 shortcutRow("Search everything in AOM", symbol: "magnifyingglass",
                             keys: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
-            AOMSection {
-                AOMToggleRow("Show AOM in the menu bar", detail: "Capture, clipboard and pause controls one click away.",
-                             isOn: $showMenuBarIcon)
+            AOMCardGroup {
+                AOMSettingRow("Show AOM in the menu bar", detail: "Capture, clipboard and pause controls one click away.",
+                              showsDivider: false) {
+                    Toggle("Show AOM in the menu bar", isOn: $showMenuBarIcon)
+                }
             }
         }
     }
 
-    private func shortcutRow(_ title: String, symbol: String, keys: String?) -> some View {
-        AOMSettingRow(title, symbol: symbol) {
+    private func shortcutRow(_ title: String, symbol: String, keys: String?, first: Bool = false) -> some View {
+        AOMSettingRow(title, symbol: symbol, showsDivider: !first) {
             if let keys { AOMKeycap(text: keys) } else {
                 Text("Not set").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             }
