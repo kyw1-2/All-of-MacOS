@@ -95,22 +95,22 @@ struct ClipboardSettingsView: View {
                       module: .clipboard,
                       subtitle: "Text, links, images, files and pinboards, encrypted on this Mac",
                       active: store.settings.enabled && !store.paused) {
-            Button("Open Clipboard") { ClipboardPanelController.shared.show() }
+            // The Clipboard page's toolbar names the same panel "Open Shelf".
+            Button("Open Shelf") { ClipboardPanelController.shared.show() }
         }
     }
 
     // MARK: - History
 
     private var historySection: some View {
+        // What history and pinboards take on disk sits beside the title, so
+        // the section needs no footer.
         AOMSection("History",
-                   help: "Unpinned history is removed when its age, item count or storage limit is reached, including with Forever selected: the item and storage limits keep the encrypted history file a manageable size. Single items larger than 20 MB are skipped. File clips save references only, not file contents.",
-                   footer: "History: \(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · Pinboards: \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file))") {
+                   detail: "\(ByteCountFormatter.string(fromByteCount: Int64(store.historyBytes), countStyle: .file)) · \(ByteCountFormatter.string(fromByteCount: Int64(store.pinnedBytes), countStyle: .file)) in pinboards",
+                   help: "Unpinned history is removed when its age, item count or storage limit is reached, including with Forever selected: the item and storage limits keep the encrypted history file a manageable size. Single items larger than 20 MB are skipped. File clips save references only, not file contents.") {
             AOMToggleRow("Keep clipboard history", isOn: $store.settings.enabled)
-            Group {
-                AOMToggleRow("Pause collection", indent: true, isOn: $store.paused)
-            }
-            .disabled(!store.settings.enabled)
-            .opacity(store.settings.enabled ? 1 : 0.55)
+            AOMToggleRow("Pause history", indent: true, isOn: $store.paused)
+                .aomDependentRows(enabled: store.settings.enabled)
             Group {
                 AOMSettingRow("Keep unpinned items",
                               help: "Pinboards are exempt from age, item count and storage limits. Pinned items stay until you delete them. Removing an item from its last pinboard returns it to history; if it is older than your history limit it is deleted, and Undo Delete brings it back.") {
@@ -164,8 +164,7 @@ struct ClipboardSettingsView: View {
 
     private var pinboardsSection: some View {
         AOMSection("Pinboards & search",
-                   help: "Text inside copied images is indexed locally for search, and matches are highlighted in the image. In a preview, drag over an image to read or copy part of it. Search supports phrases in quotes, type:image, from:Safari, board:Work, is:pinned, before:2026-01-01, after:7d, on:yesterday and -excluded terms.",
-                   footer: "Deleting a pinboard asks whether to delete its items too, as Paste does, or keep them in history. Undo Delete restores either choice until you quit.") {
+                   help: "Text inside copied images is indexed locally for search, and matches are highlighted in the image. In a preview, drag over an image to read or copy part of it. Search supports phrases in quotes, type:image, from:Safari, board:Work, is:pinned, before:2026-01-01, after:7d, on:yesterday and -excluded terms. Deleting a pinboard asks whether to delete its items too, as Paste does, or keep them in history; Undo Delete restores either choice until you quit.") {
             AOMToggleRow("Search all lists from a pinboard",
                          help: "On, as in Paste: searching while a pinboard is open looks through Clipboard History and every pinboard. Add board:Name to search one pinboard. Off: searches stay inside the pinboard on screen.",
                          isOn: $store.settings.searchesAllLists)
@@ -179,9 +178,9 @@ struct ClipboardSettingsView: View {
 
     private var pastingSection: some View {
         AOMSection("Pasting",
-                   help: "Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.",
-                   footer: "Turn off direct paste to copy only. Hold the Plain Text modifier while pasting to remove text formatting. Images and files keep their original clipboard representation.") {
-            AOMToggleRow("Paste directly into the previous app", isOn: $store.settings.pasteDirectly)
+                   help: "Select several cards with ⌘-click to combine text, or add them to the paste stack and press ⌘V repeatedly in the destination app to insert them one at a time.") {
+            AOMToggleRow("Paste directly into the previous app", help: "Turn off direct paste to copy only.",
+                         isOn: $store.settings.pasteDirectly)
             AOMToggleRow("Paste text without formatting by default", isOn: $store.settings.plainText)
             AOMSettingRow("Quick Paste modifier (1–9)") {
                 Picker("Quick Paste modifier (1–9)", selection: $preferences.quickModifier) {
@@ -189,7 +188,8 @@ struct ClipboardSettingsView: View {
                 }
                 .pickerStyle(.menu)
             }
-            AOMSettingRow("Plain Text modifier") {
+            AOMSettingRow("Plain Text modifier",
+                          help: "Hold the Plain Text modifier while pasting to remove text formatting. Images and files keep their original clipboard representation.") {
                 Picker("Plain Text modifier", selection: $preferences.plainModifier) {
                     ForEach(ClipboardPreferences.Modifier.allCases.filter { $0 != .command && $0 != preferences.quickModifier }) { Text($0.symbol).tag($0) }
                 }
@@ -224,7 +224,7 @@ struct ClipboardSettingsView: View {
                     }
                 }
             }
-            AOMSettingRow("Default shortcuts", detail: "Puts every clipboard shortcut back to its original keys") {
+            AOMSettingRow("Default shortcuts", help: "Puts every clipboard shortcut back to its original keys.") {
                 Button("Restore Defaults") {
                     stopRecording()
                     for command in ClipboardShortcuts.Command.allCases { shortcuts.setShortcut(command.initial, for: command) }
@@ -237,20 +237,17 @@ struct ClipboardSettingsView: View {
 
     private var privacySection: some View {
         AOMSection("Privacy & storage",
-                   footer: "History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.") {
+                   help: "History is encrypted on this Mac with a key stored in your login Keychain. AOM does not upload clipboard contents or sync them to an account.") {
             AOMToggleRow("Show clipboard windows in screen sharing and recording",
                          help: "When disabled, AOM requests macOS window capture exclusion. Some capture apps may ignore this policy; test with your sharing app before displaying sensitive clips.",
                          isOn: $preferences.showInScreenCapture)
             AOMToggleRow("Allow private web previews for links",
                          help: "Off by default. Opening a link preview contacts the website and may consume one-time links or send tracking parameters. Preview cookies and website data are kept only in memory; JavaScript is disabled.",
                          isOn: $preferences.networkPreviews)
-            Group {
-                AOMToggleRow("Show page titles and images on link cards",
-                             help: "Off by default, and only with web previews allowed. Each link card shown in the shelf contacts its website once per session to read the page title, site name and preview image. Links that look like they carry a password, token or signature, and links to this Mac or your local network, are never fetched. Nothing fetched is saved to disk.",
-                             indent: true, isOn: $preferences.linkCards)
-            }
-            .disabled(!preferences.networkPreviews)
-            .opacity(preferences.networkPreviews ? 1 : 0.55)
+            AOMToggleRow("Show page titles and images on link cards",
+                         help: "Off by default, and only with web previews allowed. Each link card shown in the shelf contacts its website once per session to read the page title, site name and preview image. Links that look like they carry a password, token or signature, and links to this Mac or your local network, are never fetched. Nothing fetched is saved to disk.",
+                         indent: true, isOn: $preferences.linkCards)
+                .aomDependentRows(enabled: preferences.networkPreviews)
         }
     }
 
@@ -293,7 +290,7 @@ struct ClipboardSettingsView: View {
         if let error = store.lastError {
             AOMNotice(.error, error)
         }
-        AOMSection("Saved items", detail: "\(store.entries.count) saved items · \(store.boards.count) pinboards") {
+        AOMSection("Saved items", detail: Self.savedItemsCount(items: store.entries.count, pinboards: store.boards.count)) {
             AOMSettingRow("Undo the last deletion", detail: "Works until you quit AOM") {
                 Button("Undo Delete") { _ = store.undoLastDeletion() }.disabled(!store.canUndoDeletion)
             }
@@ -302,6 +299,12 @@ struct ClipboardSettingsView: View {
                     .aomDestructive()
             }
         }
+    }
+
+    /// "12 items · 1 pinboard": the title already says "saved items", and one
+    /// is never "1 pinboards".
+    static func savedItemsCount(items: Int, pinboards: Int) -> String {
+        "\(items.formatted()) item\(items == 1 ? "" : "s") · \(pinboards.formatted()) pinboard\(pinboards == 1 ? "" : "s")"
     }
 
     static func retentionTitle(_ days: Int) -> String {

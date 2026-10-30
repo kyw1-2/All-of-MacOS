@@ -50,9 +50,10 @@ struct ConfigurationPanel: View {
 /// start closed so the panel stays readable.
 ///
 /// Drawn as a group inside the editor's card (`AOMEditorGroup`, e.2: never a
-/// card in a card): a hairline above, a monochrome symbol, the title,
-/// "Advanced" as its detail, an ⓘ for the explanation and a disclosure
-/// chevron. Pass `rows: true` when the content is `AOMSettingRow`s.
+/// card in a card): a hairline above, a monochrome symbol, the title, an ⓘ
+/// for the explanation and a disclosure chevron. A group starts closed unless
+/// it passes `expanded: true`. Pass `rows: true` when the content is
+/// `AOMSettingRow`s.
 struct ConfigSection<Content: View>: View {
     let title: String
     let systemImage: String
@@ -74,8 +75,9 @@ struct ConfigSection<Content: View>: View {
     }
 
     var body: some View {
-        AOMEditorGroup(title, symbol: systemImage, detail: isAdvanced ? "Advanced" : nil, help: help,
-                       rows: rows, isExpanded: $expanded) {
+        // No "Advanced" detail: the advanced groups only ever show inside the
+        // editor's Options › Advanced disclosure, which already says so.
+        AOMEditorGroup(title, symbol: systemImage, help: help, rows: rows, isExpanded: $expanded) {
             content()
         }
     }
@@ -563,7 +565,7 @@ struct ActionConfigView: View {
                 }
             case .ifElse:
                 AOMEditorGroup("If / Else condition",
-                               help: "Add the THEN steps with Add Inside… and the ELSE steps with Add to Else… in this step's menu. The condition is checked after the step delay.") {
+                               help: "Add the Then steps with Add Inside… and the Else steps with Add to Else… in this step's menu. The condition is checked after the step delay.") {
                     Picker("Read from", selection: Binding(get: { action.parameters.conditionKind ?? "variable" }, set: { kind in
                         saveAction { $0.parameters.conditionKind = kind }
                     })) {
@@ -588,7 +590,9 @@ struct ActionConfigView: View {
                     }
                     TextField("Compare to", text: stringParameter(\.conditionValue))
                         .textFieldStyle(.roundedBorder)
-                    AOMEditorNote("THEN: \(action.parameters.children?.count ?? 0) steps · ELSE: \(action.parameters.elseChildren?.count ?? 0) steps")
+                    let thenCount = action.parameters.children?.count ?? 0
+                    let elseCount = action.parameters.elseChildren?.count ?? 0
+                    AOMEditorNote("Then: \(thenCount) step\(thenCount == 1 ? "" : "s") · Else: \(elseCount) step\(elseCount == 1 ? "" : "s")")
                 }
             case .customSnapWindow:
                 AOMEditorGroup("Custom snap area", detail: "Percent of the visible screen, from the top left",
@@ -733,7 +737,7 @@ struct ActionConfigView: View {
 
             case .openURL:
                 AOMEditorGroup("URL", help: "{{var:name}} inserts a workflow variable, for example a script's output.") {
-                    TextField("https://...", text: $url)
+                    TextField("https://…", text: $url)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: url) { _, newValue in
                             saveAction { $0.parameters.url = newValue }
@@ -1048,7 +1052,7 @@ struct SoundOutputConfig: View {
                 get: { name }, set: { name = $0; save($0, nil) }))
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: AOMSpace.x2) {
-                Menu("Choose connected device") {
+                Menu("Choose Connected Device") {
                     ForEach(devices.filter { $0.name != "AirPlay" }) { device in
                         Button(device.name) {
                             name = device.name
@@ -1057,7 +1061,7 @@ struct SoundOutputConfig: View {
                     }
                 }
                 .fixedSize()
-                Button("Refresh devices") { devices = AudioOutputService.devices() }
+                Button("Refresh Devices") { devices = AudioOutputService.devices() }
                     .controlSize(.small)
             }
         }

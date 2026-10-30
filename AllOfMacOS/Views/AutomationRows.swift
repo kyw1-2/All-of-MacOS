@@ -53,14 +53,16 @@ struct AOMAutomationRow<Accessory: View>: View {
     var body: some View {
         AOMListRow(trigger.displayName, detail: trigger.aomRowDetail, dimmed: !trigger.isEnabled) {
             Image(systemName: trigger.input.category.iconName)
-                .font(.system(size: 13, weight: .medium))
+                .font(AOMFont.callout.weight(.medium))
                 .foregroundStyle(trigger.isEnabled ? .secondary : .tertiary)
                 .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {
                 accessory
                 if trigger.isFavorite {
-                    Image(systemName: "pin.fill").font(.system(size: 9.5)).foregroundStyle(.tertiary)
+                    // Hierarchical, so List selection turns it white with the
+                    // row; tertiary at 9.5 pt all but vanished in light mode.
+                    Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(.secondary)
                         .accessibilityLabel("Pinned")
                 }
                 if case .keyboardShortcut(let shortcut) = trigger.input {

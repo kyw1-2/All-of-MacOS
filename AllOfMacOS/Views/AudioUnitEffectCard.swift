@@ -29,13 +29,13 @@ struct AudioUnitEffectCard: View {
         Group {
             switch style {
             case .section:
-                AOMSection("Audio Unit Effect", help: Self.help, footer: message) {
+                AOMSection("Audio Unit effect", help: Self.help, footer: message) {
                     AOMSettingRow("Effect", symbol: "waveform.path.ecg") { controls }
                 }
             case .panel:
                 VStack(alignment: .leading, spacing: AOMSpace.x2) {
                     HStack(spacing: AOMSpace.x1) {
-                        Text("Audio Unit Effect")
+                        Text("Audio Unit effect")
                             .font(AOMFont.caption.weight(.semibold))
                             .foregroundStyle(AOMColor.textSecondary)
                             .accessibilityAddTraits(.isHeader)

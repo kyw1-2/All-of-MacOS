@@ -39,6 +39,9 @@ struct ModernGesturesWorkspace: View {
     enum ViewMode: String { case list, table }
 
     static let tableWidthRange: ClosedRange<Double> = 420...760
+    /// The input badge in the first-run choices: smaller than a Workspace
+    /// tile's, so a choice is one settings row (title over a caption) tall.
+    private static let choiceBadge: CGFloat = 24
 
     // MARK: Data
 
@@ -264,8 +267,9 @@ struct ModernGesturesWorkspace: View {
                                 symbol: category == .all ? nil : category.iconName, count: number)
         }
         return AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
-            .padding(.horizontal, AOMSpace.s)
-            .frame(height: 42)
+            .padding(.horizontal, AOMSpace.rowInset)
+            // One chip plus 8 pt above and below it.
+            .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
     }
 
     private var list: some View {
@@ -294,7 +298,7 @@ struct ModernGesturesWorkspace: View {
             }
             .width(28)
             TableColumn("Name", value: \.displayName) { trigger in
-                HStack(spacing: 7) {
+                HStack(spacing: AOMSpace.x2) {
                     Image(systemName: trigger.input.category.iconName)
                         .foregroundStyle(trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .secondary)
                         .frame(width: 16)
@@ -302,7 +306,7 @@ struct ModernGesturesWorkspace: View {
                         .accessibilityLabel(trigger.input.category.rawValue)
                     Text(trigger.displayName).foregroundStyle(trigger.isEnabled ? .primary : .secondary)
                     if trigger.isFavorite {
-                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary).accessibilityLabel("Pinned")
+                        Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(.secondary).accessibilityLabel("Pinned")
                     }
                 }
                 .modifier(FiredFlash(triggerID: trigger.id))
@@ -754,7 +758,7 @@ struct ModernGesturesWorkspace: View {
                 ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
                     Button { presentAddTrigger(choice.0) } label: {
                         HStack(spacing: AOMSpace.x3) {
-                            AOMModuleBadge(symbol: choice.0.iconName, hue: AOMModule.automation.hue, size: AOMIcon.tileBadge)
+                            AOMModuleBadge(symbol: choice.0.iconName, hue: AOMModule.automation.hue, size: Self.choiceBadge)
                             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                                 Text(choice.1).font(AOMFont.body).foregroundStyle(AOMColor.text)
                                 Text(choice.2).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
@@ -764,13 +768,13 @@ struct ModernGesturesWorkspace: View {
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textTertiary)
                         }
-                        .padding(.horizontal, AOMSpace.x4)
+                        .padding(.horizontal, AOMSpace.rowInset)
                         .frame(minHeight: AOMSize.rowDetail)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(AOMRowButtonStyle(radius: 0))
                     .accessibilityLabel("\(choice.1): \(choice.2)")
-                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.x4 + AOMIcon.tileBadge + AOMSpace.x3) }
+                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.rowInset + Self.choiceBadge + AOMSpace.x3) }
                 }
             }
         }

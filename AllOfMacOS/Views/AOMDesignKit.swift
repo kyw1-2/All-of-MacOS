@@ -255,14 +255,18 @@ struct AOMSectionCard<Accessory: View, Content: View, Footer: View>: View {
     }
 }
 
-/// The trailing link of a section title ("View All ›").
+/// The trailing link of a section title ("View All ›", "Show All ⌄").
 struct AOMCardLink: View {
     let title: String
+    /// `chevron.right` for links that open a page (the default),
+    /// `chevron.down`/`chevron.up` for Show All / Show Less, nil for none.
+    var symbol: String?
     let action: () -> Void
     @State private var hovering = false
 
-    init(_ title: String, action: @escaping () -> Void) {
+    init(_ title: String, symbol: String? = "chevron.right", action: @escaping () -> Void) {
         self.title = title
+        self.symbol = symbol
         self.action = action
     }
 
@@ -270,7 +274,9 @@ struct AOMCardLink: View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x0_5) {
                 Text(title)
-                Image(systemName: "chevron.right").imageScale(.small)
+                if let symbol {
+                    Image(systemName: symbol).imageScale(.small)
+                }
             }
             .font(AOMFont.callout.weight(.medium))
             .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)

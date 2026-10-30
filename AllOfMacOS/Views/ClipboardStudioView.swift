@@ -52,7 +52,7 @@ enum ClipboardEmptyContent: Equatable {
         case .unreadableArchive:
             return "The saved history file could not be decoded, so AOM stopped saving to protect it. The file has not been changed. Recover Storage keeps it under a new name and starts a new history."
         case .empty(let paused):
-            return paused ? "Recording is paused. Resume to keep what you copy."
+            return paused ? "History is paused. Resume to keep what you copy."
                 : "Copy text, links, colors, images or files and they appear here — searchable, pinnable and encrypted on this Mac."
         }
     }
@@ -149,7 +149,7 @@ struct ClipboardStudioView: View {
                         AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) { storageActions(state) }
                     } else if store.entries.isEmpty {
                         AOMEmptyState(state.title, systemImage: state.systemImage, message: state.message) {
-                            if store.paused { Button("Resume Recording") { store.resume() }.buttonStyle(.borderedProminent) }
+                            if store.paused { Button("Resume History") { store.resume() }.buttonStyle(.borderedProminent) }
                         }
                     } else if !search.query.isEmpty {
                         ContentUnavailableView.search(text: search.query)
@@ -181,13 +181,9 @@ struct ClipboardStudioView: View {
             boardCounts = counts
         }
         .sheet(isPresented: $showingSettings) {
-            VStack(spacing: 0) {
+            ModuleSettingsSheet("Clipboard Settings", done: { showingSettings = false }) {
                 ClipboardSettingsView()
-                Divider()
-                HStack { Spacer(); Button("Done") { showingSettings = false }.keyboardShortcut(.defaultAction) }
-                    .padding(AOMSpace.x3)
             }
-            .frame(minWidth: 600, idealWidth: 660, minHeight: 520, idealHeight: 600)
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
         .onAppear {
@@ -288,10 +284,12 @@ struct ClipboardStudioView: View {
 
     private func libraryRow(_ entry: ClipboardEntry) -> some View {
         AOMListRow(entry.title,
-                   detail: [entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · ")) {
+                   detail: [Self.listSource(entry), AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · ")) {
             Image(systemName: entry.kind.symbol).font(AOMFont.body.weight(.medium))
         } trailing: {
             if !entry.pinboardIDs.isEmpty {
+                // Hierarchical `.secondary`, not a fixed colour: a selected
+                // row turns it white with the rest of the row (AOMListRow).
                 Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(.secondary)
                     .accessibilityLabel("Pinned")
             }
@@ -299,6 +297,17 @@ struct ClipboardStudioView: View {
         .tag(entry.id)
         .simultaneousGesture(TapGesture(count: 2).onEnded { copy(entry) })
         .contextMenu { entryMenu(entry) }
+    }
+
+    /// AOM itself: items it makes (text it writes, edited images) carry the
+    /// release bundle ID; copies from its own windows carry the running one.
+    private static let ownBundleIDs = Set(["com.kyw.allofmacos", Bundle.main.bundleIdentifier].compactMap { $0 })
+
+    /// The source a list row names. AOM's own items name none, so rows don't
+    /// all repeat "All of MacOS"; the preview pane still shows the source.
+    private static func listSource(_ entry: ClipboardEntry) -> String? {
+        guard let id = entry.sourceBundleID, ownBundleIDs.contains(id) else { return entry.sourceName }
+        return nil
     }
 
     @ViewBuilder private func entryMenu(_ entry: ClipboardEntry) -> some View {
@@ -336,7 +345,7 @@ struct ClipboardStudioView: View {
                 }
             }
             .padding(.horizontal, AOMSpace.x4)
-            .frame(height: AOMSize.rowStandard + AOMSpace.x1)
+            .frame(height: AOMSize.rowStandard)
             AOMDivider()
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.x3) {
@@ -346,23 +355,27 @@ struct ClipboardStudioView: View {
                 .padding(AOMSpace.x4)
             }
             AOMDivider()
+            // The one primary action, and the rest behind a quiet icon menu
+            // (the gallery cards' ⋯), not a second labelled button.
             HStack(spacing: AOMSpace.x2) {
                 Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
                     .buttonStyle(AOMFilledButtonStyle())
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     .help("Copy (⇧⌘C, or press Return in the list)")
+                Spacer(minLength: AOMSpace.x2)
                 Menu {
                     entryMenu(entry)
                 } label: {
-                    Label("More", systemImage: "ellipsis")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .menuStyle(.button)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
                 .help("More actions for this item")
-                Spacer(minLength: 0)
+                .accessibilityLabel("More actions")
             }
             .padding(.horizontal, AOMSpace.x4)
-            .frame(height: AOMSize.rowDetail)
+            .frame(height: AOMSize.rowStandard + AOMSpace.x2)
         }
         .background(AOMColor.canvas)
         .id(entry.id)
@@ -390,13 +403,15 @@ struct ClipboardStudioView: View {
             // Pause lives with the other history commands; while paused the
             // filter bar and the sidebar say so, with Resume one click away.
             Menu {
+                // "History", the page's own word for it; "Recording" is the
+                // screen recorder's (Capture, the status menu).
                 if store.paused {
-                    Button("Resume Recording") {
+                    Button("Resume History") {
                         store.resume()
-                        showToast("Clipboard recording resumed")
+                        showToast("Clipboard history resumed")
                     }
                 } else {
-                    Menu("Pause Recording") {
+                    Menu("Pause History") {
                         Button("For 5 Minutes") { store.pause(for: 300) }
                         Button("For 15 Minutes") { store.pause(for: 900) }
                         Button("For 1 Hour") { store.pause(for: 3600) }
@@ -414,7 +429,7 @@ struct ClipboardStudioView: View {
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
-            .help("Pause recording, erase history and clipboard settings")
+            .help("Pause or erase history, and clipboard settings")
         }
         ToolbarItem(placement: .primaryAction) {
             Button {

@@ -35,20 +35,17 @@ struct ClipboardIntelligenceSettingsView: View {
                          help: "Suggests what you are about to paste, based on the field you are typing into and what you pasted there before. Suggested items appear first with ✦. Everything stays on your Mac.",
                          isOn: $intelligent)
                 .onChange(of: intelligent) { _, value in ClipboardIntelligence.shared.isEnabled = value }
-            Group {
-                AOMToggleRow("Look at the destination window with the on-device model",
-                             help: destinationModelCopy, indent: true,
-                             isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
-                                           set: { readsScreen = $0 }))
-                    .disabled(!ClipboardIntelligence.destinationModelAvailable)
-                    .onChange(of: readsScreen) { _, value in
-                        ClipboardIntelligence.shared.readsDestinationScreen = value
-                        if value && !ScreenCaptureService.hasPermission { _ = ScreenCaptureService.requestPermission() }
-                    }
-            }
-            .disabled(!intelligent)
-            .opacity(intelligent ? 1 : 0.55)
-            AOMSettingRow("Suggestion history", detail: "Which items you pasted into which apps") {
+            AOMToggleRow("Look at the destination window with the on-device model",
+                         help: destinationModelCopy, indent: true,
+                         isOn: Binding(get: { readsScreen && ClipboardIntelligence.destinationModelAvailable },
+                                       set: { readsScreen = $0 }))
+                .disabled(!ClipboardIntelligence.destinationModelAvailable)
+                .onChange(of: readsScreen) { _, value in
+                    ClipboardIntelligence.shared.readsDestinationScreen = value
+                    if value && !ScreenCaptureService.hasPermission { _ = ScreenCaptureService.requestPermission() }
+                }
+                .aomDependentRows(enabled: intelligent)
+            AOMSettingRow("Suggestion history", help: "Which items you pasted into which apps. Erasing it keeps your clipboard items.") {
                 Button("Erase Suggestion History…") { eraseConfirmation = true }
                     .disabled(ClipboardIntelligence.shared.log(for: store).events.isEmpty)
             }
@@ -59,7 +56,8 @@ struct ClipboardIntelligenceSettingsView: View {
 
         AOMSection("MCP & AI tools",
                    help: "Allow AI apps such as Claude Code, Codex and Cursor to search and manage your clipboard items and pinboards. Only tools you connect here can access it, through a private local socket — nothing listens on the network. Items that look like passwords, tokens or keys are never shared.") {
-            AOMToggleRow("Enable MCP", detail: "AI apps you connect can search and manage your clipboard", isOn: $mcp.enabled)
+            // What MCP allows is the section's ⓘ; the switch needs no second line.
+            AOMToggleRow("Enable MCP", isOn: $mcp.enabled)
             AOMSettingRow("Connected AI tools", detail: mcp.tools.isEmpty ? "Nothing connected yet" : nil) {
                 Menu("Connect AI Tool…") {
                     ForEach(ClipboardMCPSettings.Client.allCases) { client in
@@ -72,7 +70,7 @@ struct ClipboardIntelligenceSettingsView: View {
             ForEach(mcp.tools) { tool in
                 AOMSettingRow(tool.name,
                               detail: tool.lastUsed.map { "Last used \($0.formatted(.relative(presentation: .named)))" } ?? "Never used",
-                              symbol: "sparkle.magnifyingglass", indent: true) {
+                              indent: true) {
                     HStack(spacing: AOMSpace.x3) {
                         HStack(spacing: AOMSpace.x2) {
                             Text("Automation").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)

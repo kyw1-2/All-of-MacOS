@@ -117,11 +117,11 @@ enum AOMTheme {
 /// The 3.x type names, mapped onto the macOS text-style ramp in `AOMFont`.
 /// Section pages take their title from the toolbar; content never repeats it.
 enum AOMType {
-    /// The name of the thing being edited (22 pt bold).
+    /// The name of the thing being edited (17 pt semibold).
     static let title1 = AOMFont.title
-    /// An empty state or a sheet's heading (17 pt semibold).
+    /// An empty state or a sheet's heading (15 pt semibold).
     static let title2 = AOMFont.pageStatus
-    /// A group heading inside a page (15 pt semibold).
+    /// A group heading inside a page (13 pt semibold).
     static let title3 = AOMFont.section
     /// Card titles and emphasised row titles (13 pt bold).
     static let headline = AOMFont.headline
@@ -129,7 +129,8 @@ enum AOMType {
     static let micro = AOMFont.badge
     static let pageTitle = AOMFont.title
     static let pageTracking: CGFloat = 0
-    static let heroTitle = AOMFont.hero
+    /// The Workspace hero sentence (17 pt semibold; never Large Title).
+    static let heroTitle = AOMFont.heroSentence
     static let heroTracking: CGFloat = 0
     static let subtitle = AOMFont.body
     /// Small group labels inside a card: sentence case, no tracking (c.2).
@@ -151,7 +152,7 @@ enum AOMType {
 }
 
 extension View {
-    /// Editor title (22 pt bold).
+    /// Editor title (17 pt semibold).
     func aomPageTitle() -> some View {
         font(AOMType.pageTitle).foregroundStyle(AOMTheme.text)
     }
@@ -238,7 +239,7 @@ extension View {
     }
 
     /// The content layer's only card style: radius 12, `surface` fill, 0.5 pt
-    /// hairline (1 pt with Increase Contrast or Show Borders), 16 pt padding
+    /// hairline (1 pt with Increase Contrast or Show Borders), 12 pt padding
     /// for free content (pass 0 when the card holds rows).
     func aomCard(radius: CGFloat = AOMTheme.cardRadius, padding: CGFloat? = AOMSpace.cardPadding,
                  elevated: Bool = true) -> some View {

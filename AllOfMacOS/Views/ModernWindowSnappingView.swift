@@ -3,13 +3,14 @@ import SwiftUI
 
 /// Window Tiling (3.3.3 layout, ux-refs §d.9, e.1–e.4).
 ///
-/// One page header (status sentence, the Drag to Snap master switch, ⓘ), then
-/// sections of at most a handful of rows each: Title-bar snap, Gestures, Grid
-/// & layout, Keyboard, Dock & menu bar, Advanced and Readiness on the left;
-/// Drag to Snap, Tile the front window, Always on Top and Zones & layouts on
-/// the right. The long explanations live in ⓘ popovers and in each row's
-/// tooltip instead of caption walls. Every row, key and binding of 3.3.2 is
-/// kept.
+/// One page header (status sentence, which snap modes are on, ⓘ), then
+/// sections of at most a handful of rows each: Title-bar snap, Gestures,
+/// Modifiers, Grid & layout, Keyboard, Dock & menu bar, Advanced and Readiness
+/// on the left; Drag to Snap, Tile the front window, Always on Top and Zones &
+/// layouts on the right. Each mode's switch is the first row of its own
+/// section. Longer explanations live in one ⓘ per section (plus the few rows
+/// that need their own) and in each row's tooltip instead of caption walls.
+/// Every row, key and binding of 3.3.2 is kept.
 struct ModernWindowSnappingView: View {
     @EnvironmentObject var appState: AppState
     @State private var hoveredLayout: CustomSnapZone.Layout?
@@ -157,7 +158,7 @@ struct ModernWindowSnappingView: View {
                 } label: {
                     Label("Switch Windows", systemImage: "rectangle.stack")
                 }
-                .help("Thumbnail switcher for every open window (bind it in Settings ▸ Shortcuts)")
+                .help("Thumbnail switcher for every open window (bind it in Settings › Shortcuts)")
             }
         }
         .aomToast(toast.message)
@@ -194,25 +195,28 @@ struct ModernWindowSnappingView: View {
 
     // MARK: - Header
 
+    /// The status sentence and which mode is on, once. The two switches are
+    /// the first rows of Drag to Snap and Title-bar snap, so the header
+    /// carries no control of its own.
     private var header: some View {
         let drag = appState.currentPreset.snappingEnabled
         let on = drag || trackpadSnapOn
         let paused = !appState.globalEnabled
         let title = paused ? "Window Tiling is paused" : (on ? "Window Tiling is on" : "Window Tiling is off")
-        let parts = [appState.snapStatus, trackpadSnapOn ? "title-bar swipes on" : "title-bar swipes off"]
-        return AOMPageHeader(title, module: .tiling, subtitle: parts.joined(separator: " · "),
-                             status: paused ? AOMStatus("Paused", tone: .neutral) : nil,
-                             help: "Drag a window to a screen edge, corner or snap zone to fill that part of the screen, or swipe two fingers on its title bar. The layouts on the right tile the front window right away.",
-                             active: on && !paused) {
-            HStack(spacing: AOMSpace.x2) {
-                Text("Drag to Snap").font(AOMFont.body)
-                Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
-                                                     set: { appState.setSnappingEnabled($0) }))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-            .help("Snap windows when you drag them to an edge, corner or zone")
-        }
+        let subtitle = "Drag to Snap \(drag ? "on" : "off") · Title-bar snap \(trackpadSnapOn ? "on" : "off")"
+        return AOMPageHeader(title, module: .tiling, subtitle: subtitle,
+                             status: headerStatus(paused: paused, drag: drag),
+                             help: "Drag a window to a screen edge, corner or snap zone to fill that part of the screen, or swipe two fingers on its title bar. Tile the front window moves the front window right away.",
+                             active: on && !paused)
+    }
+
+    /// Paused, or the two Drag to Snap states that leave it doing nothing
+    /// (`AppState.snapStatus` words them for the zone editor).
+    private func headerStatus(paused: Bool, drag: Bool) -> AOMStatus? {
+        if paused { return AOMStatus("Paused", tone: .neutral) }
+        guard drag else { return nil }
+        if !appState.effectiveSnapZones.contains(where: \.isEnabled) { return AOMStatus("No zones on", tone: .warning) }
+        return appState.snapMonitoring ? nil : AOMStatus("Not listening", tone: .warning)
     }
 
     // MARK: - Title-bar snap
@@ -222,14 +226,17 @@ struct ModernWindowSnappingView: View {
     }
 
     private var titleBarSection: some View {
-        AOMSection("Title-bar snap", detail: trackpadSnapOn ? "On" : "Off", help: swipeHelp) {
-            AOMToggleRow("Title-bar snap", detail: "Swipe two fingers on a title bar to snap the window",
+        // The one footer for every section that needs this switch (Gestures,
+        // Modifiers, Grid & layout, Keyboard and Advanced dim with it).
+        AOMSection("Title-bar snap", help: swipeHelp,
+                   footer: trackpadSnapOn ? nil : "Turn on Swipe to snap to use the gestures, modifiers, grid, keyboard and advanced options below.") {
+            AOMToggleRow("Swipe to snap",
                          isOn: Binding(get: { trackpadSnapOn },
                                        set: { trackpadSnapOn = $0; TitleBarWindowSnap.shared.refreshEnabled() }))
+                .help("Swipe two fingers on a title bar or toolbar to snap the window")
             Group {
                 AOMToggleRow("Haptic feedback", indent: true, isOn: $trackpadSnapHaptic)
-                AOMSettingRow("Swipe sensitivity", indent: true,
-                              help: "How little travel starts a swipe: Quick (default) engages after about 4 % of the trackpad, Instant after 3 %, Standard after 5 % as in 3.3.1. A quick two-finger tap never snaps at any setting; a quick flick that engaged always does.") {
+                AOMSettingRow("Swipe sensitivity", indent: true, help: Self.sensitivityHelp) {
                     Picker("Swipe sensitivity", selection: sensitivitySelection) {
                         ForEach(Self.sensitivityPresets, id: \.value) { preset in
                             Text(preset.title).tag(preset.value)
@@ -243,8 +250,8 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                .help("How little travel starts a swipe: Quick (default) engages after about 4 % of the trackpad, Instant after 3 %, Standard after 5 % as in 3.3.1. A quick two-finger tap never snaps at any setting; a quick flick that engaged always does.")
-                AOMSettingRow("Multi-motion pause", indent: true, help: Self.motionPauseHelp) {
+                .help(Self.sensitivityHelp)
+                AOMSettingRow("Multi-motion pause", indent: true) {
                     Picker("Multi-motion pause", selection: motionPauseSelection) {
                         ForEach(Self.motionPausePresets, id: \.value) { preset in
                             Text(preset.title).tag(preset.value)
@@ -258,8 +265,7 @@ struct ModernWindowSnappingView: View {
                     .pickerStyle(.menu)
                 }
                 .help(Self.motionPauseHelp)
-                AOMSettingRow("Swipe down on a free window", indent: true,
-                              help: "A short swipe down on a window that is not snapped. A longer swipe down still snaps it to the bottom half; a snapped window keeps moving between cells.") {
+                AOMSettingRow("Swipe down on a free window", indent: true) {
                     Picker("Swipe down on a free window", selection: $trackpadSnapDownAction) {
                         Text("Minimize (Swish)").tag(SwishSnap.DownAction.minimize.rawValue)
                         Text("Center").tag(SwishSnap.DownAction.center.rawValue)
@@ -269,53 +275,11 @@ struct ModernWindowSnappingView: View {
                 .help("A short swipe down on a window that is not snapped. A longer swipe down still snaps it to the bottom half; a snapped window keeps moving between cells.")
             }
             .dependentSetting(on: trackpadSnapOn)
-        }
-    }
-
-    // MARK: - Gestures
-
-    private var gesturesHelp: String {
-        "Pinch in to close the window, twice to quit the app; pinch out for full screen. Double tap to unsnap or center. Rest your fingers, then swipe: up for full screen, down to minimize, sideways to the next Space. ⌥ Option: swipe sideways for a Space, down to close; ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display that way."
-    }
-
-    private var gesturesSection: some View {
-        AOMSection("Gestures", help: gesturesHelp,
-                   footer: trackpadSnapOn ? nil : "Turn on Title-bar snap to use these gestures.") {
-            Group {
-                AOMSettingRow("Double tap",
-                              help: "Double tap two fingers on a title bar: put a window AOM snapped back where it was, or center it. With ⌥ Option it hides the app, with ⇧ Shift every other app.") {
-                    Picker("Double tap", selection: $trackpadSnapDoubleTap) {
-                        Text("Unsnap or Center").tag(SwishSnap.DoubleTap.restoreOrCenter.rawValue)
-                        Text("Center").tag(SwishSnap.DoubleTap.center.rawValue)
-                        Text("Off").tag(SwishSnap.DoubleTap.off.rawValue)
-                    }
-                    .pickerStyle(.menu)
-                }
-                .help("Double tap two fingers on a title bar: put a window AOM snapped back where it was, or center it. With ⌥ Option it hides the app, with ⇧ Shift every other app.")
-                AOMSettingRow("Pinch gestures", detail: "Pinch to close, quit or go full screen",
-                              help: "Pinch in on a title bar to close the window, twice to quit the app (it may ask to save). Pinch out to enter or leave full screen; with two displays, pinch out twice or hold ⌘ for full screen on the other display.") {
-                    Toggle("Pinch to close, quit or go full screen", isOn: $trackpadSnapPinch)
-                }
-                .help("Pinch in on a title bar to close the window, twice to quit the app (it may ask to save). Pinch out to enter or leave full screen; with two displays, pinch out twice or hold ⌘ for full screen on the other display.")
-                AOMSettingRow("Tap and hold gestures", detail: "Tap and hold, then swipe",
-                              help: "Rest two fingers on a title bar for half a second, then swipe: up for full screen, down to minimize (also in full screen), left or right to move the window to the next Space.") {
-                    Toggle("Tap and hold, then swipe", isOn: $trackpadSnapHold)
-                }
-                .help("Rest two fingers on a title bar for half a second, then swipe: up for full screen, down to minimize (also in full screen), left or right to move the window to the next Space.")
-                AOMToggleRow("Tab gestures", detail: "Pinch in on a tab to close it, hold to move it",
-                             help: Self.tabsHelp, isOn: $trackpadSnapTabs)
-                    .help(Self.tabsHelp)
-                AOMSettingRow("Modifier gestures", detail: "⌥, ⇧ and ⌘ change what a gesture does",
-                              help: "⌥ Option: swipe sideways to move the window a Space, down to close it (rest first, or swipe down twice, to quit the app). ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display in that direction.") {
-                    Toggle("Modifier gestures", isOn: $trackpadSnapModifiers)
-                }
-                .help("⌥ Option: swipe sideways to move the window a Space, down to close it (rest first, or swipe down twice, to quit the app). ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display in that direction.")
-            }
-            .dependentSetting(on: trackpadSnapOn)
             // Swish's cancel: rest the fingers without moving. Shared by the
-            // title-bar snap and every menu-bar and Dock gesture.
-            AOMSettingRow("Hold still to cancel",
-                          help: "Rest two fingers without moving for this long to cancel a title-bar gesture (snap, display or Space move, pinch, tap and hold), a top-bar Space swipe, or a menu-bar or Dock gesture: the touch then does nothing until you lift. The snap preview fades just before it goes.") {
+            // title-bar snap, the top-bar Space swipe and every menu-bar and
+            // Dock gesture, so it is not indented under Swipe to snap and
+            // stays available while that is off.
+            AOMSettingRow("Hold still to cancel", help: Self.holdCancelHelp) {
                 Picker("Hold still to cancel", selection: holdCancelSelection) {
                     ForEach(Self.holdCancelPresets, id: \.value) { preset in
                         Text(preset.title).tag(preset.value)
@@ -328,7 +292,45 @@ struct ModernWindowSnappingView: View {
                 }
                 .pickerStyle(.menu)
             }
-            .help("Rest two fingers without moving for this long to cancel a title-bar gesture (snap, display or Space move, pinch, tap and hold), a top-bar Space swipe, or a menu-bar or Dock gesture: the touch then does nothing until you lift. The snap preview fades just before it goes.")
+            .help(Self.holdCancelHelp)
+        }
+    }
+
+    // MARK: - Gestures
+
+    private var gesturesHelp: String {
+        "Pinch in to close the window, twice to quit the app; pinch out for full screen. Double tap to unsnap or center. Rest your fingers, then swipe: up for full screen, down to minimize, sideways to the next Space. ⌥ Option: swipe sideways for a Space, down to close; ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display that way."
+    }
+
+    private var gesturesSection: some View {
+        // Every row needs Swipe to snap; Title-bar snap's footer says so.
+        AOMSection("Gestures", help: gesturesHelp) {
+            Group {
+                AOMSettingRow("Double tap") {
+                    Picker("Double tap", selection: $trackpadSnapDoubleTap) {
+                        Text("Unsnap or Center").tag(SwishSnap.DoubleTap.restoreOrCenter.rawValue)
+                        Text("Center").tag(SwishSnap.DoubleTap.center.rawValue)
+                        Text("Off").tag(SwishSnap.DoubleTap.off.rawValue)
+                    }
+                    .pickerStyle(.menu)
+                }
+                .help("Double tap two fingers on a title bar: put a window AOM snapped back where it was, or center it. With ⌥ Option it hides the app, with ⇧ Shift every other app.")
+                AOMSettingRow("Pinch gestures") {
+                    Toggle("Pinch to close, quit or go full screen", isOn: $trackpadSnapPinch)
+                }
+                .help("Pinch in on a title bar to close the window, twice to quit the app (it may ask to save). Pinch out to enter or leave full screen; with two displays, pinch out twice or hold ⌘ for full screen on the other display.")
+                AOMSettingRow("Tap and hold gestures") {
+                    Toggle("Tap and hold, then swipe", isOn: $trackpadSnapHold)
+                }
+                .help("Rest two fingers on a title bar for half a second, then swipe: up for full screen, down to minimize (also in full screen), left or right to move the window to the next Space.")
+                AOMToggleRow("Tab gestures", isOn: $trackpadSnapTabs)
+                    .help(Self.tabsHelp)
+                AOMSettingRow("Modifier gestures") {
+                    Toggle("Modifier gestures", isOn: $trackpadSnapModifiers)
+                }
+                .help("⌥ Option: swipe sideways to move the window a Space, down to close it (rest first, or swipe down twice, to quit the app). ⌥ or ⇧ Shift double tap hides the app or the other apps. ⌘ Command: swipe to move the window to the display in that direction.")
+            }
+            .dependentSetting(on: trackpadSnapOn)
         }
     }
 
@@ -341,13 +343,11 @@ struct ModernWindowSnappingView: View {
     /// Where swipes and hotkeys put windows (3.3.2: Swish's grid, almost
     /// maximize, margin and Stage Manager offset).
     private var gridSection: some View {
-        // Only the rows dim while title-bar snap is off; the section title
-        // stays readable and the footer says why.
-        AOMSection("Grid & layout", help: gridHelp,
-                   footer: trackpadSnapOn ? nil : "Turn on Title-bar snap to use the grid.") {
+        // Only the rows dim while Swipe to snap is off; the section title
+        // stays readable and Title-bar snap's footer says why.
+        AOMSection("Grid & layout", help: gridHelp) {
             Group {
-                AOMSettingRow("Grid",
-                              help: "2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped up or down takes its upper or lower half. 3 × 3: a third swiped up or down becomes a ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths.") {
+                AOMSettingRow("Grid") {
                     Picker("Grid", selection: trackpadSnapGrid) {
                         Text("2 × 2 · halves, quarters, no thirds").tag(SwishSnap.Grid.twoByTwo.rawValue)
                         Text("3 × 2 · thirds, sixths").tag(SwishSnap.Grid.threeByTwo.rawValue)
@@ -356,17 +356,15 @@ struct ModernWindowSnappingView: View {
                     .pickerStyle(.menu)
                 }
                 .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped up or down takes its upper or lower half. 3 × 3: a third swiped up or down becomes a ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths.")
-                AOMSettingRow("Almost maximize",
-                              help: "Swipe up to fill almost the whole screen, leaving a small gap all round; swipe up again to maximize.") {
+                AOMSettingRow("Almost maximize") {
                     Toggle("Almost maximize", isOn: $trackpadSnapAlmost)
                 }
                 .help("Swipe up to fill almost the whole screen, leaving a small gap all round; swipe up again to maximize.")
-                AOMSettingRow("Margin", help: "The gap kept around every snapped window, in points.") {
+                AOMSettingRow("Margin") {
                     pointSlider(value: $trackpadSnapMargin, range: TitleBarWindowSnap.marginRange, step: 1, label: "Margin")
                 }
                 .help("The gap kept around every snapped window, in points.")
-                AOMSettingRow("Stage Manager offset",
-                              help: "While Stage Manager is on, snapped windows leave this much room on the left for its strip of recent apps.") {
+                AOMSettingRow("Stage Manager offset") {
                     pointSlider(value: $stageManagerOffset, range: TitleBarWindowSnap.stageManagerOffsetRange, step: 10,
                                 label: "Stage Manager offset")
                 }
@@ -387,14 +385,14 @@ struct ModernWindowSnappingView: View {
     /// Swish's "Native Window Tiling", with macOS's own options beside it,
     /// read-only (AOM never writes com.apple.WindowManager).
     @ViewBuilder private var nativeTilingRows: some View {
+        // The detail is kept only to say why the switch is disabled.
         AOMToggleRow("Native window tiling",
-                     detail: Self.nativeTilingAvailable ? "macOS tiles halves, quarters and Fill" : "Needs macOS 15 or later",
-                     help: Self.nativeTilingHelp, isOn: $nativeTiling)
+                     detail: Self.nativeTilingAvailable ? nil : "Needs macOS 15 or later",
+                     isOn: $nativeTiling)
             .help(Self.nativeTilingHelp)
             .disabled(!Self.nativeTilingAvailable)
         if Self.nativeTilingAvailable, let options = systemTiling {
-            AOMSettingRow("macOS tiling", detail: "Set in System Settings › Desktop & Dock › Windows", indent: true,
-                          help: Self.systemTilingHelp) {
+            AOMSettingRow("macOS tiling", detail: "Set in System Settings › Desktop & Dock › Windows", indent: true) {
                 VStack(alignment: .trailing, spacing: AOMSpace.x0_5) {
                     Text("Drag to edges: \(NativeTiling.dragToEdgeLabel(options))")
                     Text("Margins: \(NativeTiling.marginsLabel(options))")
@@ -403,7 +401,7 @@ struct ModernWindowSnappingView: View {
                 .foregroundStyle(AOMColor.textSecondary)
                 .accessibilityElement(children: .combine)
             }
-            .help("Read-only: change these in System Settings › Desktop & Dock › Windows")
+            .help(Self.systemTilingHelp)
             .dependentSetting(on: nativeTiling, within: trackpadSnapOn)
         }
     }
@@ -412,10 +410,10 @@ struct ModernWindowSnappingView: View {
 
     private var keyboardSection: some View {
         let hotkeysOn = trackpadSnapHotkeys != SwishSnap.HotkeyScheme.off.rawValue
-        let footer = !trackpadSnapOn ? "Turn on Title-bar snap to use the keyboard shortcuts."
-            : (hotkeysOn ? nil : "Choose a key set to use the center key.")
-        return AOMSection("Keyboard", footer: footer) {
-            AOMSettingRow("Keyboard shortcuts", detail: "⌃⌥ and a key swipes the front window", help: Self.hotkeysHelp) {
+        // Title-bar snap's footer covers Swipe to snap being off.
+        let footer = trackpadSnapOn && !hotkeysOn ? "Choose a key set to use the center key." : nil
+        return AOMSection("Keyboard", help: Self.hotkeysHelp, footer: footer) {
+            AOMSettingRow("Keyboard shortcuts") {
                 Picker("Keyboard shortcuts", selection: $trackpadSnapHotkeys) {
                     Text("Off").tag(SwishSnap.HotkeyScheme.off.rawValue)
                     Text("⌃⌥ Arrows").tag(SwishSnap.HotkeyScheme.arrows.rawValue)
@@ -426,9 +424,9 @@ struct ModernWindowSnappingView: View {
                 }
                 .pickerStyle(.menu)
             }
-            .help(Self.hotkeysHelp)
+            .help("⌃⌥ and a key swipes the front window that way")
             .dependentSetting(on: trackpadSnapOn)
-            AOMSettingRow("Center key", indent: true, help: Self.centerKeyHelp) {
+            AOMSettingRow("Center key", indent: true) {
                 Picker("Center key", selection: $hotkeyCenter) {
                     Text("⌃⌥ Esc").tag(SwishSnap.HotkeyCenterKey.escape.rawValue)
                     Text("⌃⌥ ⌫ Delete").tag(SwishSnap.HotkeyCenterKey.backspace.rawValue)
@@ -457,12 +455,14 @@ struct ModernWindowSnappingView: View {
     }
 
     private var dockSection: some View {
+        // Dock gestures and Menu-bar gestures keep their own ⓘ: each stands
+        // for several gestures their names can't list.
         AOMSection("Dock & menu bar", footer: dockFooter) {
-            AOMSettingRow("Top-bar Space swipe", detail: "Two fingers on the menu bar switch Spaces") {
+            AOMSettingRow("Top-bar Space swipe") {
                 Toggle("Top-bar Space swipe", isOn: $topBarSpaceSwipe)
             }
             .help("Two fingers on the menu bar switch Spaces")
-            AOMSettingRow("Dock pinch to quit", detail: "Pinch in on a Dock icon to quit that app") {
+            AOMSettingRow("Dock pinch to quit") {
                 Toggle("Dock pinch to quit", isOn: $dockPinchQuit)
             }
             .help("Pinch in on a Dock icon to quit that app")
@@ -487,21 +487,20 @@ struct ModernWindowSnappingView: View {
     // MARK: - Advanced
 
     /// What happens around a snap (3.3.2: the preview animation, drag to
-    /// unsnap, resizing neighbours and re-snapping).
+    /// unsnap, resizing neighbours and re-snapping). Every row needs Swipe to
+    /// snap; Title-bar snap's footer says so.
     private var advancedSection: some View {
-        AOMSection(footer: showsAdvanced && !trackpadSnapOn ? "These apply to title-bar snap, which is off." : nil) {
+        AOMSection {
             AOMDisclosureRows("Advanced", detail: "Preview, focus, unsnap and re-snap", isExpanded: $showsAdvanced) {
                 Group {
-                    AOMSettingRow("Show preview",
-                                  help: "The translucent frame for a snap and the name of any other action, while your fingers are down") {
+                    AOMSettingRow("Show preview") {
                         Toggle("Show the snap preview while swiping", isOn: $trackpadSnapPreview)
                     }
                     .help("The translucent frame for a snap and the name of any other action, while your fingers are down")
-                    AOMToggleRow("Gesture tooltip", help: Self.tooltipHelp, indent: true, isOn: $trackpadSnapTooltip)
+                    AOMToggleRow("Gesture tooltip", indent: true, isOn: $trackpadSnapTooltip)
                         .help(Self.tooltipHelp)
                         .dependentSetting(on: trackpadSnapPreview, within: trackpadSnapOn)
-                    AOMSettingRow("Preview animation",
-                                  help: "How quickly the preview appears, moves and fades. Off shows and hides it at once; Reduce Motion always keeps it from sliding.") {
+                    AOMSettingRow("Preview animation") {
                         Picker("Preview animation", selection: $trackpadSnapAnimation) {
                             Text("Fast").tag(SwishSnap.AnimationSpeed.fast.rawValue)
                             Text("Normal").tag(SwishSnap.AnimationSpeed.normal.rawValue)
@@ -516,18 +515,15 @@ struct ModernWindowSnappingView: View {
                     AOMSettingRow("Keep pointer on title bar") {
                         Toggle("Keep pointer on the title bar after snapping", isOn: $trackpadSnapKeepPointer)
                     }
-                    AOMSettingRow("Drag to unsnap",
-                                  help: "Drag a window AOM snapped by its title bar and it gets back its size from before the snap, under the pointer.") {
+                    AOMSettingRow("Drag to unsnap") {
                         Toggle("Drag to unsnap", isOn: $trackpadSnapDragUnsnap)
                     }
                     .help("Drag a window AOM snapped by its title bar and it gets back its size from before the snap, under the pointer.")
-                    AOMSettingRow("Resize neighbours together",
-                                  help: "Resize a snapped window along an edge it shares with another snapped window, and when you let go that window follows the edge.") {
+                    AOMSettingRow("Resize neighbours together") {
                         Toggle("Resize neighbours together", isOn: $trackpadSnapResizeAdjacent)
                     }
                     .help("Resize a snapped window along an edge it shares with another snapped window, and when you let go that window follows the edge.")
-                    AOMSettingRow("Re-snap after display changes", detail: "After the external display timeout",
-                                  help: "When a display is connected, disconnected or rearranged, windows still where AOM snapped them take their place again on the display they end up on. AOM first waits the external display timeout (1.5 s by default) for the displays to settle.") {
+                    AOMSettingRow("Re-snap after display changes", detail: "After the external display timeout") {
                         HStack(spacing: AOMSpace.x2) {
                             Picker("External display timeout", selection: resnapDelaySelection) {
                                 ForEach(Self.resnapDelayPresets, id: \.value) { preset in
@@ -545,7 +541,7 @@ struct ModernWindowSnappingView: View {
                             Toggle("Re-snap after display changes", isOn: $trackpadSnapResnap)
                         }
                     }
-                    .help("When a display is connected, disconnected or rearranged, windows still where AOM snapped them take their place again on the display they end up on.")
+                    .help("When a display is connected, disconnected or rearranged, windows still where AOM snapped them take their place again on the display they end up on. AOM first waits the external display timeout (1.5 s by default) for the displays to settle.")
                 }
                 .dependentSetting(on: trackpadSnapOn)
             }
@@ -592,13 +588,19 @@ struct ModernWindowSnappingView: View {
 
     // MARK: - Drag to Snap
 
+    /// The Drag to Snap switch heads its own section (it used to sit in the
+    /// page header, away from the options it turns on); the options are
+    /// indented under it and dim while it is off.
     private var dragSection: some View {
         let on = appState.currentPreset.snappingEnabled
-        return AOMSection("Drag to Snap", detail: on ? "On" : "Off",
-                          footer: on ? "Drag a window to a screen edge, corner or snap zone and it fills that part of the screen."
-                                     : "Turn on Drag to Snap at the top of the page to place windows by dragging them to an edge, corner or zone.") {
+        return AOMSection("Drag to Snap",
+                          help: "Drag a window to a screen edge, corner or snap zone and it fills that part of the screen. Zones chooses the set of places; Edit Snap Zones below draws your own.") {
+            AOMToggleRow("Snap windows by dragging",
+                         isOn: Binding(get: { appState.currentPreset.snappingEnabled },
+                                       set: { appState.setSnappingEnabled($0) }))
+                .help("Snap windows when you drag them to an edge, corner or zone")
             Group {
-                AOMSettingRow("Zones") {
+                AOMSettingRow("Zones", indent: true) {
                     Picker("Zones", selection: Binding<CustomSnapZone.Collection?>(
                         get: { currentCollection },
                         set: { if let collection = $0 { applyCollection(collection) } }
@@ -612,13 +614,13 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                AOMSettingRow("Require ⌥ Option") {
+                AOMSettingRow("Require ⌥ Option", indent: true) {
                     Toggle("Hold ⌥ Option while dragging", isOn: Binding(
                         get: { requiresOption },
                         set: { updateBehavior(requiresOption: $0, showsPreview: showsPreview) }
                     ))
                 }
-                AOMSettingRow("Show snap preview") {
+                AOMSettingRow("Show snap preview", indent: true) {
                     Toggle("Show snap preview", isOn: Binding(
                         get: { showsPreview },
                         set: { updateBehavior(requiresOption: requiresOption, showsPreview: $0) }
@@ -640,7 +642,7 @@ struct ModernWindowSnappingView: View {
                    padding: AOMSpace.cardPadding) {
             VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 layoutPreview
-                    .frame(height: compact ? 104 : 140)
+                    .frame(height: compact ? TilingGalleryMetrics.previewHeightCompact : TilingGalleryMetrics.previewHeight)
                 Grid(alignment: .leading, horizontalSpacing: AOMSpace.x1, verticalSpacing: AOMSpace.x1) {
                     ForEach(layoutGroups) { group in
                         GridRow {
@@ -648,7 +650,8 @@ struct ModernWindowSnappingView: View {
                                 .font(AOMFont.caption.weight(.medium))
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .lineLimit(1)
-                                .frame(width: compact ? 64 : 80, alignment: .leading)
+                                .frame(width: compact ? TilingGalleryMetrics.groupLabelCompact : TilingGalleryMetrics.groupLabel,
+                                       alignment: .leading)
                             ForEach(0..<4, id: \.self) { index in
                                 if index < group.layouts.count {
                                     let entry = group.layouts[index]
@@ -682,7 +685,7 @@ struct ModernWindowSnappingView: View {
             let inset: CGFloat = AOMSpace.x2
             let bar: CGFloat = AOMSpace.x2
             let inner = CGSize(width: size.width - inset * 2, height: size.height - inset * 2 - bar)
-            let region = AOMTilingGeometry.rect(for: layout, in: inner).insetBy(dx: 3, dy: 3)
+            let region = AOMTilingGeometry.rect(for: layout, in: inner).insetBy(dx: AOMSpace.x0_5, dy: AOMSpace.x0_5)
             ZStack(alignment: .topLeading) {
                 screen.fill(AOMColor.sunken)
                 // The menu bar strip, so the miniature reads as a screen.
@@ -780,6 +783,8 @@ struct ModernWindowSnappingView: View {
 
     // MARK: - 3.3.3 help
 
+    static let sensitivityHelp = "How little travel starts a swipe: Quick (default) engages after about 4 % of the trackpad, Instant after 3 %, Standard after 5 % as in 3.3.1. A quick two-finger tap never snaps at any setting; a quick flick that engaged always does."
+    static let holdCancelHelp = "Rest two fingers without moving for this long to cancel a title-bar gesture (snap, display or Space move, pinch, tap and hold), a top-bar Space swipe, or a menu-bar or Dock gesture: the touch then does nothing until you lift. The snap preview fades just before it goes."
     static let motionPauseHelp = "Rest briefly on a swipe or pinch, then move again to start another gesture without lifting. Off keeps one gesture per touch, as in 3.3.2."
     static let tabsHelp = "Pinch in on a tab to close it; tap and hold a native or Safari tab, then lift, to move it to a new window. Closing follows Pinch gestures, moving follows Tap and hold gestures. Works in: \(SwishTabs.supportSummary)."
     static let tooltipHelp = "Name where the window goes beside the pointer while you swipe. It shows with the snap preview, so it is hidden while Show preview is off."
@@ -836,14 +841,14 @@ struct ModernWindowSnappingView: View {
                              label: String) -> some View {
         HStack(spacing: AOMSpace.x2) {
             Slider(value: value, in: range, step: step)
-                .frame(width: 120)
+                .frame(width: AOMRowControlMetrics.sliderWidth)
                 .controlSize(.small)
                 .accessibilityLabel(label)
                 .accessibilityValue("\(Int(value.wrappedValue.rounded())) points")
             Text("\(Int(value.wrappedValue.rounded())) pt")
                 .font(AOMFont.caption.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
         }
     }
 
@@ -902,6 +907,18 @@ struct ModernWindowSnappingView: View {
     private func showToast(_ message: String) { toast.show(message) }
 }
 
+/// The Tile the front window gallery's fixed sizes (no shared token covers
+/// them): the screen miniature, the group-name column and a layout's diagram,
+/// in the side column (`compact`) and full width.
+private enum TilingGalleryMetrics {
+    static let previewHeightCompact: CGFloat = 88
+    static let previewHeight: CGFloat = 112
+    static let groupLabelCompact: CGFloat = 64
+    static let groupLabel: CGFloat = 80
+    static let chipDiagramCompact: CGFloat = 40
+    static let chipDiagram: CGFloat = 34
+}
+
 /// One layout in the gallery: its miniature and a short label (diagram only
 /// in the narrow side column; the name stays in help and VoiceOver). Pointing
 /// at it previews the layout, clicking applies it.
@@ -917,7 +934,7 @@ private struct SnapLayoutChip: View {
         Button(action: onExecute) {
             HStack(spacing: AOMSpace.x2) {
                 AOMLayoutDiagram(layout: layout, highlighted: isHovered)
-                    .frame(width: compact ? 40 : 34)
+                    .frame(width: compact ? TilingGalleryMetrics.chipDiagramCompact : TilingGalleryMetrics.chipDiagram)
                 if !compact {
                     Text(title)
                         .font(AOMFont.caption.weight(.medium))
@@ -928,7 +945,7 @@ private struct SnapLayoutChip: View {
                 }
             }
             .padding(.horizontal, compact ? AOMSpace.x1 : AOMSpace.x2)
-            .frame(maxWidth: .infinity, minHeight: compact ? 32 : 36)
+            .frame(maxWidth: .infinity, minHeight: compact ? AOMSize.rowDense : AOMSize.rowStandard)
             .contentShape(Rectangle())
         }
         .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))

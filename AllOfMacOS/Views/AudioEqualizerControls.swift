@@ -32,57 +32,114 @@ private struct AudioBandSlider: NSViewRepresentable {
     }
 }
 
+/// The ten bands side by side: each band's gain, its slider, its frequency
+/// and ±1 dB buttons. A band's context menu resets it to 0 dB; the sheet's
+/// Flat button (or the Flat preset) resets them all.
 struct AudioEqualizerControls: View {
+    /// Sizes no design token covers.
+    private enum Metrics {
+        /// One band's column: wide enough for "+12" and "16 kHz".
+        static let bandWidth: CGFloat = 44
+        /// The slider's travel (−12 … +12 dB).
+        static let sliderHeight: CGFloat = 130
+        /// The dB scale before the first band.
+        static let scaleWidth: CGFloat = 26
+        /// The whole control, a legacy scroll bar included.
+        static let height: CGFloat = 220
+    }
+
     let gains: [Float]
     let enabled: Bool
     let onChange: (Int, Float) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            HStack(alignment: .top, spacing: 6) {
-                VStack(spacing: 0) {
-                    Text("dB").font(.caption.weight(.semibold)).frame(height: 28)
-                    Text("+12")
-                    Spacer()
-                    Text("0")
-                    Spacer()
-                    Text("−12")
-                }
-                .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 26, height: 164)
+            HStack(alignment: .top, spacing: AOMSpace.x1) {
+                scale
                 ForEach(0..<10, id: \.self) { band in
-                    VStack(spacing: 8) {
-                        Text(String(format: "%+.0f dB", value(band)))
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(value(band) == 0 ? Color.primary : Color.accentColor)
-                            .frame(height: 22)
-                        AudioBandSlider(gain: Binding(get: { Double(value(band)) }, set: { onChange(band, Float($0)) }),
-                                        enabled: enabled, label: EQSection.label(band))
-                            .frame(width: 40, height: 130)
-                        Text(EQSection.label(band) + " Hz")
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                        HStack(spacing: 8) {
-                            Button { onChange(band, max(-12, value(band) - 1)) } label: { Image(systemName: "minus") }
-                                .help("Decrease \(EQSection.label(band)) Hz by 1 dB")
-                                .accessibilityLabel("Decrease \(EQSection.label(band)) hertz by 1 decibel")
-                            Button { onChange(band, min(12, value(band) + 1)) } label: { Image(systemName: "plus") }
-                                .help("Increase \(EQSection.label(band)) Hz by 1 dB")
-                                .accessibilityLabel("Increase \(EQSection.label(band)) hertz by 1 decibel")
-                        }
-                        .buttonStyle(.borderless)
-                        Button("Reset") { onChange(band, 0) }
-                            .buttonStyle(.link).font(.caption)
-                            .accessibilityLabel("Reset \(EQSection.label(band)) hertz to zero decibels")
-                    }
-                    .frame(width: 58)
-                    .disabled(!enabled)
+                    bandColumn(band)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 12)
+            .padding(AOMSpace.x2)
         }
-        .frame(height: 260)
-        .opacity(enabled ? 1 : 0.55)
+        .frame(height: Metrics.height)
+        .opacity(enabled ? 1 : AOMRowControlMetrics.dependentOpacity)
         .accessibilityLabel("10-band equalizer")
     }
+
+    /// +12, 0 and −12 beside the sliders' travel, under a "dB" heading that
+    /// names the unit of the gains row.
+    private var scale: some View {
+        VStack(spacing: AOMSpace.x1) {
+            Text("dB").font(AOMFont.caption.weight(.semibold))
+            VStack(spacing: 0) {
+                Text("+12")
+                Spacer(minLength: 0)
+                Text("0")
+                Spacer(minLength: 0)
+                Text("−12")
+            }
+            .frame(height: Metrics.sliderHeight)
+        }
+        .font(AOMFont.caption.monospacedDigit())
+        .foregroundStyle(AOMColor.textSecondary)
+        .frame(width: Metrics.scaleWidth)
+        .accessibilityHidden(true)
+    }
+
+    private func bandColumn(_ band: Int) -> some View {
+        let gain = value(band)
+        let changed = Int(gain.rounded()) != 0
+        return VStack(spacing: AOMSpace.x1) {
+            Text(Self.gainText(gain))
+                .font(AOMFont.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(changed ? AOMColor.accent : AOMColor.text)
+                .lineLimit(1)
+            AudioBandSlider(gain: Binding(get: { Double(gain) }, set: { onChange(band, Float($0)) }),
+                            enabled: enabled, label: Self.spokenFrequency(band))
+                .frame(width: Metrics.bandWidth - AOMSpace.x1, height: Metrics.sliderHeight)
+            Text(Self.frequencyText(band))
+                .font(AOMFont.caption.monospacedDigit())
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            HStack(spacing: AOMSpace.x1) {
+                Button { onChange(band, max(-12, gain - 1)) } label: { Image(systemName: "minus") }
+                    .help("Decrease \(Self.frequencyText(band)) by 1 dB")
+                    .accessibilityLabel("Decrease \(Self.spokenFrequency(band)) by 1 decibel")
+                Button { onChange(band, min(12, gain + 1)) } label: { Image(systemName: "plus") }
+                    .help("Increase \(Self.frequencyText(band)) by 1 dB")
+                    .accessibilityLabel("Increase \(Self.spokenFrequency(band)) by 1 decibel")
+            }
+            .buttonStyle(.borderless)
+        }
+        .frame(width: Metrics.bandWidth)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Reset \(Self.frequencyText(band)) to 0 dB") { onChange(band, 0) }
+                .disabled(gain == 0)
+        }
+        .disabled(!enabled)
+    }
+
     private func value(_ band: Int) -> Float { gains.indices.contains(band) ? gains[band] : 0 }
+
+    /// "+3", "0", "−12": the scale's "dB" heading carries the unit.
+    private static func gainText(_ gain: Float) -> String {
+        let rounded = Int(gain.rounded())
+        if rounded == 0 { return "0" }
+        return rounded > 0 ? "+\(rounded)" : "−\(-rounded)"
+    }
+
+    /// "32 Hz" … "1 kHz" … "16 kHz".
+    private static func frequencyText(_ band: Int) -> String {
+        let hz = AudioEQ.bandFrequencies[band]
+        return hz >= 1000 ? "\(Int(hz / 1000)) kHz" : "\(Int(hz)) Hz"
+    }
+
+    /// The band for VoiceOver: "32 hertz", "1 kilohertz".
+    private static func spokenFrequency(_ band: Int) -> String {
+        let hz = AudioEQ.bandFrequencies[band]
+        return hz >= 1000 ? "\(Int(hz / 1000)) kilohertz" : "\(Int(hz)) hertz"
+    }
 }

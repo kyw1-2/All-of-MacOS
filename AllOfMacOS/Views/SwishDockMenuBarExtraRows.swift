@@ -10,8 +10,9 @@ import SwiftUI
 /// which stand on their own. The two Dock options are
 /// `SwishDockMenuBarExtraRows.DockRows()`, right after "Dock gestures", so
 /// each option sits under the switch it needs. The rows are the section's
-/// own `AOMToggleRow`/`AOMSettingRow`s with ⓘ help, and dim while their
-/// parent is off (the section footer says why).
+/// own `AOMToggleRow`/`AOMSettingRow`s with their explanation as a tooltip
+/// (the section's ⓘ stays on Dock gestures and Menu-bar gestures), and dim
+/// while their parent is off (the section footer says why).
 struct SwishDockMenuBarExtraRows: View {
     @AppStorage(TrackpadUtilityGestures.menuBarGesturesKey) private var menuBarGestures = true
     @AppStorage(TrackpadUtilityGestures.menuBarScrollToTopKey) private var scrollToTop = false
@@ -27,9 +28,9 @@ struct SwishDockMenuBarExtraRows: View {
         // A stack, not a Group: a Group would attach `onChange` to every row.
         VStack(alignment: .leading, spacing: 0) {
             Group {
-                AOMToggleRow("Menu bar: tap to scroll to the top", help: Self.scrollToTopHelp, indent: true, isOn: $scrollToTop)
+                AOMToggleRow("Menu bar: tap to scroll to the top", indent: true, isOn: $scrollToTop)
                     .help(Self.scrollToTopHelp)
-                AOMSettingRow("Menu bar: tap, hold and scroll", indent: true, help: Self.switcherHelp) {
+                AOMSettingRow("Menu bar: tap, hold and scroll", indent: true) {
                     Picker("Menu bar: tap, hold and scroll", selection: $switcher) {
                         Text("Window switcher").tag(TrackpadUtilityGestures.SwitcherMode.windows.rawValue)
                         Text("App switcher (⌘-Tab)").tag(TrackpadUtilityGestures.SwitcherMode.apps.rawValue)
@@ -39,7 +40,7 @@ struct SwishDockMenuBarExtraRows: View {
                 .help(Self.switcherHelp)
             }
             .dependentSetting(on: menuBarGestures)
-            AOMToggleRow("Mission Control gestures", help: Self.missionControlHelp, isOn: $missionControlGestures)
+            AOMToggleRow("Mission Control gestures", isOn: $missionControlGestures)
                 .help(Self.missionControlHelp)
         }
         .onChange(of: missionControlGestures) { _, _ in
@@ -59,9 +60,9 @@ struct SwishDockMenuBarExtraRows: View {
 
         var body: some View {
             VStack(alignment: .leading, spacing: 0) {
-                AOMToggleRow("Dock: pinch twice", help: Self.doublePinchHelp, indent: true, isOn: $dockDoublePinch)
+                AOMToggleRow("Dock: pinch twice", indent: true, isOn: $dockDoublePinch)
                     .help(Self.doublePinchHelp)
-                AOMToggleRow("Dock gestures on the app's menu", help: Self.appMenuHelp, indent: true, isOn: $appMenuGestures)
+                AOMToggleRow("Dock gestures on the app's menu", indent: true, isOn: $appMenuGestures)
                     .help(Self.appMenuHelp)
             }
             .dependentSetting(on: dockGestures)

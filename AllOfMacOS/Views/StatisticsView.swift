@@ -95,7 +95,10 @@ struct StatisticsView: View {
                 switch layout {
                 case .threeColumns, .twoColumns:
                     HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
+                        // Its own height, top-aligned: an empty list must not
+                        // stretch to the taller column beside it.
                         mostUsedSection(figures)
+                            .fixedSize(horizontal: false, vertical: true)
                         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                             inputsSection
                             configurationSection
@@ -178,15 +181,18 @@ struct StatisticsView: View {
 
     private func overviewStrip(_ figures: Figures, columns: Int?) -> some View {
         let period = period.rawValue.lowercased()
+        // Each figure's second line is the period, except where it adds a
+        // fact (the match rate); the titles already say what is counted.
         return AOMStatStrip(items: [
             AOMStatItem(title: "Automations run", value: figures.fired.formatted(), unit: "runs",
                         detail: period, systemImage: "bolt.fill", tint: AOMTheme.positive),
             AOMStatItem(title: "Inputs recognized", value: figures.detected.formatted(), unit: "inputs",
-                        detail: "\(figures.matchRate) ran an automation", systemImage: "hand.raised.fingers.spread", tint: AOMTheme.blue),
+                        detail: figures.detected > 0 ? "\(figures.matchRate) ran an automation" : period,
+                        systemImage: "hand.raised.fingers.spread", tint: AOMTheme.blue),
             AOMStatItem(title: "Nothing assigned", value: (period == "all time" ? stats.unmatchedCount : figures.unmatched).formatted(),
-                        unit: "inputs", detail: "inputs that ran no automation", systemImage: "questionmark.circle", tint: AOMTheme.orange),
-            AOMStatItem(title: "Different inputs", value: figures.distinct.formatted(), unit: "gestures",
-                        detail: "different inputs \(period)", systemImage: "square.grid.2x2", tint: AOMTheme.purple)
+                        unit: "inputs", detail: period, systemImage: "questionmark.circle", tint: AOMTheme.orange),
+            AOMStatItem(title: "Different inputs", value: figures.distinct.formatted(), unit: "inputs",
+                        detail: period, systemImage: "square.grid.2x2", tint: AOMTheme.purple)
         ], columns: columns)
     }
 
@@ -199,7 +205,7 @@ struct StatisticsView: View {
                               message: "Use a trackpad gesture, shortcut or mouse button. Counts and the most-used list appear here as you work.") {
                     if period != .all { Button("Show All Time") { period = .all } }
                 }
-                .padding(.vertical, AOMSpace.x8)
+                .padding(.vertical, AOMSpace.x6)
             } else {
                 let maxCount = max(1, figures.entries.map(\.totalCount).max() ?? 1)
                 ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
@@ -219,7 +225,7 @@ struct StatisticsView: View {
     private var inputsList: some View {
         ForEach(TriggerCategory.inputCategories, id: \.self) { category in
             let all = triggers.filter { $0.input.category == category }
-            AOMSettingRow(category.rawValue, symbol: category.iconName) {
+            AOMSettingRow(category.insightsTitle, symbol: category.iconName) {
                 Text("\(all.filter(\.isEnabled).count) of \(all.count)")
                     .font(AOMFont.body)
                     .monospacedDigit()
@@ -248,8 +254,27 @@ struct StatisticsView: View {
     }
 }
 
+// MARK: - Input names
+
+private extension TriggerCategory {
+    /// The input kinds in the words of Automation's "Start with" list, in
+    /// sentence case. `rawValue` is persisted, so it stays as it is.
+    var insightsTitle: String {
+        switch self {
+        case .all: return "All inputs"
+        case .trackpad: return "Trackpad gesture"
+        case .keyboard: return "Keyboard shortcut"
+        case .normalMouse: return "Mouse button"
+        case .drawings: return "Drawing"
+        case .otherTriggers: return "Other trigger"
+        }
+    }
+}
+
 // MARK: - Gesture Row
 
+/// One input in Most used: rank, name, when it was last used, how often it
+/// ran an automation and its count on one line, the usage bar under it.
 private struct GestureStatRow: View {
     let rank: Int
     let entry: GestureStatEntry
@@ -257,19 +282,27 @@ private struct GestureStatRow: View {
     let accentColor: Color
 
     var body: some View {
-        HStack(alignment: .top, spacing: AOMSpace.x3) {
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x3) {
             Text("\(rank)")
                 .font(AOMFont.bodyEmphasis.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
                 .frame(width: AOMIcon.tileBadge, alignment: .trailing)
-            VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(entry.gesture).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
+                        .layoutPriority(1)
                     Spacer(minLength: AOMSpace.x2)
+                    if let last = entry.lastDetected {
+                        Text("Last used \(last, style: .relative) ago")
+                            .font(AOMFont.caption)
+                            .foregroundStyle(AOMColor.textSecondary)
+                            .lineLimit(1)
+                    }
                     if entry.firedCount > 0 {
                         Text("\(entry.firedCount) fired")
                             .font(AOMFont.caption.weight(.medium))
                             .foregroundStyle(AOMColor.successText)
+                            .lineLimit(1)
                     }
                     Text("\(entry.totalCount)")
                         .font(AOMFont.bodyEmphasis.monospacedDigit())
@@ -283,15 +316,10 @@ private struct GestureStatRow: View {
                     }
                 }
                 .frame(height: AOMFeatureSize.meter)
-                if let last = entry.lastDetected {
-                    Text("Last used \(last, style: .relative) ago")
-                        .font(AOMFont.caption)
-                        .foregroundStyle(AOMColor.textSecondary)
-                }
             }
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x3)
+        .padding(.vertical, AOMSpace.x2)
         .accessibilityElement(children: .combine)
     }
 }

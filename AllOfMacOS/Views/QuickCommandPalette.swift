@@ -54,8 +54,8 @@ struct QuickCommandPalette: View {
         case commands = "Commands"
         case automations = "Automations"
         case clipboard = "Clipboard"
-        case captures = "Recent Captures"
-        case navigation = "Go To"
+        case captures = "Recent captures"
+        case navigation = "Go to"
         // Listed only while searching, like Raycast's root search.
         case applications = "Applications"
         case files = "Files"
@@ -137,7 +137,7 @@ struct QuickCommandPalette: View {
                 keys: captureKeys(.captureFullscreen)) {
             CaptureCoordinator.shared.captureFullscreen()
         }
-        command("capture.text", "Capture Text", "Recognise text in a region and copy it", "text.viewfinder",
+        command("capture.text", "Capture Text", "Recognize text in a region and copy it", "text.viewfinder",
                 keys: captureKeys(.ocr)) {
             CaptureCoordinator.shared.captureText()
         }
@@ -287,11 +287,15 @@ struct QuickCommandPalette: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: 0) {
-                HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
+                // One alignment line for the whole palette: the search glyph,
+                // section titles, row icons and the action bar start 16 pt in,
+                // and the query lines up with the row titles.
+                HStack(spacing: AOMSpace.x2) {
                     Image(systemName: "magnifyingglass")
-                        .font(AOMFont.section.weight(.medium))
+                        .font(AOMFont.body.weight(.medium))
                         .foregroundStyle(AOMColor.textSecondary)
-                    TextField("Search commands, apps, files, clipboard and captures", text: $query)
+                        .frame(width: AOMIcon.tileBadge)
+                    TextField("Search commands, apps, files…", text: $query)
                         .textFieldStyle(.plain)
                         .font(AOMFont.pageStatus.weight(.regular))
                         .focused($isFieldFocused)
@@ -299,22 +303,22 @@ struct QuickCommandPalette: View {
                         .accessibilityLabel("Search")
                     if isSearching {
                         Text("\(items.count) result\(items.count == 1 ? "" : "s")")
-                            .font(AOMType.caption.monospacedDigit())
-                            .foregroundStyle(AOMTheme.textTertiary)
+                            .font(AOMFont.caption.monospacedDigit())
+                            .foregroundStyle(AOMColor.textTertiary)
                     }
                 }
-                .padding(.horizontal, AOMSpace.m + 2)
-                .frame(height: AOMSize.rowDetail + AOMSpace.x0_5)
+                .padding(.horizontal, AOMSpace.x4)
+                .frame(height: AOMSize.rowDetail + AOMSpace.x1)
 
                 AOMDivider()
 
                 if items.isEmpty {
-                    VStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                    VStack(spacing: AOMSpace.x2) {
                         Image(systemName: "magnifyingglass")
-                            .font(AOMFont.hero.weight(.regular))
+                            .font(AOMFont.title.weight(.regular))
                             .foregroundStyle(AOMColor.textSecondary)
                             .padding(.bottom, AOMSpace.x1)
-                        Text("No Results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                        Text("No results for “\(query)”").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                         Text("Try an automation name, an app or a word you copied.")
                             .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                         // The empty state needs a mouse-reachable way out too.
@@ -324,7 +328,7 @@ struct QuickCommandPalette: View {
                         }
                         .controlSize(.small)
                         .buttonStyle(.borderless)
-                        .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
+                        .padding(.top, AOMSpace.x2)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -337,8 +341,8 @@ struct QuickCommandPalette: View {
                                         Text(item.section.rawValue)
                                             .font(AOMFont.caption.weight(.semibold))
                                             .foregroundStyle(AOMColor.textSecondary)
-                                            .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
-                                            .padding(.top, index == 0 ? AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x3)
+                                            .padding(.horizontal, AOMSpace.x2)
+                                            .padding(.top, index == 0 ? AOMSpace.x1 : AOMSpace.x3)
                                             .padding(.bottom, AOMSpace.x1)
                                             .accessibilityAddTraits(.isHeader)
                                     }
@@ -346,7 +350,7 @@ struct QuickCommandPalette: View {
                                         .id(item.id)
                                 }
                             }
-                            .padding(AOMSpace.x1 + AOMSpace.x0_5)
+                            .padding(AOMSpace.x2)
                         }
                         .onChange(of: selectedID) { _, id in
                             if let id { proxy.scrollTo(id, anchor: nil) }
@@ -394,12 +398,12 @@ struct QuickCommandPalette: View {
             selectedID = item.id
             item.primary.run()
         } label: {
-            HStack(spacing: AOMSpace.x3 - AOMSpace.x0_5) {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: item.icon)
                     .font(AOMFont.callout.weight(.semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
-                    .frame(width: AOMIcon.hitArea - AOMSpace.x1, height: AOMIcon.hitArea - AOMSpace.x1)
+                    .frame(width: AOMIcon.tileBadge, height: AOMIcon.tileBadge)
                     .background(selected ? AOMColor.accent.opacity(0.14) : AOMColor.track,
                                 in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
                 Text(item.title)
@@ -445,14 +449,15 @@ struct QuickCommandPalette: View {
                 if isSearching { query = "" } else { close() }
             }
         }
-        .padding(.horizontal, AOMSpace.x3)
+        .padding(.horizontal, AOMSpace.x4)
         .frame(height: AOMSize.rowStandard + AOMSpace.x1)
         .background(AOMColor.track)
     }
 
+    /// A title and its keycap, grouped tighter than the hints are spaced.
     private func actionHint(_ title: String, keys: String, prominent: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            HStack(spacing: AOMSpace.x1) {
                 Text(title)
                     .font(AOMFont.caption.weight(prominent ? .semibold : .regular))
                     .foregroundStyle(prominent ? AOMColor.text : AOMColor.textSecondary)

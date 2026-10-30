@@ -1,17 +1,22 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The System Tools page — MacMagic's toolbox as a grid of tool cards,
-/// grouped by category: Finder & Network, PDF & Media, Cleanup.
-/// Sidebar-only (the menu bar stays lean); every tool is one click and
+/// The System Tools page — MacMagic's toolbox: every tool is a compact
+/// one-click tile in one card, grouped by category (Finder & Network, PDF &
+/// Media, Cleanup). Sidebar-only (the menu bar stays lean); every tool
 /// collects its own inputs via panels.
 struct SystemToolsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var showGroups = false
     @State private var showActionLibrary = false
     private let service = MacMagicSystemToolService.shared
     @State private var toast: String?
     @State private var query = ""
+
+    /// A tile's narrowest width: four columns in the narrowest window, six on
+    /// the widest page, and every tool name fits on one line.
+    private static let tileMinimumWidth: CGFloat = 160
+    /// The no-match state's height, so the page doesn't collapse while typing.
+    private static let emptyStateMinimumHeight: CGFloat = 240
 
     private struct Tool: Identifiable {
         let id: String
@@ -33,18 +38,18 @@ struct SystemToolsView: View {
         }
     }
 
-    /// d.9: what the page holds, in one line; there is no master switch.
+    /// d.9: what the page holds, in one line; the group names below say the
+    /// rest, and there is no master switch.
     private var header: some View {
         let total = groups.reduce(0) { $0 + $1.tools.count }
-        return AOMPageHeader("\(total) tools, one click each", module: .systemTools,
-                             subtitle: "Finder, network, PDF, media and file utilities")
+        return AOMPageHeader("\(total) tools, one click each", module: .systemTools)
     }
 
     var body: some View {
         AOMPage {
             header
             if showActionLibrary {
-                AOMSectionCard("All Actions", symbol: "square.grid.3x3", accessory: {
+                AOMSectionCard("All actions", symbol: "square.grid.3x3", accessory: {
                     Button("Hide") { showActionLibrary = false }.controlSize(.small)
                 }) {
                     ActionLibraryView().environmentObject(appState)
@@ -52,25 +57,33 @@ struct SystemToolsView: View {
             }
             let shown = visibleGroups
             if shown.isEmpty {
-                ContentUnavailableView {
-                    Label("No Tools Match “\(query)”", systemImage: "magnifyingglass")
-                } description: {
-                    Text("Try another word, or browse every action AOM can run.")
-                } actions: {
+                AOMEmptyState("No Tools Match “\(query)”", systemImage: "magnifyingglass",
+                              message: "Try another word, or browse every action AOM can run.") {
                     Button("Clear Search") { query = "" }
                     Button("All Actions") { query = ""; showActionLibrary = true }
                 }
-                .frame(maxWidth: .infinity, minHeight: 240)
-            }
-            ForEach(shown, id: \.name) { group in
-                AOMSectionCard(group.name, symbol: group.symbol, detail: "\(group.tools.count)") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 200), spacing: AOMSpace.tileGap)],
-                              spacing: AOMSpace.tileGap) {
-                        ForEach(group.tools) { tool in
-                            ToolCard(title: tool.title, symbol: tool.symbol, tint: tool.tint, run: tool.run)
+                .frame(minHeight: Self.emptyStateMinimumHeight)
+            } else {
+                // One card: each group is a caption over a grid of row-height tiles.
+                VStack(alignment: .leading, spacing: AOMSpace.x4) {
+                    ForEach(shown, id: \.name) { group in
+                        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                            Text(group.name)
+                                .aomSectionCaps()
+                                .padding(.horizontal, AOMSpace.x1)
+                                .accessibilityAddTraits(.isHeader)
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.tileMinimumWidth), spacing: AOMSpace.tileGap)],
+                                      alignment: .leading, spacing: AOMSpace.tileGap) {
+                                ForEach(group.tools) { tool in
+                                    ToolCard(title: tool.title, symbol: tool.symbol, tint: tool.tint, run: tool.run)
+                                }
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .aomCard(padding: AOMSpace.cardPadding)
+                .accessibilityElement(children: .contain)
             }
         }
         .aomPage("System Tools")
@@ -82,16 +95,16 @@ struct SystemToolsView: View {
                 }
                 .help("Browse every action AOM can run")
             }
+            // Activation groups belong to Automation: its toolbar's scope menu
+            // has "Edit Activation Groups…". Floating menus stay one click here.
             ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button("Floating Menus & Widgets…", systemImage: "menubar.dock.rectangle") { FloatingMenuController.shared.edit() }
-                    Button("Conditional Activation Groups…", systemImage: "square.stack.3d.up") { showGroups = true }
-                } label: { Label("Automation Tools", systemImage: "wand.and.stars") }
-                .help("Floating menus and activation groups")
+                Button { FloatingMenuController.shared.edit() } label: {
+                    Label("Floating Menus & Widgets", systemImage: "menubar.dock.rectangle")
+                }
+                .help("Create floating menus, clocks and variable widgets")
             }
         }
         .aomToast(toast)
-        .sheet(isPresented: $showGroups) { ActivationGroupsEditor().environmentObject(appState) }
         .onChange(of: toast) { _, message in
             guard message != nil else { return }
             Task { @MainActor in
@@ -309,8 +322,10 @@ struct SystemToolsView: View {
     }
 }
 
-/// One tool tile: the glyph carries the group's hue (no decorative gradient
-/// squircle — colour stays for meaning, as with `AOMIconBadge` elsewhere).
+/// One tool tile, one row tall: the glyph in the group's hue (no decorative
+/// gradient squircle — colour stays for meaning, as with `AOMIconBadge`
+/// elsewhere), then the name. A quiet resting fill keeps a grid of them
+/// reading as buttons; hover deepens it.
 private struct ToolCard: View {
     let title: String
     let symbol: String
@@ -320,21 +335,29 @@ private struct ToolCard: View {
 
     var body: some View {
         Button(action: run) {
-            VStack(spacing: 8) {
-                AOMIconBadge(systemImage: symbol, tint: tint, size: 34, filled: true)
+            HStack(spacing: AOMSpace.x2) {
+                Image(systemName: symbol)
+                    .font(AOMFont.body)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(tint)
+                    .frame(width: AOMIcon.row, height: AOMIcon.row)
+                    .accessibilityHidden(true)
                 Text(title)
-                    .font(AOMType.caption.weight(.medium))
-                    .foregroundStyle(AOMTheme.text)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .font(AOMFont.body)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(hovering ? AOMTheme.track : AOMTheme.cardAlt.opacity(0.5),
-                        in: RoundedRectangle(cornerRadius: AOMRadius.tile, style: .continuous))
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard, alignment: .leading)
+            .background(hovering ? AOMColor.track : AOMColor.sunken.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
         .accessibilityLabel(title)
     }
 }

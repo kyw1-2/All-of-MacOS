@@ -123,12 +123,12 @@ struct ActionCardView: View {
     private var actionDetail: String? {
         switch action.actionType {
         case .actionGroup: return "\(action.parameters.children?.count ?? 0) actions"
-        case .ifElse: return "THEN \(action.parameters.children?.count ?? 0) / ELSE \(action.parameters.elseChildren?.count ?? 0)"
+        case .ifElse: return "Then \(action.parameters.children?.count ?? 0) · Else \(action.parameters.elseChildren?.count ?? 0)"
         case .setVariable: return "\(action.parameters.variableName ?? "") = \(action.parameters.variableValue ?? "")"
         case .customSnapWindow: return "\(Int((action.parameters.snapWidth ?? 0.5) * 100))% × \(Int((action.parameters.snapHeight ?? 1) * 100))%"
         case .wait: return "\(action.parameters.waitMs ?? 250) ms"
         case .typeText: return "\(action.parameters.text?.count ?? 0) characters"
-        case .runAppleScript, .runShellScript: return "\(action.parameters.scriptContent?.utf8.count ?? 0) bytes · timeout \(action.parameters.scriptTimeoutSeconds ?? 30)s"
+        case .runAppleScript, .runShellScript: return "\(action.parameters.scriptContent?.utf8.count ?? 0) bytes · timeout \(action.parameters.scriptTimeoutSeconds ?? 30) s"
         case .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
             return action.parameters.applicationName
         case .openURL: return action.parameters.url
@@ -236,9 +236,11 @@ struct AddActionSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                // Headline, like the other sheets' titles.
                 Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action Inside"))
-                    .font(AOMFont.pageStatus)
+                    .font(AOMFont.headline)
                     .foregroundStyle(AOMColor.text)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain)
@@ -251,7 +253,7 @@ struct AddActionSheet: View {
 
             HStack(spacing: AOMSpace.x1) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
-                TextField("Search actions by name or what they do…", text: $searchText)
+                TextField("Search actions by name or what they do", text: $searchText)
                     .textFieldStyle(.plain)
                     .accessibilityLabel("Search actions")
                 if !searchText.isEmpty {

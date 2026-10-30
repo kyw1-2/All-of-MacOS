@@ -195,6 +195,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.global(qos: .utility).async { _ = TextPostProcessor.linkDetector }
                 TextCaptureHUDController.shared.prewarm()
             }
+        } else if ProcessInfo.processInfo.arguments.contains("--aom-preview-whats-new") {
+            // Isolated previews can show What's New for review; the panel's
+            // own preview path never reads or records the last-seen version.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { WhatsNew.presentIfUpdated() } }
         }
         // Monitor start-up is owned by AppState (see AppState.init) — it runs
         // whether or not a window is ever shown, which is what an LSUIElement

@@ -494,13 +494,16 @@ final class AppAudioMeters: ObservableObject {
 }
 
 struct AppAudioLevelMeter: View {
+    /// The meter's longest length under an app's name (no design token covers it).
+    static let maxWidth: CGFloat = 100
+
     let pid: pid_t
     @ObservedObject private var meters = AppAudioMixerService.shared.meters
     var body: some View {
         let level = meters.levels[pid] ?? 0
         ProgressView(value: Double(level), total: 1)
-            .tint(level > 0.95 ? .orange : .green)
-            .frame(maxWidth: 100)
+            .tint(level > 0.95 ? AOMColor.warning : AOMColor.success)
+            .frame(maxWidth: Self.maxWidth)
             .accessibilityLabel("Application audio level")
     }
 }
@@ -515,42 +518,34 @@ private struct AppAudioMixerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(.tint)
-                Text("App Audio").font(.system(size: 13, weight: .semibold))
-                Spacer()
+                    .accessibilityHidden(true)
+                Text("App Audio").font(AOMFont.bodyEmphasis)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: AOMSpace.x2)
                 if service.isSupported {
-                    Toggle("Sound", isOn: $service.soundEnabled)
+                    // The title beside it names the switch; VoiceOver hears the page's words.
+                    Toggle("App audio", isOn: $service.soundEnabled)
+                        .labelsHidden()
                         .toggleStyle(.switch)
-                        .controlSize(.mini)
+                        .controlSize(.small)
+                        .help(service.soundEnabled ? "Turn off app audio processing" : "Turn on app audio processing")
+                        .accessibilityLabel("App audio processing")
                 }
                 Button { service.hide() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                     .buttonStyle(.plain)
                     .help("Close the mixer")
                     .accessibilityLabel("Close mixer")
-            }.padding(12)
+            }
+            .padding(AOMSpace.x3)
             if !service.soundEnabled {
-                VStack(spacing: 12) {
-                    Spacer()
-                    Image(systemName: "speaker.slash.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(.secondary)
-                    Text("App Audio is Disabled")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Apps output directly through standard macOS audio paths without tap interception.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                    Button("Enable App Audio") {
-                        service.soundEnabled = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    Spacer()
+                // Off is a state, in the Audio page's words, with one way back.
+                AOMEmptyState("App audio is off", systemImage: "speaker.slash",
+                              message: "Apps play directly. Your app and effect settings are kept.") {
+                    Button("Turn On App Audio") { service.soundEnabled = true }
+                        .aomPrimaryButton()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, 24)
             } else {
                 ScrollView {
                     controls
@@ -572,16 +567,23 @@ private struct AppAudioMixerView: View {
     private var controls: some View {
         VStack(spacing: 0) {
             MixerOutputSection()
-            AirPlayProcessingControls(service: service).padding(12)
+            AirPlayProcessingControls(service: service)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AOMSpace.x3)
             Divider()
             MasterBoostControls(service: service)
-                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(AOMSpace.x3)
             Divider()
             if let error = service.lastError {
-                VStack(spacing: 6) {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                VStack(spacing: AOMSpace.x2) {
+                    Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
+                        .multilineTextAlignment(.center)
                     Button("Reconnect Audio") { service.reconnectAll() }.controlSize(.small)
-                }.padding(8)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(AOMSpace.x3)
+                Divider()
             }
             EQSection(service: service)
             // 3.3.3: per-output curves and the Audio Unit effect follow the equalizer.
@@ -598,13 +600,10 @@ private struct AppAudioMixerView: View {
 
     @ViewBuilder private var appList: some View {
         if service.apps.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "waveform").font(.system(size: 28)).foregroundStyle(.secondary)
-                Text(service.isSupported ? "No app is playing audio right now."
-                                         : "Per-app audio needs macOS 14.2 or newer.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            AOMEmptyState(service.isSupported ? "No app is playing audio" : "Per-app audio isn't available",
+                          systemImage: "waveform",
+                          message: service.isSupported ? "Apps appear here while they play."
+                                                       : "Per-app audio needs macOS 14.2 or newer.")
         } else {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
@@ -612,7 +611,7 @@ private struct AppAudioMixerView: View {
                         AppAudioRow(app: app,
                                     onGain: { service.setGain($0, bundleID: app.bundleID) },
                                     onMute: { service.toggleMute(bundleID: app.bundleID) })
-                        Divider().padding(.leading, 12)
+                        if app.id != service.apps.last?.id { AOMRowDivider(trailingInset: 0) }
                     }
                 }
             }
@@ -633,21 +632,23 @@ struct MasterBoostControls: View {
     @ObservedObject var service: AppAudioMixerService
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $service.allAppsBoostEnabled) {
-                Label("Magic Boost", systemImage: "sparkles")
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                Toggle(isOn: $service.allAppsBoostEnabled) {
+                    Label("Magic Boost", systemImage: "sparkles")
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .tint(AOMTheme.indigo)
+                .accessibilityLabel("Magic Boost for the output")
+                .help("Richer, fuller sound: quiet passages are raised while loud audio is kept from overdriving")
+                Text(service.allAppsBoostEnabled
+                     ? "Listening ahead on each output to lift quiet passages without distortion."
+                     : "Lifts quiet passages on every output without overdriving loud audio.")
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .tint(.indigo)
-            .accessibilityLabel("Magic Boost for the output")
-            .help("Richer, fuller sound: quiet passages are raised while loud audio is kept from overdriving")
-            Text(service.allAppsBoostEnabled
-                 ? "Listening ahead on each output to lift quiet passages without distortion."
-                 : "Lifts quiet passages on every output without overdriving loud audio.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             // 3.3.3: the output's preset, under its switch and off with it.
             AudioBoostPresetPicker(bundleID: nil)
                 .disabled(!service.allAppsBoostEnabled)
@@ -666,11 +667,12 @@ struct MixerOutputSection: View {
     @State private var isSwitchingOutput = false
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text("Output").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Picker("", selection: Binding(
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x2) {
+                Text("Output").aomSectionCaps()
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: AOMSpace.x2)
+                Picker("Output device", selection: Binding(
                     get: { currentUID },
                     set: { uid in
                         // This picker drives the machine-wide default output, and
@@ -693,9 +695,10 @@ struct MixerOutputSection: View {
                 }
                 .labelsHidden()
                 .controlSize(.small)
-                .frame(maxWidth: 170)
+                // Capped like the Headphone EQ pickers below; long names truncate.
+                .frame(maxWidth: AOMSize.tileMin)
             }
-            HStack {
+            HStack(spacing: AOMSpace.x2) {
                 Button {
                     AudioOutputService.shared.adjustVolume(percentagePoints: -5, completion: { _ in refresh() })
                 } label: { Image(systemName: "speaker.minus") }
@@ -707,6 +710,8 @@ struct MixerOutputSection: View {
                     AudioOutputService.shared.setVolume(percent: newValue, completion: { _ in })
                 }), in: 0...100, step: 1)
                     .controlSize(.small)
+                    .accessibilityLabel("Output volume")
+                    .accessibilityValue("\(Int(volume)) percent")
                 Button {
                     AudioOutputService.shared.adjustVolume(percentagePoints: 5, completion: { _ in refresh() })
                 } label: { Image(systemName: "speaker.plus") }
@@ -714,11 +719,14 @@ struct MixerOutputSection: View {
                     .help("Volume up 5%")
                     .accessibilityLabel("Volume up")
                 Text("\(Int(volume))%")
-                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
+                    .font(AOMFont.caption.monospacedDigit())
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
+                    .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 12).padding(.bottom, 10)
+        .padding(.horizontal, AOMSpace.x3)
+        .padding(.bottom, AOMSpace.x3)
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
     }
@@ -741,24 +749,29 @@ struct EQSection: View {
     @ObservedObject var service: AppAudioMixerService
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text("Equalizer").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Toggle("", isOn: $service.eqEnabled).labelsHidden().controlSize(.mini)
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x2) {
+                Text("Equalizer").aomSectionCaps()
+                    .accessibilityAddTraits(.isHeader)
+                // A switch like the panel's other on/off controls; the
+                // heading beside it is its visible label.
+                Toggle("Equalizer", isOn: $service.eqEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
                     .help("Applies to every app you've adjusted")
-                Spacer()
-                Picker("", selection: $service.eqPreset) {
+                Spacer(minLength: AOMSpace.x2)
+                Picker("Equalizer preset", selection: $service.eqPreset) {
                     ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
                     if service.eqPreset == "Custom" { Text("Custom").tag("Custom") }
                 }
-                .labelsHidden().controlSize(.small).frame(maxWidth: 130)
+                .labelsHidden().controlSize(.small).fixedSize()
             }
             AudioEqualizerControls(gains: service.eqGains, enabled: service.eqEnabled) {
                 service.setBand($0, gain: $1)
             }
-
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(AOMSpace.x3)
     }
 
     static func label(_ band: Int) -> String {
@@ -781,24 +794,32 @@ struct AppAudioRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(app.name).font(.callout).lineLimit(1)
-            Spacer(minLength: 8)
+        HStack(spacing: AOMSpace.x2) {
+            Text(app.name).font(AOMFont.callout).lineLimit(1)
+            Spacer(minLength: AOMSpace.x2)
             Button { onMute() } label: {
                 Image(systemName: app.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(app.muted ? .red : .secondary)
-            }.buttonStyle(.plain).help(app.muted ? "Unmute" : "Mute")
+                    .foregroundStyle(app.muted ? AOMColor.danger : AOMColor.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help(app.muted ? "Unmute" : "Mute")
+            .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
             Slider(value: Binding(get: { Double(gain) }, set: { newValue in
                 gain = Float(newValue)
                 onGain(gain)
             }), in: 0...1, step: 0.01)
-                .frame(width: 130)
+                .frame(width: AOMRowControlMetrics.sliderWidth)
                 .controlSize(.small)
+                .accessibilityLabel("Volume for \(app.name)")
+                .accessibilityValue("\(Int((gain * 100).rounded())) percent")
             Text("\(Int((gain * 100).rounded()))%")
-                .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
+                .font(AOMFont.caption.monospacedDigit())
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
+                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
+        .padding(.horizontal, AOMSpace.rowInset)
+        .frame(minHeight: AOMSize.rowStandard)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onMute() }
         .onChange(of: app.gain) { _, newGain in
@@ -808,28 +829,60 @@ struct AppAudioRow: View {
 }
 
 /// Controls describe audible behavior; transport mechanics stay out of the UI.
+/// The mixer panel shows a labelled switch over its status line; the Audio
+/// page passes its label column's width (`labelWidth`) so the name sits in
+/// that column and the status lines up under the switch.
 struct AirPlayProcessingControls: View {
     @ObservedObject var service: AppAudioMixerService
+    /// The Audio page's label column; nil in the mixer panel.
+    var labelWidth: CGFloat?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle("HomePod / AirPlay effects", isOn: $service.airPlayProcessingEnabled)
-                .toggleStyle(.switch).controlSize(.small)
-                .disabled(!service.soundEnabled)
+        if let labelWidth {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                HStack(spacing: AOMSpace.x3) {
+                    Text("HomePod effects")
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1)
+                        .frame(width: labelWidth, alignment: .leading)
+                        .accessibilityHidden(true)
+                    toggle.labelsHidden()
+                    Spacer(minLength: 0)
+                }
+                status
+                    .padding(.leading, labelWidth + AOMSpace.x3)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                toggle
+                status
+            }
+        }
+    }
+
+    private var toggle: some View {
+        Toggle("HomePod / AirPlay effects", isOn: $service.airPlayProcessingEnabled)
+            .toggleStyle(.switch).controlSize(.small)
+            .disabled(!service.soundEnabled)
+    }
+
+    private var status: some View {
+        Group {
             if !service.soundEnabled {
                 Text("Audio processing off — settings saved")
-                    .font(.caption).foregroundStyle(.secondary)
             } else if service.airPlayPreparing {
                 Label("Connecting — current audio continues", systemImage: "airplay.audio")
-                    .font(.caption).foregroundStyle(.secondary)
             } else if service.airPlayProcessingActive {
                 Label("App volume, EQ and boost → HomePod", systemImage: "airplay.audio")
-                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(service.airPlayProcessingEnabled
                      ? "Apply app volume, EQ and boost to Mac audio sent to HomePod. Buffered playback adds latency."
                      : "Direct playback: effects and app volume are bypassed on AirPlay.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .font(AOMFont.caption)
+        .foregroundStyle(AOMColor.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

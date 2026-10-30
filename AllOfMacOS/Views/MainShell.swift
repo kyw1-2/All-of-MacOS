@@ -97,7 +97,6 @@ struct AOMMainShell<Content: View>: View {
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
-    @Environment(\.colorSchemeContrast) private var contrast
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -120,7 +119,9 @@ struct AOMSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) { searchButton }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            AOMSidebarSearchButton(showingCommandPalette: $showingCommandPalette)
+        }
         .accessibilityElement(children: .contain)
     }
 
@@ -148,19 +149,30 @@ struct AOMSidebar: View {
         .tag(tab)
         .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
     }
+}
 
-    private var searchButton: some View {
+/// The way into ⌘K, drawn like the system's sidebar search field: one
+/// standard 28 pt capsule whose fill and label deepen under the pointer,
+/// aligned with the selection inset of the rows below. Its own view, so
+/// hovering never re-evaluates the sidebar list.
+private struct AOMSidebarSearchButton: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var showingCommandPalette: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var hovering = false
+
+    var body: some View {
         Button { showingCommandPalette = true } label: {
-            HStack(spacing: AOMSpace.x1 + 2) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 Image(systemName: "magnifyingglass").imageScale(.small)
                 Text("Search").font(AOMFont.body)
                 Spacer(minLength: AOMSpace.x1)
                 AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
-            .foregroundStyle(AOMColor.textSecondary)
-            .padding(.horizontal, AOMSpace.x3 - 2)
+            .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
+            .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
             .frame(height: AOMIcon.hitArea)
-            .background(AOMColor.track, in: Capsule())
+            .background(hovering ? AOMColor.sunken : AOMColor.track, in: Capsule())
             .overlay {
                 Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
                                        lineWidth: contrast == .increased ? 1 : 0.5)
@@ -168,9 +180,11 @@ struct AOMSidebar: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, AOMSpace.x3 - 2)
-        .padding(.top, AOMSpace.x1 + 2)
-        .padding(.bottom, AOMSpace.x2)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
+        .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+        .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
+        .padding(.bottom, AOMSpace.x1 + AOMSpace.x0_5)
         .help("Search pages, settings and actions")
         .accessibilityLabel("Search")
     }

@@ -11,7 +11,9 @@ import SwiftUI
 ///   standard set; `ModifierRoles.loadIssue` says so above the card, next to
 ///   Restore Modifiers (`ModifierRoles.save(.standard, to:)`).
 /// - Every row belongs to title-bar snap and dims while it is off (ui.md's
-///   dependent-options rule).
+///   dependent-options rule); Title-bar snap's footer says why, so this
+///   section's footer only carries a refused pick. The section ⓘ explains the
+///   roles; each row keeps its explanation as a tooltip.
 struct SwishModifierRolesSection: View {
     /// Title-bar snap's switch.
     let snapOn: Bool
@@ -70,10 +72,9 @@ struct SwishModifierRolesSection: View {
                     Button("Restore Modifiers", action: restore)
                 }
             }
-            AOMSection(footer: snapOn ? refusal : "Turn on Title-bar snap to use the modifiers.") {
+            AOMSection(footer: snapOn ? refusal : nil) {
                 Group {
-                    AOMToggleRow("Super key: whole window", detail: superDetail(roles),
-                                 help: Self.superAnywhereHelp, isOn: $superAnywhere)
+                    AOMToggleRow("Super key: whole window", detail: superDetail(roles), isOn: $superAnywhere)
                         .help(Self.superAnywhereHelp)
                     ForEach(Role.allCases, id: \.self) { role in
                         rolePicker(role, roles: roles)
@@ -94,7 +95,7 @@ struct SwishModifierRolesSection: View {
 
     private func rolePicker(_ role: Role, roles: Roles) -> some View {
         let current = roles[role]
-        return AOMSettingRow(role.title, detail: Self.detail(role), help: Self.help(role)) {
+        return AOMSettingRow(role.title, detail: Self.detail(role)) {
             Picker("\(role.title) modifier", selection: Binding(get: { current.rawValue },
                                                                set: { choose(Keys(rawValue: $0), for: role) })) {
                 Text("None").tag(0)

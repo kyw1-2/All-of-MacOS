@@ -33,15 +33,17 @@ struct CaptureStudioView: View {
         }
     }
 
+    /// The header title already counts the captures and the chips count each
+    /// filter, so the context line only says when the last one was taken.
     private var subtitle: String {
         guard let latest = history.entries.first else { return "Screenshots, recordings, annotation and text recognition" }
-        return "Last capture \(AOMRelativeTime.string(latest.capturedAt).lowercased()) · screenshots, recordings and text"
+        return "Last capture \(AOMRelativeTime.string(latest.capturedAt).lowercased())"
     }
 
     /// Library thumbnail size: 0 small, 1 medium, 2 large (Bear, Nova).
     @AppStorage("AOMCaptureGridDensity") private var density = 1
 
-    private var gridMinimum: CGFloat { [168, 220, 300][min(2, max(0, density))] }
+    private var gridMinimum: CGFloat { CaptureGalleryMetrics.columnMinimum[min(2, max(0, density))] }
 
     private func count(_ filter: CaptureFilter) -> Int {
         switch filter {
@@ -58,37 +60,26 @@ struct CaptureStudioView: View {
             if recordingService.isRecording {
                 activeRecordingBanner
             }
-            AOMSection("Capture tools", padding: AOMSpace.x1) {
+            // A bare strip: the toolbar's Capture menu lists the same tools,
+            // so the strip needs no title of its own (VoiceOver keeps one).
+            AOMSection(padding: AOMSpace.x1) {
                 captureLaunchpad
             }
+            .accessibilityLabel("Capture tools")
             VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-                AOMSectionTitle("Recent captures", detail: history.entries.isEmpty ? nil : "\(history.entries.count)") {
-                    Picker("Thumbnail Size", selection: $density) {
-                        Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
-                        Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
-                        Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .controlSize(.small)
-                }
-                filterBar
+                // Nothing to filter or size before the first capture.
+                if !history.entries.isEmpty { filterBar }
                 gallerySection
             }
         }
         .aomPage("Capture")
         .toolbar { toolbarContent }
         .sheet(isPresented: $showingSettingsSheet) {
-            VStack(spacing: 0) {
+            ModuleSettingsSheet("Capture Settings", done: { showingSettingsSheet = false }) {
                 CaptureSettingsView()
-                Divider()
-                HStack { Spacer(); Button("Done") { showingSettingsSheet = false }.keyboardShortcut(.defaultAction) }
-                    .padding(AOMSpace.x3)
             }
-            .frame(minWidth: 620, idealWidth: 680, minHeight: 540, idealHeight: 640)
         }
-        .alert("Clear Capture History?", isPresented: $showingClearConfirmation) {
+        .alert("Clear capture history?", isPresented: $showingClearConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Clear All", role: .destructive) {
                 history.removeAll()
@@ -155,7 +146,8 @@ struct CaptureStudioView: View {
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Button("All-in-One\(keys(.allInOne))") { CaptureCoordinator.shared.captureAllInOne() }
+                // The same names as the strip on the page, one name per mode.
+                Button("All-In-One\(keys(.allInOne))") { CaptureCoordinator.shared.captureAllInOne() }
                 Button("Area\(keys(.captureArea))") { CaptureCoordinator.shared.captureArea() }
                 Button("Window\(keys(.captureWindow))") { CaptureCoordinator.shared.captureWindowInteractive() }
                 Button("Full Screen\(keys(.captureFullscreen))") { CaptureCoordinator.shared.captureFullscreen() }
@@ -163,10 +155,10 @@ struct CaptureStudioView: View {
                 Divider()
                 Button("Record Screen\(keys(.recordScreen))") { recordingService.promptAndStartRecording() }
                 Divider()
-                Button("Extract Text\(keys(.ocr))") { CaptureCoordinator.shared.captureText() }
+                Button("Text\(keys(.ocr))") { CaptureCoordinator.shared.captureText() }
                 Button("Previous Area\(keys(.capturePreviousArea))") { CaptureCoordinator.shared.capturePreviousArea() }
                 Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
-                Button("QR / Barcode") { CaptureCoordinator.shared.captureQRCode() }
+                Button("QR Code") { CaptureCoordinator.shared.captureQRCode() }
             } label: {
                 Label("Capture Area", systemImage: "viewfinder")
             } primaryAction: {
@@ -202,7 +194,7 @@ struct CaptureStudioView: View {
             AOMModeButton("Self-Timer", symbol: "timer", compact: true) {
                 CaptureCoordinator.shared.captureWithSelfTimer()
             }
-            AOMModeButton(recordingService.isRecording ? "Recording" : "Record", symbol: "record.circle",
+            AOMModeButton(recordingService.isRecording ? "Recording" : "Record Screen", symbol: "record.circle",
                           tint: AOMTheme.danger, shortcut: shortcut(.recordScreen), compact: true) {
                 recordingService.promptAndStartRecording()
             }
@@ -216,11 +208,23 @@ struct CaptureStudioView: View {
         }
     }
 
-    /// What the gallery shows; the thumbnail size sits in the section title.
+    /// What the gallery shows, with the thumbnail size at the trailing end of
+    /// the same row (one control row above the grid, not two).
     private var filterBar: some View {
-        AOMScopeBar(items: CaptureFilter.allCases.map { filter in
-            AOMScopeItem(id: filter, title: filter.rawValue, count: count(filter))
-        }, selection: $selectedFilter, accessibilityLabel: "Show")
+        HStack(spacing: AOMSpace.x3) {
+            AOMScopeBar(items: CaptureFilter.allCases.map { filter in
+                AOMScopeItem(id: filter, title: filter.rawValue, count: count(filter))
+            }, selection: $selectedFilter, accessibilityLabel: "Show")
+            Picker("Thumbnail size", selection: $density) {
+                Image(systemName: "square.grid.3x3").tag(0).help("Small thumbnails")
+                Image(systemName: "square.grid.2x2").tag(1).help("Medium thumbnails")
+                Image(systemName: "rectangle.grid.1x2").tag(2).help("Large thumbnails")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .controlSize(.small)
+        }
         .fixedSize(horizontal: false, vertical: true)
         .frame(minHeight: AOMSize.rowDense)
     }
@@ -228,7 +232,9 @@ struct CaptureStudioView: View {
     // MARK: - Active Recording Banner
 
     /// A long-running capture adds a strip under the header (d.2): the
-    /// recording colour on the glyph only, the controls beside it.
+    /// recording colour on the glyph only, the controls beside it. The header
+    /// and its pill already say recording or paused, so the strip holds one
+    /// line: the elapsed time and the controls.
     private var activeRecordingBanner: some View {
         HStack(spacing: AOMSpace.x3) {
             Image(systemName: "record.circle")
@@ -237,15 +243,11 @@ struct CaptureStudioView: View {
                 .foregroundStyle(recordingService.isPaused ? AOMColor.paused : AOMColor.recording)
                 .symbolEffect(.pulse, options: .repeating, isActive: !recordingService.isPaused)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(recordingService.isPaused ? "Recording Paused" : "Recording Screen")
-                    .font(AOMFont.headline)
-                    .foregroundStyle(AOMColor.text)
-                Text(formatElapsed(recordingService.elapsedSeconds))
-                    .font(AOMFont.callout.monospacedDigit())
-                    .foregroundStyle(AOMColor.textSecondary)
-            }
-            Spacer()
+            Text(formatElapsed(recordingService.elapsedSeconds))
+                .font(AOMFont.headline.monospacedDigit())
+                .foregroundStyle(AOMColor.text)
+                .accessibilityLabel("\(recordingService.isPaused ? "Paused" : "Recording"), \(formatElapsed(recordingService.elapsedSeconds))")
+            Spacer(minLength: AOMSpace.x3)
             Button {
                 recordingService.togglePause()
             } label: {
@@ -276,16 +278,20 @@ struct CaptureStudioView: View {
     private var gallerySection: some View {
         VStack(alignment: .leading, spacing: AOMSpace.s) {
             if filteredEntries.isEmpty {
-                AOMEmptyState(selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
+                // An empty history says so whatever the filter; a filter with
+                // nothing in it names the filter.
+                AOMEmptyState(history.entries.isEmpty || selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
                               systemImage: "camera.badge.ellipsis",
                               message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
                     Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
                         .buttonStyle(.borderedProminent)
                 }
-                .frame(minHeight: 320)
+                .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
             } else {
-                // Wide enough that the caption (kind, size, time) never truncates.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum, maximum: gridMinimum * 1.6), spacing: AOMSpace.m)],
+                // Wide enough that the title and the time share one line.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
+                                                       maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
+                                             spacing: AOMSpace.m)],
                           spacing: AOMSpace.m) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
@@ -384,45 +390,40 @@ private struct CaptureCard: View {
             .onTapGesture(count: 2, perform: onAnnotate)
             .onDrag { CaptureItemActions.dragProvider(entry) }
 
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5 + 1) {
-                HStack(spacing: AOMSpace.x2) {
-                    Text(entry.displayName)
-                        .font(AOMFont.bodyEmphasis)
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Menu {
-                        Button("Copy", action: onCopy)
-                        Button("Edit", action: onAnnotate)
-                        Button("Pin to Screen", action: onPin)
-                        Button("Reopen in Quick Access", action: onRestoreOverlay)
-                        if let onShowInFinder { Button("Show in Finder", action: onShowInFinder) }
-                        Divider()
-                        Button("Remove from History", role: .destructive, action: onDelete)
-                    } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .accessibilityLabel("Actions for \(entry.displayName)")
-                }
-                HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    // The kind only when the title does not already say it.
-                    if entry.kind.displayName != entry.displayName {
-                        Text(entry.kind.displayName)
-                        Text("·")
-                    }
-                    Text("\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))").monospacedDigit()
-                    Spacer(minLength: AOMSpace.x1)
-                    Text(AOMRelativeTime.string(entry.capturedAt)).monospacedDigit()
-                }
-                .font(AOMFont.caption)
-                .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(1)
+            // One line under the picture: the name, the time and the menu.
+            // The kind and pixel size are in the tooltip and the VoiceOver label.
+            HStack(spacing: AOMSpace.x2) {
+                Text(entry.displayName)
+                    .font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: AOMSpace.x1)
+                Text(AOMRelativeTime.string(entry.capturedAt))
+                    .font(AOMFont.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                Menu {
+                    Button("Copy", action: onCopy)
+                    Button("Edit", action: onAnnotate)
+                    Button("Pin to Screen", action: onPin)
+                    Button("Reopen in Quick Access", action: onRestoreOverlay)
+                    if let onShowInFinder { Button("Show in Finder", action: onShowInFinder) }
+                    Divider()
+                    Button("Remove from History", role: .destructive, action: onDelete)
+                } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .accessibilityLabel("Actions for \(entry.displayName)")
             }
-            .padding(.horizontal, AOMSpace.x3 + AOMSpace.x0_5)
-            .padding(.vertical, AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMSize.rowStandard)
         }
         // Hover shifts the fill only; cards never lift or outline (c.6).
         .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered)
         .aomAnimation(.quick, value: isHovered)
+        .help(details)
         .contextMenu {
             Button("Copy", action: onCopy)
             Button("Edit", action: onAnnotate)
@@ -435,7 +436,16 @@ private struct CaptureCard: View {
             Button("Remove from History", role: .destructive, action: onDelete)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(entry.displayName), \(entry.kind.displayName)")
+        .accessibilityLabel("\(entry.displayName), \(entry.kind.displayName), \(pixelSizeText)")
+    }
+
+    private var pixelSizeText: String { "\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))" }
+
+    /// The card's tooltip: the name, the kind when the name doesn't already
+    /// say it, and the pixel size (the footer keeps to one line).
+    private var details: String {
+        let kind = entry.kind.displayName == entry.displayName ? nil : entry.kind.displayName
+        return [entry.displayName, kind, pixelSizeText].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func badge(_ title: String, _ symbol: String, _ tint: Color) -> some View {
@@ -464,4 +474,63 @@ private struct CaptureCard: View {
         .help(help)
         .accessibilityLabel(help)
     }
+}
+
+// MARK: - Gallery metrics
+
+/// Gallery sizes the shared scale has no token for.
+private enum CaptureGalleryMetrics {
+    /// The thumbnail column minimum at the small, medium and large sizes
+    /// (medium is a Workspace tile).
+    static let columnMinimum: [CGFloat] = [168, AOMSize.tileMin, 300]
+    /// How far a column may grow past its minimum before another one fits.
+    static let columnStretch: CGFloat = 1.6
+    /// The empty gallery keeps the page from collapsing under the strip.
+    static let emptyMinHeight: CGFloat = 320
+}
+
+// MARK: - Settings sheet
+
+/// The settings sheet the Capture and Clipboard pages open: the size and the
+/// title bar with Done that Settings uses for the same views
+/// (`SettingsSheetHost`), so Capture Settings and Clipboard Settings look the
+/// same wherever they are opened.
+struct ModuleSettingsSheet<Content: View>: View {
+    let title: String
+    let done: () -> Void
+    @ViewBuilder var content: Content
+
+    init(_ title: String, done: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.done = done
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: AOMSpace.x2) {
+                Text(title)
+                    .font(AOMFont.body.weight(.medium))
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: AOMSpace.x2)
+                Button("Done", action: done)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, AOMSpace.x4)
+            .padding(.vertical, AOMSpace.x3)
+            AOMDivider()
+            content
+        }
+        .frame(minWidth: AOMSize.readableWidth, idealWidth: AOMSize.readableWidth, maxWidth: .infinity,
+               minHeight: ModuleSettingsSheetMetrics.minHeight, idealHeight: ModuleSettingsSheetMetrics.idealHeight,
+               maxHeight: .infinity)
+    }
+}
+
+/// The settings sheet's height in Settings (`SettingsHub`), which has no token.
+private enum ModuleSettingsSheetMetrics {
+    static let minHeight: CGFloat = 560
+    static let idealHeight: CGFloat = 620
 }

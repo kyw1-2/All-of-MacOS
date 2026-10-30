@@ -32,29 +32,29 @@ struct TextCaptureSettingsSection: View {
     // MARK: Languages
 
     private var languagesGroup: some View {
-        AOMSection("Text Recognition") {
-            AOMSettingRow("Automatic Languages", detail: automaticSubtitle, symbol: "globe") {
+        AOMSection("Text recognition") {
+            AOMSettingRow("Automatic languages", detail: automaticSubtitle) {
                 Toggle("Automatic languages", isOn: Binding(get: { settings.usesAutomaticLanguages },
                                                              set: { settings.setAutomaticLanguages($0) }))
                     .accessibilityLabel("Automatic languages")
             }
             if !settings.usesAutomaticLanguages { languageList }
-            AOMSettingRow("Instant Recognition", symbol: "bolt.fill",
+            AOMSettingRow("Instant recognition",
                           help: "Copy after one recognition. Turn off for slower, detailed mixed-script recognition.") {
                 toggle(\.prefersFastRecognition, "Instant recognition")
             }
-            AOMSettingRow("Engine", symbol: "cpu",
+            AOMSettingRow("Engine",
                           help: "Automatic uses Live Text for Korean, Chinese and Japanese primary languages.") {
                 Picker("Engine", selection: Binding(get: { settings.engine }, set: { settings.engine = $0 })) {
                     ForEach(TextRecognitionEngineMode.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.menu)
             }
-            AOMSettingRow("Language Correction", symbol: "character.book.closed",
+            AOMSettingRow("Language correction",
                           help: "Fixes likely misreads in prose. Turn off for code and serial numbers.") {
                 toggle(\.usesLanguageCorrection, "Language correction")
             }
-            AOMSettingRow("Custom Words", symbol: "text.book.closed", indent: true,
+            AOMSettingRow("Custom words", indent: true,
                           help: "Comma-separated names and jargon to prefer.") {
                 TextField("AOM, TextSniper, …", text: $customWords)
                     .textFieldStyle(.roundedBorder)
@@ -67,7 +67,8 @@ struct TextCaptureSettingsSection: View {
         }
     }
 
-    /// The ordered languages, indented under Automatic Languages while it is off.
+    /// The ordered languages, indented under Automatic languages while it is
+    /// off, lined up with the other indented rows (rows carry no symbol).
     private var languageList: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x1) {
             ForEach(Array(settings.selectedLanguages.enumerated()), id: \.element) { index, code in
@@ -103,10 +104,10 @@ struct TextCaptureSettingsSection: View {
                 Spacer(minLength: 0)
             }
         }
-        .padding(.leading, AOMSpace.rowSymbolInset + AOMSpace.x5)
+        .padding(.leading, AOMSpace.rowInset + AOMSpace.x5)
         .padding(.trailing, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x2)
-        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowSymbolInset + AOMSpace.x5) }
+        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowInset + AOMSpace.x5) }
     }
 
     private var automaticSubtitle: String {
@@ -118,22 +119,22 @@ struct TextCaptureSettingsSection: View {
     // MARK: Output
 
     private var outputGroup: some View {
-        AOMSection("Recognized Text") {
-            AOMSettingRow("Keep Line Breaks", symbol: "text.alignleft",
+        AOMSection("Recognized text") {
+            AOMSettingRow("Keep line breaks",
                           help: "Off re-flows lines into paragraphs (no spaces added between CJK lines).") {
                 toggle(\.keepsLineBreaks, "Keep line breaks")
             }
-            AOMSettingRow("Join Hyphenated Words", symbol: "minus", help: "“infor-” + “mation” becomes “information”.") {
+            AOMSettingRow("Join hyphenated words", help: "“infor-” + “mation” becomes “information”.") {
                 toggle(\.joinsHyphenatedWords, "Join hyphenated words")
             }
-            AOMSettingRow("Additive Clipboard", symbol: "text.badge.plus",
+            AOMSettingRow("Additive clipboard",
                           help: "Append each capture to the text already on the clipboard.") {
                 toggle(\.additiveClipboard, "Additive clipboard")
             }
-            AOMSettingRow("Detect Links", symbol: "link", help: "Show detected web and mail links in the result HUD.") {
+            AOMSettingRow("Detect links", help: "Show detected web and mail links in the result HUD.") {
                 toggle(\.detectsLinks, "Detect links")
             }
-            AOMSettingRow("Read QR Codes and Barcodes", symbol: "qrcode",
+            AOMSettingRow("Read QR codes and barcodes",
                           help: "Add code payloads found in the selection.") {
                 toggle(\.readsBarcodes, "Read QR codes and barcodes")
             }
@@ -142,17 +143,19 @@ struct TextCaptureSettingsSection: View {
 
     // MARK: Feedback
 
+    /// "Text capture" stays in the title: Capture Settings also has a Play
+    /// sound for screenshots, and only these four shortcuts are listed here.
     private var feedbackGroup: some View {
-        AOMSection("Text Capture Feedback") {
-            AOMSettingRow("Play Sound", symbol: "speaker.wave.2",
+        AOMSection("Text capture feedback") {
+            AOMSettingRow("Play sound",
                           help: "Confirm success or “nothing found” with a sound.") {
                 toggle(\.playsSound, "Play sound")
             }
-            AOMSettingRow("Show Result HUD", symbol: "rectangle.and.text.magnifyingglass",
+            AOMSettingRow("Show result HUD",
                           help: "A preview with Copy, Edit, Speak and Share. Hover to keep it open.") {
                 toggle(\.showsResultHUD, "Show result HUD")
             }
-            AOMSettingRow("HUD Duration", symbol: "timer", indent: true) {
+            AOMSettingRow("HUD duration", indent: true) {
                 Picker("HUD duration", selection: Binding(get: { Int(settings.hudDuration) },
                                                           set: { settings.hudDuration = Double($0) })) {
                     ForEach([3, 6, 10, 20], id: \.self) { Text("\($0) s").tag($0) }
@@ -161,7 +164,7 @@ struct TextCaptureSettingsSection: View {
                 .accessibilityLabel("HUD duration")
             }
             .aomDependentRows(enabled: settings.showsResultHUD)
-            AOMSettingRow("Speak Result", symbol: "waveform", help: "Read the text aloud in its detected language.") {
+            AOMSettingRow("Speak result", help: "Read the text aloud in its detected language.") {
                 toggle(\.speaksResult, "Speak result")
             }
         }
@@ -170,14 +173,14 @@ struct TextCaptureSettingsSection: View {
     // MARK: Shortcuts
 
     private var shortcutsGroup: some View {
-        AOMSection("Text Capture Shortcuts") {
-            AOMSettingRow("Capture Text", symbol: "text.viewfinder", help: "Select an area and copy its text.") {
+        AOMSection("Text capture shortcuts") {
+            AOMSettingRow("Capture Text", help: "Select an area and copy its text.") {
                 recorder(id: "ocr", current: captureShortcuts.shortcut(for: .ocr)) {
                     captureShortcuts.setShortcut($0, for: .ocr)
                 }
             }
             ForEach(TextCaptureShortcutAction.allCases, id: \.self) { action in
-                AOMSettingRow(action.displayName, symbol: action.iconName, help: subtitle(for: action)) {
+                AOMSettingRow(action.displayName, help: subtitle(for: action)) {
                     recorder(id: action.rawValue, current: textShortcuts.shortcut(for: action)) {
                         textShortcuts.setShortcut($0, for: action)
                     }

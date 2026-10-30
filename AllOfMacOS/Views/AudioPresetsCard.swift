@@ -139,7 +139,7 @@ struct HeadphoneEQCard: View {
         AOMSection("Headphone EQ", help: Self.help, footer: message) {
             AOMSettingRow("Output", symbol: "headphones") { outputPicker.frame(maxWidth: AOMSize.tileMin) }
             AOMSettingRow("Curve", symbol: "slider.vertical.3") { curvePicker.frame(maxWidth: AOMSize.tileMin) }
-            AOMSettingRow("AutoEQ File", symbol: "doc.text",
+            AOMSettingRow("AutoEQ file", symbol: "doc.text",
                           help: "AutoEQ publishes ParametricEQ.txt files for many headphones. AOM fits the file to its 10-band EQ and uses it for the output above.") {
                 HStack(spacing: AOMSpace.x2) {
                     importButton

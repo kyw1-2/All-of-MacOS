@@ -54,12 +54,13 @@ struct GestureSettingsView: View {
     @AppStorage("AOMForcePressThreshold") private var forcePressThreshold = 0.95
 
     var body: some View {
+        // Sentence-case section titles, like every other settings pane.
         Form {
-            Section("Trackpad Sensitivity") {
+            Section("Trackpad sensitivity") {
                 LabeledContent("Default swipe minimum speed", value: "\(Int(velocity)) pt/s")
                 Slider(value: $velocity, in: 50...2000, step: 50)
                 Text("Lower speeds recognize gentler swipes. Individual swipe overrides take priority; choose Use Global Default in the trigger settings to remove an override.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                 LabeledContent("TipTap resting time", value: "\(Int(tipTap * 1000)) ms")
                 Slider(value: $tipTap, in: 0.05...0.5, step: 0.01)
                 LabeledContent("Press-drag distance", value: "\(Int(drag)) pt")
@@ -76,15 +77,15 @@ struct GestureSettingsView: View {
                 // Force Click switch above is on.
                 ForceTouchStageSettingsRow()
                 Text("Off by default so ordinary clicks never count as force clicks. Turn it on when you assign a Force Click trigger.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             }
-            Section("Keyboard & Mouse") {
+            Section("Keyboard & mouse") {
                 Stepper("Keyboard long press: \(longPress) ms", value: $longPress, in: 100...5000, step: 50)
                 Stepper("Keyboard quick release: \(quickRelease) ms", value: $quickRelease, in: 50...2000, step: 50)
                 Stepper("Mouse long press: \(mouseLongPress) ms", value: $mouseLongPress, in: 100...5000, step: 50)
                 Stepper("Mouse drag distance: \(mouseDrag) px", value: $mouseDrag, in: 5...500, step: 5)
             }
-            Section("Prevent Accidental Gestures") {
+            Section("Prevent accidental gestures") {
                 Toggle("Ignore trackpad gestures briefly after typing", isOn: $suppression.settings.disableTrackpadAfterKeyEnabled)
                 Stepper("After typing: \(suppression.settings.disableTrackpadAfterKeyMs) ms",
                         value: $suppression.settings.disableTrackpadAfterKeyMs, in: 50...5000, step: 50)
@@ -126,34 +127,36 @@ struct WorkflowVariablesView: View {
     @State private var value = ""
     @State private var error: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Workflow Variables").font(.title2.bold())
-            Text("Shared by your automations and saved across restarts. Do not store passwords.")
-                .font(.caption).foregroundStyle(.secondary)
+        // The window's title bar already says "Workflow Variables"; the page
+        // starts with what they are for.
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            AOMEditorNote("Shared by your automations and saved across restarts. Do not store passwords.")
             List(values.keys.sorted(), id: \.self, selection: $selection) { key in
-                HStack { Text(key).font(.body.monospaced()); Spacer(); Text(values[key] ?? "").lineLimit(1).foregroundStyle(.secondary) }
+                HStack { Text(key).font(AOMFont.mono); Spacer(); Text(values[key] ?? "").lineLimit(1).foregroundStyle(.secondary) }
                     .tag(key)
             }
-            HStack {
-                TextField("Name", text: $name).frame(width: 180)
+            HStack(spacing: AOMSpace.x2) {
+                TextField("Name", text: $name).frame(width: AOMEditorSize.rowField)
                 TextField("Value", text: $value)
                 Button("Save") {
                     if WorkflowVariables.set(name, value: value) { error = nil; refresh(); selection = name }
                     else { error = "Use 1–64 ASCII letters, digits or underscores; up to 512 characters per value and 128 variables." }
                 }.disabled(name.isEmpty)
             }
-            HStack {
+            HStack(spacing: AOMSpace.x2) {
                 Button("New") { selection = nil; name = ""; value = ""; error = nil }
                 Button("Delete", role: .destructive) {
                     if let selection { WorkflowVariables.remove(selection) }
                     selection = nil; name = ""; value = ""; refresh()
                 }.disabled(selection == nil)
                 Spacer()
-                Text("\(values.count) / 128").font(.caption).foregroundStyle(.secondary)
+                Text("\(values.count) / 128")
+                    .font(AOMFont.caption.monospacedDigit())
+                    .foregroundStyle(AOMColor.textSecondary)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { AOMEditorNote(error, tone: .danger) }
         }
-        .padding(20).frame(minWidth: 560, minHeight: 360)
+        .padding(AOMSpace.x4).frame(minWidth: 560, minHeight: 360)
         .onChange(of: selection) { _, selected in
             if let selected { name = selected; value = values[selected] ?? ""; error = nil }
         }

@@ -29,34 +29,42 @@ struct ShortcutsSettingsView: View {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 if showsBanner { headerBanner }
 
+                // Restore sits on the first section's title row, the recorder
+                // tips under the last card; no separate Defaults card.
                 ForEach(groups, id: \.name) { group in
-                    AOMSection(group.name, detail: "\(group.actions.filter { shortcuts.shortcut(for: $0) != nil }.count) of \(group.actions.count) set") {
+                    AOMSection(group.name,
+                               detail: "\(group.actions.filter { shortcuts.shortcut(for: $0) != nil }.count) of \(group.actions.count) set",
+                               footer: group.name == groups.last?.name ? Self.recorderTips : nil,
+                               accessory: {
+                                   if group.name == groups.first?.name { restoreDefaultsLink }
+                               }) {
                         ForEach(group.actions) { action in
                             shortcutRow(for: action)
-                        }
-                    }
-                }
-
-                AOMSection("Defaults",
-                           footer: "Tip: Disable system shortcuts in System Settings to override ⇧⌘3 / ⇧⌘4. Escape cancels recording; Delete clears a shortcut.") {
-                    AOMSettingRow("Restore capture defaults", detail: "Pinning, switching and Keep Awake keep their keys") {
-                        Button("Restore Capture Defaults") {
-                            // Scoped: capture & tool shortcuts only — pinning,
-                            // switching and Keep Awake assignments survive.
-                            shortcuts.resetCaptureDefaults()
                         }
                     }
                 }
             }
             .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
             .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x4)
+            .padding(.top, AOMSpace.x3)
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onDisappear {
             stopRecording()
         }
+    }
+
+    private static let recorderTips = "Escape cancels recording; Delete clears a shortcut. To use ⇧⌘3 or ⇧⌘4, "
+        + "turn them off in System Settings › Keyboard › Keyboard Shortcuts."
+
+    /// Scoped: Screen Capture and Tools & Utilities only; pinning, switching
+    /// and Keep Awake assignments survive (`resetCaptureDefaults`).
+    private var restoreDefaultsLink: some View {
+        AOMCardLink("Restore Capture Defaults", symbol: nil) {
+            shortcuts.resetCaptureDefaults()
+        }
+        .accessibilityHint("Pinning, switching and Keep Awake keep their keys")
     }
 
     // MARK: - Header
@@ -80,7 +88,7 @@ struct ShortcutsSettingsView: View {
         let currentShortcut = shortcuts.shortcut(for: action)
         let shape = RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
 
-        return HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+        return HStack(spacing: AOMSpace.x2) {
             Button {
                 if isRecording {
                     stopRecording()
@@ -97,7 +105,7 @@ struct ShortcutsSettingsView: View {
                             .font(AOMFont.caption.weight(.medium))
                             .foregroundStyle(AOMColor.accent)
                     }
-                    .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
+                    .padding(.horizontal, AOMSpace.x2)
                     .padding(.vertical, AOMSpace.x1)
                     .background(shape.fill(AOMColor.accent.opacity(0.12)))
                     .overlay(shape.strokeBorder(AOMColor.accent, lineWidth: 1.5))
@@ -132,6 +140,7 @@ struct ShortcutsSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Clear Shortcut")
+                .accessibilityLabel("Clear the \(action.displayName) shortcut")
             }
         }
     }
@@ -194,25 +203,25 @@ struct ShortcutsSettingsView: View {
     private func subtitle(for action: CaptureShortcutAction) -> String {
         switch action {
         case .captureArea: return "Drag a rectangular selection"
-        case .captureFullscreen: return "Grab current display or screen under pointer"
-        case .captureWindow: return "Capture active (frontmost) window"
-        case .recordScreen: return "Record video of screen or selected area"
+        case .captureFullscreen: return "The display under the pointer"
+        case .captureWindow: return "Pick a window to capture"
+        case .recordScreen: return "Record the screen or an area"
         case .pauseRecording: return "Pause or resume the current recording"
-        case .allInOne: return "Choose capture mode in one selection overlay"
+        case .allInOne: return "Choose the capture mode in one overlay"
         case .openProject: return "Reopen editable screenshot annotations"
         case .capturePreviousArea: return "Repeat the last selected capture area"
         case .scrollingCapture: return "Capture tall web pages and documents"
-        case .ocr: return "Extract and copy text directly to clipboard"
-        case .history: return "Slide out CleanShot capture history overlay"
+        case .ocr: return "Recognize text in a region and copy it"
+        case .history: return "Slide out the capture history overlay"
         case .toggleDesktopIcons: return "Hide or restore icons on the desktop"
-        case .pinLast: return "Float most recent capture on top of all windows"
+        case .pinLast: return "Float the latest capture above all windows"
         case .choosePinnedWindow: return "Pick a live window from thumbnail previews"
         case .selectPinnedWindow: return "Point at a window, then click to pin or unpin"
-        case .togglePinFrontWindow: return "Toggle always on top for the front window"
-        case .togglePinWindowUnderCursor: return "Toggle always on top for the window under the pointer"
-        case .unpinAllWindows: return "Remove all live pins, leaving source windows open"
-        case .windowSwitcher: return "Switch windows with an AltTab-style thumbnail overlay"
-        case .keepAwake: return "Toggle the keep-awake power assertion"
+        case .togglePinFrontWindow: return "Keep the front window on top, or release it"
+        case .togglePinWindowUnderCursor: return "Keep the window under the pointer on top, or release it"
+        case .unpinAllWindows: return "Release every pinned window; the windows stay open"
+        case .windowSwitcher: return "Switch windows with thumbnails"
+        case .keepAwake: return "Keep the Mac awake, or let it sleep again"
         case .appAudioMixer: return "Per-app volume and mute panel (macOS 14.2+)"
         case .muteFrontAppAudio: return "Mute or unmute the front app's audio"
         }

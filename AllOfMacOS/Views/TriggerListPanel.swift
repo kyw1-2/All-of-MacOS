@@ -502,8 +502,10 @@ struct AddTriggerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            Text("Add New Trigger")
-                .font(AOMFont.pageStatus)
+            // Named like the command that opens it (File › New Automation,
+            // the toolbar's New Automation) and titled like the other sheets.
+            Text("New Automation")
+                .font(AOMFont.headline)
                 .foregroundStyle(AOMColor.text)
                 .accessibilityAddTraits(.isHeader)
 
@@ -543,7 +545,7 @@ struct AddTriggerSheet: View {
                     .foregroundStyle(AOMColor.textSecondary)
             }
 
-            TextField("Trigger Name (optional)", text: $triggerName)
+            TextField("Name (optional)", text: $triggerName)
                 .textFieldStyle(.roundedBorder)
 
             HStack {
@@ -555,7 +557,7 @@ struct AddTriggerSheet: View {
                     .disabled(!canAdd)
             }
         }
-        .padding(AOMSpace.x5)
+        .padding(AOMSpace.x4)
         .frame(width: category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet)
     }
 
@@ -597,7 +599,7 @@ struct AddTriggerSheet: View {
             Text("Gesture")
                 .font(AOMFont.headline)
                 .foregroundStyle(AOMColor.text)
-            TextField("Search gestures...", text: $gestureSearch)
+            TextField("Search gestures", text: $gestureSearch)
                 .textFieldStyle(.roundedBorder)
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
@@ -670,7 +672,7 @@ struct AddTriggerSheet: View {
                 .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
             HStack(spacing: AOMSpace.x2) {
-                Button(keyboardMonitor.isMonitoring ? "Recording..." : "Record Next Key") {
+                Button(keyboardMonitor.isMonitoring ? "Recording…" : "Record Next Key") {
                     keyboardMonitor.startRecording { shortcut in
                         if sequenceStrokes.count < 6 {
                             sequenceStrokes.append(KeySequenceStroke(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers.rawValue))
@@ -709,7 +711,7 @@ struct AddTriggerSheet: View {
                 if let shortcut = recordedShortcut {
                     AOMShortcutKeys(shortcut: shortcut)
                 } else {
-                    Text("Press a key combination...")
+                    Text("Press a key combination…")
                         .font(AOMFont.body)
                         .foregroundStyle(AOMColor.textSecondary)
                 }
@@ -723,7 +725,7 @@ struct AddTriggerSheet: View {
             )
             .aomAnimation(.quick, value: keyboardMonitor.isMonitoring)
 
-            Button(keyboardMonitor.isMonitoring ? "Recording..." : "Record Shortcut") {
+            Button(keyboardMonitor.isMonitoring ? "Recording…" : "Record Shortcut") {
                 keyboardMonitor.startRecording { shortcut in
                     recordedShortcut = shortcut
                 }

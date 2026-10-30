@@ -9,22 +9,24 @@ struct HyperKeyRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HubRowShell(icon: "command.square.fill", tint: .orange, title: "Hyper Key",
-                        subtitle: "Hold the key for ⌃⌥⇧⌘ — a modifier no app uses, for your own shortcuts",
+            HubRowShell(icon: "command.square.fill", tint: .orange, title: "Hyper key",
+                        subtitle: "Hold one key for ⌃⌥⇧⌘ in your own shortcuts",
                         onLabelTap: { enabled.toggle() }) {
-                Toggle("", isOn: $enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                    .accessibilityLabel("Hyper Key")
+                Toggle("", isOn: $enabled).labelsHidden().toggleStyle(AOMRowSwitchStyle())
+                    .accessibilityLabel("Hyper key")
             }
             if enabled {
-                HubRowShell(icon: "keyboard", tint: .orange, title: "Hyper Key Is", subtitle: "") {
+                // Its options, indented under the switch (e.3).
+                HubRowShell(icon: "keyboard", tint: .orange, title: "Key", subtitle: "", indent: true) {
                     Picker("", selection: $source) {
                         ForEach(HIDKey.hyperSources) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
+                        .accessibilityLabel("Key for the Hyper key")
                 }
-                HubRowShell(icon: "escape", tint: .orange, title: "Tap Alone for Escape",
-                            subtitle: "A quick press without another key sends Escape",
+                HubRowShell(icon: "escape", tint: .orange, title: "Tap alone for Escape",
+                            subtitle: "A quick press without another key sends Escape", indent: true,
                             onLabelTap: { tapEscape.toggle() }) {
-                    Toggle("", isOn: $tapEscape).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    Toggle("", isOn: $tapEscape).labelsHidden().toggleStyle(AOMRowSwitchStyle())
                         .accessibilityLabel("Tap alone for Escape")
                 }
             }
@@ -40,7 +42,7 @@ struct KeyRemapRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HubRowShell(icon: "arrow.left.arrow.right.square", tint: .blue, title: "Remap Keys",
+            HubRowShell(icon: "arrow.left.arrow.right.square", tint: .blue, title: "Remap keys",
                         subtitle: remaps.isEmpty ? "Turn one key into another on every keyboard while AOM runs"
                                                  : "\(remaps.count) remapped key\(remaps.count == 1 ? "" : "s"); removed when AOM quits") {
                 Button("Add") { remaps.append(KeyRemap(from: 0x39, to: 0x29)) }
@@ -51,11 +53,11 @@ struct KeyRemapRow: View {
                 HStack(spacing: AOMSpace.x2) {
                     Picker("From", selection: $remap.from) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
                     Image(systemName: "arrow.right").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
                     Picker("To", selection: $remap.to) {
                         ForEach(HIDKey.catalog) { Text($0.title).tag($0.usage) }
-                    }.labelsHidden().frame(width: AOMFeatureSize.keyPicker)
+                    }.labelsHidden().controlSize(.small).frame(width: AOMFeatureSize.keyPicker)
                     Spacer()
                     Button {
                         remaps.removeAll { $0.id == remap.id }
@@ -63,7 +65,7 @@ struct KeyRemapRow: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Remove \(HIDKey.title(remap.from)) remap")
                 }
-                // Indented under "Remap Keys", past its 20 pt symbol (e.3).
+                // Indented to the "Remap keys" title, past its 20 pt symbol (e.3).
                 .padding(.leading, AOMSpace.rowSymbolInset).padding(.trailing, AOMSpace.rowInset)
                 .padding(.vertical, AOMSpace.x1)
             }
@@ -82,11 +84,11 @@ struct ReverseWheelRow: View {
     @State private var enabled = InputRemapSettings.reverseMouseWheel
 
     var body: some View {
-        HubRowShell(icon: "computermouse", tint: .teal, title: "Reverse Mouse Wheel",
+        HubRowShell(icon: "computermouse", tint: .teal, title: "Reverse mouse wheel",
                     subtitle: "Flip a wheel mouse only; the trackpad keeps natural scrolling",
                     onLabelTap: { enabled.toggle() }) {
-            Toggle("", isOn: $enabled).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                .accessibilityLabel("Reverse Mouse Wheel")
+            Toggle("", isOn: $enabled).labelsHidden().toggleStyle(AOMRowSwitchStyle())
+                .accessibilityLabel("Reverse mouse wheel")
         }
         .onChange(of: enabled) { _, value in InputRemapSettings.reverseMouseWheel = value; InputRemapService.shared.apply() }
     }

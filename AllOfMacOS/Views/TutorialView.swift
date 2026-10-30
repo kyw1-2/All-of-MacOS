@@ -87,9 +87,9 @@ struct TutorialOverlayView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, AOMSpace.x8)
-                .padding(.top, AOMSpace.x8)
-                .padding(.bottom, AOMSpace.x5)
+                .padding(.horizontal, AOMSpace.x6)
+                .padding(.top, AOMSpace.x6)
+                .padding(.bottom, AOMSpace.x4)
                 .transition(.opacity)
                 .id(page)
                 AOMDivider()
@@ -112,7 +112,7 @@ struct TutorialOverlayView: View {
     // MARK: Pages
 
     private func pageTitle(_ title: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
             Text(title)
                 .font(AOMFont.title)
                 .foregroundStyle(AOMColor.text)
@@ -123,14 +123,17 @@ struct TutorialOverlayView: View {
         }
     }
 
+    /// The six tools in the sidebar, each with its module badge.
     private var welcomePage: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x5) {
-            pageTitle("Welcome to All of MacOS", "Four tools that work together, one shortcut away.")
-            VStack(alignment: .leading, spacing: AOMSpace.x4) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            pageTitle("Welcome to All of MacOS", "Six tools that work together, one shortcut away.")
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 feature(.capture, "Capture your screen", "Screenshots, recordings and text, with a preview to copy, edit or drag.")
                 feature(.clipboard, "Keep everything you copy", "A searchable clipboard shelf, encrypted on this Mac.")
                 feature(.gestures, "Automate what you repeat", "Turn gestures, keys and mouse buttons into actions.")
                 feature(.snapping, "Tile your windows", "Drag a window to an edge or zone and it snaps into place.")
+                feature(.audio, "Shape every app's sound", "Per-app volume, Magic Boost and an equalizer for each output.")
+                feature(.tools, "Keep utilities close", "Finder, network, PDF, media and file tools, one click each.")
             }
         }
     }
@@ -139,7 +142,7 @@ struct TutorialOverlayView: View {
     private func feature(_ tab: AOMMainTab, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: AOMSpace.x3) {
             if let module = AOMModule(tab: tab) {
-                AOMModuleBadge(module, size: AOMIcon.headerBadge)
+                AOMModuleBadge(module, size: AOMIcon.tileBadge)
             }
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text(title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
@@ -169,9 +172,11 @@ struct TutorialOverlayView: View {
             if status == .granted {
                 AOMStatusPill("Allowed", tone: .success, symbol: "checkmark.circle.fill")
             } else {
-                Button("Open Settings…") { _ = permission.openSettings() }
+                // The one verb for opening a permission's pane, as on Workspace.
+                Button("Allow…") { _ = permission.openSettings() }
                     .controlSize(.small)
                     .help("Opens System Settings › Privacy & Security › \(permission.title)")
+                    .accessibilityLabel("Allow \(permission.title) in System Settings")
             }
         }
     }
@@ -188,7 +193,7 @@ struct TutorialOverlayView: View {
                             keys: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
             AOMCardGroup {
-                AOMSettingRow("Show AOM in the menu bar", detail: "Capture, clipboard and pause controls one click away.",
+                AOMSettingRow("Show AOM in the menu bar", detail: "Capture, clipboard and pause controls one click away",
                               showsDivider: false) {
                     Toggle("Show AOM in the menu bar", isOn: $showMenuBarIcon)
                 }
@@ -234,7 +239,8 @@ struct TutorialOverlayView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, AOMSpace.x5)
+        // The page's own margin, so Skip and Continue line up with its text.
+        .padding(.horizontal, AOMSpace.x6)
         .frame(height: AOMSize.rowDetail + AOMSpace.x1)
     }
 

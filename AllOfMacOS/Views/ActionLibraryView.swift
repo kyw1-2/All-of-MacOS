@@ -21,7 +21,8 @@ struct ActionLibraryView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            AOMEditorNote("Browse every built-in capability and configure it as an automation. New drafts stay off until you enable them.")
+            AOMEditorNote("Configure any built-in action as an automation. New drafts stay off until you turn them on.")
+            // The count rides at the end of the filter row instead of a line of its own.
             HStack(spacing: AOMSpace.x2) {
                 TextField("Search actions, descriptions and parameters", text: $query).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $category) {
@@ -30,11 +31,13 @@ struct ActionLibraryView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: AOMEditorSize.libraryCategory)
+                Text("\(actions.count) actions")
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .monospacedDigit()
+                    .fixedSize()
+                    .accessibilityLabel("\(actions.count) actions shown")
             }
-            Text("\(actions.count) actions")
-                .font(AOMFont.caption)
-                .foregroundStyle(AOMColor.textSecondary)
-                .monospacedDigit()
             LazyVStack(spacing: 0) {
                 ForEach(Array(actions.enumerated()), id: \.element) { index, type in
                     row(type, showsDivider: index > 0)

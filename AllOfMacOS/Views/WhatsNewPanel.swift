@@ -21,39 +21,22 @@ enum WhatsNew {
     }
 
     /// Highlights of the current version, bundled so the panel works offline.
-    /// 3.3.3: several gestures change their default behaviour (multi-motion,
-    /// tab pinches, ⇧/⌃ swipes, the Dock pinch waiting for a second pinch,
-    /// pinboard search); each of those items says where it is turned off.
+    /// 3.3.4: a swipe up on a title bar now always maximizes (the top half is
+    /// a second quick swipe up), which is a new default; the item says so.
     static let items: [Item] = [
-        Item(symbol: "sparkles", title: "A calmer, consistent look",
-             detail: "Workspace opens with one status line and what needs your attention, and every page uses the same sections, rows and ⓘ help. Window Tiling is split into Title-bar snap, Gestures, Grid & layout, Keyboard, Dock & menu bar and Advanced. Pause AOM is in the new Controls menu."),
-        Item(symbol: "hand.draw.fill", title: "Keep gesturing without lifting",
-             detail: "Rest briefly on a title-bar swipe or pinch, then move again for the next gesture in the same touch. A tooltip by the pointer names where the window goes, and Esc cancels. Turn it off: Window Tiling › Multi-motion pause › Off.",
+        Item(symbol: "arrow.up.left.and.arrow.down.right", title: "Swipe up maximizes",
+             detail: "A two-finger swipe up on a title bar now maximizes however long or fast it is, also for large windows near a corner. For the top half, swipe up again on the maximized window within half a second (Swish's double swipe up).",
              module: .tiling, note: "New default"),
-        Item(symbol: "square.on.square", title: "Tab gestures",
-             detail: "Pinch in on a tab to close it. Tap and hold a Finder, Preview or Safari tab, then lift, to move it to its own window. Tabs in Chrome, Arc, Xcode and VS Code can be closed; in Firefox a pinch on the tab strip still closes the window. Turn off: Window Tiling › Tab gestures.",
-             module: .tiling, note: "New default"),
-        Item(symbol: "command", title: "Modifier roles and hotkeys",
-             detail: "Choose the keys for the Super, General, Screen, Secondary and Tertiary roles; AOM refuses keys that clash. ⇧ swipes now use the 3 × 2 grid and ⌃ swipes the 3 × 3 grid. With the ⌃⌥ hotkeys on, add ⌘ for another display or ⇧ for the 3 × 2 grid, and press Esc to centre. Optional: macOS native tiling, and gestures anywhere on a window while you hold Super.",
-             module: .tiling, note: "New default"),
-        Item(symbol: "dock.rectangle", title: "Dock, menu bar and Mission Control",
-             detail: "Pinch in twice on a Dock icon to minimize the app's windows, out twice to bring them back, so a single pinch now acts when you lift. A third finger cancels. Swiping up on the menu bar restores every minimized window on that display. New options: Mission Control gestures, tap the menu bar to scroll to the top. Turn off the double pinch: Window Tiling › Dock: pinch twice.",
-             module: .tiling, note: "New default"),
-        Item(symbol: "lock.shield", title: "Clipboard privacy and Paste-style pinboards",
-             detail: "Suggestions never read password fields, secure keyboard entry or excluded apps, and AI tools over MCP no longer see secrets hidden in rich text, links, image text or long clips. Search highlights text inside images, and dragging over an image preview copies that part. Searching from a pinboard now covers every list (turn off: Clipboard › Search all lists from a pinboard). Link cards with page titles are optional and off.",
-             module: .clipboard, note: "New default"),
-        Item(symbol: "square.and.arrow.down", title: "BetterTouchTool presets",
-             detail: "Import Preset reads .bttpreset files and copied BTT triggers: trackpad, keyboard, key sequences, mouse, named and system triggers, app groups and about 180 actions. A report lists what was imported, what was approximated and why, and what was skipped. Scripts and shell commands arrive turned off for review.",
-             module: .automation),
-        Item(symbol: "pianokeys", title: "MIDI, pressure and value bindings",
-             detail: "MIDI triggers read Pitch Bend, Program Change and pressure messages too. A MIDI fader or knob, Force Touch pressure or scrolling with a modifier can set the volume, an app's volume or the display brightness directly. New: Force Touch stage triggers and sliders in floating menus.",
-             module: .automation),
-        Item(symbol: "photo.on.rectangle.angled", title: "Recording backgrounds and Annotate tools",
-             detail: "Edit Recording places a video on a colour, gradient or picture, with click styles and colours, a cursor highlight and optional hidden desktop icons. Annotate adds text styles, an eraser (X) and image layers you can move, resize and rotate. Arrows now point the way you drag.",
-             module: .capture),
-        Item(symbol: "hifispeaker.fill", title: "Audio presets, headphone EQ and AirPlay",
-             detail: "Magic Boost presets (Music, Speech, Movie, Night), an EQ curve per output that switches with it, including imported AutoEQ files, and an Audio Unit effect on every output. On a HomePod a skipped cycle now fades back in, and moving an app to another output no longer skips audio.",
-             module: .audio)
+        Item(symbol: "hifispeaker.fill", title: "Cleaner HomePod and AirPlay sound",
+             detail: "AirPlay outputs level loud clicks and consonants over 10 ms before the limiter, so Magic Boost no longer makes the bass crackle in loud passages, and near-silent noise is no longer raised in quiet ones. Audio diagnostics now say which stage reduced the level.",
+             module: .audio),
+        Item(symbol: "rectangle.compress.vertical", title: "A denser main window",
+             detail: "Smaller headings, a one-line Workspace status, shorter rows, tiles and sheets on every page, and the same names and sentence case in Settings and on each page."),
+        Item(symbol: "lock.shield", title: "Privacy and safety fixes",
+             detail: "AI tools over MCP no longer read passwords and tokens written as JSON or YAML. Suggestions check excluded apps and secure input again before they appear. Tab detach checks the tab right before moving it, and a snap that lands after a pause no longer activates the window or moves the pointer.",
+             module: .clipboard),
+        Item(symbol: "arrow.counterclockwise", title: "Reset Preferences resets everything",
+             detail: "Every preference goes back to its default, including the title-bar, Dock, recording, clipboard and audio settings; automations, history, captures, layouts and backups are kept. Dock and menu-bar gestures no longer also run your own two-finger triggers.")
     ]
 
     /// Pure decision: show for an update, never for a first install or a re-launch.
@@ -66,6 +49,13 @@ enum WhatsNew {
     static func presentIfUpdated(defaults: UserDefaults = .standard) {
         let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         guard !current.isEmpty else { return }
+        // Isolated previews can show the panel for review
+        // (`--aom-preview-whats-new`) without reading or recording the
+        // last-seen version; real launches never take this path.
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-whats-new") {
+            WhatsNewPanelController.shared.show(version: current)
+            return
+        }
         let lastSeen = defaults.string(forKey: lastSeenKey)
         defaults.set(current, forKey: lastSeenKey)
         guard shouldShow(lastSeen: lastSeen, current: current) else { return }
@@ -79,7 +69,13 @@ final class WhatsNewPanelController {
     private var panel: NSPanel?
 
     func show(version: String) {
-        let size = NSSize(width: WhatsNewView.width, height: WhatsNewView.height)
+        let hosting = NSHostingView(rootView: WhatsNewView(version: version) { [weak self] in self?.close() })
+        // As tall as the list, up to `maxHeight`; a longer list scrolls, a
+        // short one leaves no empty glass under it.
+        let fitting = hosting.fittingSize.height
+        let height = fitting.isFinite && fitting > 0
+            ? min(WhatsNewView.maxHeight, max(WhatsNewView.minHeight, ceil(fitting))) : WhatsNewView.maxHeight
+        let size = NSSize(width: WhatsNewView.width, height: height)
         let panel = self.panel ?? {
             let p = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -91,7 +87,7 @@ final class WhatsNewPanelController {
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             return p
         }()
-        panel.contentView = NSHostingView(rootView: WhatsNewView(version: version) { [weak self] in self?.close() })
+        panel.contentView = hosting
         self.panel = panel
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
@@ -112,7 +108,10 @@ final class WhatsNewPanelController {
 /// Floating chrome outside, opaque cards inside, as on every AOM page.
 private struct WhatsNewView: View {
     static let width: CGFloat = 420
-    static let height: CGFloat = 560
+    /// The panel grows with its list up to this height, then the list scrolls.
+    static let maxHeight: CGFloat = 560
+    /// A floor for the measured height (the header, one row and the buttons).
+    static let minHeight: CGFloat = 200
 
     let version: String
     let close: () -> Void
@@ -129,6 +128,22 @@ private struct WhatsNewView: View {
         return titles.map { ($0, grouped[$0] ?? []) }
     }
 
+    private var list: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            ForEach(sections, id: \.title) { section in
+                AOMSection(section.title) {
+                    ForEach(section.items) { WhatsNewRow(item: $0) }
+                }
+            }
+            Text("Items marked New default change how something you already use behaves; each one says where to turn it off.")
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, AOMSpace.x1)
+        }
+        .padding(.bottom, AOMSpace.x1)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
@@ -143,7 +158,7 @@ private struct WhatsNewView: View {
                 Spacer(minLength: AOMSpace.x2)
                 Button(action: close) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                        .font(AOMFont.pageStatus)
                         .foregroundStyle(AOMColor.textSecondary)
                         .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
@@ -152,22 +167,13 @@ private struct WhatsNewView: View {
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close What's New")
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.x5) {
-                    ForEach(sections, id: \.title) { section in
-                        AOMSection(section.title) {
-                            ForEach(section.items) { WhatsNewRow(item: $0) }
-                        }
-                    }
-                    Text("Items marked New default change how something you already use behaves; each one says where to turn it off.")
-                        .font(AOMFont.caption)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, AOMSpace.x1)
-                }
-                .padding(.bottom, AOMSpace.x1)
+            // The whole list when it fits (the panel is then exactly as tall
+            // as it), a scroll view once the panel reaches `maxHeight`.
+            ViewThatFits(in: .vertical) {
+                list
+                ScrollView { list }
+                    .scrollIndicators(.automatic)
             }
-            .scrollIndicators(.automatic)
             HStack(spacing: AOMSpace.x2) {
                 Button("Full Release Notes") {
                     if let url = URL(string: "https://github.com/kyw1-2/All-of-MacOS/releases") { NSWorkspace.shared.open(url) }
@@ -179,8 +185,8 @@ private struct WhatsNewView: View {
             }
             .controlSize(.regular)
         }
-        .padding(AOMSpace.x5)
-        .frame(width: Self.width, height: Self.height)
+        .padding(AOMSpace.x4)
+        .frame(width: Self.width)
         .aomFloatingSurface(.panel, radius: AOMRadius.panel)
     }
 }
@@ -210,7 +216,7 @@ private struct WhatsNewRow: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x3)
+        .padding(.vertical, AOMSpace.x2)
         .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowInset + AOMIcon.tileBadge + AOMSpace.x3) }
         .accessibilityElement(children: .combine)
     }

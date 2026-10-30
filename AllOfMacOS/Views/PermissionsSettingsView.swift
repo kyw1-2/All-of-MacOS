@@ -28,14 +28,14 @@ struct PermissionsSettingsView: View {
                     AOMNotice(.info, permissionChangeMessage)
                 }
 
-                AOMSection("Core permissions", detail: "\(requiredGranted) of \(requiredPermissions.count)") {
+                AOMSection("Core permissions", detail: "\(requiredGranted) of \(requiredPermissions.count) allowed") {
                     ForEach(requiredPermissions) { permission in
                         permissionRow(permission)
                     }
                 }
 
                 AOMSection("Optional & per-app permissions",
-                           footer: "'Check Manually' means macOS provides no safe general read-only check. A change may require restarting the app.") {
+                           footer: "“Check Manually”: macOS has no safe read-only check for that access. Some changes apply after AOM restarts.") {
                     ForEach(optionalPermissions) { permission in
                         permissionRow(permission)
                     }
@@ -43,7 +43,7 @@ struct PermissionsSettingsView: View {
             }
             .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
             .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x4)
+            .padding(.top, AOMSpace.x3)
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -56,20 +56,24 @@ struct PermissionsSettingsView: View {
         }
     }
 
-    /// d.9: one sentence for the state of the required permissions, the
-    /// count as context, and Refresh at the trailing edge.
+    /// d.9: one sentence for the state of the required permissions and when
+    /// it was read (the count sits on the Core permissions title). The pane
+    /// re-reads every 5 s and on returning to the app, so Refresh is a quiet
+    /// icon at the trailing edge.
     private var header: some View {
         let missing = requiredPermissions.count - requiredGranted
         return AOMPageHeader(missing == 0 ? "All required permissions are allowed"
                              : "\(missing) required permission\(missing == 1 ? " needs" : "s need") setup",
                              symbol: missing == 0 ? "checkmark.shield.fill" : "shield.lefthalf.filled",
-                             subtitle: "\(requiredGranted) of \(requiredPermissions.count) required permissions granted · checked \(refreshDate.formatted(date: .omitted, time: .shortened))",
-                             help: "This dashboard checks the permissions of the currently signed All of MacOS application. Return to this tab or press Refresh after changing access; AOM never changes access itself.") {
+                             subtitle: "Checked \(refreshDate.formatted(date: .omitted, time: .shortened)) · updates automatically",
+                             help: "This dashboard reads the permissions of the signed All of MacOS app every few seconds and when you return to it. AOM never changes access itself; you allow it in System Settings › Privacy & Security.") {
             Button {
                 refresh()
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
             }
+            .help("Check again now")
         }
     }
 
@@ -81,33 +85,38 @@ struct PermissionsSettingsView: View {
         }
     }
 
-    /// One permission: its symbol, name and what it allows, the state as a
-    /// pill, and "Open". The whole row is the button that opens its System
-    /// Settings pane, as before.
+    /// One permission: its symbol, name and what it allows, then "Allow…"
+    /// while access is missing and the state as a pill, which always ends
+    /// the row so the pills line up. The whole row is the button that opens
+    /// its System Settings pane, as before.
     private func permissionRow(_ permission: AOMPermission) -> some View {
         let status = statuses[permission] ?? .manualReview
+        let allowed = status == .granted
+        let spoken = allowed ? "Open \(permission.title) settings" : "Allow \(permission.title) in System Settings"
         return Button {
             openSettings(permission)
         } label: {
             AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
                 HStack(spacing: AOMSpace.x3) {
+                    if !allowed {
+                        Text("Allow…")
+                            .font(AOMFont.callout)
+                            .foregroundStyle(AOMColor.accent)
+                    }
                     AOMStatusPill(status.label, tone: tone(status), symbol: status.symbol)
-                    Label("Open", systemImage: "arrow.up.right.square")
-                        .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.accent)
                 }
             }
         }
         .buttonStyle(.plain)
         .help("Open \(permission.title) in macOS System Settings")
-        .accessibilityLabel("Open \(permission.title) settings")
+        .accessibilityLabel(spoken)
         .accessibilityIdentifier("AOMPermissionOpen_\(permission.rawValue)")
     }
 
     private func openSettings(_ permission: AOMPermission) {
         settingsError = nil
         if !permission.openSettings() {
-            settingsError = "Could not open \(permission.title). Open System Settings → Privacy & Security manually."
+            settingsError = "Could not open \(permission.title). Open System Settings › Privacy & Security instead."
         }
     }
 

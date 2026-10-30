@@ -80,7 +80,7 @@ struct AOMHomeView: View {
             .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
             .padding(.horizontal, AOMSpace.pageMargin)
             .padding(.top, AOMSpace.x4)
-            .padding(.bottom, AOMSpace.x8)
+            .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
@@ -147,6 +147,8 @@ struct AOMHomeView: View {
         }
     }
 
+    // Regular-size buttons: the hero is a status line, not a billboard, and
+    // its action matches every other button on the page.
     @ViewBuilder
     private func heroAction(_ state: WorkspaceHeroState) -> some View {
         switch state {
@@ -155,22 +157,18 @@ struct AOMHomeView: View {
                 Label("Pause AOM", systemImage: "pause.fill")
             }
             .buttonStyle(.bordered)
-            .controlSize(.large)
             .help("Pause every gesture, shortcut, snap and clipboard capture")
         case .paused:
             Button(action: resumeAOM) {
                 Label("Resume", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
         case .blocked(let permission, _):
             Button("Allow \(permission.shortTitle)…") { _ = permission.openSettings() }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
         case .setup:
             Button("Skip for Now") { withAnimation(AOMMotion.standard) { setupSkipped = true } }
                 .buttonStyle(.bordered)
-                .controlSize(.large)
         }
     }
 
@@ -202,8 +200,11 @@ struct AOMHomeView: View {
             .tint(AOMColor.recording)
         }
         .padding(.horizontal, AOMSpace.x3)
-        .frame(minHeight: AOMSize.rowDetail - AOMSpace.x1)
-        .background(AOMTone.recording.wash(increasedContrast: false), in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+        .frame(minHeight: AOMSize.rowStandard + AOMSpace.x1)
+        // Concentric with the hero card around it.
+        .background(AOMTone.recording.wash(increasedContrast: false),
+                    in: RoundedRectangle(cornerRadius: AOMRadius.concentric(AOMRadius.card, inset: AOMSpace.x3),
+                                         style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Recording, \(Self.elapsed(recording.elapsedSeconds))")
     }
@@ -216,6 +217,8 @@ struct AOMHomeView: View {
     private func setupChecklist(_ snapshot: WorkspaceSnapshot) -> some View {
         let accessibility = snapshot.status(.accessibility)
         let screen = snapshot.status(.screenRecording)
+        // Concentric with the hero card that holds it.
+        let well = RoundedRectangle(cornerRadius: AOMRadius.concentric(AOMRadius.card, inset: AOMSpace.x3), style: .continuous)
         VStack(spacing: 0) {
             WorkspaceSetupStep(number: 1, title: "Allow Accessibility",
                                detail: "Lets gestures and shortcuts move windows and press keys.",
@@ -233,11 +236,12 @@ struct AOMHomeView: View {
                 Button("New Automation", action: newAutomation)
             }
         }
-        .background(AOMColor.canvas.opacity(0.6), in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
-        HStack(spacing: AOMSpace.x2) {
+        .background(AOMColor.canvas.opacity(0.6), in: well)
+        .overlay(well.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
             Button("Show the Tour") { appState.showTutorialRequested = true }
                 .buttonStyle(.link)
+                .font(AOMFont.callout)
             Text("You can reopen it from Help › Show Welcome Again.")
                 .font(AOMFont.caption)
                 .foregroundStyle(AOMColor.textSecondary)
@@ -250,11 +254,11 @@ struct AOMHomeView: View {
         let shown = showsAllAttention ? items : Array(items.prefix(Self.attentionLimit))
         return AOMSection("Needs attention", detail: "\(items.count)") {
             if items.count > Self.attentionLimit {
-                Button(showsAllAttention ? "Show Less" : "Show All (\(items.count))") {
+                // The same quiet link as "View All ›"; the count is already beside the title.
+                AOMCardLink(showsAllAttention ? "Show Less" : "Show All",
+                            symbol: showsAllAttention ? "chevron.up" : "chevron.down") {
                     withAnimation(AOMMotion.standard) { showsAllAttention.toggle() }
                 }
-                .buttonStyle(.link)
-                .font(AOMFont.callout)
             }
         } content: {
             ForEach(shown) { item in
@@ -347,7 +351,8 @@ struct AOMHomeView: View {
     }
 
     @State private var gridWidth: CGFloat = 900
-    static let tileHeight: CGFloat = 128
+    /// Three lines and the card padding: no empty band between the badge and the name.
+    static let tileHeight: CGFloat = AOMSize.tileHeight
 
     @ViewBuilder
     private func tile(_ module: AOMModule, _ snapshot: WorkspaceSnapshot) -> some View {
@@ -563,7 +568,7 @@ struct AOMHomeView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, AOMSpace.rowInset)
-                .frame(minHeight: AOMSize.rowStandard + AOMSpace.x2)
+                .frame(minHeight: AOMSize.rowStandard)
             } else {
                 ForEach(events) { event in
                     WorkspaceActivityRow(event: event)
@@ -762,33 +767,23 @@ private struct WorkspaceHero<Action: View, Strip: View, Checklist: View>: View {
         self.checklist = checklist()
     }
 
+    /// Running is one calm status line on the plain card. The states that ask
+    /// for something (paused, a missing permission, first-run setup) are two
+    /// lines on a light wash of their tone.
+    private var isRunning: Bool {
+        if case .running = state { return true }
+        return false
+    }
+
+    private var showsChips: Bool { !chips.isEmpty && state != .setup }
+
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-        VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            HStack(alignment: .top, spacing: AOMSpace.x4) {
-                Image(systemName: state.symbol)
-                    .font(.system(size: AOMIcon.hero + 6, weight: .regular))
-                    .symbolRenderingMode(state == .setup ? .hierarchical : .palette)
-                    .foregroundStyle(state == .setup ? AnyShapeStyle(AOMColor.accent) : AnyShapeStyle(Color.white),
-                                     AnyShapeStyle(state.tone.color))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(width: AOMIcon.hero + 12, height: AOMIcon.hero + 12)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                    Text(state.sentence)
-                        .font(AOMFont.hero)
-                        .foregroundStyle(AOMColor.text)
-                        .accessibilityAddTraits(.isHeader)
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
-                        Text(state.detail(now: context.date))
-                            .font(AOMFont.body)
-                            .foregroundStyle(AOMColor.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !chips.isEmpty, state != .setup {
-                        WorkspacePermissionChips(chips: chips)
-                            .padding(.top, AOMSpace.x2)
-                    }
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            HStack(alignment: .center, spacing: AOMSpace.x3) {
+                glyph
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    lines(now: context.date)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 action
@@ -797,53 +792,148 @@ private struct WorkspaceHero<Action: View, Strip: View, Checklist: View>: View {
             strip
             checklist
         }
-        .padding(AOMSpace.x5)
+        .padding(.horizontal, AOMSpace.x4)
+        .padding(.vertical, AOMSpace.x3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            ZStack {
-                shape.fill(AOMColor.surface)
-                if contrast != .increased {
-                    shape.fill(LinearGradient(colors: [state.tone.color.opacity(0.12), state.tone.color.opacity(0.02)],
-                                              startPoint: .topLeading, endPoint: .bottomTrailing))
-                }
-            }
-        }
+        .background { heroFill(shape) }
         .overlay {
-            shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : state.tone.color.opacity(0.25),
-                               lineWidth: contrast == .increased ? 1 : 0.5)
+            shape.strokeBorder(heroEdge, lineWidth: contrast == .increased ? 1 : 0.5)
         }
         .aomAnimation(.standard, value: state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status: \(state.sentence)")
     }
+
+    private var glyph: some View {
+        Image(systemName: state.symbol)
+            .font(.system(size: AOMIcon.heroGlyph, weight: .regular))
+            .symbolRenderingMode(state == .setup ? .hierarchical : .palette)
+            .foregroundStyle(state == .setup ? AnyShapeStyle(AOMColor.accent) : AnyShapeStyle(Color.white),
+                             AnyShapeStyle(state.tone.color))
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: AOMIcon.hero, height: AOMIcon.hero)
+            .accessibilityHidden(true)
+    }
+
+    /// The widest arrangement that fits: one line (running only), then the
+    /// sentence and its chips over the detail, then everything stacked with
+    /// the chips wrapping (narrow windows, the drawer open).
+    @ViewBuilder
+    private func lines(now: Date) -> some View {
+        if isRunning {
+            ViewThatFits(in: .horizontal) {
+                oneLine(now: now)
+                twoLines(now: now)
+                stacked(now: now)
+            }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                twoLines(now: now)
+                stacked(now: now)
+            }
+        }
+    }
+
+    private var sentence: some View {
+        Text(state.sentence)
+            .font(AOMFont.heroSentence)
+            .foregroundStyle(AOMColor.text)
+            .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func detail(now: Date) -> some View {
+        Text(state.detail(now: now))
+            .font(AOMFont.callout)
+            .foregroundStyle(AOMColor.textSecondary)
+    }
+
+    private func oneLine(now: Date) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            sentence
+            detail(now: now).lineLimit(1)
+            if showsChips { WorkspacePermissionChips(chips: chips, wraps: false) }
+        }
+    }
+
+    private func twoLines(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                sentence
+                if showsChips { WorkspacePermissionChips(chips: chips, wraps: false) }
+            }
+            detail(now: now).lineLimit(1)
+        }
+    }
+
+    private func stacked(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            sentence
+            detail(now: now)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            if showsChips {
+                WorkspacePermissionChips(chips: chips, wraps: true)
+                    .padding(.top, AOMSpace.x1)
+            }
+        }
+    }
+
+    /// The plain card while running; a light flat wash in the state's tone
+    /// when AOM asks for something. Increase Contrast keeps the opaque card
+    /// with a 1 pt edge instead.
+    private func heroFill(_ shape: RoundedRectangle) -> some View {
+        ZStack {
+            shape.fill(AOMColor.surface)
+            if !isRunning && contrast != .increased {
+                shape.fill(state.tone.color.opacity(0.08))
+            }
+        }
+    }
+
+    private var heroEdge: Color {
+        if contrast == .increased { return AOMColor.strongLine }
+        return isRunning ? AOMColor.hairline : state.tone.color.opacity(0.25)
+    }
 }
 
 /// One chip per permission AOM uses: glyph, name, state. A missing one opens
-/// the right System Settings pane; when everything is allowed, one chip says so.
+/// the right System Settings pane; when everything is allowed, one chip says
+/// so. `wraps: false` keeps them on the hero's sentence line; in narrow
+/// windows they wrap under the detail.
 private struct WorkspacePermissionChips: View {
     let chips: [(AOMPermission, AOMPermissionStatus)]
+    var wraps = true
 
     var body: some View {
         let missing = chips.filter { $0.1 == .denied || $0.1 == .notDetermined }
         if missing.isEmpty {
             AOMStatusPill("All permissions allowed", tone: .success, symbol: "checkmark.circle.fill")
+        } else if wraps {
+            WorkspaceFlowRow(spacing: AOMSpace.x1 + AOMSpace.x0_5) { pills }
         } else {
-            WorkspaceFlowRow(spacing: AOMSpace.x2) {
-                ForEach(chips, id: \.0) { permission, status in
-                    let ok = status == .granted || status == .manualReview
-                    if ok {
-                        AOMStatusPill(permission.shortTitle, tone: .success, symbol: "checkmark.circle.fill")
-                    } else {
-                        Button { _ = permission.openSettings() } label: {
-                            AOMStatusPill(permission.shortTitle, tone: .warning, symbol: "exclamationmark.circle.fill")
-                        }
-                        .buttonStyle(.plain)
-                        .help("Allow \(permission.title) in System Settings")
-                        .accessibilityLabel("\(permission.title), not allowed")
-                        .accessibilityHint("Opens System Settings")
-                    }
-                }
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) { pills }
+        }
+    }
+
+    private var pills: some View {
+        ForEach(chips, id: \.0) { permission, status in
+            chip(permission, status: status)
+        }
+    }
+
+    @ViewBuilder
+    private func chip(_ permission: AOMPermission, status: AOMPermissionStatus) -> some View {
+        if status == .granted || status == .manualReview {
+            AOMStatusPill(permission.shortTitle, tone: .success, symbol: "checkmark.circle.fill")
+        } else {
+            Button { _ = permission.openSettings() } label: {
+                AOMStatusPill(permission.shortTitle, tone: .warning, symbol: "exclamationmark.circle.fill")
             }
+            .buttonStyle(.plain)
+            .help("Allow \(permission.title) in System Settings")
+            .accessibilityLabel("\(permission.title), not allowed")
+            .accessibilityHint("Opens System Settings")
         }
     }
 }
@@ -915,10 +1005,10 @@ private struct WorkspaceSetupStep<Action: View>: View {
                 if done {
                     Image(systemName: "checkmark").font(AOMFont.badge.weight(.bold)).foregroundStyle(.white)
                 } else {
-                    Text("\(number)").font(AOMFont.callout.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
+                    Text("\(number)").font(AOMFont.caption.weight(.semibold)).foregroundStyle(AOMColor.textSecondary)
                 }
             }
-            .frame(width: 24, height: 24)
+            .frame(width: AOMIcon.row, height: AOMIcon.row)
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(AOMFont.bodyEmphasis).foregroundStyle(done ? AOMColor.textSecondary : AOMColor.text)
@@ -933,8 +1023,9 @@ private struct WorkspaceSetupStep<Action: View>: View {
             }
         }
         .padding(.horizontal, AOMSpace.x3)
+        .padding(.vertical, AOMSpace.x1)
         .frame(minHeight: AOMSize.rowDetail)
-        .overlay(alignment: .top) { if number > 1 { AOMRowDivider(inset: AOMSpace.x3 + 24 + AOMSpace.x3) } }
+        .overlay(alignment: .top) { if number > 1 { AOMRowDivider(inset: AOMSpace.x3 + AOMIcon.row + AOMSpace.x3) } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Step \(number): \(title)\(done ? ", done" : "")")
     }
@@ -973,7 +1064,9 @@ private struct WorkspaceAttentionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: AOMSpace.x3) {
+        // A settings-row: 32 pt with a regular button, glyph and text 8 pt
+        // apart, the divider starting under the text.
+        HStack(spacing: AOMSpace.x2) {
             Image(systemName: symbol)
                 .foregroundStyle(tint)
                 .frame(width: AOMIcon.row)
@@ -997,9 +1090,9 @@ private struct WorkspaceAttentionRow: View {
             }
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .padding(.vertical, AOMSpace.x2)
-        .frame(minHeight: AOMSize.rowDetail - AOMSpace.x1)
-        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowSymbolInset + AOMSpace.x1) }
+        .padding(.vertical, AOMSpace.x1)
+        .frame(minHeight: AOMSize.rowStandard)
+        .overlay(alignment: .top) { AOMRowDivider(inset: AOMSpace.rowSymbolInset) }
         .accessibilityElement(children: .contain)
     }
 }
@@ -1042,21 +1135,29 @@ private struct WorkspaceQuickAction: View {
     }
 
     var body: some View {
+        // A regular bordered pill with Callout text; the shortcut reads like a
+        // menu's, as quiet text after the title rather than a key cap inside
+        // the button.
         Button(action: action) {
-            HStack(spacing: AOMSpace.x2) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 if running {
-                    ProgressView().controlSize(.small).frame(width: AOMIcon.row)
+                    ProgressView().controlSize(.small).frame(width: AOMIcon.row - AOMSpace.x1)
                 } else {
                     Image(systemName: symbol)
                         .symbolRenderingMode(.hierarchical)
-                        .frame(width: AOMIcon.row)
+                        .frame(width: AOMIcon.row - AOMSpace.x1)
                 }
                 Text(title).lineLimit(1).truncationMode(.tail)
-                if let keys { AOMKeycap(text: keys).padding(.leading, AOMSpace.x1) }
+                if let keys {
+                    Text(keys)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
+            .font(AOMFont.callout)
         }
         .buttonStyle(.bordered)
-        .controlSize(.large)
         .help(help ?? (keys.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(keys.map { "Shortcut \($0)" } ?? "")
@@ -1100,7 +1201,7 @@ private struct WorkspaceActivityRow: View {
                 }
             }
             .padding(.horizontal, AOMSpace.rowInset)
-            .frame(minHeight: AOMSize.rowStandard + AOMSpace.x1)
+            .frame(minHeight: AOMSize.rowStandard)
             .background(hovering ? AOMColor.sunken.opacity(0.6) : .clear)
             .contentShape(Rectangle())
         }
