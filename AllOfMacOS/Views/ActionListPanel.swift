@@ -42,7 +42,7 @@ struct ActionCardView: View {
         HStack(spacing: AOMSpace.x2) {
             // Step number, centred under the arrows that join the cards.
             Text("\(index)")
-                .font(AOMFont.badge.monospacedDigit())
+                .font(AOMFont.callout.monospacedDigit())
                 .foregroundStyle(AOMColor.textSecondary)
                 .frame(width: AOMIcon.row)
                 .accessibilityLabel("Step \(index)")
@@ -57,17 +57,17 @@ struct ActionCardView: View {
                 .frame(width: AOMIcon.row)
                 .accessibilityHidden(true)
 
-            // Name and detail on one line (3.3.5); the detail truncates first
-            // and the full text stays in the tooltip.
-            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            // The name over its detail (a 48 pt settings row, design-336
+            // #74); the detail truncates in the middle, the full text stays
+            // in the tooltip.
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text(action.displayName)
                     .font(AOMFont.bodyEmphasis)
                     .foregroundStyle(action.isEnabled ? AOMColor.text : AOMColor.textSecondary)
                     .lineLimit(1)
-                    .layoutPriority(1)
                 if let detail = actionDetail {
                     Text(detail)
-                        .font(AOMFont.caption)
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMColor.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -121,7 +121,8 @@ struct ActionCardView: View {
             .accessibilityLabel(isExpanded ? "Collapse action options" : "Expand action options")
         }
         .padding(.horizontal, AOMSpace.rowInset)
-        .frame(minHeight: AOMSize.rowStandard)
+        .padding(.vertical, AOMSpace.x1)
+        .frame(minHeight: actionDetail == nil ? AOMSize.rowStandard : AOMSize.rowDetail)
         .contentShape(Rectangle())
         .onTapGesture { onToggleExpand() }
     }
@@ -242,22 +243,29 @@ struct AddActionSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                // Headline, like the other sheets' titles.
+                // Title 3, the sheet-title style (design-336 b.1).
                 Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action Inside"))
-                    .font(AOMFont.headline)
+                    .font(AOMFont.title)
                     .foregroundStyle(AOMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(AOMFont.title.weight(.regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                        .contentShape(Rectangle())
+                }
                     .buttonStyle(.plain)
                     .help("Close without adding")
                     .accessibilityLabel("Close")
             }
-            .padding(.horizontal, AOMSpace.x4)
-            .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x2)
+            .padding(.horizontal, AOMSpace.x5)
+            .padding(.top, AOMSpace.x4)
+            .padding(.bottom, AOMSpace.x3)
 
-            HStack(spacing: AOMSpace.x1) {
+            HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
                 TextField("Search actions by name or what they do", text: $searchText)
                     .textFieldStyle(.plain)
@@ -269,10 +277,11 @@ struct AddActionSheet: View {
                         .accessibilityLabel("Clear search")
                 }
             }
-            .padding(AOMSpace.x2)
-            .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
-            .padding(.horizontal, AOMSpace.x4)
-            .padding(.bottom, AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.x3)
+            .frame(height: AOMSize.rowStandard - AOMSpace.x1)
+            .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
+            .padding(.horizontal, AOMSpace.x5)
+            .padding(.bottom, AOMSpace.x4)
 
             HSplitView {
                 List(selection: Binding<Section?>(get: { section }, set: { if let value = $0 { section = value; searchText = "" } })) {
@@ -325,7 +334,8 @@ struct AddActionSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(AOMSpace.x3)
+            .padding(.horizontal, AOMSpace.x5)
+            .padding(.vertical, AOMSpace.x4)
         }
         .frame(width: AOMEditorSize.actionPicker.width)
     }
@@ -364,7 +374,7 @@ struct AddActionSheet: View {
                         .frame(width: AOMIcon.row)
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         Text(type.rawValue).font(AOMFont.body).foregroundStyle(AOMColor.text)
-                        Text(type.description).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(2)
+                        Text(type.description).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(2)
                         if showsCategory || !type.parameterHint.isEmpty {
                             Text([showsCategory ? type.category.rawValue : nil, type.parameterHint.isEmpty ? nil : "Options: " + type.parameterHint]
                                 .compactMap { $0 }.joined(separator: " · "))

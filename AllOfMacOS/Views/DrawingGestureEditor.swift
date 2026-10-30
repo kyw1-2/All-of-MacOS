@@ -69,8 +69,8 @@ struct DrawingStrokePad: View {
                 }.stroke(.secondary.opacity(0.13), style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 if current.isEmpty {
                     VStack(spacing: 6) {
-                        Image(systemName: "pencil.tip.crop.circle").font(.system(size: AOMFeatureSize.emptyGlyph))
-                        Text("Draw a single continuous stroke").font(AOMFont.caption)
+                        Image(systemName: "pencil.tip.crop.circle").font(AOMFont.hero.weight(.regular))
+                        Text("Draw a single continuous stroke").font(AOMFont.callout)
                     }.foregroundStyle(.tertiary)
                 }
                 DrawingStrokePreview(sample: current)

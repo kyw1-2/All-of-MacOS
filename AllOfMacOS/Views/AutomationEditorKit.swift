@@ -230,7 +230,7 @@ enum AOMEditorSize {
     static let numberField: CGFloat = AOMSpace.x10 * 2
     /// The new-trigger and edit-trigger sheets: the editor minimum, so a row
     /// keeps its label and control on one line.
-    static let triggerSheet: CGFloat = AOMSize.editorMinimum
+    static let triggerSheet: CGFloat = AOMSize.editorMinimum + AOMSpace.x10
     /// The new-trigger sheet while it shows the drawing recorder.
     static let drawingSheet: CGFloat = 540
     /// The drawing recorder inside the new-trigger sheet.
@@ -238,7 +238,8 @@ enum AOMEditorSize {
     /// The gesture list inside the trigger sheets.
     static let gestureList: CGFloat = 200
     /// The action picker sheet and its category column.
-    static let actionPicker = CGSize(width: 720, height: 420)
+    /// 3.3.6: taller and wider for 13 pt rows (was 720 × 420).
+    static let actionPicker = CGSize(width: 780, height: 480)
     static let actionPickerSidebar: CGFloat = AOMSize.sidebarMin
     /// The BetterTouchTool import report's minimum (the alert accessory is 640 × 420).
     static let importReport = CGSize(width: 560, height: 360)
