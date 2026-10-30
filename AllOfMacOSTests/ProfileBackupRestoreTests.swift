@@ -292,6 +292,21 @@ final class ProfileBackupRestoreTests: XCTestCase {
                     TriggerSuppression.settingsKey, "AOMWindowLayoutsV1"] {
             XCTAssertTrue(PresetManager.isBackedUpSetting(key), key)
         }
+        // 3.3.3: the title-bar snap's new options and modifier roles, the Dock,
+        // menu-bar and Mission Control options, and the Force Touch stage hysteresis.
+        let keys333 = [TitleBarWindowSnap.motionPauseKey, TitleBarWindowSnap.superAnywhereKey,
+                       TitleBarWindowSnap.tabGesturesKey, TitleBarWindowSnap.nativeTilingKey, TitleBarWindowSnap.tooltipKey,
+                       TitleBarWindowSnap.resnapDelayKey, TitleBarWindowSnap.hotkeyCenterKey, PressureStageTracker.hysteresisKey]
+            + SwishSnap.ModifierRole.allCases.map(\.defaultsKey) + TrackpadUtilityGestures.settingsKeys333
+        XCTAssertEqual(keys333.count, 18)
+        for key in keys333 { XCTAssertTrue(PresetManager.isBackedUpSetting(key), key) }
+        for key in TrackpadUtilityGestures.settingsKeys333 {
+            XCTAssertEqual(PresetManager.settingArea(key), "Trackpad gestures", key)
+        }
+        for role in SwishSnap.ModifierRole.allCases {
+            XCTAssertEqual(PresetManager.settingArea(role.defaultsKey), "Title-bar snap", role.defaultsKey)
+        }
+        XCTAssertEqual(PresetManager.settingArea(PressureStageTracker.hysteresisKey), "Gesture timing")
         XCTAssertFalse(PresetManager.isBackedUpSetting("AOMBackupPath"), "a machine-specific folder is not carried over")
         XCTAssertFalse(PresetManager.isBackedUpSetting(ClipboardMCPSettings.toolsKey), "AI tool access is never restored silently")
     }

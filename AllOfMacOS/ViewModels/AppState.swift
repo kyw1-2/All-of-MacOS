@@ -205,7 +205,9 @@ class AppState: ObservableObject {
         }
     }
     func presentPresetImport() {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]
+        // AOM presets, copied BTT trigger JSON and plain `.bttpreset` files;
+        // `reviewCompatiblePresetImport` tells them apart.
+        let panel = NSOpenPanel(); panel.allowedContentTypes = BTTPresetImport.openPanelContentTypes
         panel.begin { [weak self] response in
             if response == .OK, let url = panel.url { self?.reviewCompatiblePresetImport(from: url) }
         }

@@ -1,3 +1,110 @@
+## 3.3.3 (2026-10-30)
+
+Fixes for the three 3.3.2 audit reports of 2026-10-29 (the main report, the Swish REA comparison, and the Swish deep report with its CleanShot X, BetterTouchTool and Paste appendix), and a redesign of the main window. docs/release-3.3.3-audit-resolution.md maps every audit ID to its fix or says why it is open; docs/window-snap-3.3.3.md has the gesture details. Backups cover every new setting; the audio diagnostics reset request and the recording camera and microphone stay out on purpose. Nothing below was tried on a real trackpad, MIDI controller, HomePod or in a real recording; the last section lists what still needs that.
+
+### UI redesign
+
+- One token file (`AOMTokens.swift`, 4 pt grid) and one opaque card, section, row, page header, notice and status pill for every page. Liquid Glass only on the toolbar, sidebar, ⌘K palette and floating chrome (macOS 26+, material before), following Reduce Transparency, Increase Contrast and Reduce Motion.
+- Workspace: a hero with running, paused, blocked and setup states, Needs attention, module tiles with their main switch, quick actions, recent activity and a first-run checklist.
+- Sidebar: search at the top, no footer switch; new Controls › Pause AOM / Resume AOM and Window › Diagnostics Console / Touch Visualizer commands.
+- Window Tiling: the Trackpad Gestures card is now six sections (Title-bar snap, Gestures, Grid & layout, Keyboard, Dock & menu bar, Advanced) with captions moved into ⓘ; every setting is kept.
+- Automation shows a notice when Accessibility or Input Monitoring is missing or AOM is paused, and a new empty state. Audio has the App Audio switch in its header. Settings has section titles above cards and groups General's ten loose rows. System Tools has a page header with the tool count. What's New uses the same sections, badges and pills.
+
+### Swish title bar
+
+- Multi-motion (F01, X01–X03): rest 0.25 s on a swipe or pinch (a haptic marks the lock), then move again to start the next gesture in the same touch. Lifting commits as before, a 2 s rest cancels only the locked gesture, and up to 4 motions queue and apply in order to the same window (`AOMTitleBarSnapMotionPause`; 0 turns it off).
+- Tabs (F02, G11, G12): pinch in on a tab to close it (its close button, Chromium's close action, else ⌘W to that app while the tab is selected; never the window). Tap and hold a native or Safari tab, then lift, to move it to a new window, which is then chained. Close and detach in AppKit window tabs and Safari; close only in Chrome, Brave, Vivaldi, Arc, Dia, Orion, Xcode, VS Code and UPDF; nothing in Edge, Figma and Craft. Firefox exposes no tabs, so a pinch there still closes the window (`AOMTitleBarSnapTabs`, on).
+- Start areas (F04, X05): the hit-test reaches tab bars under toolbars; with Super anywhere on (`AOMTitleBarSnapSuperAnywhere`, off), holding the Super key starts a gesture anywhere on a window.
+- Modifier roles (F05, X20–X22): Super, General, Screen, Secondary and Tertiary can be reassigned; clashes are refused and Restore Modifiers puts back fn, ⌥, ⌘, ⇧, ⌃. ⇧ swipes use the 3 × 2 grid (up: almost maximize), ⌃ swipes the 3 × 3 grid.
+- Keyboard (F05, X13, X24–X26): ⌃⌥⌘ + a direction moves to the display that way, ⌃⌥⇧ uses the 3 × 2 grid, a center key (Esc, ⌫ or ↩; `AOMTitleBarSnapHotkeyCenter`) centres or restores, and ,AOE (Dvorak) joins the key schemes. Esc cancels a gesture on show while AOM's keyboard tap is installed. The hotkeys stay off in secure text fields.
+- Native tiling (F06, X31, X32): optional macOS tiling for halves, quarters and Fill where the app has Window › Move & Resize (macOS 15+); the system's tiling options are read, never written (`AOMTitleBarSnapNativeTiling`, off).
+- External display timeout 0.5–10 s, 0 = no re-snap (X38, `AOMTitleBarSnapResnapDelay`). Hold ⇧ while dragging to keep a snapped window's size (X35). A tooltip by the pointer names where the window goes (X43, `AOMTitleBarSnapTooltip`, on).
+- `TitleBarWindowSnap.beginChain(window:pid:reason:)`: a chained window takes title-bar gestures wherever the pointer is, for the rest of the touch and 3 s after it lifts.
+- Fixed (S03, B04): re-snapping, resizing neighbours and drag to unsnap skip windows of apps paused in AOM, and stop when AOM is paused mid-way.
+- Fixed (S05): delayed full-screen steps check the pause, the screen lock and the app again before they run.
+
+### Dock & menu bar
+
+- Fixed (S01, B01): the Dock pinch to quit checks the target app's pause, the global pause and the screen lock right before the quit request, and never targets AOM. The shared quit request (`politeQuit`) refuses AOM and paused apps for every caller.
+- Fixed (S02, B02): a third or fourth finger spends the touch until every finger lifts. A 2→3→2 touch no longer pinches, swipes, taps or holds, and a pinch still waiting is taken back; a regression test replays the audit probe's frames.
+- Fixed (S04): menu-bar swipe up checks each window's app pause right before each Accessibility write.
+- Fixed (S05): delayed Dock and menu-bar work (the wait for a second pinch, ⌘N after the activation, scroll to top, the app-switcher watchdog, each window move) re-checks the pause, the lock and the target when it runs.
+- Fixed (S06): menu-bar swipe up restores every window minimized on that display, not only the ones AOM minimized (twice or ⇧: every display), AOM's newest first. Skipped and failed windows stay remembered, and the HUD reports partial results.
+- Fixed (B03, B06): Dock ⇧ double tap no longer hides apps AOM is paused for, and Dock and menu-bar HUD lines follow the On-screen HUD setting.
+- Dock double pinch (F03, G25, G26): pinch in twice on an icon to minimize all the app's windows, out twice to bring them back (`AOMDockDoublePinch`, on). A single pinch then waits 0.35 s for a second one and acts when the fingers lift. A window a Dock gesture brings forward is chained to the title-bar snap (G29, G30).
+- Menu bar (F04, X08, X09): the empty area, the app's own menu, other menu titles and status items are told apart, and menu titles and status items keep their clicks. Options: Dock gestures on the app's menu (`AOMAppMenuGestures`), a two-finger tap that scrolls the front window to the top (`AOMMenuBarScrollToTop`, G02), and the macOS ⌘-Tab switcher for tap, hold and scroll (`AOMMenuBarSwitcher`, G03; the default stays AOM's window switcher).
+- Mission Control and App Exposé (X07): optional gestures on a thumbnail, pinch in to close the window (twice: quit its app) and swipe down to minimize it (`AOMMissionControlGestures`, off). The ✕ buttons and W/⇧W/M/H read thumbnails from WindowManager on macOS 27 (from the Dock before) and act only on the matching window; ⇧W closes the app's windows and no longer asks the process that draws Mission Control to quit. `AOMMissionControlHotkeys` is read live.
+- A second trackpad takes over cleanly from one that went quiet with spent fingers.
+
+### Clipboard privacy & Paste
+
+- Fixed (PA-01, PASTE-32): excluded apps are never read through Accessibility, the optional screen model or its OCR for suggestions. They get no suggestions, and their items and paste history never feed the ranker (shelf, MCP `get_suggestions`, paste log). Capture uses the same trimmed, case-insensitive test.
+- Fixed (PA-02, PASTE-33): password fields and secure keyboard entry get no suggestions, no model look and no paste-log entries, and a secret is never suggested.
+- Fixed (PA-03, PASTE-35): MCP secret blocking scans every representation (UTF-8 and UTF-16 text, RTF, RTFD, HTML, URLs, file URLs, titles, image text, legacy types) at any length, after decoding percent-encoding, HTML character references, zero-width and full-width characters. `read_item` re-checks its whole reply, content searches never match hidden items, and Automation MCP hides credentials in trigger and menu definitions.
+- Fixed (PA-04, PASTE-36): the classification cache key hashes the whole content, so a same-length edit in the middle reclassifies the item.
+- Link cards (PASTE-16): opt-in page title, site name and image, under private web previews (`AOMClipboardLinkCards`, off). An ephemeral session with byte caps, one request per page per session, and never for secret-looking, local-network or numeric-host links.
+- Image text (PASTE-11): OCR keeps its line boxes, matches are highlighted in cards and previews, and a region dragged in a preview can be read or copied as text or image.
+- Paste semantics (PASTE-13, PASTE-22, PASTE-23): a pinboard can be deleted with its items (undoable); an optional one-pinboard-per-item mode, where ⌥-drag copies; searching from a pinboard covers every list (on; optional); new search operators `pinboard:`, `is:pinned`/`is:unpinned`, `on:`, relative dates (7d, 2w, 3m, 1y) and plural type names; MCP `delete_pinboard` gains `delete_items`. Keep History offers 1 Year and Forever; shortening retention or storage asks first, and Undo restores only that limit.
+
+### BTT import
+
+- Import Preset reads plain `.bttpreset` files and copied triggers, one or many (BTT-이식, BTT-50, BTT-51): all 152 trackpad catalog IDs (95 mapped, 6 of them approximately), keyboard shortcuts with left/right modifiers, key phases and hold times, key sequences, normal-mouse buttons, clicks, scrolls and drags, named triggers and 38 Other triggers, with about 180 documented action IDs. Compressed presets are refused with an export hint. Limits: 8 MB, 2,000 triggers, 64 actions per trigger.
+- Imported triggers keep their BTT names, notes, app scope and enabled state. Approximate matches arrive disabled with their reasons in the notes, dropped steps stay as disabled placeholders in place, and IF/ELSE/Repeat skip the whole trigger.
+- A report in three groups (Imported, Mapped Approximately, Skipped) names each trigger's BTT name, class and ID, what it became, and why.
+- Security: AppleScript, JavaScript, shell commands, Shortcuts, runnable files and custom URL schemes arrive disabled and flagged for review. Every value is type- and range-checked, and malformed JSON is rejected without crashing (seeded mutation tests).
+- The Import Preset panel offers `.bttpreset` files.
+
+### MIDI & value bindings
+
+- Fixed (BTT-입력, BTT-21): MIDI input decoded only 0x80/0x90/0xB0. It now decodes every channel-voice message, keeps running status across packets, skips SysEx and system-common data, and ignores realtime bytes inside a message.
+- MIDI trigger types Pitch Bend (14-bit), Program Change, Channel Pressure and Poly Pressure, with "any" note, controller or program.
+- Continuous value bindings (BTT-07): MIDI CC, Pitch Bend, Channel and Poly Pressure, Force Touch pressure and Scroll Up/Down with a modifier set the system volume, an app's volume (macOS 14.2+) or the display brightness through an input range, inversion, curve and output range, with an optional hold-peak. At most 30 writes per second per target, on their own queue; app scope, activation groups, the master switch and pauses apply.
+- Force Touch stage 1 and stage 2 triggers with hysteresis (BTT-06; `AOMForceTouchStageHysteresis`, 0.1).
+- Slider widgets in floating menus, bound to a continuous target.
+
+### Recording
+
+- Video backgrounds (CS-45): a colour, 8 gradients, a picture or the desktop picture, with padding, rounded corners and a shadow, laid out on the output canvas so 16:9, 4:3 (new), 1:1 and 9:16 fill with the background. Live preview; MP4 and GIF exports render it. Older projects keep their backdrop until edited.
+- Click marks (CS-39): ring, filled circle or double ring, separate left- and right-click colours (a ⌃-click counts as right), size, and 0.2–2 s duration. Old projects keep the blue ring.
+- Fixed (CS-38): once set, Show Cursor for recordings no longer depends on Show Mouse Clicks. New: editable pointer size and a cursor highlight, also over a pointer already in the video (`pointerInVideo` in the input track).
+- Keystroke overlay: choose which modifiers make a shortcut (⌘ ⌃ ⌥ by default; ⇧ optional). Presentation renders, trims and the first Edit Recording session use the recording's click, pointer, highlight and keystroke options.
+- Optional "Hide desktop icons while recording" (Finder's CreateDesktop), journaled and restored on stop, cancel, a failed start or restart, and at the next launch after a crash.
+- Do Not Disturb (part of CS-37): the end Shortcut is journaled and runs at the next launch if AOM quit mid-recording.
+- GIF (part of CS-49): frames of 480–1280 px (960 by default), loop or play once. Also "Scale Retina videos to 1x", and a camera and microphone choice that falls back to the default when the device is missing (the microphone still needs macOS 15).
+
+### Annotation
+
+- Text styles (CS-22): weight, any installed font family, alignment, a box, rounded box, pill or speech bubble behind the text, text, background and outline colours, outline width and shadow; presets Classic, Plain, Outline, Shadow, Label, Light Label, Pill and Speech Bubble. Saved in projects; text without the new fields renders exactly as in 3.3.2.
+- Eraser (CS-23): X, with Object and Stroke modes and a size (`AOMAnnotationEraserMode`, `AOMAnnotationEraserSize`); one undo per drag.
+- Image layers (CS-21): insert from a file (⌥⌘I, or Add as Layer in the ⌘I chooser), the clipboard (⌘V with an image, ⌥⌘V) or ⌥-drop; move, resize (⇧ keeps the ratio) and rotate (⇧ snaps to 15°); Arrange with ⇧⌘] ⌘] ⌘[ ⇧⌘[. Stored as PNG in the project; blur, pixelate and secure blur over a layer hide its pixels.
+- Fixed: arrows and lines follow the drag (they were always drawn from top left to bottom right); objects saved before 3.3.3 keep their course. Several spotlights share one dimmed layer instead of dimming each other.
+- Crop ratios add Original, 3:2, 21:9, 9:16, 3:4, 2:3 and 4:5, with the largest centred area. Text boxes grow with their lines, and ⌥↩ adds a line.
+
+### Audio
+
+- HomePod / AirPlay at 128-frame IO (A01): after a skipped HAL cycle the bridge fades back in over 5 ms instead of resuming mid-waveform. coreaudiod reports those gaps as HAL safety violations; AOM's own callback measured about 20 µs of the 2.7 ms cycle. Callback cost, the device's overload notices and its IO cycle usage are now in diagnostics, and the drift loop no longer aliases the mix-block rhythm at 128-frame IO.
+- Output moves (A02): one consumer at a time. The old output fades out, the new one continues with the next sample and fades in, nothing is pulled twice, and the DSP state passes over intact.
+- Diagnostics (A03): audio-health.json keeps the last 200 events with wall-clock times (cycle gaps, trims, underruns, limiter, late wakes, reconfigurations, device and route changes, taps, moves), recorded through lock-free realtime rings, and counters since the last reset that survive output and session re-creation (`AOMAudioDiagnosticsResetAt` requests a reset).
+- Magic Boost presets (G01): Music (the 3.3.2 boost, sample for sample), Speech, Movie and Night, for the output and per app.
+- Headphone EQ (G01): named curves assigned per output and run as a second 10-band stage that follows the output; AutoEQ ParametricEQ.txt files are fitted to the 10 bands.
+- Audio Unit effect (G01): one installed v2 effect on every output's master chain, before Magic Boost and the limiter, made off the render thread and swapped with a 10 ms crossfade, with the generic editor.
+
+### Not done / needs hardware check
+
+Not done:
+- Swish: moving a window or a Space from Mission Control (G01 of the deep report; macOS 27 ignores synthetic drags), minimized-window Dock tiles as an origin (X10), Super required for all gestures (X06) and on Dock icons, Include Screen Edges (X30), the portrait 3 × 2 axis swap (X28), live Resize Adjacent (X36), going back to the original display after a reconnect (X37), per-gesture switches (X19), the Active Event Listener (X18), Magic Mouse (X12, X47), Spaces hotkeys and key hold-and-release (X27), and Swish's double vertical swipe. Reset Preferences still misses the Swish settings (B05), and Dock/menu-bar gestures still do not coordinate with user two-finger triggers (B07).
+- Clipboard: iCloud and other devices, shared pinboards, a device filter, iOS (PASTE-12, PASTE-38–40), Paste import (PASTE-41), file contents (PASTE-03), image bytes over MCP (PASTE-37), Quick Paste modifiers (PASTE-27); Forever is still bounded by the item and storage limits (PASTE-06); Base64 or split secrets are not decoded, and link cards have no DNS-rebinding guard.
+- BTT: Magic Mouse, drawings, Touch Bar, Stream Deck, Notch Bar, MIDI and other device classes in imports, compressed presets, text-selection and power-mode triggers (BTT-34, BTT-35), Move Window to Desktop N (BTT-47), floating-menu submenus and search (BTT-29), continuous mouse-drag and gamepad values (BTT-16, BTT-23), keyboard backlight.
+- Recording: following one window (CS-32), the microphone on macOS 14 (CS-33), mono and a level meter (CS-35), restoring the previous Focus (CS-37), a full-frame camera (CS-42), motion blur options (CS-46), GIF palette and length (CS-49).
+- Audio: AUv3, per-output or chained effects and latency compensation; the HAL's 128-frame safety violations themselves; a reset button for the counters.
+
+Needs a hardware check:
+- Trackpad: the multi-motion lock, tab gestures per app (and detach with Korean and Japanese menus), Dock 2→3→2 and pinch-twice timing, a Dock gesture chained into a title-bar gesture, menu-bar parts on macOS 27, scroll to top, the held ⌘-Tab switcher, Mission Control on macOS 27 and 14–26, native tiling on macOS 15 and 26, the hotkeys in a password field.
+- Clipboard: a Safari password field and Secure Keyboard Entry, an excluded app, link cards, image regions, pinboard delete and Undo, a real MCP client.
+- A MIDI controller, Force Touch stages, and value bindings on built-in, USB and Bluetooth outputs and an external display.
+- Recording: hidden desktop icons across a force quit, Focus recovery, backgrounds in MP4 and GIF exports, click colours, Retina 1x, camera and microphone choice, GIF play-once.
+- HomePod: 20 minutes per state with diagnostics on, output switches during music, the Boost presets, an AutoEQ curve on real headphones, an Audio Unit on the HomePod.
+
 ## 3.3.2 (2026-10-29)
 
 Swish parity for the trackpad title-bar snap, the HomePod / AirPlay crackle fixes, per-app balance, and the fixes from the release review of 2026-10-29. docs/window-snap-3.3.2.md and docs/airplay-crackle-3.3.2.md have the details. Not run on hardware: a real trackpad, and listening on a HomePod.

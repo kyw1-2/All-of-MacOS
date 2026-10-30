@@ -246,7 +246,8 @@ enum CaptureSettings {
          "AOMCaptureRecordingKeystrokeSize", "AOMCaptureRecordingKeystrokePosition",
          "AOMCaptureRecordingKeystrokeAllKeys", "AOMCaptureRecordingFocus", "AOMCaptureRecordingFocusOn",
          "AOMCaptureRecordingFocusOff", "AOMAnnotationStylePresets", "AOMAnnotationMyColors",
-         "AOMAnnotationBackgroundPresets", "AOMAnnotationBackgroundAutoPresetID"] + recording333BackedUpKeys
+         "AOMAnnotationBackgroundPresets", "AOMAnnotationBackgroundAutoPresetID"]
+            + recording333BackedUpKeys + AnnotationSettings.backedUpKeys
     }
 
     /// Never in a backup: they describe this Mac, not the user's choices.

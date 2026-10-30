@@ -184,6 +184,12 @@ class PresetManager {
             TitleBarWindowSnap.gridKey, TitleBarWindowSnap.almostKey, TitleBarWindowSnap.hotkeysKey,
             TitleBarWindowSnap.dragUnsnapKey, TitleBarWindowSnap.resnapKey, TitleBarWindowSnap.animationKey,
             TitleBarWindowSnap.stageManagerOffsetKey, TitleBarWindowSnap.resizeAdjacentKey,
+            // 3.3.3 title-bar snap: the multi-motion pause, Super anywhere, tab
+            // gestures, native tiling, the tooltip, the external display
+            // timeout and the ⌃⌥ center key. The five modifier roles follow below.
+            TitleBarWindowSnap.motionPauseKey, TitleBarWindowSnap.superAnywhereKey, TitleBarWindowSnap.tabGesturesKey,
+            TitleBarWindowSnap.nativeTilingKey, TitleBarWindowSnap.tooltipKey, TitleBarWindowSnap.resnapDelayKey,
+            TitleBarWindowSnap.hotkeyCenterKey,
             TrackpadUtilityGestures.spacesEnabledKey, TrackpadUtilityGestures.dockQuitEnabledKey,
             // 3.3.2 Swish Dock and menu-bar gestures.
             TrackpadUtilityGestures.dockGesturesKey, TrackpadUtilityGestures.menuBarGesturesKey,
@@ -192,6 +198,8 @@ class PresetManager {
             "AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs",
             "AOMMouseLongPressMs", "AOMMouseQuickReleaseMaxMs", "AOMMouseMultiClickIntervalMs",
             "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold",
+            // 3.3.3: how far Force Touch pressure eases off before a stage can fire again.
+            PressureStageTracker.hysteresisKey,
             "AOMHUDEnabled", "AOMReverseMouseWheel",
             // Key remapping and the Hyper key (the remaps AOM owns at runtime are not settings).
             "AOMKeyRemaps", "AOMHyperKeyEnabled", "AOMHyperKeySource", "AOMHyperKeyTapEscape",
@@ -200,9 +208,15 @@ class PresetManager {
             // Audio output choices.
             "AOMAudioAirPlayProcessingEnabled", "AOMAudioFavorites",
             "aom.audio.protectMediaPlayback", "aom.audio.restoreOutputOnExit",
+            // 3.3.3 audio: the output's Magic Boost preset (each app's is the
+            // AOMAudioMagicBoostPreset_ family below), the user's EQ curves and
+            // which output uses which, and the output's Audio Unit effect and its state.
+            AudioBoostPreset.masterKey, AudioDeviceEQ.presetsKey, AudioDeviceEQ.assignmentsKey,
+            AudioUnitEffectHost.choiceKey, AudioUnitEffectHost.stateKey,
             // Clipboard preferences (never the history itself).
             "AOMClipboardSettings.v1", "AOMClipboardQuickModifier", "AOMClipboardPlainModifier",
             "AOMClipboardPanelHeight", "AOMClipboardShowInScreenCapture", "AOMClipboardNetworkPreviews",
+            "AOMClipboardLinkCards",  // 3.3.3: link cards, under the web-previews switch above
             "AOMClipboardCompact", "AOMClipboardGridLayout", "AOMPasteStackReversed",
             // Text capture.
             TextCaptureSettings.Key.automaticLanguages, TextCaptureSettings.Key.languages,
@@ -217,6 +231,10 @@ class PresetManager {
         ]
         // Capture and recording preferences (audit 2026-10-28 F07).
         keys += CaptureSettings.backedUpKeys
+        // 3.3.3 Dock, menu-bar and Mission Control options, and the title-bar
+        // snap's five modifier roles (keys built as "AOMTitleBarSnapModifier" + role).
+        keys += TrackpadUtilityGestures.settingsKeys333
+        keys += SwishSnap.ModifierRole.allCases.map(\.defaultsKey)
         // Add per-gesture swipe velocity keys
         for gesture in TrackpadGesture.allCases {
             keys.append("AOMSwipeMinVelocity_\(gesture.rawValue)")
@@ -255,6 +273,7 @@ class PresetManager {
             "AOMIntelligentClipboardEnabled": "reads clipboard content: turned on on purpose, never by a restore",
             "AOMIntelligentClipboardReadsScreen": "reads the screen: turned on on purpose, never by a restore",
             "AOMAudioDiagnostics": "diagnostics opt-in",
+            AudioDiagnostics.resetRequestKey: "a one-off request to reset the diagnostics counters, not a setting",
             "AOMKeyRemapOwnedPairs": "runtime state of the remapper",
             "AOMParkedWindowRecoveryV1": "runtime recovery journal",
             "AOMQuickAccessRecentlyClosedIDs": "runtime state",
@@ -274,7 +293,9 @@ class PresetManager {
             "AOMAudioShowAllApps": "window layout", "AOMAnnotationBackgroundPanelOpen": "window layout",
             "AOMAnnotationBackgroundPrevious": "window layout"
         ]
-        for key in CaptureSettings.machineSpecificKeys { reasons[key] = "describes this Mac (folders, last area)" }
+        for key in CaptureSettings.machineSpecificKeys {
+            reasons[key] = "describes this Mac (folders, last area, camera and microphone devices)"
+        }
         return reasons
     }()
 
@@ -333,7 +354,9 @@ class PresetManager {
     static let backedUpSettingPrefixes = ["AOMAudioGain_", "AOMAudioMute_", "AOMAudioRoute_", "AOMAudioMagicBoost_",
                                           "AOMAudioBoostLevel_", "AOMAudioOverdrive_", "AOMAudioBalance_",
                                           "AOMAudioAppEQEnabled_", "AOMAudioAppEQGains_", "AOMAudioAppEQPreset_",
-                                          "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_"]
+                                          "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_",
+                                          // 3.3.3: each app's Magic Boost preset.
+                                          "AOMAudioMagicBoostPreset_"]
     private static let backedUpKeySet = Set(userDefaultsKeys)
 
     /// Whether `key` belongs in a settings backup and may be restored from one.
@@ -521,11 +544,14 @@ class PresetManager {
         if key.hasPrefix("AOMTitleBarSnap") { return "Title-bar snap" }
         if key == TrackpadUtilityGestures.spacesEnabledKey || key == TrackpadUtilityGestures.dockQuitEnabledKey
             || key == TrackpadUtilityGestures.dockGesturesKey || key == TrackpadUtilityGestures.menuBarGesturesKey
+            || TrackpadUtilityGestures.settingsKeys333.contains(key)
             || key.hasPrefix("AOMSwipeMinVelocity_") || key.hasPrefix("AOMTipTap") || key == "AOMPressDragThreshold"
             || key == "AOMSuppressMouseDuringDrawing" { return "Trackpad gestures" }
         if ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",
             "AOMMouseQuickReleaseMaxMs", "AOMMouseMultiClickIntervalMs", "AOMMouseDragThresholdPx", "AOMForcePressEnabled",
-            "AOMForcePressThreshold", "AOMReverseMouseWheel"].contains(key) { return "Gesture timing" }
+            "AOMForcePressThreshold", PressureStageTracker.hysteresisKey, "AOMReverseMouseWheel"].contains(key) {
+            return "Gesture timing"
+        }
         if key.hasPrefix("AOMKeyRemap") || key.hasPrefix("AOMHyperKey") { return "Key remapping" }
         if key.hasPrefix("AOMWindowGesture") || key == "AOMWindowLayoutsV1" || key == "AOMWindowPinningOptionsV1"
             || key.hasPrefix("AOMMissionControl") { return "Window layouts" }

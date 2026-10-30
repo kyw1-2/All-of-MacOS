@@ -162,6 +162,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             GestureHUD.shared.start()
             AppActivationHistory.shared.start()
             TitleBarWindowSnap.shared.refreshEnabled()
+            // 3.3.3: a window a Dock gesture brings forward (tap and hold, the
+            // swipes, pinch out twice) is chained to the title-bar snap, so the
+            // next title-bar gesture applies to it wherever the pointer is. True
+            // means the snap took the window; the Dock then lets go of the touch.
+            TrackpadUtilityGestures.shared.chainWindow = { window in
+                guard let element = window.element else { return false }
+                return TitleBarWindowSnap.shared.beginChain(window: element, pid: window.pid, reason: "Dock gesture")
+            }
             if !PresetManager.isRunningTests {
                 InputRemapService.shared.apply()
                 // After the menu bar and audio settle, so an update never opens on a busy launch.
