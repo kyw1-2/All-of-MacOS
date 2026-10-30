@@ -124,15 +124,22 @@ final class ReviewFixes332Tests: XCTestCase {
 
     // MARK: Swish gaps: a maximized window reaches the bottom
 
+    /// 3.3.2 review: from maximize nothing reached the bottom half without
+    /// first restoring; 3.3.2–3.3.4 used a longer swipe down for it. N335:
+    /// a swipe down restores at any length (Swish), and the bottom half is
+    /// Swish's double swipe down (`doubleSwipe`).
     func testALongerSwipeDownFromMaximizeGoesToTheBottomHalf() {
         XCTAssertEqual(SwishSnap.move(from: .maximize, stroke: .init(.down), thirds: false), .restore, "short: Swish's unmaximize")
-        XCTAssertEqual(SwishSnap.move(from: .maximize, stroke: .init(.down, tier: 2), thirds: false), .cell(.bottomHalf))
+        XCTAssertEqual(SwishSnap.move(from: .maximize, stroke: .init(.down, tier: 2), thirds: false), .restore,
+                       "N335: long too")
         XCTAssertEqual(SwishSnap.step(from: .almostMaximize, stroke: .init(.down), grid: .twoByTwo, almost: true), .restore)
         XCTAssertEqual(SwishSnap.step(from: .almostMaximize, stroke: .init(.down, tier: 2), grid: .twoByTwo, almost: true),
-                       .cell(.bottomHalf))
+                       .restore)
         let options = SwishSnap.GestureOptions()
         XCTAssertEqual(SwishSnap.move(from: .maximize, stroke: .init(.down, tier: 2), modifiers: [], options: options),
-                       .cell(.bottomHalf), "Swish's mapping: a maximized window is no free one")
+                       .restore, "Swish's mapping: a maximized window is no free one")
+        XCTAssertEqual(SwishSnap.move(at: .grid(.full), stroke: .init(.down), modifiers: [], options: options,
+                                      doubleSwipe: .down), .cell(.bottomHalf), "N335: the double swipe down")
         XCTAssertEqual(SwishSnap.move(from: .maximize, stroke: .init(.down, cross: .left), modifiers: [], options: options),
                        .cell(.bottomLeft), "a diagonal or L picks the quarter outright")
         XCTAssertEqual(SwishSnap.move(from: .topHalf, stroke: .init(.down), modifiers: [], options: options), .cell(.bottomHalf))

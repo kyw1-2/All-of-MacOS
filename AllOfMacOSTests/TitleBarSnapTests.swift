@@ -234,7 +234,7 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(SwishSnap.layout(for: .up, tier: 1), .maximize)
         XCTAssertEqual(SwishSnap.layout(for: .up, tier: 2), .maximize, "N334: a longer swipe up is no top half")
         XCTAssertEqual(SwishSnap.layout(for: .down, tier: 1), .center)
-        XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .bottomHalf)
+        XCTAssertEqual(SwishSnap.layout(for: .down, tier: 2), .center, "N335: a longer swipe down is no bottom half")
     }
 
     /// Swish: "Swipe horizontally and vertically to snap to a quarter. Both orders work."
@@ -1003,11 +1003,11 @@ final class TitleBarSnapTests: XCTestCase {
                  fullscreen: Bool = false) -> SwishSnap.Move? {
             SwishSnap.move(from: cell, stroke: stroke, modifiers: modifiers, options: options, fullscreen: fullscreen)
         }
-        // Swish's default: a short swipe down minimizes a free (or centred)
-        // window; a longer one or an L-shape still snaps.
+        // Swish's default: a swipe down minimizes a free (or centred) window,
+        // at any length (N335); an L-shape still snaps.
         XCTAssertEqual(map(nil, .init(.down)), .action(.minimize))
         XCTAssertEqual(map(.center, .init(.down)), .action(.minimize))
-        XCTAssertEqual(map(nil, .init(.down, tier: 2)), .cell(.bottomHalf))
+        XCTAssertEqual(map(nil, .init(.down, tier: 2)), .action(.minimize))
         XCTAssertEqual(map(nil, .init(.down, cross: .left)), .cell(.bottomLeft))
         // A window in a cell keeps chaining.
         XCTAssertEqual(map(.topLeft, .init(.down)), .cell(.bottomLeft))
