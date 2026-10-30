@@ -189,7 +189,8 @@ struct CaptureSettingsView: View {
     // MARK: - Capture behaviour
 
     private var captureGroup: some View {
-        AOMSection("Capture") {
+        // Named like Settings › Capture's own group, so the two read alike.
+        AOMSection("Screenshots") {
             AOMToggleRow("Show Cursor", symbol: "cursorarrow",
                          help: "Include the pointer in screenshots. Recordings have their own Show Cursor under Pointer in Recordings.",
                          isOn: $showsCursor)
