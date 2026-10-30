@@ -115,6 +115,8 @@ enum AOMFeatureSize {
     /// The window picker sheet and its thumbnails.
     static let windowPickerMin = CGSize(width: 520, height: 360)
     static let windowPickerThumbnail: CGFloat = 96
+    /// The welcome overlay.
+    static let welcomeWidth: CGFloat = 560
 }
 
 // MARK: - Feature colours

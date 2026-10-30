@@ -75,7 +75,7 @@ struct TutorialOverlayView: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.32)
+            AOMFeatureColor.mediaDim
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
             VStack(spacing: 0) {
@@ -87,21 +87,21 @@ struct TutorialOverlayView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 32)
-                .padding(.top, 30)
-                .padding(.bottom, 20)
+                .padding(.horizontal, AOMSpace.x8)
+                .padding(.top, AOMSpace.x8)
+                .padding(.bottom, AOMSpace.x5)
                 .transition(.opacity)
                 .id(page)
                 AOMDivider()
                 controls
             }
-            .frame(width: 560)
+            .frame(width: AOMFeatureSize.welcomeWidth)
+            // Glass chrome draws its own shadow; nothing is added on top (c.4).
             .aomFloatingSurface(.panel, radius: AOMRadius.panel, inWindow: true)
-            .shadow(color: .black.opacity(0.28), radius: 36, y: 16)
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(.isModal)
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: page)
+        .aomAnimation(.standard, value: page)
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             if page == 1 { refresh() }
@@ -111,16 +111,22 @@ struct TutorialOverlayView: View {
 
     // MARK: Pages
 
+    private func pageTitle(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+            Text(title)
+                .font(AOMFont.title)
+                .foregroundStyle(AOMColor.text)
+                .accessibilityAddTraits(.isHeader)
+            Text(detail)
+                .font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var welcomePage: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Welcome to All of MacOS")
-                    .font(.system(size: 24, weight: .semibold)).tracking(-0.3)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Four tools that work together, one shortcut away.")
-                    .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-            }
-            VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: AOMSpace.x5) {
+            pageTitle("Welcome to All of MacOS", "Four tools that work together, one shortcut away.")
+            VStack(alignment: .leading, spacing: AOMSpace.x4) {
                 feature(.capture, "Capture your screen", "Screenshots, recordings and text, with a preview to copy, edit or drag.")
                 feature(.clipboard, "Keep everything you copy", "A searchable clipboard shelf, encrypted on this Mac.")
                 feature(.gestures, "Automate what you repeat", "Turn gestures, keys and mouse buttons into actions.")
@@ -129,17 +135,15 @@ struct TutorialOverlayView: View {
         }
     }
 
+    /// Each tool with its module badge, the same identity the Workspace tiles use.
     private func feature(_ tab: AOMMainTab, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: tab.sidebarSymbol)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 32, height: 32)
-                .background(tab.accentColor.gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(AOMType.headline)
-                Text(detail).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
+        HStack(alignment: .top, spacing: AOMSpace.x3) {
+            if let module = AOMModule(tab: tab) {
+                AOMModuleBadge(module, size: AOMIcon.headerBadge)
+            }
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(title).font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                Text(detail).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -147,124 +151,75 @@ struct TutorialOverlayView: View {
     }
 
     private var permissionsPage: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Allow what you'll use")
-                    .font(.system(size: 22, weight: .semibold)).tracking(-0.3)
-                    .accessibilityAddTraits(.isHeader)
-                Text("macOS asks you to approve each kind of access in System Settings. AOM only reads whether it was given.")
-                    .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(spacing: 0) {
-                let permissions = AOMPermission.required
-                ForEach(Array(permissions.enumerated()), id: \.element.id) { index, permission in
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            pageTitle("Allow what you'll use",
+                      "macOS asks you to approve each kind of access in System Settings. AOM only reads whether it was given.")
+            AOMSection(footer: "You can skip this and allow access later in Settings › Permissions.") {
+                ForEach(AOMPermission.required) { permission in
                     permissionRow(permission)
-                    if index < permissions.count - 1 { AOMDivider().padding(.leading, 44) }
                 }
             }
-            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
-            Text("You can skip this and allow access later in Settings › Permissions.")
-                .font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
         }
     }
 
     private func permissionRow(_ permission: AOMPermission) -> some View {
         let status = statuses[permission] ?? .notDetermined
-        return HStack(spacing: 12) {
-            Image(systemName: permission.icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AOMTheme.textSecondary)
-                .frame(width: 20)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(permission.title).font(AOMType.body.weight(.medium))
-                Text(permission.explanation).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-            }
-            Spacer(minLength: 8)
+        return AOMSettingRow(permission.title, detail: permission.explanation, symbol: permission.icon) {
             if status == .granted {
-                Label("Allowed", systemImage: "checkmark.circle.fill")
-                    .font(AOMType.caption.weight(.semibold))
-                    .foregroundStyle(AOMTheme.positive)
+                AOMStatusPill("Allowed", tone: .success, symbol: "checkmark.circle.fill")
             } else {
                 Button("Open Settings…") { _ = permission.openSettings() }
                     .controlSize(.small)
                     .help("Opens System Settings › Privacy & Security › \(permission.title)")
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .accessibilityElement(children: .combine)
     }
 
     private var readyPage: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("You're set")
-                    .font(.system(size: 22, weight: .semibold)).tracking(-0.3)
-                    .accessibilityAddTraits(.isHeader)
-                Text("These shortcuts work from any app. Change them any time in Settings.")
-                    .font(AOMType.body).foregroundStyle(AOMTheme.textSecondary)
-            }
-            VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: AOMSpace.x4) {
+            pageTitle("You're set", "These shortcuts work from any app. Change them any time in Settings.")
+            AOMSection {
                 shortcutRow("Capture an area", symbol: "viewfinder",
                             keys: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString)
-                AOMDivider().padding(.leading, 44)
                 shortcutRow("Open the clipboard shelf", symbol: "doc.on.clipboard",
                             keys: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString)
-                AOMDivider().padding(.leading, 44)
                 shortcutRow("Search everything in AOM", symbol: "magnifyingglass",
                             keys: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }
-            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
-            Toggle(isOn: $showMenuBarIcon) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Show AOM in the menu bar").font(AOMType.body)
-                    Text("Capture, clipboard and pause controls one click away.")
-                        .font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary)
-                }
+            AOMSection {
+                AOMToggleRow("Show AOM in the menu bar", detail: "Capture, clipboard and pause controls one click away.",
+                             isOn: $showMenuBarIcon)
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
         }
     }
 
     private func shortcutRow(_ title: String, symbol: String, keys: String?) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AOMTheme.textSecondary)
-                .frame(width: 20)
-                .accessibilityHidden(true)
-            Text(title).font(AOMType.body)
-            Spacer(minLength: 8)
+        AOMSettingRow(title, symbol: symbol) {
             if let keys { AOMKeycap(text: keys) } else {
-                Text("Not set").font(AOMType.caption).foregroundStyle(AOMTheme.textTertiary)
+                Text("Not set").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             }
         }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 40)
         .accessibilityElement(children: .combine)
     }
 
     // MARK: Controls
 
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AOMSpace.x3) {
             if page == 0 {
                 Button("Skip") { finish() }
                     .buttonStyle(.borderless)
-                    .foregroundStyle(AOMTheme.textSecondary)
+                    .foregroundStyle(AOMColor.textSecondary)
             } else {
                 Button("Back") { page -= 1 }
                     .buttonStyle(.borderless)
             }
             Spacer()
-            HStack(spacing: 6) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                 ForEach(0..<Self.pageCount, id: \.self) { index in
                     Capsule()
-                        .fill(index == page ? Color.accentColor : AOMTheme.textTertiary.opacity(0.35))
-                        .frame(width: index == page ? 16 : 6, height: 6)
+                        .fill(index == page ? AOMColor.accent : AOMColor.textTertiary)
+                        .frame(width: index == page ? AOMSpace.x4 : AOMIcon.dot, height: AOMIcon.dot)
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -276,8 +231,8 @@ struct TutorialOverlayView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 56)
+        .padding(.horizontal, AOMSpace.x5)
+        .frame(height: AOMSize.rowDetail + AOMSpace.x1)
     }
 
     private func refresh() {
