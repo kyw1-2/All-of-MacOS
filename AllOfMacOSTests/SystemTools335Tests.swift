@@ -1,7 +1,9 @@
 import XCTest
 @testable import AllOfMacOS
 
-/// 3.3.5 System Tools: the pure engines behind the new tools. Nothing here
+/// 3.3.5 System Tools: the pure engines behind the new tools (the Text &
+/// Developer cases left with that group in 3.3.6; File SHA-256 is covered
+/// in SystemTools336Tests). Nothing here
 /// changes system state: preferences go to an in-memory store, files live in
 /// a temporary folder, and "Trash" moves go to a fake trash inside it.
 @MainActor
@@ -48,14 +50,14 @@ final class SystemTools335Tests: XCTestCase {
         XCTAssertTrue(hits("lsof").isSuperset(of: [.portLookup, .whoLocks]))
         XCTAssertTrue(hits("amphetamine").contains(.keepAwake))
         XCTAssertTrue(hits("network").contains(.speedTest), "Group names match")
-        XCTAssertTrue(hits("JSON").contains(.formatJSON))
+        XCTAssertTrue(hits("battery").contains(.batteryDetails))
         XCTAssertEqual(hits("").count, SystemToolCatalog.all.count)
         XCTAssertTrue(hits("zzzz-no-such-tool").isEmpty)
     }
 
     func testRecentListIsNewestFirstWithoutDuplicates() {
         var list: [SystemToolID] = []
-        for id in [SystemToolID.dns, .uuid, .dns, .wifi, .sleep, .qr, .trash, .cache] {
+        for id in [SystemToolID.dns, .ping, .dns, .wifi, .sleep, .qr, .trash, .cache] {
             list = SystemToolsModel.updatedRecent(list, adding: id)
         }
         XCTAssertEqual(list, [.cache, .trash, .qr, .sleep, .wifi, .dns])
@@ -68,10 +70,10 @@ final class SystemTools335Tests: XCTestCase {
         XCTAssertTrue(SystemToolsModel.favoritesKey.hasPrefix("AOM"))
         let model = SystemToolsModel(defaults: defaults)
         model.toggleFavorite(.speedTest)
-        model.toggleFavorite(.uuid)
+        model.toggleFavorite(.ping)
         model.toggleFavorite(.speedTest)
-        XCTAssertEqual(defaults.stringArray(forKey: SystemToolsModel.favoritesKey), ["uuid"])
-        XCTAssertEqual(SystemToolsModel(defaults: defaults).favorites, [.uuid])
+        XCTAssertEqual(defaults.stringArray(forKey: SystemToolsModel.favoritesKey), ["ping"])
+        XCTAssertEqual(SystemToolsModel(defaults: defaults).favorites, [.ping])
     }
 
     func testPreviewLineIsShortAndSingleLine() {
@@ -79,72 +81,6 @@ final class SystemTools335Tests: XCTestCase {
         let long = SystemToolsModel.preview(String(repeating: "x", count: 100))
         XCTAssertEqual(long.count, 48)
         XCTAssertTrue(long.hasSuffix("…"))
-    }
-
-    // MARK: - Text & Developer
-
-    func testJSONPrettyAndMinifyRoundTrip() throws {
-        let source = #"{"b":[1,2,{"c":null}],"a":"x/y"}"#
-        let pretty = try DevTextTools.prettyJSON(source)
-        XCTAssertTrue(pretty.contains("\n"))
-        XCTAssertLessThan(pretty.range(of: "\"a\"")!.lowerBound, pretty.range(of: "\"b\"")!.lowerBound, "Keys are sorted")
-        XCTAssertTrue(pretty.contains("x/y"), "Slashes are not escaped")
-        let minified = try DevTextTools.minifiedJSON(pretty)
-        XCTAssertFalse(minified.contains("\n"))
-        XCTAssertFalse(minified.contains(": "))
-        let a = try JSONSerialization.jsonObject(with: Data(source.utf8)) as? NSDictionary
-        let b = try JSONSerialization.jsonObject(with: Data(minified.utf8)) as? NSDictionary
-        XCTAssertEqual(a, b)
-        XCTAssertEqual(try DevTextTools.minifiedJSON(" 42 "), "42", "Fragments are accepted")
-        XCTAssertThrowsError(try DevTextTools.prettyJSON("{nope")) { error in
-            guard case DevTextTools.Failure.notJSON = error else { return XCTFail("\(error)") }
-        }
-    }
-
-    func testBase64EncodesAndDecodesLenientInput() throws {
-        XCTAssertEqual(DevTextTools.base64Encode("안녕 AOM"), Data("안녕 AOM".utf8).base64EncodedString())
-        XCTAssertEqual(try DevTextTools.base64Decode(DevTextTools.base64Encode("안녕 AOM")), "안녕 AOM")
-        XCTAssertEqual(try DevTextTools.base64Decode("aGk"), "hi", "Missing padding")
-        XCTAssertEqual(try DevTextTools.base64Decode("aGk/\n"), try DevTextTools.base64Decode("aGk_"), "URL-safe alphabet and line breaks")
-        XCTAssertThrowsError(try DevTextTools.base64Decode("a"))
-        XCTAssertThrowsError(try DevTextTools.base64Decode("!!!!"))
-        XCTAssertThrowsError(try DevTextTools.base64Decode("//79")) { error in
-            XCTAssertEqual(error as? DevTextTools.Failure, .notUTF8)
-        }
-    }
-
-    func testTextStatsCountWordsLinesAndBytes() {
-        let stats = DevTextTools.stats("Hello world\n안녕 세상\n")
-        XCTAssertEqual(stats.words, 4)
-        XCTAssertEqual(stats.lines, 2)
-        XCTAssertEqual(stats.characters, 18)
-        XCTAssertEqual(stats.bytes, "Hello world\n안녕 세상\n".utf8.count)
-        XCTAssertEqual(DevTextTools.stats("").lines, 0)
-        XCTAssertEqual(DevTextTools.stats("one").summary, "3 characters, 1 word, 1 line, 3 bytes (UTF-8)")
-    }
-
-    func testSHA256OfTextAndStreamedFile() throws {
-        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        XCTAssertEqual(DevTextTools.sha256Hex("abc"), abc)
-        let url = folder.appendingPathComponent("abc.txt")
-        try Data("abc".utf8).write(to: url)
-        XCTAssertEqual(try DevTextTools.sha256Hex(fileAt: url), abc)
-        let big = try write("big.bin", bytes: 3 << 20)
-        XCTAssertEqual(try DevTextTools.sha256Hex(fileAt: big), DevTextTools.sha256Hex(try Data(contentsOf: big)), "Chunked equals whole")
-        XCTAssertEqual(DevTextTools.expectedHash(in: " \(abc.uppercased())\n"), abc)
-        XCTAssertNil(DevTextTools.expectedHash(in: "abc"))
-        XCTAssertNil(DevTextTools.expectedHash(in: String(repeating: "g", count: 64)))
-    }
-
-    func testUnixTimestampsInSecondsAndMilliseconds() {
-        XCTAssertEqual(DevTextTools.timestamp(from: "1700000000")?.date, Date(timeIntervalSince1970: 1_700_000_000))
-        XCTAssertEqual(DevTextTools.timestamp(from: " 1700000000123 ")?.wasMilliseconds, true)
-        XCTAssertEqual(DevTextTools.timestamp(from: "1700000000123")?.date.timeIntervalSince1970 ?? 0, 1_700_000_000.123, accuracy: 0.001)
-        XCTAssertNil(DevTextTools.timestamp(from: "12345"))
-        XCTAssertNil(DevTextTools.timestamp(from: "17000000x0"))
-        XCTAssertNil(DevTextTools.timestamp(from: "١٧٠٠٠٠٠٠٠٠"), "Only ASCII digits")
-        XCTAssertEqual(DevTextTools.iso8601(Date(timeIntervalSince1970: 0)), "1970-01-01T00:00:00Z")
-        XCTAssertEqual(DevTextTools.unixSeconds(Date(timeIntervalSince1970: 1_700_000_000.9)), "1700000000")
     }
 
     // MARK: - Tweaks (in-memory store only)
