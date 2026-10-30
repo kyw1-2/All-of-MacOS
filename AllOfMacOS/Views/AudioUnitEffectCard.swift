@@ -87,7 +87,6 @@ struct AudioUnitEffectCard: View {
             .frame(maxWidth: AOMSize.tileMin)
             .accessibilityLabel("Audio Unit effect for every output")
             Button("Edit…") { AudioUnitEffectEditor.shared.show() }
-                .controlSize(.small)
                 .disabled(selection.isEmpty)
                 .help("Open the effect's controls; the settings apply to every output when the window closes")
         }

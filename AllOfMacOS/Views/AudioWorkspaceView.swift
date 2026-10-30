@@ -134,7 +134,6 @@ struct AudioWorkspaceView: View {
         return AOMSectionCard("Applications", symbol: "square.grid.2x2", detail: total > 0 ? "\(total)" : nil, contentPadding: 0,
                               accessory: {
             Button { pickAndAddApplication() } label: { Label("Add…", systemImage: "plus") }
-                .controlSize(.small)
                 .help("Choose an application to add to your favorites")
         }) {
             if !service.isSupported {
@@ -170,8 +169,8 @@ struct AudioWorkspaceView: View {
                     .aomSectionCaps()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AOMSpace.rowInset)
-                    .padding(.top, AOMSpace.x2)
-                    .padding(.bottom, AOMSpace.x0_5)
+                    .padding(.top, AOMSpace.x3)
+                    .padding(.bottom, AOMSpace.x1)
                     .accessibilityAddTraits(.isHeader)
             }
             ForEach(rows) { app in
@@ -181,11 +180,10 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    /// The card's empty states: the compact empty state, as on Clipboard and Insights.
+    /// The card's empty states: one leading row inside the card (design-336 b.9).
     private func emptyState<Actions: View>(_ title: String, symbol: String, message: String,
                                            @ViewBuilder actions: () -> Actions = { EmptyView() }) -> some View {
-        AOMCompactEmptyState(title, systemImage: symbol, message: message, centered: true, actions: actions)
-            .padding(.vertical, AOMSpace.x2)
+        AOMCardEmptyRow(title, detail: message, systemImage: symbol, action: actions)
     }
 
     private func pickAndAddApplication() {
@@ -212,8 +210,8 @@ private enum AudioRowMetrics {
     static let buttonWidth = AOMIcon.hitArea
     static let buttonHeight: CGFloat = 22
     /// A row's volume slider grows between these widths.
-    static let sliderMinWidth: CGFloat = 110
-    static let sliderMaxWidth: CGFloat = 220
+    static let sliderMinWidth: CGFloat = 140
+    static let sliderMaxWidth: CGFloat = 260
     /// Output and Input share one title width, so their device pickers line up.
     static let deviceTitleWidth = AOMSpace.x12
     /// An app's name column never narrows below this.
@@ -227,17 +225,17 @@ private enum AudioRowMetrics {
 }
 
 private extension View {
-    /// One device or app row: row insets, 4 pt above and below (3.3.5, was
-    /// 8), at least one standard row tall.
+    /// One device or app row: row insets, 8 pt above and below, at least one
+    /// standard row tall (3.3.5 had 4 pt).
     func audioRowPadding() -> some View {
         padding(.horizontal, AOMSpace.rowInset)
-            .padding(.vertical, AOMSpace.x1)
+            .padding(.vertical, AOMSpace.x2)
             .frame(minHeight: AOMSize.rowStandard)
     }
 
     /// A row's volume slider.
     func audioRowSlider() -> some View {
-        controlSize(.small)
+        controlSize(.regular)
             .frame(minWidth: AudioRowMetrics.sliderMinWidth, maxWidth: AudioRowMetrics.sliderMaxWidth)
     }
 }
@@ -339,7 +337,6 @@ private struct OutputDeviceRow: View {
                     ForEach(devices) { Text($0.name).tag($0.uid) }
                 }
                 .labelsHidden()
-                .controlSize(.small)
                 .fixedSize()
             }
             Spacer(minLength: AOMSpace.x2)
@@ -495,7 +492,7 @@ private struct InputDeviceRow: View {
                     set: { uid in AudioOutputService.selectInput(uid: uid); refresh() })) {
                     ForEach(devices) { Text($0.name).tag($0.uid) }
                 }
-                .labelsHidden().controlSize(.small).fixedSize()
+                .labelsHidden().fixedSize()
             }
             Spacer(minLength: AOMSpace.x2)
             MuteButton(symbol: isMuted ? "mic.slash.fill" : "mic.fill", muted: isMuted) {
