@@ -15,8 +15,11 @@ import SwiftUI
 // MARK: - Feature sizes
 
 enum AOMFeatureSize {
-    /// Filter chips: the same height as the `AOMScopeBar` chips.
-    static let chip: CGFloat = 26
+    /// Filter chips (3.3.5: 26 → 22, one small control high).
+    static let chip: CGFloat = 22
+    /// `AOMCompactEmptyState`: its glyph and the width its message wraps at.
+    static let emptyGlyph: CGFloat = 24
+    static let emptyMessageWidth: CGFloat = 340
     /// Pinboard and filter dots inside chips.
     static let chipDot: CGFloat = 7
     /// App icons inside chips.
@@ -28,16 +31,16 @@ enum AOMFeatureSize {
     /// The outline that marks the selected swatch.
     static let swatchRing: CGFloat = 2
     /// Usage bars in lists (Insights › Most used).
-    static let meter: CGFloat = 6
+    static let meter: CGFloat = 4
     /// A preview pane beside a list (Clipboard): shown from this page width,
     /// sized 42% of it within this range.
     static let previewPaneMinimumWidth: CGFloat = 640
     static let previewPane: ClosedRange<CGFloat> = 300...420
     static let previewPaneShare: CGFloat = 0.42
     /// The picture area of a gallery card (Clipboard › Gallery).
-    static let galleryPreview: CGFloat = 144
+    static let galleryPreview: CGFloat = 112
     /// Finder file icons in previews and cards.
-    static let fileIcon: CGFloat = 48
+    static let fileIcon: CGFloat = 40
     static let fileIconLarge: CGFloat = 64
     /// Fixed-width sheets: a name and a colour; a short text or form.
     static let sheetCompact: CGFloat = 380
@@ -104,7 +107,7 @@ enum AOMFeatureSize {
     static let historySearchField: CGFloat = 190
     static let historyFilterStrip: CGFloat = 470
     /// The ⌘K palette's height (the width is `AOMSize.paletteWidth`).
-    static let paletteHeight: CGFloat = 460
+    static let paletteHeight: CGFloat = 420
     /// The window switcher's thumbnails.
     static let switcherThumbnail = CGSize(width: 176, height: 112)
     /// The Copy Text HUD.
@@ -118,11 +121,11 @@ enum AOMFeatureSize {
     static let windowPickerMin = CGSize(width: 520, height: 360)
     static let windowPickerThumbnail: CGFloat = 96
     /// The welcome overlay.
-    static let welcomeWidth: CGFloat = 560
+    static let welcomeWidth: CGFloat = 500
     /// Capture's mode buttons (Area, Window, Record…) in the launchpad grid.
-    static let modeButtonMin: CGFloat = 108
+    static let modeButtonMin: CGFloat = 96
     /// Small round badges on a capture thumbnail (Video, Pinned).
-    static let thumbnailBadge: CGFloat = 20
+    static let thumbnailBadge: CGFloat = 16
 }
 
 // MARK: - Feature colours
@@ -252,6 +255,121 @@ struct AOMFilterChip: View {
         .aomAnimation(.quick, value: selected)
         .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+// MARK: - Compact empty state
+
+/// A small empty state for page content (3.3.5): a 24 pt glyph, a 13 pt title,
+/// one line or two of message and small buttons, placed near the top of the
+/// space instead of centred in it. `ContentUnavailableView` draws a ~40 pt
+/// glyph and title-size text that ignore the page's type scale.
+struct AOMCompactEmptyState<Actions: View>: View {
+    let title: String
+    let systemImage: String
+    let message: String
+    /// Centre in the available space (narrow columns, sheets) instead of
+    /// sitting a short way below the top edge.
+    var centered = false
+    @ViewBuilder var actions: Actions
+
+    init(_ title: String, systemImage: String, message: String, centered: Bool = false,
+         @ViewBuilder actions: () -> Actions = { EmptyView() }) {
+        self.title = title
+        self.systemImage = systemImage
+        self.message = message
+        self.centered = centered
+        self.actions = actions()
+    }
+
+    var body: some View {
+        VStack(spacing: AOMSpace.x2) {
+            Image(systemName: systemImage)
+                .font(.system(size: AOMFeatureSize.emptyGlyph, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(AOMColor.textTertiary)
+                .accessibilityHidden(true)
+            VStack(spacing: AOMSpace.x0_5) {
+                Text(title)
+                    .font(AOMFont.bodyEmphasis)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
+                Text(message)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: AOMFeatureSize.emptyMessageWidth)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AOMSpace.x2) { actions }
+                VStack(spacing: AOMSpace.x1) { actions }
+            }
+            .controlSize(.small)
+        }
+        .padding(AOMSpace.x4)
+        .padding(.top, centered ? 0 : AOMSpace.x8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: centered ? .center : .top)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+// MARK: - Inline setting row
+
+/// A setting row whose description sits beside the title when both fit
+/// (3.3.5), and under it only when they don't: the Settings pane rows'
+/// layout, for panes with many described rows (Shortcuts, Permissions).
+/// Geometry matches `AOMSettingRow` (symbol column, insets, top divider).
+struct AOMInlineSettingRow<Control: View>: View {
+    let title: String
+    var detail: String
+    var symbol: String?
+    @ViewBuilder var control: Control
+
+    init(_ title: String, detail: String, symbol: String? = nil, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+        self.control = control()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: AOMSpace.x2) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .frame(width: AOMIcon.row)
+                    .accessibilityHidden(true)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                    Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text)
+                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                }
+                .lineLimit(1)
+                .fixedSize()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(AOMFont.body).foregroundStyle(AOMColor.text).lineLimit(1)
+                    Text(detail).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
+            }
+            .layoutPriority(1)
+            Spacer(minLength: AOMSpace.x3)
+            control
+                .labelsHidden()
+                .fixedSize()
+        }
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x1)
+        .frame(minHeight: AOMSize.rowStandard)
+        .overlay(alignment: .top) {
+            AOMRowDivider(inset: symbol == nil ? AOMSpace.rowInset : AOMSpace.rowSymbolInset)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
     }
 }
 
