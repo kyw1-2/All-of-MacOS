@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.7
+
+A two-finger swipe up on a title bar now always maximizes, from any half, quarter, third or sixth, and no title-bar gesture snaps to the top or bottom half any more. See docs/window-snap-3.3.7.md for the full gesture table, checked against the Swish 1.13.3 analysis.
+
 ## Version 3.3.6
 
 Every page is redesigned on Apple's design guidance (docs/design-3.3.6.md, 95 references): macOS text styles with a 13 pt body, regular controls, the system sidebar and toolbar title, and a Workspace with module tiles, quick-action tiles and an overview of recent activity, today's actions and this Mac. System Tools drops the text and developer tools and grows to 104 tools in 13 groups, adding display, sound, battery, apps and processes, disk and Time Machine, network and system info tools (docs/system-tools-3.3.6.md).

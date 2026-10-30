@@ -1,3 +1,16 @@
+## 3.3.7 (2026-10-30)
+
+Title-bar gestures rebuilt on the user's two rules, checked against DeepSeek's static analysis of Swish 1.13.3 (Oracle report swish-1.13.3-rea-20261027) and the Swish 1.13.2 help strings. docs/window-snap-3.3.7.md has the full gesture table and what matches Swish or differs on purpose. Nothing was tried on a real trackpad.
+
+Tests: only the new class and the classes whose expectations changed were run: N337SwishUpMaximizeTests (13 new), N334SwipeUpMaximizeTests, N335SwishParityTests, TitleBarSnapTests, SwishSnapGridTests, ReviewFixes332Tests: 154 tests, 0 failures.
+
+### Swish title bar (new defaults)
+
+- A plain two-finger swipe up always maximizes: from a free or centred window, a half, any quarter (bottom-right ↑ is maximize, no longer top-right), a third, a sixth or a ninth, at any length, also as a later motion in the same touch. A maximized window stays maximized. ⇧ ↑ still almost-maximizes.
+- No title-bar gesture snaps to the top or bottom half: the double swipes (in one touch and within 0.5 s), their "↑↑/↓↓" tooltips, top half ↓, a bottom quarter ↓ and a bottom sixth ↓ growing into a half are gone; those swipes down put the window back to its size from before the snap.
+- Top quarters come from ↖ ↗ diagonals or L-shapes. The upper sixths (3 × 2) and upper and middle ninths (3 × 3) are no longer reached by a swipe.
+- Unchanged: sideways halves and thirds, ↓ from a half to its bottom quarter, ↓ from a top quarter to the bottom quarter, your Down action (Center), modifiers, tap and hold, pinches, double tap, multi-motion. The top and bottom half layouts stay for presets, menus, actions and snap zones.
+
 ## 3.3.6 (2026-10-30)
 
 An Apple-style redesign of every page, built on a spec with 95 references from the Human Interface Guidelines, WWDC sessions, Apple sample code and Apple's own Mac apps (docs/design-3.3.6.md). System Tools drops Text & Developer and grows to 104 tools in 13 groups (docs/system-tools-3.3.6.md). The toggles and system-changing tools were not run against the real system.
