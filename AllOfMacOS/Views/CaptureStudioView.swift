@@ -175,7 +175,9 @@ struct CaptureStudioView: View {
     /// Every capture mode one click away, in CleanShot's order, the way the
     /// system screenshot toolbar lays them out: glyph, name, shortcut.
     private var captureLaunchpad: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMFeatureSize.modeButtonMin), spacing: AOMSpace.x1)], spacing: AOMSpace.x1) {
+        // One row of equal tools (3.3.5): an adaptive grid left a ragged gap
+        // after QR Code; narrow windows show the glyphs alone (AOMModeButton).
+        HStack(spacing: AOMSpace.x0_5) {
             AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne), compact: true) {
                 CaptureCoordinator.shared.captureAllInOne()
             }
@@ -280,9 +282,9 @@ struct CaptureStudioView: View {
             if filteredEntries.isEmpty {
                 // An empty history says so whatever the filter; a filter with
                 // nothing in it names the filter.
-                AOMEmptyState(history.entries.isEmpty || selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
-                              systemImage: "camera.badge.ellipsis",
-                              message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
+                AOMCompactEmptyState(history.entries.isEmpty || selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
+                                     systemImage: "camera.badge.ellipsis",
+                                     message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
                     Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
                         .buttonStyle(.borderedProminent)
                 }
@@ -291,8 +293,8 @@ struct CaptureStudioView: View {
                 // Wide enough that the title and the time share one line.
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
                                                        maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
-                                             spacing: AOMSpace.m)],
-                          spacing: AOMSpace.m) {
+                                             spacing: AOMSpace.x2)],
+                          spacing: AOMSpace.x2) {
                     ForEach(filteredEntries) { entry in
                         CaptureCard(
                             entry: entry,
@@ -324,7 +326,7 @@ struct CaptureStudioView: View {
                     .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, AOMSpace.x2)
+                    .padding(.top, AOMSpace.x1)
             }
         }
     }
@@ -361,7 +363,7 @@ private struct CaptureCard: View {
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .padding(AOMSpace.x2)
+                    .padding(AOMSpace.x1)
             }
             .aspectRatio(16 / 10, contentMode: .fit)
             .overlay(alignment: .topLeading) {
@@ -369,7 +371,7 @@ private struct CaptureCard: View {
                     if entry.kind == .videoRecording { badge("Video", "play.fill", AOMColor.recording) }
                     if entry.isPinned { badge("Pinned", "pin.fill", AOMColor.warning) }
                 }
-                .padding(AOMSpace.x2)
+                .padding(AOMSpace.x1)
             }
             .overlay(alignment: .bottom) {
                 if isHovered {
@@ -381,11 +383,11 @@ private struct CaptureCard: View {
                         Spacer(minLength: 0)
                         hoverButton("trash", "Remove from History", role: .destructive, action: onDelete)
                     }
-                    .padding(AOMSpace.x2)
+                    .padding(AOMSpace.x1)
                     .transition(.opacity)
                 }
             }
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMRadius.card, topTrailingRadius: AOMRadius.card,
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMRadius.well, topTrailingRadius: AOMRadius.well,
                                               style: .continuous))
             .onTapGesture(count: 2, perform: onAnnotate)
             .onDrag { CaptureItemActions.dragProvider(entry) }
@@ -394,7 +396,7 @@ private struct CaptureCard: View {
             // The kind and pixel size are in the tooltip and the VoiceOver label.
             HStack(spacing: AOMSpace.x2) {
                 Text(entry.displayName)
-                    .font(AOMFont.bodyEmphasis)
+                    .font(AOMFont.callout.weight(.medium))
                     .foregroundStyle(AOMColor.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -415,13 +417,14 @@ private struct CaptureCard: View {
                     Button("Remove from History", role: .destructive, action: onDelete)
                 } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .tint(AOMColor.textSecondary)
                 .accessibilityLabel("Actions for \(entry.displayName)")
             }
-            .padding(.horizontal, AOMSpace.x3)
-            .frame(height: AOMSize.rowStandard)
+            .padding(.horizontal, AOMSpace.x2)
+            .frame(height: AOMSize.rowDense)
         }
         // Hover shifts the fill only; cards never lift or outline (c.6).
-        .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered)
+        .aomCardStyle(.paper, radius: AOMRadius.well, padding: 0, hovering: isHovered)
         .aomAnimation(.quick, value: isHovered)
         .help(details)
         .contextMenu {
@@ -481,12 +484,13 @@ private struct CaptureCard: View {
 /// Gallery sizes the shared scale has no token for.
 private enum CaptureGalleryMetrics {
     /// The thumbnail column minimum at the small, medium and large sizes
-    /// (medium is a Workspace tile).
-    static let columnMinimum: [CGFloat] = [168, AOMSize.tileMin, 300]
+    /// (3.3.5: 168 / 220 / 300 → 128 / 164 / 240, so a 1320 pt window shows
+    /// six medium thumbnails a row instead of four).
+    static let columnMinimum: [CGFloat] = [128, 164, 240]
     /// How far a column may grow past its minimum before another one fits.
-    static let columnStretch: CGFloat = 1.6
+    static let columnStretch: CGFloat = 1.5
     /// The empty gallery keeps the page from collapsing under the strip.
-    static let emptyMinHeight: CGFloat = 320
+    static let emptyMinHeight: CGFloat = 180
 }
 
 // MARK: - Settings sheet
@@ -519,7 +523,7 @@ struct ModuleSettingsSheet<Content: View>: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, AOMSpace.x4)
-            .padding(.vertical, AOMSpace.x3)
+            .padding(.vertical, AOMSpace.x2)
             AOMDivider()
             content
         }
