@@ -706,6 +706,10 @@ final class TitleBarSnapTests: XCTestCase {
 
     func testMovingToANewZoneKeepsTheGestureAlive() {
         let recognizer = Self.stateMachineRecognizer()
+        // One gesture held across zones. With 3.3.3's multi-motion pause on
+        // (0.25 s), a 1 s rest locks the swipe and the next move starts a
+        // second gesture instead (SwishTitleBar333Tests covers that).
+        recognizer.motionPause = 0
         let events = observe(recognizer)
         recognizer.feed(contacts: pair(0.40, 0.50), timestamp: 0)
         recognizer.feed(contacts: pair(0.50, 0.50), timestamp: 0.1)
