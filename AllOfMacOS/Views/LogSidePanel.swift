@@ -14,26 +14,27 @@ struct LogSidePanel: View {
             // Header
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "terminal.fill")
-                    .font(AOMFont.caption)
+                    .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text("Console")
-                    .font(AOMFont.caption.weight(.semibold))
+                    .font(AOMFont.callout.weight(.semibold))
                     .foregroundStyle(AOMColor.text)
                 Spacer()
                 Button(action: { GestureLog.shared.entries.removeAll() }) {
                     Image(systemName: "trash")
-                        .font(AOMFont.caption)
+                        .font(AOMFont.callout)
                         .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("Clear the console")
                 .accessibilityLabel("Clear console")
             }
-            .padding(.horizontal, AOMSpace.rowInset)
-            .padding(.vertical, AOMSpace.x1)
+            .padding(.leading, AOMSpace.rowInset)
+            .padding(.trailing, AOMSpace.x1)
+            .padding(.vertical, AOMSpace.x0_5)
             .background(AOMColor.surface)
 
             AOMDivider()
@@ -99,7 +100,7 @@ private struct LogEntryRow: View {
                 .textSelection(.enabled)
         }
         .font(AOMFont.mono)
-        .padding(.horizontal, AOMSpace.x2)
+        .padding(.horizontal, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x0_5)
         .background(
             entry.level == .fire

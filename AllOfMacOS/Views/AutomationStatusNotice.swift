@@ -24,13 +24,13 @@ struct AutomationStatusNotice: View {
                           detail: cut.map { String(sentence[$0.upperBound...]) }) {
                     Button("Allow…") { _ = permission.openSettings() }
                 }
-                .padding([.horizontal, .top], AOMSpace.x2)
+                .padding([.horizontal, .top], AOMSpace.x3)
             } else if !appState.globalEnabled || suppressionPaused {
                 AOMNotice(.info, "AOM is paused, so automations don't run.",
                           detail: suppressionPaused ? suppressionDetail : nil) {
                     Button("Resume", action: resume)
                 }
-                .padding([.horizontal, .top], AOMSpace.x2)
+                .padding([.horizontal, .top], AOMSpace.x3)
             }
         }
         .task {

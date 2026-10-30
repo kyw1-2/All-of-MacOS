@@ -14,7 +14,7 @@ struct DiagnosticDrawerView: View {
             // Header
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: "terminal.fill")
-                    .font(AOMFont.caption)
+                    .font(AOMFont.body)
                     .foregroundStyle(AOMColor.textSecondary)
                     .accessibilityHidden(true)
                 Text("Diagnostics")
@@ -27,9 +27,9 @@ struct DiagnosticDrawerView: View {
                     openDetachedWindow()
                 } label: {
                     Image(systemName: "arrow.up.forward.square")
-                        .font(AOMFont.callout)
+                        .font(AOMFont.body)
                         .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -43,9 +43,9 @@ struct DiagnosticDrawerView: View {
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(AOMFont.caption.weight(.semibold))
+                        .font(AOMFont.callout.weight(.semibold))
                         .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.row, height: AOMIcon.row)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -67,16 +67,16 @@ struct DiagnosticDrawerView: View {
                 VStack(spacing: AOMSpace.x1) {
                     HStack {
                         Image(systemName: "hand.point.up.braille.fill")
-                            .font(AOMFont.badge)
+                            .font(AOMFont.callout)
                             .foregroundStyle(AOMColor.textSecondary)
                             .accessibilityHidden(true)
                         Text("Live Touch Visualizer")
-                            .font(AOMFont.caption.weight(.medium))
+                            .font(AOMFont.callout.weight(.medium))
                             .foregroundStyle(AOMColor.textSecondary)
                         Spacer()
                     }
-                    .padding(.horizontal, AOMSpace.x2)
-                    .padding(.top, AOMSpace.x1 + AOMSpace.x0_5)
+                    .padding(.horizontal, AOMSpace.rowInset)
+                    .padding(.top, AOMSpace.x2)
 
                     LiveTouchView()
                         .frame(maxWidth: .infinity)
@@ -142,7 +142,7 @@ private struct DetachedDiagnosticsView: View {
             VStack(spacing: AOMSpace.x1) {
                 HStack {
                     Text("Live Touch Visualizer")
-                        .font(AOMFont.caption.weight(.medium))
+                        .font(AOMFont.callout.weight(.medium))
                         .foregroundStyle(AOMColor.textSecondary)
                     Spacer()
                 }
