@@ -1254,9 +1254,10 @@ private struct AnnotationEditorView: View {
             .background(Color(nsColor: .underPageBackgroundColor))
             .overlay(alignment: .bottom) {
                 if let status {
-                    Text(status).font(.caption)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: Capsule()).padding(.bottom, 12)
+                    // A message over the canvas: the opaque capsule, not a material (c.4).
+                    Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.text)
+                        .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5).padding(.vertical, AOMSpace.x1 + 1)
+                        .aomInPanelCapsule().padding(.bottom, AOMSpace.x3)
                         .allowsHitTesting(false)
                 }
             }
