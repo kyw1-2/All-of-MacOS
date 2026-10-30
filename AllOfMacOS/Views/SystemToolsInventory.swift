@@ -1,16 +1,19 @@
 import Foundation
 
 /// The System Tools page's tools by group, for places that report what the
-/// page offers without building it (the Workspace tile). The ids and groups
-/// follow `SystemToolsView.groups`; keep the two in step when a tool is added
-/// or removed.
+/// page offers without building it (the Workspace tile). Derived from
+/// `SystemToolCatalog`, the list the page itself draws, so the two can't
+/// drift apart.
 enum SystemToolsInventory {
-    static let groups: [(name: String, toolIDs: [String])] = [
-        ("Finder & Network", ["hidden", "desktop", "finder", "dns"]),
-        ("PDF & Media", ["pdfmerge", "pdfcompress", "imageconvert", "videoconvert", "qr"]),
-        ("Cleanup", ["cache", "dsstore", "trash"])
-    ]
+    static var groups: [(name: String, toolIDs: [String])] {
+        SystemToolGroup.allCases.map { group in
+            (group.name, SystemToolCatalog.tools(in: group).map(\.id.rawValue))
+        }.filter { !$0.toolIDs.isEmpty }
+    }
 
     /// Counted the way the page header counts: every tool in every group.
-    static var count: Int { groups.reduce(0) { $0 + $1.toolIDs.count } }
+    static var count: Int { SystemToolCatalog.all.count }
+
+    /// A one-line summary for the Workspace tile.
+    static let subtitle = "Toggles, power, Finder & Dock, cleanup, files, text and network"
 }
