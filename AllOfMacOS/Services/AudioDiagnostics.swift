@@ -46,14 +46,70 @@ enum AudioDiagnostics {
     }
 }
 
-/// What the event log records (3.3.3, A03).
+/// What the event log records (3.3.3, A03). New kinds go at the end: the raw
+/// values are what the realtime rings carry.
 enum AudioEventKind: UInt64, CaseIterable {
     case cycleGap = 1, trim, underrun, clear, dropped, limiterEngaged, limiterReleased, overload,
          reconfiguration, bufferSize, formatNotice, outputStarted, outputStopped, outputFailed,
          defaultOutputChanged, deviceListChanged, tapAttached, tapDetached, tapRewrite, outputMoved,
-         handover, mixLate, countersReset, effectChanged
+         handover, mixLate, countersReset, effectChanged,
+         // 3.3.4 (N334): a network bus's leveler took more than 1 dB, and let go.
+         levelerEngaged, levelerReleased
 
     var name: String { String(describing: self) }
+
+    /// The limiter's and the leveler's episodes (their `extra` is an `AudioDynamicsReading`).
+    var isDynamics: Bool { self == .limiterEngaged || self == .limiterReleased || self == .levelerEngaged || self == .levelerReleased }
+}
+
+/// 3.3.4 (N334): what a limiter or leveler event carries besides its
+/// reduction, packed into the ring record's existing `extra` word (the ring
+/// layout is unchanged), so the next crackle can be told apart: hot sources
+/// (the apps' sum is already over), Magic Boost lifting transients (the sum
+/// is low, the stage's input high), or the other stage at work.
+///   bits  0–21  episode length, ms (release events; saturates at about 70 min)
+///   bits 22–35  the stage's input peak (true peak on a network bus), centi-dB above −100 dBFS; 0: none
+///   bits 36–49  the apps' summed peak before output Magic Boost, centi-dB above −100 dBFS; 0: none
+///   bits 50–63  the other stage's reduction, centi-dB (a limiter event: the leveler's; a leveler event: the limiter's)
+/// A release event carries the readings of the episode's deepest moment.
+struct AudioDynamicsReading: Equatable {
+    /// Linear peaks (0: silence or none) and the other stage's gain (1: none).
+    var inputPeak: Float = 0
+    var sumPeak: Float = 0
+    var otherGain: Float = 1
+
+    static let durationMask: UInt64 = (1 << 22) - 1
+    static let fieldMask: UInt64 = (1 << 14) - 1
+
+    /// Render thread safe: arithmetic and `log10` only.
+    func packed(durationMS: UInt64 = 0) -> UInt64 {
+        func peak(_ value: Float) -> UInt64 {
+            guard value > 0, value.isFinite else { return 0 }
+            let field = ((20 * log10(Double(value)) + 100) * 100).rounded()
+            return UInt64(min(Double(Self.fieldMask), max(1, field)))
+        }
+        let reduction: UInt64
+        if otherGain > 0, otherGain < 1 {
+            reduction = UInt64(min(Double(Self.fieldMask), max(0, (-20 * log10(Double(otherGain)) * 100).rounded())))
+        } else {
+            reduction = otherGain >= 1 ? 0 : Self.fieldMask
+        }
+        return min(durationMS, Self.durationMask) | peak(inputPeak) << 22 | peak(sumPeak) << 36 | reduction << 50
+    }
+
+    /// Decoded (control thread): dB values; nil where there was no reading.
+    struct Decoded: Equatable {
+        var durationMS: Int
+        var inputPeakDB: Double?
+        var sumPeakDB: Double?
+        var otherReductionDB: Double
+    }
+
+    static func decode(_ extra: UInt64) -> Decoded {
+        func peak(_ field: UInt64) -> Double? { field == 0 ? nil : Double(field) / 100 - 100 }
+        return Decoded(durationMS: Int(extra & durationMask), inputPeakDB: peak((extra >> 22) & fieldMask),
+                       sumPeakDB: peak((extra >> 36) & fieldMask), otherReductionDB: Double((extra >> 50) & fieldMask) / 100)
+    }
 }
 
 /// Lock-free single-producer ring for a realtime thread (3.3.3, A03): fixed
@@ -131,7 +187,9 @@ final class AudioEventRing {
 }
 
 /// The audio event log (3.3.3, A03): the last 200 events with wall-clock
-/// time — cycle gaps, trims, underruns, clears, limiter engagement, overload
+/// time — cycle gaps, trims, underruns, clears, limiter engagement (3.3.4:
+/// and a network bus's leveler, each with its input peak, the apps' summed
+/// peak and the other stage's reduction), overload
 /// notices, reconfigurations, IO-size and route or device changes, tap
 /// attach, detach and rewrites, output moves — for audio-health.json. Built
 /// off the realtime threads: realtime code pushes into its own
@@ -152,10 +210,12 @@ final class AudioEventLog {
         var time: Date
         var kind: AudioEventKind
         var source: String
-        /// Frames for gaps, trims, clears and drops; centi-dB for the
-        /// limiter; microseconds for a late mix wake-up; else a count.
+        /// Frames for gaps, trims, clears and drops; centi-dB for the limiter
+        /// and the leveler; microseconds for a late mix wake-up; else a count.
         var value: Int64 = 0
         var detail: String = ""
+        /// 3.3.4: the limiter's and the leveler's `AudioDynamicsReading` (packed).
+        var extra: UInt64 = 0
 
         private static let formatter: ISO8601DateFormatter = {
             let formatter = ISO8601DateFormatter()
@@ -170,7 +230,15 @@ final class AudioEventLog {
             var result: [String: Any] = ["time": Self.timeString(time), "kind": kind.name, "source": source]
             switch kind {
             case .cycleGap, .trim, .clear, .dropped, .bufferSize: result["frames"] = value
-            case .limiterEngaged, .limiterReleased: result["reductionDB"] = Double(value) / 100
+            case .limiterEngaged, .limiterReleased, .levelerEngaged, .levelerReleased:
+                result["reductionDB"] = Double(value) / 100
+                let reading = AudioDynamicsReading.decode(extra)
+                if let peak = reading.inputPeakDB { result["inputPeakDBFS"] = peak }
+                if let sum = reading.sumPeakDB { result["appsPeakDBFS"] = sum }
+                if extra >> 22 != 0 {
+                    result[kind == .limiterEngaged || kind == .limiterReleased ? "levelerDB" : "limiterDB"] = reading.otherReductionDB
+                }
+                if kind == .limiterReleased || kind == .levelerReleased { result["durationMS"] = reading.durationMS }
             case .mixLate: result["lateMS"] = Double(value) / 1000
             default: if value != 0 { result["value"] = value }
             }
@@ -293,11 +361,30 @@ final class AudioEventLog {
         var event = Event(time: time, kind: kind, source: source, value: Int64(clamping: value))
         switch kind {
         case .cycleGap: event.detail = "device sample time \(extra)"
-        case .limiterReleased: event.detail = "engaged for \(extra) ms"
+        case .limiterEngaged, .limiterReleased, .levelerEngaged, .levelerReleased:
+            event.extra = extra
+            event.detail = dynamicsDetail(kind: kind, extra: extra)
         case .handover: event.detail = extra == 1 ? "the old output had stopped (took over)" : "after the old output's fade-out"
         default: break
         }
         return event
+    }
+
+    /// "engaged for 2190 ms; at its deepest: input peak +4.6 dBFS, leveler 0.0 dB, apps' sum −5.4 dBFS".
+    static func dynamicsDetail(kind: AudioEventKind, extra: UInt64) -> String {
+        let reading = AudioDynamicsReading.decode(extra)
+        let released = kind == .limiterReleased || kind == .levelerReleased
+        var parts: [String] = []
+        if let peak = reading.inputPeakDB { parts.append(String(format: "input peak %+.1f dBFS", peak)) }
+        if extra >> 22 != 0 {
+            let other = kind == .limiterEngaged || kind == .limiterReleased ? "leveler" : "limiter"
+            parts.append(String(format: "%@ %.1f dB", other, reading.otherReductionDB))
+        }
+        if let sum = reading.sumPeakDB { parts.append(String(format: "apps' sum %+.1f dBFS", sum)) }
+        let readings = parts.joined(separator: ", ")
+        guard released else { return readings }
+        let length = "engaged for \(reading.durationMS) ms"
+        return readings.isEmpty ? length : "\(length); at its deepest: \(readings)"
     }
 
     /// Under the lock.

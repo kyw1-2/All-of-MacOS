@@ -34,9 +34,10 @@ final class AirPlayOutputRenderer {
     let deviceID: AudioDeviceID
     /// −1 dBTP: the receiver decodes a lossy stream, whose overshoot would
     /// clip a mix limited to −0.2 dB sample peak (3.3.2 audit), released
-    /// slowly enough not to modulate bass (`networkRelease`).
-    let bus = AppAudioRenderBus(ceiling: AppAudioRenderBus.networkCeiling, truePeak: true,
-                                releaseSeconds: AppAudioRenderBus.networkRelease)
+    /// slowly enough not to modulate bass (`networkRelease`). 3.3.4 (N334):
+    /// levelled first (`AppAudioRenderBus.network()`), so the 1.3 ms
+    /// limiter no longer takes several dB off transients Magic Boost lifted.
+    let bus = AppAudioRenderBus.network()
     // Replacements of one device share a disposal/start barrier; unrelated
     // receivers must never wait behind its potentially blocking HAL lifecycle.
     private let queue: DispatchQueue
@@ -103,6 +104,7 @@ final class AirPlayOutputRenderer {
         result["output.ignoredFormatNotices"] = ignoredFormatNotices.load()
         result["output.processorOverloads"] = processorOverloads.load()
         result["output.limiterEngagements"] = bus.limiterEngagements.load()
+        result["output.levelerEngagements"] = bus.levelerEngagements.load()
         if let mixer { result["output.mixLateWakes"] = mixer.timeline.lateWakes.load() }
         return result
     }

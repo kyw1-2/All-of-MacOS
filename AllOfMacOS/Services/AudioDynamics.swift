@@ -91,6 +91,9 @@ final class AudioMagicBoost {
     static let kneeCeiling: Float = 200
     static let kneeAttackDrop: Float = 5
     static let makeup: Float = 1
+    /// 3.3.4 (N334): a block whose peak stays under this (−60 dBFS) releases
+    /// like digital silence (a hundredth of the rate), so noise is not lifted.
+    static let nearSilence: Float = 0.001
     /// SoundSource's output is a parallel blend: (dry + (gain - 0.15) * dry) / 2.
     static func outputGain(_ gain: Float) -> Float { makeup * (gain + 0.85) * 0.5 }
 
@@ -177,9 +180,16 @@ final class AudioMagicBoost {
         }
         // SoundSource releases a hundred times slower over digital silence so
         // the gain does not climb during a pause and blast the next sound.
+        // 3.3.4 (N334): so does AOM over near-silence, a block whose peak
+        // stays under −60 dBFS (`nearSilence`). Codec or room noise in a quiet
+        // passage is not digital zero, and the full release lifted it about
+        // +34 dB in 11 s: a hiss rising for ten seconds. Every block at or
+        // above −60 dBFS, and exact zeros, behave as before.
         adoptPreset()
         var silent = true
-        for frame in 0..<frames where left[frame] != 0 || right[frame] != 0 { silent = false; break }
+        for frame in 0..<frames where !(abs(left[frame]) < Self.nearSilence && abs(right[frame]) < Self.nearSilence) {
+            silent = false; break
+        }
         let release = releaseRate * rateScale * (silent ? 0.01 : 1)
         let attack = Self.attackRate * rateScale
         let capacity = Self.lookaheadFrames
@@ -284,6 +294,9 @@ final class AudioLookaheadLimiter {
     private(set) var reduction: Float = 1
     /// The deepest gain since the last `takeDeepestReduction` (render thread).
     private var deepest: Float = 1
+    /// 3.3.4 (N334): the largest detected input peak (true peak in true-peak
+    /// mode) since the last `takeLargestPeak`, for the event log.
+    private var largestPeak: Float = 0
 
     /// The lowest gain applied since the last call, then starts again (1:
     /// the limiter did nothing). Render thread; for the event log (3.3.3).
@@ -292,6 +305,17 @@ final class AudioLookaheadLimiter {
         deepest = 1
         return value
     }
+
+    /// The largest input peak the detector saw since the last call (linear;
+    /// 0 for silence), then starts again. Render thread; for the event log.
+    func takeLargestPeak() -> Float {
+        let value = largestPeak
+        largestPeak = 0
+        return value
+    }
+
+    /// Where reduction starts: the ceiling, less the true-peak margin.
+    var detectionThreshold: Float { detectionCeiling }
 
     /// Total delay from input to output, frames.
     var latencyFrames: Int { delayLength }
@@ -360,6 +384,7 @@ final class AudioLookaheadLimiter {
             // back, which the longer delay line accounts for.
             let peak = detector?.peak(inputLeft, inputRight, threshold: detectionCeiling)
                 ?? max(abs(inputLeft), abs(inputRight))
+            if peak > largestPeak { largestPeak = peak }
             let required = peak > detectionCeiling ? detectionCeiling / peak : 1
             // Push into the monotonic minimum deque; evict entries that are
             // no longer the minimum or have left the window.
@@ -412,6 +437,197 @@ final class AudioLookaheadLimiter {
             frame += 1
             if frame == Int.max / 2 {
                 // Re-base frame stamps rather than overflow after years of audio.
+                for i in 0..<dequeCount {
+                    let s = (dequeHead + i) % dequeCapacity
+                    dequeFrames[s] -= frame - window
+                }
+                frame = window
+            }
+        }
+    }
+}
+
+/// 3.3.4 (N334, AirPlay crackle): the leveler in front of a network bus's
+/// true-peak limiter.
+///
+/// Output Magic Boost lifts a quiet passage (gain 3–20) and, since its attack
+/// only acts on the samples above its threshold, a click, a plosive or a rim
+/// shot (well under a millisecond over it) passes with most of that gain. The
+/// network limiter then took 2–8 dB off each within its 1.3 ms lookahead (the
+/// live log's engagements: single transients, in runs) and modulated
+/// everything under it, heard as grit for as long as such a passage lasted.
+///
+/// The leveler takes those overs instead. It is the limiter's design over a
+/// 10 ms window instead of 1.3 ms: true-peak detection, the minimum required
+/// gain over the window smoothed by two moving averages that lie inside it
+/// (the gain is down before the peak is output), and a program-dependent
+/// release: a lone peak recovers over 0.5 s, a run of them over 1.5 s (a slow
+/// envelope follows the reduction over about 2 s and holds it, so a hot
+/// passage is levelled rather than pumped). Its target sits just under the
+/// limiter's detection threshold, which leaves the limiter to guard the
+/// ceiling. It never clamps; the limiter after it is the guarantee.
+/// Preallocated; no allocation, lock or object release per frame.
+final class AudioLookaheadLeveler {
+    static let lookaheadSeconds = 0.01
+    static let fastReleaseSeconds = 0.5
+    static let slowReleaseSeconds = 1.5
+    static let slowAttackSeconds = 2.0
+
+    let lookahead: Int
+    let target: Float
+    private let detector = AudioTruePeakDetector()
+    private let delayLength: Int
+    private let delay: UnsafeMutablePointer<Float>
+    private var delayIndex = 0
+    // Monotonic deque (minimum) of required gain over lookahead + 1 frames.
+    private let dequeValues: UnsafeMutablePointer<Float>
+    private let dequeFrames: UnsafeMutablePointer<Int>
+    private let dequeCapacity: Int
+    private var dequeHead = 0
+    private var dequeCount = 0
+    private var frame = 0
+    private let firstWidth: Int
+    private let secondWidth: Int
+    private let first: UnsafeMutablePointer<Float>
+    private let second: UnsafeMutablePointer<Float>
+    private var firstIndex = 0, secondIndex = 0
+    private var firstSum: Double, secondSum: Double
+    private let fastRelease: Float
+    private let slowRelease: Float
+    private let slowAttack: Float
+    /// The gain that follows each peak (released over 0.5 s) and the one that
+    /// follows the reduction itself (about 2 s down, 1.5 s back up); the
+    /// lower of the two is applied.
+    private var fast: Float = 1
+    private var slow: Float = 1
+    private(set) var reduction: Float = 1
+    private var deepest: Float = 1
+    private var largestPeak: Float = 0
+
+    /// Total delay from input to output, frames (10 ms and the detector's 32).
+    var latencyFrames: Int { delayLength }
+
+    init(sampleRate: Double, target: Float) {
+        let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : 48000
+        // Even, so the two averages together span exactly the window.
+        let frames = max(2, 2 * Int((rate * Self.lookaheadSeconds / 2).rounded()))
+        lookahead = frames
+        self.target = target.isFinite ? min(1, max(0.1, target)) : 0.85
+        delayLength = frames + AudioTruePeakDetector.delay
+        firstWidth = frames / 2 + 1
+        secondWidth = frames / 2 + 1
+        fastRelease = AudioLookaheadLimiter.releaseCoefficient(sampleRate: rate, seconds: Self.fastReleaseSeconds)
+        slowRelease = AudioLookaheadLimiter.releaseCoefficient(sampleRate: rate, seconds: Self.slowReleaseSeconds)
+        slowAttack = AudioLookaheadLimiter.releaseCoefficient(sampleRate: rate, seconds: Self.slowAttackSeconds)
+        delay = .allocate(capacity: delayLength * 2)
+        delay.initialize(repeating: 0, count: delayLength * 2)
+        dequeCapacity = frames + 2
+        dequeValues = .allocate(capacity: dequeCapacity)
+        dequeValues.initialize(repeating: 1, count: dequeCapacity)
+        dequeFrames = .allocate(capacity: dequeCapacity)
+        dequeFrames.initialize(repeating: 0, count: dequeCapacity)
+        first = .allocate(capacity: firstWidth)
+        first.initialize(repeating: 1, count: firstWidth)
+        second = .allocate(capacity: secondWidth)
+        second.initialize(repeating: 1, count: secondWidth)
+        firstSum = Double(firstWidth)
+        secondSum = Double(secondWidth)
+    }
+
+    deinit {
+        delay.deallocate(); dequeValues.deallocate(); dequeFrames.deallocate()
+        first.deallocate(); second.deallocate()
+    }
+
+    /// The lowest gain applied since the last call (1: none), then starts
+    /// again. Render thread; for the event log.
+    func takeDeepestReduction() -> Float {
+        let value = deepest
+        deepest = 1
+        return value
+    }
+
+    /// The largest input true peak since the last call (linear), then starts
+    /// again. Render thread; for the event log.
+    func takeLargestPeak() -> Float {
+        let value = largestPeak
+        largestPeak = 0
+        return value
+    }
+
+    func reset() {
+        memset(delay, 0, delayLength * 2 * MemoryLayout<Float>.size)
+        detector.reset()
+        delayIndex = 0; dequeHead = 0; dequeCount = 0; frame = 0
+        for i in 0..<firstWidth { first[i] = 1 }
+        for i in 0..<secondWidth { second[i] = 1 }
+        firstSum = Double(firstWidth); secondSum = Double(secondWidth)
+        firstIndex = 0; secondIndex = 0
+        fast = 1; slow = 1; reduction = 1
+    }
+
+    /// In place; `left` and `right` may alias for mono. Output lags input by `latencyFrames`.
+    func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) {
+        let window = lookahead + 1
+        for index in 0..<frames {
+            let inputLeft = left[index].isFinite ? max(-1e6, min(1e6, left[index])) : 0
+            let inputRight = right[index].isFinite ? max(-1e6, min(1e6, right[index])) : 0
+            // The estimate is for the frame `AudioTruePeakDetector.delay`
+            // frames back, which the longer delay line accounts for.
+            let peak = detector.peak(inputLeft, inputRight, threshold: target)
+            if peak > largestPeak { largestPeak = peak }
+            let required = peak > target ? target / peak : 1
+            while dequeCount > 0 {
+                let tail = (dequeHead + dequeCount - 1) % dequeCapacity
+                if dequeValues[tail] >= required { dequeCount -= 1 } else { break }
+            }
+            let slot = (dequeHead + dequeCount) % dequeCapacity
+            dequeValues[slot] = required; dequeFrames[slot] = frame
+            dequeCount += 1
+            while dequeCount > 0 && dequeFrames[dequeHead] <= frame - window {
+                dequeHead = (dequeHead + 1) % dequeCapacity; dequeCount -= 1
+            }
+            let minimum = dequeValues[dequeHead]
+            firstSum += Double(minimum - first[firstIndex])
+            first[firstIndex] = minimum
+            firstIndex += 1
+            if firstIndex == firstWidth {
+                firstIndex = 0
+                var sum = 0.0
+                for i in 0..<firstWidth { sum += Double(first[i]) }
+                firstSum = sum
+            }
+            let firstAverage = Float(firstSum / Double(firstWidth))
+            secondSum += Double(firstAverage - second[secondIndex])
+            second[secondIndex] = firstAverage
+            secondIndex += 1
+            if secondIndex == secondWidth {
+                secondIndex = 0
+                var sum = 0.0
+                for i in 0..<secondWidth { sum += Double(second[i]) }
+                secondSum = sum
+            }
+            let smoothed = min(1, Float(secondSum / Double(secondWidth)))
+            // Attack follows the smoothed curve exactly; each envelope
+            // releases on its own time, and the slow one only follows the
+            // fast one down slowly, so a lone peak hardly moves it.
+            if smoothed < fast { fast = smoothed }
+            else { fast = min(smoothed, fast + (smoothed - fast) * fastRelease) }
+            if fast < slow { slow += (fast - slow) * slowAttack }
+            else { slow = min(fast, slow + (fast - slow) * slowRelease) }
+            let gain = min(fast, slow)
+            reduction = gain
+            if gain < deepest { deepest = gain }
+            let delaySlot = delayIndex * 2
+            let outputLeft = delay[delaySlot] * gain
+            let outputRight = delay[delaySlot + 1] * gain
+            delay[delaySlot] = inputLeft; delay[delaySlot + 1] = inputRight
+            delayIndex += 1
+            if delayIndex == delayLength { delayIndex = 0 }
+            left[index] = outputLeft
+            right[index] = outputRight
+            frame += 1
+            if frame == Int.max / 2 {
                 for i in 0..<dequeCount {
                     let s = (dequeHead + i) % dequeCapacity
                     dequeFrames[s] -= frame - window

@@ -345,7 +345,8 @@ final class SharedOutputRenderer {
 /// AVAudioEngine graph. Removing a source fades it out over 5 ms and a sweep
 /// on main releases its closure later; `removeAll` is the teardown barrier.
 /// After summing, the output's Magic Boost and a transparent lookahead
-/// limiter process the mix, so boosted or summed apps never hard clip.
+/// limiter process the mix, so boosted or summed apps never hard clip. A
+/// network (AirPlay) bus levels the mix between the two (3.3.4, `network()`).
 final class AppAudioRenderBus {
     typealias Render = (Int, UnsafeMutablePointer<AudioBufferList>) -> Void
     static let ceiling: Float = 0.977 // -0.2 dBFS
@@ -357,6 +358,17 @@ final class AppAudioRenderBus {
     /// audit, follow-up): at −1 dBTP the limiter works on most loud masters,
     /// and a 25 ms release rose and fell with every bass cycle.
     static let networkRelease: Double = 0.15
+
+    /// 3.3.4 (N334): the bus an AirPlay output renders. Magic Boost, then the
+    /// leveler (`AudioLookaheadLeveler`: 10 ms lookahead, 0.5–1.5 s release),
+    /// then the −1 dBTP limiter, which the leveler leaves to guard the
+    /// ceiling. Local outputs keep `init()`'s chain: Magic Boost and the limiter.
+    static func network() -> AppAudioRenderBus {
+        AppAudioRenderBus(ceiling: networkCeiling, truePeak: true, releaseSeconds: networkRelease, leveling: true)
+    }
+    /// The leveler holds true peaks 0.1 dB under where the limiter starts,
+    /// so the limiter's own reduction stays at 0 unless the leveler misses.
+    static let levelerTargetBelowLimiter: Float = 0.98855
     private let lock = AudioUnfairLock()
     /// 3.3.2: a removed source fades out over 5 ms before it goes; cutting an
     /// app off mid-waveform (a session stopping, an output moving) clicked.
@@ -379,22 +391,75 @@ final class AppAudioRenderBus {
     private let left: UnsafeMutablePointer<Float>
     private let right: UnsafeMutablePointer<Float>
     private let limiter: AudioLookaheadLimiter
+    /// 3.3.4 (N334): network buses only (`network()`); nil on a local output.
+    private let leveler: AudioLookaheadLeveler?
     private let boost = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
     private let boostLevel = AudioAtomicCounter()
     /// 3.3.3 (A03): the render thread's ring (limiter engagement; on an
-    /// AirPlay bus also the mix clock's late wake-ups) and the engagements so far.
+    /// AirPlay bus also the mix clock's late wake-ups and, 3.3.4, the
+    /// leveler's episodes) and the engagements so far.
     let events = AudioEventRing(capacity: 32)
     let limiterEngagements = AudioAtomicCounter()
+    let levelerEngagements = AudioAtomicCounter()
     /// Below this gain (−0.1 dB) the limiter counts as engaged; it counts as
     /// released after `limiterReleaseHoldSeconds` without any reduction, so a
     /// loud passage is one engagement, not one per peak.
     static let limiterEngageGain: Float = 0.98855
     static let limiterReleaseHoldSeconds = 2.0
+    /// The leveler counts as engaged below −1 dB (it rides small overs all
+    /// the time on a hot mix), released after the same hold.
+    static let levelerEngageGain: Float = 0.891251
+
+    /// Render-thread bookkeeping of one stage's episodes: engaged below
+    /// `threshold`, released after the hold without, with the readings of
+    /// its deepest moment for the release event.
+    private struct Episode {
+        let threshold: Float
+        var engaged = false
+        var quietFrames = 0
+        var frames = 0
+        var deepest: Float = 1
+        var worst = AudioDynamicsReading()
+        enum Change { case none, engaged, released }
+        init(threshold: Float) { self.threshold = threshold }
+        mutating func note(gain: Float, frames count: Int, reading: AudioDynamicsReading, holdFrames: Int) -> Change {
+            var change = Change.none
+            if gain < threshold {
+                if !engaged {
+                    engaged = true; frames = 0; deepest = gain; worst = reading
+                    change = .engaged
+                }
+                if gain < deepest { deepest = gain; worst = reading }
+                quietFrames = 0
+            } else if engaged {
+                quietFrames += count
+                if quietFrames >= holdFrames { engaged = false; change = .released }
+            }
+            if engaged { frames += count }
+            return change
+        }
+        var milliseconds: UInt64 { UInt64(Double(frames) * 1000 / SharedOutputRenderer.sampleRate) }
+    }
     // Render thread only.
-    private var limiterEngaged = false
-    private var limiterQuietFrames = 0
-    private var limiterEpisodeFrames = 0
-    private var limiterEpisodeDeepest: Float = 1
+    private var limiterEpisode = Episode(threshold: AppAudioRenderBus.limiterEngageGain)
+    private var levelerEpisode = Episode(threshold: AppAudioRenderBus.levelerEngageGain)
+    /// The last chunks' peaks: the apps' sum, the leveler's input, the
+    /// limiter's input (`recentChunks` × 3). One peak reaches the stages at
+    /// different times (Magic Boost and the leveler delay it by about 1000
+    /// frames), so an event takes the largest of the last few chunks.
+    static let recentChunks = 4
+    private let recentPeaks: UnsafeMutablePointer<Float>
+    private var recentSlot = 0
+
+    /// 3.3.4: the last chunk's stages (render thread; tests read it between renders).
+    struct ChunkDynamics: Equatable {
+        var sumPeak: Float = 0
+        var levelerInputPeak: Float = 0
+        var limiterInputPeak: Float = 0
+        var levelerGain: Float = 1
+        var limiterGain: Float = 1
+    }
+    private(set) var lastChunk = ChunkDynamics()
 
     /// Centi-dB of gain reduction (render thread; no allocation).
     private static func centiDecibels(_ gain: Float) -> UInt64 {
@@ -613,28 +678,49 @@ final class AppAudioRenderBus {
         }
     }
 
-    /// Render thread: one chunk's limiter activity into episodes.
-    private func noteLimiter(frames: Int) {
-        let deepest = limiter.takeDeepestReduction()
-        if deepest < Self.limiterEngageGain {
-            if !limiterEngaged {
-                limiterEngaged = true
-                limiterEpisodeFrames = 0
-                limiterEpisodeDeepest = deepest
-                limiterEngagements.add()
-                events.push(.limiterEngaged, value: Self.centiDecibels(deepest))
-            }
-            limiterEpisodeDeepest = min(limiterEpisodeDeepest, deepest)
-            limiterQuietFrames = 0
-        } else if limiterEngaged {
-            limiterQuietFrames += frames
-            if Double(limiterQuietFrames) >= Self.limiterReleaseHoldSeconds * SharedOutputRenderer.sampleRate {
-                limiterEngaged = false
-                events.push(.limiterReleased, value: Self.centiDecibels(limiterEpisodeDeepest),
-                            extra: UInt64(Double(limiterEpisodeFrames) * 1000 / SharedOutputRenderer.sampleRate))
-            }
+    /// Render thread: one chunk's limiter and leveler activity into episodes.
+    /// 3.3.4 (N334): each event also carries the stage's input peak, the
+    /// apps' summed peak and the other stage's reduction
+    /// (`AudioDynamicsReading`), so the next episode can be classified.
+    private func noteDynamics(frames: Int, sumPeak: Float) {
+        var chunk = ChunkDynamics(sumPeak: sumPeak, limiterInputPeak: limiter.takeLargestPeak(),
+                                  limiterGain: limiter.takeDeepestReduction())
+        if let leveler {
+            chunk.levelerInputPeak = leveler.takeLargestPeak()
+            chunk.levelerGain = leveler.takeDeepestReduction()
         }
-        if limiterEngaged { limiterEpisodeFrames += frames }
+        lastChunk = chunk
+        let row = recentPeaks + recentSlot * 3
+        row[0] = chunk.sumPeak; row[1] = chunk.levelerInputPeak; row[2] = chunk.limiterInputPeak
+        recentSlot = (recentSlot + 1) % Self.recentChunks
+        var recentSum: Float = 0, recentLeveler: Float = 0, recentLimiter: Float = 0
+        for slot in 0..<Self.recentChunks {
+            recentSum = max(recentSum, recentPeaks[slot * 3])
+            recentLeveler = max(recentLeveler, recentPeaks[slot * 3 + 1])
+            recentLimiter = max(recentLimiter, recentPeaks[slot * 3 + 2])
+        }
+        let hold = Int(Self.limiterReleaseHoldSeconds * SharedOutputRenderer.sampleRate)
+        let limiterReading = AudioDynamicsReading(inputPeak: recentLimiter, sumPeak: recentSum, otherGain: chunk.levelerGain)
+        switch limiterEpisode.note(gain: chunk.limiterGain, frames: frames, reading: limiterReading, holdFrames: hold) {
+        case .engaged:
+            limiterEngagements.add()
+            events.push(.limiterEngaged, value: Self.centiDecibels(chunk.limiterGain), extra: limiterReading.packed())
+        case .released:
+            events.push(.limiterReleased, value: Self.centiDecibels(limiterEpisode.deepest),
+                        extra: limiterEpisode.worst.packed(durationMS: limiterEpisode.milliseconds))
+        case .none: break
+        }
+        guard leveler != nil else { return }
+        let levelerReading = AudioDynamicsReading(inputPeak: recentLeveler, sumPeak: recentSum, otherGain: chunk.limiterGain)
+        switch levelerEpisode.note(gain: chunk.levelerGain, frames: frames, reading: levelerReading, holdFrames: hold) {
+        case .engaged:
+            levelerEngagements.add()
+            events.push(.levelerEngaged, value: Self.centiDecibels(chunk.levelerGain), extra: levelerReading.packed())
+        case .released:
+            events.push(.levelerReleased, value: Self.centiDecibels(levelerEpisode.deepest),
+                        extra: levelerEpisode.worst.packed(durationMS: levelerEpisode.milliseconds))
+        case .none: break
+        }
     }
     /// Output Magic Boost switch; any level above zero is on.
     func setBoostLevel(_ level: Int) {
@@ -661,10 +747,20 @@ final class AppAudioRenderBus {
     private let limiterReleaseBits = AudioAtomicCounter()
     private var appliedReleaseBits: UInt64 = 0
     var limiterCeiling: Float { limiter.ceiling }
-    init(ceiling: Float = AppAudioRenderBus.ceiling, truePeak: Bool = false, releaseSeconds: Double = 0.025) {
+    /// 3.3.4: whether this bus levels before its limiter (a network bus).
+    var levels: Bool { leveler != nil }
+    /// Delay of the output's dynamics (Magic Boost's lookahead, the leveler's, the limiter's), frames.
+    var dynamicsLatencyFrames: Int { boost.latencyFrames + (leveler?.latencyFrames ?? 0) + limiter.latencyFrames }
+    init(ceiling: Float = AppAudioRenderBus.ceiling, truePeak: Bool = false, releaseSeconds: Double = 0.025,
+         leveling: Bool = false) {
         baseRelease = releaseSeconds.isFinite ? min(2, max(0.005, releaseSeconds)) : 0.025
-        limiter = AudioLookaheadLimiter(sampleRate: SharedOutputRenderer.sampleRate, ceiling: ceiling, truePeak: truePeak,
-                                        releaseSeconds: releaseSeconds)
+        let limiter = AudioLookaheadLimiter(sampleRate: SharedOutputRenderer.sampleRate, ceiling: ceiling, truePeak: truePeak,
+                                            releaseSeconds: releaseSeconds)
+        self.limiter = limiter
+        leveler = leveling ? AudioLookaheadLeveler(sampleRate: SharedOutputRenderer.sampleRate,
+                                                   target: limiter.detectionThreshold * Self.levelerTargetBelowLimiter) : nil
+        recentPeaks = .allocate(capacity: Self.recentChunks * 3)
+        recentPeaks.initialize(repeating: 0, count: Self.recentChunks * 3)
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
         sum = .allocate(capacity: capacity * 2)
@@ -676,7 +772,7 @@ final class AppAudioRenderBus {
     }
     deinit {
         scratch.deallocate(); sum.deallocate(); left.deallocate(); right.deallocate()
-        effectOldLeft.deallocate(); effectOldRight.deallocate()
+        effectOldLeft.deallocate(); effectOldRight.deallocate(); recentPeaks.deallocate()
         // Nothing renders any more: the published host and every replaced
         // one are released here (each holds exactly one retain).
         for bits in retiredEffects + [effectSlot.load()] where bits != 0 {
@@ -816,13 +912,18 @@ final class AppAudioRenderBus {
         var offset = 0
         while offset < frames {
             let count = min(chunk, frames - offset)
+            // 3.3.4: the apps' summed peak, before the effect and Magic Boost (diagnostics).
+            var sumPeak: Float = 0
             for index in 0..<count {
-                left[index] = sum[(offset + index) * 2]; right[index] = sum[(offset + index) * 2 + 1]
+                let l = sum[(offset + index) * 2], r = sum[(offset + index) * 2 + 1]
+                left[index] = l; right[index] = r
+                sumPeak = max(sumPeak, max(abs(l), abs(r)))
             }
             processEffect(frames: count)
             boost.process(left: left, right: right, frames: count, enabled: boostEnabled)
+            leveler?.process(left: left, right: right, frames: count)
             limiter.process(left: left, right: right, frames: count)
-            noteLimiter(frames: count)
+            noteDynamics(frames: count, sumPeak: sumPeak)
             for index in 0..<count {
                 sum[(offset + index) * 2] = left[index]; sum[(offset + index) * 2 + 1] = right[index]
             }
