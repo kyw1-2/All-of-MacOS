@@ -663,7 +663,7 @@ enum SettingsCatalog {
             item("tutorial", .data, "Onboarding Tour", "Show the introduction again", ["튜토리얼", "안내", "온보딩"], AnyView(HubActionRow(icon: "sparkles", tint: .pink, title: "Onboarding Tour", subtitle: "Show the introduction again") {
                 Button("Start") { NotificationCenter.default.post(name: .aomRestartTutorial, object: nil) }.controlSize(.small)
             })),
-            item("reset", .data, "Reset Preferences", "Restore default preferences", ["Reset", "리셋"], AnyView(HubActionRow(icon: "arrow.counterclockwise", tint: .red, title: "Reset Preferences", subtitle: "Restore preferences; keep gestures and actions") {
+            item("reset", .data, "Reset Preferences", "Restore default preferences", ["Reset", "리셋"], AnyView(HubActionRow(icon: "arrow.counterclockwise", tint: .red, title: "Reset Preferences", subtitle: "Restore default preferences; keep automations and data") {
                 Button("Reset", role: .destructive) { NotificationCenter.default.post(name: .aomResetPreferences, object: nil) }.controlSize(.small)
             })),
         ]
@@ -957,19 +957,30 @@ struct SettingsHubView: View {
         }
     }
 
+    /// Settings › Data › Reset Preferences (3.3.3, N333-07): every preference
+    /// `PreferenceResetRegistry` names, not nine fixed keys; the alert says
+    /// what is kept before anything changes. The title-bar snap and the Dock
+    /// and menu-bar gestures read their settings when they act, and the
+    /// change notice refreshes the rest that listens; the parts that read
+    /// their settings at launch need a reopen, as after a restore.
     private func confirmReset() {
         let alert = NSAlert()
         alert.messageText = "Reset Preferences?"
-        alert.informativeText = "Only preferences will be reset. Gestures and actions are preserved."
+        alert.informativeText = "Every preference goes back to its default: general, gestures (title bar, Dock and menu bar), "
+            + "capture and recording, clipboard, audio and shortcuts.\n\n"
+            + "Kept: automations and presets; clipboard history, pinboards and the apps it ignores; captures, "
+            + "recordings and how long their history keeps them; saved window layouts, floating menus, key remaps, "
+            + "EQ curves and annotation styles; access granted to AI tools; backups; and whether AOM is paused."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Reset")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let keys = ["AOMGlobalEnabled", "AOMAccentColor", "AOMAppearance",
-                    "AOMPressDragThreshold", "AOMTipTapMinRestTime",
-                    "AOMSuppressMouseDuringDrawing", "showMenuBarIcon", "AOMHasSeenTutorial", "AOMHUDBackgroundOpacity"]
-        for key in keys { UserDefaults.standard.removeObject(forKey: key) }
-        flashSaved()
+        let removed = PreferenceResetRegistry.reset(.standard)
+        NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
+        appState.presetOperationReporter("Preferences Reset", removed.isEmpty
+            ? "Every preference was already at its default."
+            : "\(removed.count) preference\(removed.count == 1 ? "" : "s") went back to the default. "
+                + "Quit and reopen All of MacOS so every part uses the defaults.", .actionNeeded)
     }
 }
 
