@@ -94,27 +94,44 @@ enum ContinuousTargetRef: Hashable {
 /// Per target the newest value wins: a burst of MIDI or pressure readings is
 /// coalesced to at most one write per `minimumInterval`, and the last value of
 /// the burst is always written (trailing edge). A value equal to the last one
-/// written is skipped.
+/// written to the same device is skipped.
+///
+/// Only a write that succeeded counts as written (N333-04). A failed write, or
+/// one during which the device changed, leaves the level unknown, so the same
+/// value is written again. A failed value is retried once after `retryDelay`,
+/// together with anything submitted meanwhile; a retry that fails waits for
+/// the next value, so a target that cannot be set is never polled.
 final class ContinuousValueSink {
     static let queueLabel = "com.kyw.allofmacos.continuous-values"
     static let defaultInterval: TimeInterval = 1.0 / 30
+    static let retryDelay: TimeInterval = 0.25
 
     let minimumInterval: TimeInterval
     private let lock = NSLock()
     private var pending: [ContinuousTargetRef: Double] = [:]
-    private var lastWritten: [ContinuousTargetRef: (time: TimeInterval, value: Double)] = [:]
+    /// When each target was last tried, successful or not: the rate limit.
+    private var lastAttempt: [ContinuousTargetRef: TimeInterval] = [:]
+    /// The level each target is known to hold, and the device that holds it.
+    private var lastWritten: [ContinuousTargetRef: (value: Double, device: AnyHashable?)] = [:]
     private var scheduled = Set<ContinuousTargetRef>()
+    /// Targets whose scheduled flush is the automatic retry of a failed write.
+    private var retrying = Set<ContinuousTargetRef>()
     private let clock: () -> TimeInterval
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
+    private let device: (ContinuousTargetRef) -> AnyHashable?
     private let apply: (ContinuousTargetRef, Double) -> Bool
 
+    /// `device` names what a target lands on when the target itself does not
+    /// (the default output for system volume); nil when the target is enough.
     init(minimumInterval: TimeInterval = ContinuousValueSink.defaultInterval,
          queue: DispatchQueue = DispatchQueue(label: ContinuousValueSink.queueLabel, qos: .userInitiated),
          clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          schedule: ((TimeInterval, @escaping () -> Void) -> Void)? = nil,
+         device: @escaping (ContinuousTargetRef) -> AnyHashable? = { _ in nil },
          apply: @escaping (ContinuousTargetRef, Double) -> Bool) {
         self.minimumInterval = max(0, minimumInterval)
         self.clock = clock
+        self.device = device
         self.apply = apply
         self.schedule = schedule ?? { delay, work in
             if delay <= 0 { queue.async(execute: work) } else { queue.asyncAfter(deadline: .now() + delay, execute: work) }
@@ -126,20 +143,34 @@ final class ContinuousValueSink {
         guard value.isFinite else { return }
         lock.lock()
         pending[target] = ContinuousValueBinding.unit(value)
+        retrying.remove(target) // a new value earns its own retry
         guard scheduled.insert(target).inserted else { lock.unlock(); return }
-        let delay = lastWritten[target].map { max(0, $0.time + minimumInterval - clock()) } ?? 0
+        let delay = lastAttempt[target].map { max(0, $0 + minimumInterval - clock()) } ?? 0
         lock.unlock()
         schedule(delay) { [weak self] in self?.flush(target) }
     }
 
     private func flush(_ target: ContinuousTargetRef) {
+        let output = device(target)
         lock.lock()
         scheduled.remove(target)
+        let isRetry = retrying.remove(target) != nil
         guard let value = pending.removeValue(forKey: target) else { lock.unlock(); return }
-        if let last = lastWritten[target], abs(last.value - value) < 0.0005 { lock.unlock(); return }
-        lastWritten[target] = (clock(), value)
+        if let last = lastWritten[target], last.device == output, abs(last.value - value) < 0.0005 { lock.unlock(); return }
+        lastAttempt[target] = clock()
+        // Held while the write runs, so a forget during it is not undone.
+        lastWritten[target] = (value, output)
         lock.unlock()
-        _ = apply(target, value)
+        let ok = apply(target, value)
+        if ok, device(target) == output { return }
+        // Failed, or the device changed under the write: the level is unknown.
+        lock.lock()
+        lastWritten[target] = nil
+        // One more try, unless a newer value is waiting or this was the retry.
+        let retry = !ok && !isRetry && pending[target] == nil && scheduled.insert(target).inserted
+        if retry { pending[target] = value; retrying.insert(target) }
+        lock.unlock()
+        if retry { schedule(max(minimumInterval, Self.retryDelay)) { [weak self] in self?.flush(target) } }
     }
 
     /// Forgets what was written, so the next value is written even if equal.
@@ -165,7 +196,7 @@ final class ContinuousValueEngine {
     private var positions: [UUID: (position: Double, time: TimeInterval, target: ContinuousTargetRef)] = [:]
     private var peaks: [UUID: Double] = [:]
 
-    init(sink: ContinuousValueSink = ContinuousValueSink(apply: ContinuousTargetIO.apply),
+    init(sink: ContinuousValueSink = ContinuousValueSink(device: ContinuousTargetIO.device, apply: ContinuousTargetIO.apply),
          resolve: @escaping (ContinuousValueBinding) -> ContinuousTargetRef? = ContinuousTargetIO.resolve,
          currentLevel: @escaping (ContinuousTargetRef) -> Double? = ContinuousTargetIO.currentLevel,
          clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
@@ -220,8 +251,8 @@ final class ContinuousValueEngine {
 // MARK: - Live target I/O
 
 /// The real outputs. `resolve` and `currentLevel` run on the main thread;
-/// `apply` runs on the sink queue. Under XCTest `apply` refuses everything, so
-/// no test can change the real volume or brightness.
+/// `apply` and `device` run on the sink queue. Under XCTest `apply` refuses
+/// everything, so no test can change the real volume or brightness.
 enum ContinuousTargetIO {
     private static let lock = NSLock()
     private static var failing = Set<ContinuousTargetRef>()
@@ -250,6 +281,14 @@ enum ContinuousTargetIO {
             return Double(min(1, AppAudioEngine.storedGain(bundleID: id)))
         case .displayBrightness(let display): return DisplayControlService.brightness(display).map(Double.init)
         }
+    }
+
+    /// The device a target lands on when the target does not name it: system
+    /// volume follows the default output, so a level written to one output is
+    /// not taken for another's. Nil under XCTest, where `apply` writes nothing.
+    static func device(_ target: ContinuousTargetRef) -> AnyHashable? {
+        guard case .systemVolume = target, !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return nil }
+        return AudioOutputService.currentDeviceID().map { AnyHashable($0) }
     }
 
     static func apply(_ target: ContinuousTargetRef, _ level: Double) -> Bool {
