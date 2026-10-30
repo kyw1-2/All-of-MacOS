@@ -434,8 +434,10 @@ final class TrackpadUtilityGestures: ObservableObject {
 
     /// Two fingers landed (a new touch): a pinch waiting for its second half
     /// gets a little longer to see this touch, and in the top band the
-    /// lookup of the menu bar's part starts at once.
+    /// lookup of the menu bar's part starts at once. The trigger engine's
+    /// claim (N333-08) starts afresh: the last touch's ends here.
     private func touchLanded() {
+        beginClaim()
         extendPendingPinch()
         guard menuBarGesturesEnabled || appMenuGesturesEnabled else { return }
         let cursor = cursorLocation()
@@ -445,6 +447,7 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// The fingers lifted: a scrolled window switcher takes its selection
     /// (the ⌘-Tab grammar), as does the app switcher, and this touch's state goes.
     private func endTouch() {
+        keepClaimPastLift()
         if switcherScrolled, desktop.switcherIsShowing { desktop.confirmSwitcher() }
         releaseAppSwitcher(commit: true)
         twoFingerStart = nil
@@ -465,6 +468,7 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// the app switcher it holds is let go without switching, a pinch it made
     /// that still waits is taken back, and the touch switches no Space.
     private func abandonTouch() {
+        rememberClaimPlace()
         cancelSwitchers()
         takeBackPinchOfThisTouch()
         twoFingerStart = nil
@@ -493,10 +497,132 @@ final class TrackpadUtilityGestures: ObservableObject {
         lastTap = nil
     }
 
-    /// Forgets the work waiting for a second pinch or tap (tests; a pause).
+    /// Forgets the work waiting for a second pinch or tap, and the touch the
+    /// trigger engine leaves to this layer (tests; a pause).
     func cancelPending() {
         pendingPinch = nil
         pendingScrollToken = nil
+        releaseClaim()
+    }
+
+    // MARK: Touch ownership (3.3.3, N333-08)
+
+    /// B07 / N333-08: the trigger engine (`TrackpadMonitor`) runs the user's
+    /// two-finger triggers from the same frames as this layer. A touch that
+    /// lands on the Dock, the menu bar, the app's own menu or a Mission
+    /// Control thumbnail is this layer's for the gestures it answers there
+    /// (pinches it ran or still holds included), the way a title-bar touch is
+    /// the snap's (`TitleBarWindowSnap.claimsNow`). The claim lasts while the
+    /// fingers are down and, after they lift, `claimLiftGrace` for the
+    /// gestures the lift completes (a tap, a double tap); the next touch, a
+    /// pause or the lock ends it.
+    ///
+    /// A two-finger touch landed and nothing let it go since.
+    private var claimLive = false
+    /// Its place, once this layer or the trigger engine looked it up, kept
+    /// past the lift (`place` goes with the touch).
+    private var claimPlace: Place?
+    /// The top band over no ordinary window under it, once asked.
+    private var claimTopBand: Bool?
+    /// When its fingers lifted (`now()`); nil while they are down.
+    private var claimLiftedAt: TimeInterval?
+    /// How long a lifted touch's claim still answers: the trigger engine runs
+    /// a lifted touch's tap on its next turn, or 0.4 s later when a double
+    /// tap is also bound.
+    nonisolated static let claimLiftGrace: Double = 1.0
+
+    /// The families a claim depends on, as the settings stand.
+    var claimFamilies: UtilityTouchClaim.Families {
+        UtilityTouchClaim.Families(spaces: spacesEnabled, menuBar: menuBarGesturesEnabled, dock: dockGesturesEnabled,
+                                   dockQuit: dockQuitEnabled, doublePinch: dockDoublePinchEnabled,
+                                   missionControl: missionControlGesturesEnabled)
+    }
+
+    /// Whether the trigger engine leaves `gesture` to this layer: the touch on
+    /// the pad, or the one that lifted less than `claimLiftGrace` ago with no
+    /// touch since. Main thread, like the trigger engine. When the trigger
+    /// engine asks first (its swipe and pinch are recognised before this
+    /// layer's) the place is looked up here, once per touch; while the fingers
+    /// are down that answer becomes the touch's place, so both act on one
+    /// answer. Nothing is looked up for a gesture no family on could claim.
+    func claimsNow(_ gesture: TrackpadGesture) -> Bool {
+        guard claimLive, UtilityTouchClaim.covers(gesture) else { return false }
+        if let lifted = claimLiftedAt {
+            let since = now() - lifted
+            guard since >= 0, since <= Self.claimLiftGrace else { releaseClaim(); return false }
+        }
+        let families = claimFamilies
+        guard UtilityTouchClaim.mayClaim(gesture, families: families) else { return false }
+        let found = claimedPlace(dockFirst: gesture == .twoFingerPinchIn || gesture == .twoFingerPinchOut)
+        var claim = UtilityTouchClaim(spot: claimSpot(of: found), topBand: false)
+        if claim.claims(gesture, families: families) { return true }
+        // A sideways swipe in the top band switches the Space over any part
+        // of the menu bar (`armSpaceSwipe`), not only its empty area.
+        guard families.spaces, UtilityTouchClaim.isSideways(gesture) else { return false }
+        claim.topBand = claimInTopBand(found)
+        return claim.claims(gesture, families: families)
+    }
+
+    private func beginClaim() {
+        claimLive = true
+        claimPlace = nil
+        claimTopBand = nil
+        claimLiftedAt = nil
+    }
+
+    private func releaseClaim() {
+        claimLive = false
+        claimPlace = nil
+        claimTopBand = nil
+        claimLiftedAt = nil
+    }
+
+    /// The place this touch resolved stays its claim's when `place` goes.
+    private func rememberClaimPlace() {
+        if claimLive, let place { claimPlace = place }
+    }
+
+    private func keepClaimPastLift() {
+        rememberClaimPlace()
+        if claimLive, claimLiftedAt == nil { claimLiftedAt = now() }
+    }
+
+    private func claimedPlace(dockFirst: Bool) -> Place {
+        if let place { return place }
+        if let claimPlace { return claimPlace }
+        // Fingers down: the touch's place, as this layer's own first gesture
+        // would find it. Lifted: looked up once and kept for the claim only,
+        // so the next touch starts without a place.
+        let found = twoFingerStart != nil ? resolvePlace(dockFirst: dockFirst) : lookUpPlace(dockFirst: dockFirst)
+        claimPlace = found
+        return found
+    }
+
+    private func claimSpot(of place: Place) -> UtilityTouchClaim.Spot {
+        switch place {
+        case .menuBar: return .menuBar
+        case .appMenu: return .appMenu
+        case .dock: return .dock
+        case .missionControl: return .missionControl
+        // A window handed to the title-bar snap: the snap claims the touch.
+        case .handedOff, .nowhere: return .elsewhere
+        }
+    }
+
+    /// The top band with no ordinary window under the pointer, as
+    /// `resolvePlace` and `armSpaceSwipe` see it; asked once per touch.
+    private func claimInTopBand(_ place: Place) -> Bool {
+        if let claimTopBand { return claimTopBand }
+        let inBand: Bool
+        switch place {
+        case .menuBar, .appMenu:
+            inBand = true
+        default:
+            let cursor = cursorLocation()
+            inBand = cursorInTopBand(cursor) && windowUnderPointer(cursor)?.layer != 0
+        }
+        claimTopBand = inBand
+        return inBand
     }
 
     // MARK: Gestures
@@ -582,24 +708,28 @@ final class TrackpadUtilityGestures: ObservableObject {
     /// pinch asks the Dock first (as the Dock pinch always did).
     private func resolvePlace(dockFirst: Bool) -> Place {
         if let place { return place }
+        let resolved = lookUpPlace(dockFirst: dockFirst)
+        place = resolved
+        return resolved
+    }
+
+    /// The lookup behind `resolvePlace`, without keeping the answer (the
+    /// trigger engine's claim asks it once a touch has lifted, N333-08).
+    private func lookUpPlace(dockFirst: Bool) -> Place {
         let cursor = cursorLocation()
         let dockOn = dockQuitEnabled || dockGesturesEnabled
-        let resolved: Place
         if dockFirst, dockOn, let app = dockApp() {
-            resolved = .dock(app)
+            return .dock(app)
         } else if cursorInTopBand(cursor), windowUnderPointer(cursor)?.layer != 0 {
             // An ordinary window under the band (the menu bar hidden, a
             // window's title bar at the very top) is the title-bar snap's.
-            resolved = menuBarPlace(at: cursor)
+            return menuBarPlace(at: cursor)
         } else if missionControlGesturesEnabled, let window = missionControlWindow(cursor) {
-            resolved = .missionControl(window)
+            return .missionControl(window)
         } else if !dockFirst, dockOn, let app = dockApp() {
-            resolved = .dock(app)
-        } else {
-            resolved = .nowhere
+            return .dock(app)
         }
-        place = resolved
-        return resolved
+        return .nowhere
     }
 
     /// The top band over no ordinary window (3.3.3, Swish): the empty area
@@ -1357,6 +1487,105 @@ extension SwishSnap.Direction {
         case .right: self = .right
         case .up: self = .up
         case .down: self = .down
+        }
+    }
+}
+
+/// N333-08: what a two-finger touch is to the trigger engine, as the utility
+/// gestures see it: the part of the screen it landed on. Pure, so the rule is
+/// tested without a trackpad (`TrackpadUtilityGestures.claimsNow` applies it).
+struct UtilityTouchClaim: Equatable {
+    enum Spot: Equatable {
+        /// The empty menu bar (or no answer on which part it is).
+        case menuBar
+        /// The frontmost app's own menu, with the Application Menu option on.
+        case appMenu
+        /// A Dock icon of a running app.
+        case dock
+        /// A window's thumbnail in Mission Control or App Exposé.
+        case missionControl
+        /// None of these: an ordinary window, a menu title or a status item,
+        /// the desktop, or a window handed to the title-bar snap (which
+        /// claims that touch itself).
+        case elsewhere
+    }
+
+    /// The gesture families a claim depends on.
+    struct Families: Equatable {
+        var spaces = false
+        var menuBar = false
+        var dock = false
+        var dockQuit = false
+        var doublePinch = false
+        var missionControl = false
+    }
+
+    var spot: Spot
+    /// The top band with no ordinary window under the pointer: a sideways
+    /// swipe there switches the Space whatever part of the menu bar it is on.
+    var topBand: Bool
+
+    /// The two-finger trigger gestures a utility gesture answers too, by what
+    /// the utility recognizer makes of the same fingers.
+    private enum Kind: Equatable {
+        case tap, hold, pinchIn, pinchOut
+        case swipe(UtilityGestureRecognizer.Direction)
+
+        init?(_ gesture: TrackpadGesture) {
+            switch gesture {
+            case .twoFingerTap, .twoFingerDoubleTap: self = .tap
+            case .twoFingerLongTouch: self = .hold
+            case .twoFingerPinchIn: self = .pinchIn
+            case .twoFingerPinchOut: self = .pinchOut
+            case .twoFingerSwipeUp, .twoFingerSwipeFromBottomEdge: self = .swipe(.up)
+            case .twoFingerSwipeDown, .twoFingerSwipeFromTopEdge: self = .swipe(.down)
+            case .twoFingerSwipeLeft, .twoFingerSwipeFromRightEdge: self = .swipe(.left)
+            case .twoFingerSwipeRight, .twoFingerSwipeFromLeftEdge: self = .swipe(.right)
+            default: return nil
+            }
+        }
+    }
+
+    /// A gesture a claim can ever cover. Clicks, rotations, Touch Start,
+    /// Release and every other finger count stay the trigger engine's.
+    static func covers(_ gesture: TrackpadGesture) -> Bool { Kind(gesture) != nil }
+
+    static func isSideways(_ gesture: TrackpadGesture) -> Bool {
+        guard case .swipe(let direction)? = Kind(gesture) else { return false }
+        return direction.isHorizontal
+    }
+
+    /// Whether any spot could claim `gesture` with these families on, so the
+    /// place is looked up only when the answer can matter.
+    static func mayClaim(_ gesture: TrackpadGesture, families: Families) -> Bool {
+        [Spot.menuBar, .appMenu, .dock, .missionControl].contains {
+            UtilityTouchClaim(spot: $0, topBand: true).claims(gesture, families: families)
+        }
+    }
+
+    /// Whether the trigger engine leaves `gesture` to the utility gestures:
+    /// only the two-finger gestures they answer at this spot with these
+    /// families on, as `TitleBarWindowSnap.claims` does for a title bar.
+    /// - Menu bar: tap and double tap, tap and hold, swipes; no pinch.
+    /// - Dock icon and app menu: the same and pinch out with the Dock gestures
+    ///   on; pinch in with Dock quit, or pinch twice, on.
+    /// - Mission Control thumbnail: pinch in and swipe down.
+    /// - Top band: a sideways swipe with the Space swipe on.
+    func claims(_ gesture: TrackpadGesture, families: Families) -> Bool {
+        guard let kind = Kind(gesture) else { return false }
+        if topBand, families.spaces, case .swipe(let direction) = kind, direction.isHorizontal { return true }
+        switch spot {
+        case .menuBar:
+            guard families.menuBar else { return false }
+            return kind != .pinchIn && kind != .pinchOut
+        case .appMenu, .dock:
+            if kind == .pinchIn { return families.dockQuit || (families.dock && families.doublePinch) }
+            return families.dock
+        case .missionControl:
+            guard families.missionControl else { return false }
+            return kind == .pinchIn || kind == .swipe(.down)
+        case .elsewhere:
+            return false
         }
     }
 }

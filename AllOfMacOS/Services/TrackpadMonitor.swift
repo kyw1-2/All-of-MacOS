@@ -1460,6 +1460,12 @@ class TrackpadMonitor {
             GestureLog.shared.logFromAnyThread("Gesture \(gesture.rawValue) — left to the title-bar snap", level: .noMatch)
             return
         }
+        // 3.3.3 (N333-08): so is one on the Dock, the menu bar, the app's own
+        // menu or a Mission Control thumbnail to the gesture there.
+        if !toFire.isEmpty, utilityClaims(gesture) {
+            GestureLog.shared.logFromAnyThread("Gesture \(gesture.rawValue) — left to the Dock or menu-bar gesture", level: .noMatch)
+            return
+        }
         if systemMonitoringEnabled { GestureHaptics.shared.feedback(enabled: toFire.contains { $0.hapticFeedback && $0.actions.contains(where: \.isEnabled) }) }
 
         if toFire.isEmpty {
@@ -1481,6 +1487,20 @@ class TrackpadMonitor {
     /// Test-only: directly fire a gesture through the normal pipeline
     func fireGestureForTest(_ gesture: TrackpadGesture) {
         fireGesture(gesture)
+    }
+
+    /// Test seam: answers in place of the shared utility layer whether a Dock,
+    /// menu-bar or Mission Control gesture owns the touch (N333-08).
+    var utilityClaimsOverride: ((TrackpadGesture) -> Bool)?
+
+    /// Whether the utility gestures (`TrackpadUtilityGestures.claimsNow`) own
+    /// the touch `gesture` came from. Only the stream this monitor feeds them
+    /// reaches that layer, so a monitor that does not feed it (tests, the
+    /// scroll and magnify events without the raw stream) never defers to it.
+    private func utilityClaims(_ gesture: TrackpadGesture) -> Bool {
+        if let override = utilityClaimsOverride { return override(gesture) }
+        guard systemMonitoringEnabled, !suspended, source.running else { return false }
+        return MainActor.assumeIsolated { TrackpadUtilityGestures.shared.claimsNow(gesture) }
     }
 
     /// Test-only: the shared corner/middle zone map.
