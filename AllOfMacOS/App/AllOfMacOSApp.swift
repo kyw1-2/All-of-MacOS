@@ -925,20 +925,19 @@ struct GeneralSettingsView: View {
     private func exportPreset() { appState.presentPresetExport() }
     private func importPreset() { appState.presentPresetImport() }
 
+    /// The same reset as Settings › Data › Reset Preferences (N333-07): one
+    /// registry decides what goes back to its default and what is kept.
     private func resetAllSettings() {
         let alert = NSAlert()
-        alert.messageText = "Reset All Settings?"
-        alert.informativeText = "This will reset all preferences to defaults. Your triggers and actions will not be affected."
+        alert.messageText = "Reset Preferences?"
+        alert.informativeText = "Every preference goes back to its default. Automations, presets, clipboard history, captures, "
+            + "saved layouts and backups are kept, and so is whether AOM is paused."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Reset")
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
-            let keys = ["AOMGlobalEnabled", "AOMAccentColor", "AOMAppearance",
-                        "AOMPressDragThreshold", "AOMTipTapMinRestTime",
-                        "AOMSuppressMouseDuringDrawing", "launchAtLogin", "showMenuBarIcon", "AOMHasSeenTutorial", "AOMHUDBackgroundOpacity"]
-            for key in keys {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
+            PreferenceResetRegistry.reset(.standard)
+            NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
         }
     }
 }
