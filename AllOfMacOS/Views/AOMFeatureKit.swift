@@ -117,6 +117,10 @@ enum AOMFeatureSize {
     static let windowPickerThumbnail: CGFloat = 96
     /// The welcome overlay.
     static let welcomeWidth: CGFloat = 560
+    /// Capture's mode buttons (Area, Window, Record…) in the launchpad grid.
+    static let modeButtonMin: CGFloat = 108
+    /// Small round badges on a capture thumbnail (Video, Pinned).
+    static let thumbnailBadge: CGFloat = 20
 }
 
 // MARK: - Feature colours
