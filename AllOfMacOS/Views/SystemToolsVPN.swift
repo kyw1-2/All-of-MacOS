@@ -232,6 +232,19 @@ struct VPNSheet: View {
         return "Connected: " + up.map(\.name).joined(separator: ", ")
     }
 
+    /// The type, and the one case where two true states disagree: macOS
+    /// reports Tailscale's tunnel as connected while Tailscale itself isn't
+    /// logged in or is stopped, so no traffic goes through it.
+    private func detail(for service: VPNTools.Service) -> String {
+        var text = service.kindTitle
+        if !service.enabled { text += " · turned off in Settings" }
+        if service.state == .connected, service.providerBundleID?.lowercased().contains("tailscale") == true,
+           let backend = model.tailscale?.backend, backend != .running {
+            text += " · the tunnel is up, but Tailscale is \(backend.title.lowercased())"
+        }
+        return text
+    }
+
     private var servicesSection: some View {
         AOMSection("VPN services", detail: model.services.isEmpty ? nil : "\(model.services.count)",
                    footer: "The VPNs set up in System Settings › VPN, with their live state (scutil --nc).") {
@@ -240,7 +253,7 @@ struct VPNSheet: View {
                                actionTitle: "VPN Settings…") { model.openVPNSettings() }
             } else {
                 ForEach(model.services) { service in
-                    AOMSettingRow(service.name, detail: "\(service.kindTitle)\(service.enabled ? "" : " · turned off in Settings")",
+                    AOMSettingRow(service.name, detail: detail(for: service),
                                   symbol: service.state == .connected ? "lock.shield.fill" : "lock.shield") {
                         HStack(spacing: AOMSpace.x2) {
                             AOMStatusPill(service.state.title, tone: service.state == .connected ? .success

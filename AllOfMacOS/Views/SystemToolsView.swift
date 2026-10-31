@@ -158,6 +158,7 @@ struct SystemToolsView: View {
             status.start()
             if PresetManager.isUIPreview {
                 weather.loadPreviewSample()
+                MicMutePreview.runIfRequested()
                 if ProcessInfo.processInfo.arguments.contains("--aom-preview-homebrew") {
                     homebrew.loadPreviewSample()
                     homebrew.isPresented = true

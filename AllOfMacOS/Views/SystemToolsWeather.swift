@@ -1,78 +1,40 @@
 import SwiftUI
 
-/// The Weather card in System Tools › This Mac (opt-in). Off, it isn't drawn;
-/// the section title's Weather button turns it on by choosing a place.
+/// The Weather card in System Tools › This Mac (opt-in), a full-width strip
+/// under the gauges so the grid above keeps its even rows: now on the left
+/// (glyph, temperature, conditions), then feels-like, humidity and wind,
+/// then the next three days. Off, it isn't drawn; the section title's Show
+/// Weather turns it on by choosing a place.
 struct WeatherCard: View {
     @ObservedObject var model: WeatherCardModel
     @State private var choosing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x1) {
-            HStack(spacing: AOMSpace.x1) {
-                Label(model.place?.name ?? "Weather", systemImage: "location")
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: AOMSpace.x1)
-                if model.loading { ProgressView().controlSize(.mini) }
-                Menu {
-                    Button("Refresh") { model.refresh() }.disabled(model.loading)
-                    Button("Change Place…") { choosing = true }
-                    Divider()
-                    Button("Turn Off Weather") { model.setOn(false) }
-                } label: {
-                    Image(systemName: "ellipsis.circle").imageScale(.medium)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Weather options")
-                .accessibilityLabel("Weather options")
-            }
+        HStack(alignment: .center, spacing: AOMSpace.x6) {
             if let forecast = model.forecast {
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
-                    Image(systemName: OpenMeteo.symbol(forecast.code, isDay: forecast.isDay))
-                        .symbolRenderingMode(.multicolor)
-                        .font(AOMFont.title)
-                        .accessibilityHidden(true)
-                    Text(Self.temperature(forecast.temperature))
-                        .font(AOMFont.metricLarge)
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-                Text(detail(forecast))
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                HStack(spacing: AOMSpace.x2) {
-                    ForEach(forecast.days.dropFirst().prefix(3)) { day in
-                        HStack(spacing: AOMSpace.x0_5 + 1) {
-                            Text(Self.weekday(day.date, zone: forecast.timezone))
-                                .foregroundStyle(AOMColor.textSecondary)
-                            Image(systemName: OpenMeteo.symbol(day.code))
-                                .symbolRenderingMode(.multicolor)
-                                .imageScale(.small)
-                            Text("\(Int(day.high.rounded()))°")
-                                .foregroundStyle(AOMColor.text)
-                        }
-                        .font(AOMFont.caption.monospacedDigit())
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(Self.weekday(day.date, zone: forecast.timezone)): \(OpenMeteo.condition(day.code)), high \(Self.temperature(day.high))")
-                    }
-                }
+                now(forecast)
+                details(forecast)
+                Spacer(minLength: AOMSpace.x2)
+                days(forecast)
             } else if let error = model.error {
-                Text(error).font(AOMFont.callout).foregroundStyle(AOMColor.warningText).lineLimit(2)
-                Button("Try Again") { model.refresh() }.controlSize(.small)
+                VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    placeLabel
+                    Text(error).font(AOMFont.callout).foregroundStyle(AOMColor.warningText).lineLimit(2)
+                }
+                Spacer(minLength: AOMSpace.x2)
+                Button("Try Again") { model.refresh() }
             } else {
-                Text("…").font(AOMFont.metricLarge).foregroundStyle(AOMColor.textSecondary)
-                Text("Reading the forecast").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    placeLabel
+                    Text("Reading the forecast…").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                }
+                Spacer(minLength: AOMSpace.x2)
             }
+            optionsMenu
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .aomCard(padding: AOMSpace.cardPadding)
-        .help(model.updated.map { "Open-Meteo forecast for \(model.place?.title ?? "") · updated \(AOMRelativeTime.string($0).lowercased()) · refreshes every 30 minutes while shown" }
+        .help(model.updated.map { "Open-Meteo forecast for \(model.place?.title ?? "") · updated \(AOMRelativeTime.string($0).lowercased()) · refreshes every 30 minutes while this page shows it" }
               ?? "Open-Meteo forecast")
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
@@ -83,7 +45,94 @@ struct WeatherCard: View {
         .onDisappear { model.viewerDisappeared() }
     }
 
-    private func detail(_ forecast: OpenMeteo.Forecast) -> String {
+    private var placeLabel: some View {
+        Label(model.place?.title ?? "Weather", systemImage: "location")
+            .font(AOMFont.caption)
+            .foregroundStyle(AOMColor.textSecondary)
+            .lineLimit(1)
+    }
+
+    private func now(_ forecast: OpenMeteo.Forecast) -> some View {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
+            WeatherGlyph(code: forecast.code, isDay: forecast.isDay)
+                .font(AOMFont.display)
+                .frame(minWidth: AOMIcon.hudGlyph)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                placeLabel
+                Text(Self.temperature(forecast.temperature))
+                    .font(AOMFont.metricLarge)
+                    .foregroundStyle(AOMColor.text)
+                    .lineLimit(1)
+                Text(conditions(forecast))
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .layoutPriority(1)
+    }
+
+    private func details(_ forecast: OpenMeteo.Forecast) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) {
+            if let feels = forecast.feelsLike { fact("Feels like", Self.temperature(feels)) }
+            if let humidity = forecast.humidity { fact("Humidity", "\(humidity)%") }
+            if let wind = forecast.windSpeed { fact("Wind", Self.speed(wind)) }
+        }
+        .font(AOMFont.callout)
+    }
+
+    private func fact(_ title: String, _ value: String) -> some View {
+        HStack(spacing: AOMSpace.x2) {
+            Text(title).foregroundStyle(AOMColor.textSecondary)
+            Text(value).monospacedDigit().foregroundStyle(AOMColor.text)
+        }
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func days(_ forecast: OpenMeteo.Forecast) -> some View {
+        HStack(spacing: AOMSpace.x5) {
+            ForEach(forecast.days.dropFirst().prefix(3)) { day in
+                VStack(spacing: AOMSpace.x1) {
+                    Text(Self.weekday(day.date, zone: forecast.timezone))
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                    WeatherGlyph(code: day.code, isDay: true)
+                        .font(AOMFont.title)
+                        .frame(height: AOMIcon.tileBadge)
+                    Text("\(Int(day.high.rounded()))° \(Int(day.low.rounded()))°")
+                        .font(AOMFont.callout.monospacedDigit())
+                        .foregroundStyle(AOMColor.text)
+                }
+                .fixedSize()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(Self.weekday(day.date, zone: forecast.timezone)): \(OpenMeteo.condition(day.code)), high \(Self.temperature(day.high)), low \(Self.temperature(day.low))")
+            }
+        }
+    }
+
+    private var optionsMenu: some View {
+        Menu {
+            Button("Refresh") { model.refresh() }.disabled(model.loading)
+            Button("Change Place…") { choosing = true }
+            Divider()
+            Button("Turn Off Weather") { model.setOn(false) }
+        } label: {
+            if model.loading {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "ellipsis.circle").imageScale(.large).foregroundStyle(AOMColor.textSecondary)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Refresh, change the place or turn the weather off")
+        .accessibilityLabel("Weather options")
+    }
+
+    private func conditions(_ forecast: OpenMeteo.Forecast) -> String {
         var parts = [OpenMeteo.condition(forecast.code)]
         if let today = forecast.days.first {
             parts.append("H \(Int(today.high.rounded()))° L \(Int(today.low.rounded()))°")
@@ -94,10 +143,11 @@ struct WeatherCard: View {
 
     private var accessibilitySummary: String {
         guard let forecast = model.forecast else { return "Weather, \(model.place?.name ?? "no place chosen")" }
-        return "Weather in \(model.place?.name ?? ""), \(Self.temperature(forecast.temperature)), \(detail(forecast))"
+        return "Weather in \(model.place?.name ?? ""), \(Self.temperature(forecast.temperature)), \(conditions(forecast))"
     }
 
-    /// Open-Meteo answers in °C; MeasurementFormatter shows the person's unit.
+    /// Open-Meteo answers in °C and km/h; MeasurementFormatter shows the
+    /// person's own units.
     static func temperature(_ celsius: Double) -> String {
         let formatter = MeasurementFormatter()
         formatter.unitStyle = .short
@@ -105,11 +155,47 @@ struct WeatherCard: View {
         return formatter.string(from: Measurement(value: celsius, unit: UnitTemperature.celsius))
     }
 
+    static func speed(_ kilometresPerHour: Double) -> String {
+        let formatter = MeasurementFormatter()
+        formatter.unitStyle = .medium
+        formatter.numberFormatter.maximumFractionDigits = 0
+        return formatter.string(from: Measurement(value: kilometresPerHour, unit: UnitSpeed.kilometersPerHour))
+    }
+
     static func weekday(_ date: Date, zone: TimeZone?) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = zone ?? .current
         formatter.setLocalizedDateFormatFromTemplate("EEE")
         return formatter.string(from: date)
+    }
+}
+
+/// A weather glyph that reads on the light card too: clouds in the
+/// secondary label colour (multicolour clouds are white), the sun and
+/// lightning yellow, rain and snow blue.
+struct WeatherGlyph: View {
+    let code: Int
+    var isDay = true
+
+    var body: some View {
+        let name = OpenMeteo.symbol(code, isDay: isDay)
+        let cloud = AOMColor.textSecondary
+        switch name {
+        case "sun.max.fill":
+            Image(systemName: name).foregroundStyle(Color.yellow)
+        case "moon.stars.fill":
+            Image(systemName: name).symbolRenderingMode(.palette).foregroundStyle(Color.yellow, cloud)
+        case "cloud.sun.fill", "cloud.moon.fill":
+            Image(systemName: name).symbolRenderingMode(.palette).foregroundStyle(cloud, Color.yellow)
+        case "cloud.bolt.rain.fill":
+            Image(systemName: name).symbolRenderingMode(.palette).foregroundStyle(cloud, Color.yellow, Color.blue)
+        case "cloud.drizzle.fill", "cloud.rain.fill", "cloud.heavyrain.fill", "cloud.sleet.fill", "cloud.hail.fill":
+            Image(systemName: name).symbolRenderingMode(.palette).foregroundStyle(cloud, Color.blue)
+        case "cloud.snow.fill":
+            Image(systemName: name).symbolRenderingMode(.palette).foregroundStyle(cloud, Color.cyan)
+        default:
+            Image(systemName: name).foregroundStyle(cloud)
+        }
     }
 }
 

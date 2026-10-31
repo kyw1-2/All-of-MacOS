@@ -287,9 +287,14 @@ final class SystemToolsModel: ObservableObject {
             let wasMuted = AudioOutputService.isOutputMuted()
             runAction(id, .muteVolume, success: wasMuted ? "Sound on" : "Sound muted", failure: "The current output has no mute or volume control.")
         case .muteMic:
-            let wasMuted = AudioOutputService.isInputMuted()
-            runAction(id, .toggleMuteMicrophone, success: wasMuted ? "Microphone on" : "Microphone muted",
-                      failure: "The default microphone has no software mute switch.")
+            // The microphone helper keeps push-to-talk, the menu bar icon and
+            // the status menu in step; the page reports with a toast.
+            let mic = MicMuteController.shared
+            if let muted = mic.toggleInWindow() {
+                succeed(id, muted ? "Microphone muted" + (mic.deviceName.map { " (\($0))" } ?? "") : "Microphone on")
+            } else {
+                fail(id, "Microphone Not Changed", mic.lastFailure ?? "The default microphone has no software mute switch.")
+            }
         case .bluetooth: bluetoothMenu()
         case .focus:
             runAction(id, .toggleDoNotDisturb, success: "Focus shortcut ran",

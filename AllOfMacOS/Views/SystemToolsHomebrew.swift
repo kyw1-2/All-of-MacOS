@@ -180,11 +180,11 @@ final class HomebrewModel: ObservableObject {
                 self.report(.cleanup, "Nothing to clean up", tone: .success); return
             }
             guard self.confirm("Clean Up Homebrew?",
-                               "This removes \(items) old version\(items == 1 ? "" : "s"), download\(items == 1 ? "" : "s") and log\(items == 1 ? "" : "s") and frees about \(size.text). Installed packages keep working.",
+                               "This removes \(items) old version\(items == 1 ? "" : "s"), download\(items == 1 ? "" : "s") and log\(items == 1 ? "" : "s") and frees about \(SystemStatus.size(size.bytes)). Installed packages keep working.",
                                button: "Clean Up", destructive: true) else { return }
             self.run(.cleanup, logs: true) { result in
                 let freed = Homebrew.parseFreedSize(result.stdout)
-                self.finished(.cleanup, result, success: freed.map { "Freed \($0.text) (\(SystemStatus.size($0.bytes)))" } ?? "Cleaned up")
+                self.finished(.cleanup, result, success: freed.map { "Freed \(SystemStatus.size($0.bytes))" } ?? "Cleaned up")
             }
         }
     }
@@ -363,7 +363,7 @@ final class HomebrewModel: ObservableObject {
             .init(package: .init(kind: .formula, name: "node"), installedVersions: ["24.10.0"], currentVersion: "24.11.1", pinned: true),
             .init(package: .init(kind: .cask, name: "swish"), installedVersions: ["1.12"], currentVersion: "1.13.3", pinned: false)
         ]
-        activity = [AOMLogEntry(date: Date().addingTimeInterval(-600), tone: .success, message: "Freed 41.9MB (43.9 MB)", source: "brew cleanup")]
+        activity = [AOMLogEntry(date: Date().addingTimeInterval(-600), tone: .success, message: "Freed 43.9 MB", source: "brew cleanup")]
     }
 }
 
@@ -437,7 +437,9 @@ struct HomebrewSheet: View {
                     .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
+                    .help(model.brew.map { "brew at \($0.path)" } ?? "")
             }
+            .layoutPriority(1)
             Spacer(minLength: AOMSpace.x3)
             Group {
                 Button("Check Now") { model.checkOutdated() }
@@ -457,7 +459,6 @@ struct HomebrewSheet: View {
 
     private var summary: String {
         var parts: [String] = []
-        if let brew = model.brew { parts.append(brew.deletingLastPathComponent().deletingLastPathComponent().path) }
         if let outdated = model.outdated {
             parts.append(outdated.isEmpty ? "Everything up to date" : "\(outdated.count) outdated")
         } else {
