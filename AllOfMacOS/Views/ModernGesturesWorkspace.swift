@@ -28,7 +28,9 @@ struct ModernGesturesWorkspace: View {
     @State private var toElse = false
     @State private var replaceActionID: UUID?
     @State private var addCategory: TriggerCategory = .trackpad
-    @State private var pendingDeletion: Trigger?
+    @Environment(\.undoManager) private var undoManager
+    /// Confirmations with Undo (design-3.4.0 b.5): delete, duplicate, test failures.
+    @StateObject private var toast = AOMToastModel()
     /// Narrow windows: whether the editor replaces the list.
     @State private var compactShowsEditor = false
     /// The editor title reads as a heading, so it edits on click — a hoverable
@@ -144,25 +146,22 @@ struct ModernGesturesWorkspace: View {
         .sheet(isPresented: $appState.showingAddAction) {
             AddActionSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
         }
-        .confirmationDialog("Delete “\(pendingDeletion?.displayName ?? "")”?",
-                            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
-            Button("Delete Automation", role: .destructive) {
-                if let trigger = pendingDeletion {
-                    if appState.selectedTrigger?.id == trigger.id { appState.selectedTrigger = nil }
-                    appState.removeTrigger(trigger)
-                }
-                pendingDeletion = nil
-            }
-            Button("Cancel", role: .cancel) { pendingDeletion = nil }
-        } message: {
-            Text("The automation and its actions are removed from this preset.")
-        }
+        .aomToast(toast)
         .onAppear {
             reconcileSelection()
             showInputSettings = selectedTrigger?.actions.isEmpty == true
             applyPreviewEditorHook()
-            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-add-midi-trigger") {
+            let args = ProcessInfo.processInfo.arguments
+            if PresetManager.isUIPreview, args.contains("--aom-preview-add-midi-trigger") {
                 presentAddTrigger(.otherTriggers)
+            }
+            // `--aom-preview-add-trigger <trackpad|keyboard|mouse|drawing|other>`
+            // opens the New Automation sheet on that input (isolated previews only).
+            if PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-add-trigger"),
+               args.indices.contains(index + 1) {
+                let categories: [String: TriggerCategory] = ["trackpad": .trackpad, "keyboard": .keyboard,
+                                                             "mouse": .normalMouse, "drawing": .drawings, "other": .otherTriggers]
+                presentAddTrigger(categories[args[index + 1]] ?? .trackpad)
             }
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
@@ -172,7 +171,7 @@ struct ModernGesturesWorkspace: View {
             showOptions = false
             applyPreviewEditorHook()
         }
-        .onDeleteCommand { if let trigger = selectedTrigger { pendingDeletion = trigger } }
+        .onDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -244,6 +243,20 @@ struct ModernGesturesWorkspace: View {
                 table
             } else {
                 list
+            }
+            // The list's + − ⋯ bar (design-3.4.0 b.2, System Settings #230).
+            AOMAddRemoveBar(addLabel: "New Automation", add: { presentAddTrigger(selectedDeviceCategory) },
+                            removeLabel: "Delete Automation",
+                            remove: selectedTrigger.map { trigger in { delete(trigger) } }) {
+                if let trigger = selectedTrigger {
+                    Button("Duplicate") { duplicate(trigger) }
+                    Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") { appState.toggleFavorite(trigger) }
+                    Divider()
+                }
+                Button("Import Preset…") { appState.presentPresetImport() }
+                Button("Export Preset…") { appState.presentPresetExport() }
+                Divider()
+                Button("Edit Activation Groups…") { showingGroupsEditor = true }
             }
         }
     }
@@ -338,12 +351,51 @@ struct ModernGesturesWorkspace: View {
         .accessibilityLabel("Automations")
     }
 
+    /// Flat, no shortcuts, unavailable items hidden (b.4). Delete doesn't
+    /// ask: it undoes (toast Undo, ⌘Z).
     @ViewBuilder private func triggerMenu(_ trigger: Trigger) -> some View {
-        Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") { appState.toggleFavorite(trigger) }
-        Button("Duplicate") { appState.addTrigger(TriggerClipboard.duplicate(trigger)) }
+        if !trigger.actions.isEmpty, ActionTree.problem(trigger.actions) == nil {
+            Button("Test") { test(trigger) }
+        }
         Button(trigger.isEnabled ? "Turn Off" : "Turn On") { appState.toggleTrigger(trigger) }
+        Button(trigger.isFavorite ? "Unpin from Workspace" : "Pin to Workspace") { appState.toggleFavorite(trigger) }
+        Button("Duplicate") { duplicate(trigger) }
         Divider()
-        Button("Delete…", role: .destructive) { pendingDeletion = trigger }
+        Button("Delete", role: .destructive) { delete(trigger) }
+    }
+
+    private func duplicate(_ trigger: Trigger) {
+        let copy = TriggerClipboard.duplicate(trigger)
+        appState.addTrigger(copy)
+        toast.show("Duplicated “\(trigger.displayName)”")
+    }
+
+    /// Deletes without asking; Undo puts the automation back where it was
+    /// (same position and order), from the toast or Edit › Undo (#103–#105).
+    private func delete(_ trigger: Trigger) {
+        guard let index = appState.currentPreset.triggers.firstIndex(where: { $0.id == trigger.id }) else { return }
+        let saved = appState.currentPreset.triggers[index]
+        let visible = rows
+        let next = visible.firstIndex { $0.id == saved.id }.flatMap { position -> Trigger? in
+            visible.indices.contains(position + 1) ? visible[position + 1] : (position > 0 ? visible[position - 1] : nil)
+        }
+        let wasSelected = appState.selectedTrigger?.id == saved.id
+        let state = appState
+        let revert: @MainActor () -> Void = {
+            guard !state.currentPreset.triggers.contains(where: { $0.id == saved.id }) else { return }
+            state.currentPreset.triggers.insert(saved, at: min(index, state.currentPreset.triggers.count))
+            state.selectedTrigger = state.currentPreset.triggers.first { $0.id == saved.id }
+            state.save()
+        }
+        AOMUndo.perform("Delete Automation", undoManager: undoManager, perform: {
+            state.removeTrigger(saved)
+            // Selection moves to the neighbouring row (#97).
+            if wasSelected, let next { state.selectedTrigger = state.currentPreset.triggers.first { $0.id == next.id } }
+        }, revert: revert)
+        let manager = undoManager
+        toast.show("Deleted “\(saved.displayName)”", action: {
+            if let manager, manager.canUndo, manager.undoActionName == "Delete Automation" { manager.undo() } else { revert() }
+        })
     }
 
     private var scopeMenu: some View {
@@ -737,9 +789,14 @@ struct ModernGesturesWorkspace: View {
 
     private func test(_ trigger: Trigger) {
         runStates[trigger.id] = .running
+        let name = trigger.displayName
         ActionExecutor.executeActions(trigger.actions, fromTrackpad: trigger.input.category == .trackpad,
                                       triggerID: trigger.id) { ok in
-            DispatchQueue.main.async { runStates[trigger.id] = ok ? .succeeded(Date()) : .failed(Date()) }
+            DispatchQueue.main.async {
+                runStates[trigger.id] = ok ? .succeeded(Date()) : .failed(Date())
+                // A failed test says so where you are, not only in the title's status.
+                if !ok { toast.show("“\(name)” didn't finish. A step failed or was stopped.", tone: .danger) }
+            }
         }
     }
 

@@ -500,22 +500,44 @@ struct AddTriggerSheet: View {
     @State private var drawingCertainty: Double = 0.7
     @State private var drawingIgnoreDirection = false
 
+    /// The input kinds as one segmented control (HIG #55: five short,
+    /// equal segments), so the choice that decides everything else is in
+    /// view instead of inside a pop-up menu.
+    private static func shortTitle(_ category: TriggerCategory) -> String {
+        switch category {
+        case .trackpad: return "Trackpad"
+        case .keyboard: return "Keyboard"
+        case .normalMouse: return "Mouse"
+        case .drawings: return "Drawing"
+        case .otherTriggers: return "Other"
+        case .all: return "All"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             // Named like the command that opens it (File › New Automation,
-            // the toolbar's New Automation) and titled like the other sheets.
-            Text("New Automation")
-                .font(AOMFont.headline)
-                .foregroundStyle(AOMColor.text)
-                .accessibilityAddTraits(.isHeader)
+            // the toolbar's New Automation), with what happens next.
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text("New Automation")
+                    .font(AOMFont.title)
+                    .foregroundStyle(AOMColor.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Choose what starts it. You add the actions it runs next.")
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+            }
 
             Picker("Input type", selection: $category) {
                 ForEach(TriggerCategory.inputCategories) { item in
-                    Label(item.rawValue, systemImage: item.iconName).tag(item)
+                    Text(Self.shortTitle(item)).tag(item)
+                        .help(item.rawValue)
                 }
-            }.onChange(of: category) { _, _ in keyboardMonitor.stopRecording() }
-
-            AOMDivider()
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Input type")
+            .onChange(of: category) { _, _ in keyboardMonitor.stopRecording() }
 
             switch category {
             case .trackpad:
@@ -525,7 +547,9 @@ struct AddTriggerSheet: View {
                     Text("Shortcut").tag("shortcut")
                     Text("Key Sequence").tag("sequence")
                     Text("Typed String").tag("typed")
-                }.pickerStyle(.segmented)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 if keyboardMode == "sequence" { sequenceRecorder }
                 else if keyboardMode == "typed" { typedStringFields }
                 else { keyboardRecorder }
@@ -540,25 +564,70 @@ struct AddTriggerSheet: View {
                 }.frame(height: AOMEditorSize.drawingComposer)
             case .otherTriggers:
                 otherTriggerPicker
-            default:
-                Text("Coming soon for \(category.rawValue)")
-                    .foregroundStyle(AOMColor.textSecondary)
+            case .all:
+                EmptyView()
             }
 
-            TextField("Name (optional)", text: $triggerName)
+            TextField("Automation name (optional)", text: $triggerName)
                 .textFieldStyle(.roundedBorder)
+                .help("Unnamed automations are titled by their input")
 
-            HStack {
-                Button("Cancel") { dismiss() }
+            AOMDivider()
+            HStack(spacing: AOMSpace.x3) {
+                // Why Add is unavailable, in words (HIG Feedback #109).
+                if let reason = missingReason {
+                    Label(reason, systemImage: "info.circle")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AOMSpace.x2)
+                Button("Cancel") { keyboardMonitor.stopRecording(); dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Spacer()
                 Button("Add") { addTrigger() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canAdd)
             }
         }
-        .padding(AOMSpace.x4)
+        .padding(AOMSpace.x5)
         .frame(width: category == .drawings ? AOMEditorSize.drawingSheet : AOMEditorSize.triggerSheet)
+    }
+
+    /// What is still missing before Add works; nil when it does.
+    private var missingReason: String? {
+        guard !canAdd else { return nil }
+        switch category {
+        case .keyboard:
+            if keyboardMode == "sequence" {
+                if sequenceHoldEnabled { return "Record exactly one key to hold." }
+                return sequenceStrokes.count > 6 ? "Use at most six keys." : "Record at least two keys."
+            }
+            if keyboardMode == "typed" { return "Type an abbreviation of 2 to 64 characters on one line." }
+            return "Record a shortcut first."
+        case .trackpad:
+            return TriggerValidation.problem(for: .trackpadGesture(selectedGesture), requiredModifiers: trackpadModifiers)
+        case .normalMouse:
+            return TriggerValidation.problem(for: mouseInput, requiredModifiers: mouseModifiers)
+        case .drawings:
+            return drawingSamples.isEmpty ? "Draw the shape at least once." : "Name the drawing."
+        case .otherTriggers:
+            switch otherTriggerMode {
+            case "scheduled":
+                if scheduleKind == "interval", !(1...1440).contains(intervalMinutes) { return "Choose an interval of 1 to 1,440 minutes." }
+                return "Choose at least one day."
+            case "event":
+                if systemEventKind == "file" { return "Choose a file or folder." }
+                if systemEventKind == "appLaunch" || systemEventKind == "appQuit" { return "Choose an application." }
+                if ["batteryBelow", "batteryAbove"].contains(systemEventKind) { return "Choose a charge of 1 to 99%." }
+                if systemEventKind == "hid" { return "Check the IDs: vendor and product 1–65535, minimum no higher than maximum." }
+                return "Check the event's values."
+            default:
+                return "Name the trigger."
+            }
+        case .all:
+            return nil
+        }
     }
 
     private var canAdd: Bool {
@@ -601,56 +670,43 @@ struct AddTriggerSheet: View {
                 .foregroundStyle(AOMColor.text)
             TextField("Search gestures", text: $gestureSearch)
                 .textFieldStyle(.roundedBorder)
+            // A real list: arrow keys and type-to-select move the selection,
+            // Return or a double-click adds (b.4).
             ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(filteredGestures) { gesture in
-                            let selected = selectedGesture == gesture
-                            let onAccent = AOMTheme.onAccent(AOMColor.accent)
-                            HStack(spacing: AOMSpace.x2) {
-                                Image(systemName: gestureIcon(gesture))
-                                    .frame(width: AOMIcon.row)
-                                    .foregroundStyle(selected ? onAccent : AOMColor.textSecondary)
-                                Text(gesture.rawValue)
-                                    .font(AOMFont.body)
-                                    .foregroundStyle(selected ? onAccent : AOMColor.text)
-                                Spacer()
-                                if selected {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(onAccent)
-                                        .transition(.opacity)
-                                }
-                            }
-                            .padding(.horizontal, AOMSpace.x2)
-                            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
-                                    .fill(selected ? AOMColor.accent : Color.clear)
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) {
-                                withAnimation(AOMMotion.quick) { selectedGesture = gesture }
-                                addTrigger()
-                            }
-                            .onTapGesture {
-                                withAnimation(AOMMotion.quick) { selectedGesture = gesture }
-                            }
+                List(selection: Binding<TrackpadGesture?>(
+                    get: { selectedGesture },
+                    set: { if let gesture = $0 { selectedGesture = gesture } })) {
+                    ForEach(filteredGestures) { gesture in
+                        Label(gesture.rawValue, systemImage: gestureIcon(gesture))
+                            .font(AOMFont.body)
+                            .tag(gesture)
                             .id(gesture)
-                        }
                     }
-                    .padding(AOMSpace.x1)
                 }
-                .onChange(of: gestureSearch) { _ in
-                    if let first = filteredGestures.first {
+                .listStyle(.inset(alternatesRowBackgrounds: false))
+                .contextMenu(forSelectionType: TrackpadGesture.self) { _ in
+                    EmptyView()
+                } primaryAction: { gestures in
+                    if let gesture = gestures.first { selectedGesture = gesture; addTrigger() }
+                }
+                .onChange(of: gestureSearch) { _, _ in
+                    if let first = filteredGestures.first, !filteredGestures.contains(selectedGesture) {
                         selectedGesture = first
                         withAnimation(AOMMotion.standard) { proxy.scrollTo(first, anchor: .top) }
                     }
                 }
+                .overlay {
+                    if filteredGestures.isEmpty {
+                        Text("No gesture matches “\(gestureSearch)”.")
+                            .font(AOMFont.body)
+                            .foregroundStyle(AOMColor.textSecondary)
+                    }
+                }
             }
             .frame(height: AOMEditorSize.gestureList)
-            .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMTheme.hairline, lineWidth: 0.5))
+            .accessibilityLabel("Gestures")
             if selectedGesture.isLongTouch {
                 Stepper("Hold for \(String(format: "%.1f", Double(longTouchMs) / 1000)) s", value: $longTouchMs, in: 100...5000, step: 100)
             }
@@ -672,13 +728,14 @@ struct AddTriggerSheet: View {
                 .background(AOMColor.raised, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
             HStack(spacing: AOMSpace.x2) {
-                Button(keyboardMonitor.isMonitoring ? "Recording…" : "Record Next Key") {
+                Button(keyboardMonitor.isMonitoring ? "Stop Recording" : "Record Next Key") {
+                    if keyboardMonitor.isMonitoring { keyboardMonitor.stopRecording(); return }
                     keyboardMonitor.startRecording { shortcut in
                         if sequenceStrokes.count < 6 {
                             sequenceStrokes.append(KeySequenceStroke(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers.rawValue))
                         }
                     }
-                }.disabled(keyboardMonitor.isMonitoring || sequenceStrokes.count >= 6)
+                }.disabled(!keyboardMonitor.isMonitoring && sequenceStrokes.count >= 6)
                 Menu("Modifier Press") {
                     Button("⌘ Command") { appendModifier(55) }
                     Button("⌥ Option") { appendModifier(58) }
@@ -711,7 +768,7 @@ struct AddTriggerSheet: View {
                 if let shortcut = recordedShortcut {
                     AOMShortcutKeys(shortcut: shortcut)
                 } else {
-                    Text("Press a key combination…")
+                    Text(keyboardMonitor.isMonitoring ? "Press a key combination…" : "No shortcut recorded")
                         .font(AOMFont.body)
                         .foregroundStyle(AOMColor.textSecondary)
                 }
@@ -725,12 +782,15 @@ struct AddTriggerSheet: View {
             )
             .aomAnimation(.quick, value: keyboardMonitor.isMonitoring)
 
-            Button(keyboardMonitor.isMonitoring ? "Recording…" : "Record Shortcut") {
+            // While recording, the same button stops (the next key combination
+            // is taken otherwise).
+            Button(keyboardMonitor.isMonitoring ? "Stop Recording"
+                   : (recordedShortcut == nil ? "Record Shortcut" : "Record Again")) {
+                if keyboardMonitor.isMonitoring { keyboardMonitor.stopRecording(); return }
                 keyboardMonitor.startRecording { shortcut in
                     recordedShortcut = shortcut
                 }
             }
-            .disabled(keyboardMonitor.isMonitoring)
         }
     }
 
@@ -805,14 +865,16 @@ struct AddTriggerSheet: View {
             if scheduleKind == "weekly" || (scheduleKind == "interval" && restrictInterval) {
                 HStack(spacing: AOMSpace.x1) {
                     ForEach(1...7, id: \.self) { day in
-                        let label = ["S", "M", "T", "W", "T", "F", "S"][day - 1]
-                        Button(label) {
-                            if selectedWeekdays.contains(day) { selectedWeekdays.remove(day) }
-                            else { selectedWeekdays.insert(day) }
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(selectedWeekdays.contains(day) ? AOMColor.accent : AOMColor.textSecondary)
-                        .frame(width: AOMIcon.hitArea)
+                        let symbols = Calendar.current.shortWeekdaySymbols
+                        let names = Calendar.current.weekdaySymbols
+                        let on = selectedWeekdays.contains(day)
+                        Toggle(symbols[day - 1], isOn: Binding(get: { on }, set: { value in
+                            if value { selectedWeekdays.insert(day) } else { selectedWeekdays.remove(day) }
+                        }))
+                        .toggleStyle(.button)
+                        .tint(AOMColor.accent)
+                        .help(names[day - 1])
+                        .accessibilityLabel(names[day - 1])
                     }
                 }
                 AOMEditorNote(SystemTriggerKind.weekdayNames(Array(selectedWeekdays)))
