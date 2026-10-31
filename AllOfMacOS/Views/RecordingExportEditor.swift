@@ -93,7 +93,7 @@ struct RecordingExportEditor: View {
                         .help(isExporting ? "Wait for the export to finish" : "Close (Esc)")
                 }
                 if duration > 0, let previewPlayer {
-                    VideoPlayer(player: previewPlayer)
+                    AOMPlayerView(player: previewPlayer)
                         .frame(minHeight: AOMFeatureSize.videoPreviewHeight, maxHeight: AOMFeatureSize.videoPreviewHeight * 1.5)
                         .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
@@ -873,5 +873,26 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
         guard let window = notification.object as? NSWindow,
               let source = windows.first(where: { $0.value === window })?.key else { return }
         windows.removeValue(forKey: source)
+    }
+}
+
+/// AVKit's AppKit player view in SwiftUI. The SwiftUI `VideoPlayer` overlay
+/// aborted while building its view on macOS 27.2 (the preview build crashed
+/// in `_AVKit_SwiftUI` class metadata), so AOM hosts `AVPlayerView`
+/// directly: the same inline controls, no overlay library involved.
+struct AOMPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = false
+        view.player = player
+        view.setAccessibilityLabel("Video preview")
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
     }
 }

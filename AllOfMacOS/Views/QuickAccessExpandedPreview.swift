@@ -179,7 +179,7 @@ struct CapturePreviewContent: View {
     @ViewBuilder private var canvas: some View {
         if isVideo {
             if let player {
-                VideoPlayer(player: player).padding(AOMSpace.x4)
+                AOMPlayerView(player: player).padding(AOMSpace.x4)
             } else {
                 ContentUnavailableView("Recording Missing", systemImage: "video.slash",
                     description: Text("The recorded MP4 file can no longer be found."))
