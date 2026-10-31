@@ -198,6 +198,7 @@ final class ClipboardStore: ObservableObject {
                 pauseTimer = nil
                 pauseRemainingSeconds = 0
             }
+            reschedulePollingIfNeeded()
         }
     }
     @Published var pauseRemainingSeconds: Int = 0
@@ -239,6 +240,7 @@ final class ClipboardStore: ObservableObject {
             if let data = try? JSONEncoder().encode(settings.bounded) { defaults.set(data, forKey: Self.settingsKey) }
             trim()
             scheduleSave()
+            reschedulePollingIfNeeded()
         }
     }
 
@@ -307,12 +309,35 @@ final class ClipboardStore: ObservableObject {
         guard timer == nil else { return }
         // Do not capture the user's pre-existing clipboard merely by opening AOM.
         lastChangeCount = pasteboard.changeCount
-        let timer = Timer(timeInterval: 0.075, repeats: true) { [weak self] _ in
+        schedulePolling()
+    }
+
+    /// How often the pasteboard is sampled: every 75 ms while the history
+    /// records, once a minute (the retention trim) while it is off or
+    /// paused. 3.4.0 audit: with Clipboard History off or paused the store
+    /// still woke 13 times a second, for nothing it would keep.
+    static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.075 : 60 }
+
+    /// The running poller's interval; nil while stopped (tests).
+    var pollingInterval: TimeInterval? { timer?.timeInterval }
+
+    private func schedulePolling() {
+        let interval = Self.pollInterval(recording: settings.enabled && !paused)
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
-        timer.tolerance = 0.01
+        timer.tolerance = interval < 1 ? 0.01 : 5
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    /// History switched on or off, paused or resumed: the running poller
+    /// takes the matching interval. A stopped store stays stopped.
+    private func reschedulePollingIfNeeded() {
+        guard let timer, timer.timeInterval != Self.pollInterval(recording: settings.enabled && !paused) else { return }
+        timer.invalidate()
+        self.timer = nil
+        schedulePolling()
     }
 
     func stop() {
