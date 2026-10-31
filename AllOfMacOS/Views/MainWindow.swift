@@ -9,6 +9,14 @@ struct MainWindow: View {
     @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettings
+    @ObservedObject private var history = AOMNavigationHistory.shared
+
+    /// The last page, restored at launch (HIG Launching: restore the previous
+    /// state). Isolated previews and tests share no state with the app, so
+    /// they neither read nor write it.
+    static let lastPageKey = "AOMLastPage"
+    static var persistsLastPage: Bool { !PresetManager.isUIPreview && !PresetManager.isRunningTests }
+    private static var restoredLastPage = false
 
     var body: some View {
         AOMMainShell(showingCommandPalette: $appState.showingCommandPalette,
@@ -61,7 +69,12 @@ struct MainWindow: View {
             setShowLog: { showLog = $0 },
             showTouchVisualizer: showTouchVisualizer,
             setShowTouchVisualizer: { showTouchVisualizer = $0 }))
+        .onChange(of: appState.selectedMainTab) { old, new in
+            history.record(from: old, to: new)
+            if Self.persistsLastPage { UserDefaults.standard.set(new.rawValue, forKey: Self.lastPageKey) }
+        }
         .onAppear {
+            restoreLastPage()
             // Isolated previews can open Settings for review (`--aom-preview-settings`),
             // once the main window is on screen — the way a person would.
             if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-settings") {
@@ -74,6 +87,20 @@ struct MainWindow: View {
                 appState.showTutorialRequested = false
             }
         }
+    }
+}
+
+extension MainWindow {
+    /// Once per launch, and only if nothing else (a link, the menu bar) has
+    /// picked a page yet.
+    private func restoreLastPage() {
+        guard Self.persistsLastPage, !Self.restoredLastPage else { return }
+        Self.restoredLastPage = true
+        guard appState.selectedMainTab == .home,
+              let raw = UserDefaults.standard.string(forKey: Self.lastPageKey),
+              let tab = AOMMainTab(rawValue: raw), tab != .home else { return }
+        history.skipRecording(tab)
+        appState.selectedMainTab = tab
     }
 }
 
@@ -96,12 +123,26 @@ struct AOMMainWindowChrome: NSViewRepresentable {
             // macOS 26 draws the toolbar as Liquid Glass with a scroll-edge
             // effect over the system canvas. Painting a custom background or
             // a transparent titlebar here hid both (3.0.x).
-            if !sizedForPreview, let size = PresetManager.previewWindowSize {
+            if !sizedForPreview, let size = AOMMainWindowChrome.previewSize {
                 sizedForPreview = true
                 window.setFrame(NSRect(x: 0, y: 0, width: size.width, height: size.height), display: true)
             }
         }
     }
+    /// The isolated preview's window size. The last `--aom-preview-size`
+    /// wins, so a size added after the kit's default 1320x820 (the 1000x680
+    /// review) takes effect.
+    static var previewSize: CGSize? {
+        guard PresetManager.isUIPreview else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.lastIndex(of: "--aom-preview-size"), args.indices.contains(index + 1) else {
+            return PresetManager.previewWindowSize
+        }
+        let parts = args[index + 1].split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2, parts.allSatisfy({ $0 >= 400 && $0 <= 4000 }) else { return PresetManager.previewWindowSize }
+        return CGSize(width: parts[0], height: parts[1])
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = Probe(frame: .zero); view.appearanceChoice = appearance; return view
     }

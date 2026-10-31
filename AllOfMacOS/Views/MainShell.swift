@@ -23,6 +23,7 @@ struct AOMMainShell<Content: View>: View {
     /// The sidebar is collapsible (toolbar button, View ▸ Hide Sidebar) and
     /// remembers its state.
     @AppStorage("AOMSidebarVisible") private var sidebarVisible = true
+    @ObservedObject private var history = AOMNavigationHistory.shared
 
     init(showingCommandPalette: Binding<Bool>,
          showLog: Binding<Bool>,
@@ -87,6 +88,22 @@ struct AOMMainShell<Content: View>: View {
             // The system toolbar title (design-3.3.6 b.11): standard size,
             // with the page's subtitle from `aomToolbarSubtitle`.
             .navigationTitle(appState.selectedMainTab.title)
+            // Back and Forward beside the title (System Settings, Finder's Go
+            // menu; design-3.4.0 b.3, #228–#229, #233).
+            .toolbar {
+                ToolbarItemGroup(placement: .navigation) {
+                    Button { history.goBack(appState) } label: {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .disabled(!history.canGoBack)
+                    .help(history.backTarget.map { "Back to \($0.title) (⌘[)" } ?? "Back (⌘[)")
+                    Button { history.goForward(appState) } label: {
+                        Label("Forward", systemImage: "chevron.right")
+                    }
+                    .disabled(!history.canGoForward)
+                    .help(history.forwardTarget.map { "Forward to \($0.title) (⌘])" } ?? "Forward (⌘])")
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
         .background(AOMMainWindowChrome(appearance: appearance).frame(width: 0, height: 0))
@@ -112,10 +129,25 @@ struct AOMSidebar: View {
                 set: { if let tab = $0, tab != appState.selectedMainTab { appState.selectedMainTab = tab } })
     }
 
+    /// Sections people folded (HIG Sidebars and Outline views: keep their
+    /// expansion choices).
+    @AppStorage("AOMSidebarCollapsed") private var collapsedSections = ""
+    @ObservedObject private var layout = AOMWorkspaceLayout.shared
+    @Environment(\.undoManager) private var undoManager
+
+    private func expanded(_ id: String) -> Binding<Bool> {
+        Binding(get: { !collapsedSections.split(separator: ",").contains(Substring(id)) },
+                set: { isExpanded in
+                    var set = Set(collapsedSections.split(separator: ",").map(String.init))
+                    if isExpanded { set.remove(id) } else { set.insert(id) }
+                    collapsedSections = set.sorted().joined(separator: ",")
+                })
+    }
+
     var body: some View {
         List(selection: selection) {
             navigationItem(.home)
-            Section("Tools") {
+            Section("Tools", isExpanded: expanded("tools")) {
                 navigationItem(.gestures)
                 navigationItem(.snapping)
                 navigationItem(.capture)
@@ -123,13 +155,13 @@ struct AOMSidebar: View {
                 navigationItem(.audio)
                 navigationItem(.tools)
             }
-            Section("Productivity") {
+            Section("Productivity", isExpanded: expanded("productivity")) {
                 navigationItem(.folderRules)
                 navigationItem(.textActions)
                 navigationItem(.files)
                 navigationItem(.focus)
             }
-            Section("Activity") {
+            Section("Activity", isExpanded: expanded("activity")) {
                 navigationItem(.insights)
             }
         }
@@ -151,7 +183,50 @@ struct AOMSidebar: View {
         case .capture: AOMRecordingSidebarBadge()
         case .clipboard: AOMClipboardSidebarBadge()
         case .audio: AOMAudioSidebarBadge()
+        case .folderRules, .textActions, .files, .focus:
+            if let module = AOMModule(tab: tab), let status = AOMModuleStatusBoard.status(for: module) {
+                AOMModuleSidebarBadge(status: status)
+            }
         default: EmptyView()
+        }
+    }
+
+    /// The row's context menu (design-3.4.0 b.4): open, the module's own
+    /// switch as a checked item, and whether Workspace shows its tile.
+    @ViewBuilder
+    private func rowMenu(_ tab: AOMMainTab) -> some View {
+        Button("Open \(tab.title)") { appState.selectedMainTab = tab }
+        switch tab {
+        case .gestures:
+            Toggle("Automation", isOn: Binding(get: { appState.globalEnabled },
+                                               set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
+        case .snapping:
+            Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
+                                                 set: { appState.setSnappingEnabled($0) }))
+                .disabled(!appState.globalEnabled)
+        case .clipboard:
+            Toggle("Clipboard History", isOn: Binding(get: { !ClipboardStore.shared.paused },
+                                                      set: { $0 ? ClipboardStore.shared.resume() : ClipboardStore.shared.pause() }))
+        case .audio:
+            if AppAudioMixerService.shared.isSupported {
+                Toggle("App Audio", isOn: Binding(get: { AppAudioMixerService.shared.soundEnabled },
+                                                  set: { AppAudioMixerService.shared.soundEnabled = $0 }))
+            }
+        case .folderRules, .textActions, .files, .focus:
+            if let module = AOMModule(tab: tab), let status = AOMModuleStatusBoard.status(for: module),
+               status.isOn != nil, let setOn = status.setOn {
+                Toggle(module.title, isOn: Binding(get: { status.isOn ?? false }, set: { setOn($0) }))
+            }
+        default:
+            EmptyView()
+        }
+        if let module = AOMModule(tab: tab) {
+            let id = AOMWorkspaceLayout.tileID(module)
+            let hidden = layout.hidden.contains(id)
+            Divider()
+            Button(hidden ? "Show on Workspace" : "Hide from Workspace") {
+                layout.change(hidden ? "Show Tile" : "Hide Tile", undoManager: undoManager) { $0.setHidden(id, !hidden) }
+            }
         }
     }
 
@@ -167,6 +242,68 @@ struct AOMSidebar: View {
         }
         .tag(tab)
         .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
+        .contextMenu { rowMenu(tab) }
+    }
+}
+
+// MARK: - Navigation history
+
+/// Back and Forward through the pages (Finder's Go menu, System Settings'
+/// View menu): every page change is recorded, at most 50, and ⌘[ / ⌘] and
+/// the toolbar chevrons walk it. A change made by Back or Forward itself is
+/// not recorded again.
+@MainActor
+final class AOMNavigationHistory: ObservableObject {
+    static let shared = AOMNavigationHistory()
+    static let limit = 50
+
+    @Published private(set) var backStack: [AOMMainTab] = []
+    @Published private(set) var forwardStack: [AOMMainTab] = []
+    /// The page Back or Forward is about to select.
+    private var pending: AOMMainTab?
+
+    var canGoBack: Bool { !backStack.isEmpty }
+    var canGoForward: Bool { !forwardStack.isEmpty }
+    var backTarget: AOMMainTab? { backStack.last }
+    var forwardTarget: AOMMainTab? { forwardStack.last }
+
+    /// Called for every page change.
+    func record(from old: AOMMainTab, to new: AOMMainTab) {
+        guard old != new else { return }
+        if pending == new {
+            pending = nil
+            return
+        }
+        pending = nil
+        backStack.append(old)
+        if backStack.count > Self.limit { backStack.removeFirst(backStack.count - Self.limit) }
+        forwardStack.removeAll()
+    }
+
+    /// The next page change to `tab` is not a visit (launch restore).
+    func skipRecording(_ tab: AOMMainTab) { pending = tab }
+
+    /// Pops the page Back goes to; the caller selects it.
+    func back(from current: AOMMainTab) -> AOMMainTab? {
+        guard let target = backStack.popLast() else { return nil }
+        forwardStack.append(current)
+        pending = target
+        return target
+    }
+
+    func forward(from current: AOMMainTab) -> AOMMainTab? {
+        guard let target = forwardStack.popLast() else { return nil }
+        backStack.append(current)
+        pending = target
+        return target
+    }
+
+    func goBack(_ appState: AppState) {
+        if let target = back(from: appState.selectedMainTab) { appState.selectedMainTab = target }
+    }
+
+    func goForward(_ appState: AppState) {
+        if let target = forward(from: appState.selectedMainTab) { appState.selectedMainTab = target }
     }
 }
 
@@ -350,6 +487,23 @@ private struct AOMWorkspaceSidebarBadge: View {
                 if count != missing { missing = count }
                 try? await Task.sleep(for: .seconds(5))
             }
+        }
+    }
+}
+
+/// A Productivity module: ⚠ while it needs something (its `attention`),
+/// On while a Focus session runs; nothing in the normal state.
+private struct AOMModuleSidebarBadge: View {
+    @ObservedObject var status: AOMModuleStatus
+
+    var body: some View {
+        if let attention = status.attention, !attention.isEmpty {
+            AOMSidebarStatusBadge(text: "1", tone: .warning, symbol: "exclamationmark.triangle.fill")
+                .help(attention)
+                .accessibilityLabel("Needs attention: \(attention)")
+        } else if status.module == .focus, status.isOn == true {
+            AOMSidebarStatusBadge(text: "On", tone: .success)
+                .help(status.detail)
         }
     }
 }
