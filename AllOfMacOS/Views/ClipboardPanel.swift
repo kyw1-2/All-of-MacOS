@@ -87,6 +87,9 @@ final class ClipboardPanelState: ObservableObject {
     @Published var editor: ClipboardEditorRequest?
     @Published var preview: ClipboardEntry?
     @Published var editingTitleID: UUID?
+    /// A card asked to rename its title in place (Rename in the card menu,
+    /// ⌘R on the selection), Paste-style; the card clears it when it starts.
+    @Published var renameRequestID: UUID?
     /// Intelligent Clipboard picks for the current destination, best first.
     /// Shown at the front of Clipboard History when no search or filter is on.
     @Published var suggestedIDs: [UUID] = []
@@ -880,6 +883,18 @@ final class ClipboardPanelController {
         return "Paste"
     }
 
+    /// Rename in place on the card, as Paste does (3.4.0; until then a
+    /// "Rename Item" sheet). A card that is not on screen cannot take it, so
+    /// the sheet still opens when no card started editing.
+    func requestRename(_ item: ClipboardEntry) {
+        state.renameRequestID = item.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.state.renameRequestID == item.id else { return }
+            self.state.renameRequestID = nil
+            self.state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+        }
+    }
+
     func editEntry(_ item: ClipboardEntry) {
         if item.kind == .image, let data = item.imageData,
            let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -1130,7 +1145,7 @@ final class ClipboardPanelController {
             case .edit:
                 editEntry(item)
             case .rename:
-                state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+                requestRename(item)
             }
             state.searchFieldActive = false
             return true
@@ -2392,6 +2407,13 @@ private struct ClipboardCardView: View, Equatable {
             ClipboardPreviewSheet(entry: entry, store: store, state: state, controller: controller)
         }
         .contextMenu { entryMenu(entry) }
+        // Rename in the menu or ⌘R starts the in-place title edit (3.4.0).
+        // The state is not observed here, so the request arrives as an event.
+        .onReceive(state.$renameRequestID) { id in
+            guard let id, id == entry.id, !isEditingTitle else { return }
+            DispatchQueue.main.async { if state.renameRequestID == id { state.renameRequestID = nil } }
+            beginTitleEdit()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -2579,7 +2601,7 @@ private struct ClipboardCardView: View, Equatable {
             if entry.kind == .image {
                 Button("Remove Background") { controller.removeBackground(entry) }
             }
-            Button("Rename…") { state.editor = .init(operation: .renameEntry(entry.id), title: "Rename Item", text: entry.title) }
+            Button("Rename") { controller.requestRename(entry) }
                 .keyboardShortcut("r", modifiers: .command)
         }
         Button("Delete\(suffix)", role: .destructive) {
