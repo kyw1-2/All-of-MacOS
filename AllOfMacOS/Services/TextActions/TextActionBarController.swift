@@ -206,12 +206,25 @@ final class TextActionBarController {
 
     // MARK: Layout
 
+    /// Sizes and places the panel now, and once more on the next turn: SwiftUI
+    /// applies a model change (a page, a submenu, a confirmation) a moment
+    /// later, and the bar must stay centred at its new width.
     private func layout() {
+        place()
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.place() }
+        }
+    }
+
+    private func place() {
         guard let panel, let hosting else { return }
+        hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
+        guard size.width > 0, size.height > 0 else { return }
         let screens = NSScreen.screens.map { TextActionScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) }
         let origin = TextActionBarPlacement.origin(for: size, anchor: anchor, pointer: pointer, screens: screens, position: position)
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        let frame = NSRect(origin: origin, size: size)
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
     private func makePanel() -> TextActionBarPanel {

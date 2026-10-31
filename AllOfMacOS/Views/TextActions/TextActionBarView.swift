@@ -93,11 +93,14 @@ struct TextActionBarView: View {
     }
 }
 
-/// A hairline between items, as in the iOS edit menu.
+/// A hairline between items, as in the iOS edit menu (a stronger line with
+/// Increase Contrast).
 struct TextActionBarSeparator: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+
     var body: some View {
         Rectangle()
-            .fill(AOMColor.hairline)
+            .fill(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline)
             .frame(width: 1, height: TextActionBarMetrics.height * 0.5)
             .accessibilityHidden(true)
     }
