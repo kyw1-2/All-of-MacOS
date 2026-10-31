@@ -1,15 +1,26 @@
 import AppKit
 
-/// 3.4 scaffold for Microphone mute HUD and hotkey. The module's agent replaces this body;
-/// `AOMProductivityModules` calls these two entry points.
+/// The microphone mute helper's entry points (3.4 scaffold signatures, kept):
+/// `AOMProductivityModules` calls `start()` at launch and collects
+/// `statusMenuItems()`; the `toggleMicMute` hotkey and Workspace's Mute
+/// Microphone quick action call `toggleMute()`. The work is in
+/// `MicMuteController`; the settings are `MicMuteSection` on the Audio page.
 @MainActor
 enum MicMuteModule {
-    /// Called once at launch (never in UI previews or unit tests).
-    static func start() {}
+    /// Called once at launch (never in UI previews or unit tests). Installs
+    /// only what the saved settings need (key monitor for push-to-talk, the
+    /// launch observer for auto-mute, device listeners for the indicator).
+    static func start() {
+        MicMuteController.shared.start()
+    }
 
     /// Mutes or unmutes the default microphone and shows the HUD.
-    static func toggleMute() {}
+    static func toggleMute() {
+        MicMuteController.shared.toggle()
+    }
 
-    /// This module's items in the status menu's Productivity section.
-    static func statusMenuItems() -> [NSMenuItem] { [] }
+    /// "Mute Microphone", checked while the microphone is muted.
+    static func statusMenuItems() -> [NSMenuItem] {
+        [MicMuteController.shared.statusMenuItem()]
+    }
 }

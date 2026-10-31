@@ -88,19 +88,27 @@ enum CleanupTools {
         ]
 
         func matches(_ fileName: String, allowNameMatch: Bool) -> Bool {
+            matchKind(fileName, allowNameMatch: allowNameMatch) != nil
+        }
+
+        enum MatchKind: Equatable { case bundleID, name }
+
+        /// How an entry matched: by the bundle ID (it is the app's) or only
+        /// by the app's name (it may belong to another app with that name).
+        func matchKind(_ fileName: String, allowNameMatch: Bool) -> MatchKind? {
             let id = bundleID.lowercased()
             let name = fileName.lowercased()
-            guard id.count >= 3 else { return false }
+            guard id.count >= 3 else { return nil }
             // A two-part ID ("com.foo") could be a vendor prefix shared by
             // other apps, so it only matches itself plus a file extension.
             if id.split(separator: ".").count < 3 {
-                if name == id || [".plist", ".savedstate", ".binarycookies"].contains(where: { name == id + $0 }) { return true }
+                if name == id || [".plist", ".savedstate", ".binarycookies"].contains(where: { name == id + $0 }) { return .bundleID }
             } else if containsAtBoundary(name, id) {
-                return true
+                return .bundleID
             }
-            guard allowNameMatch else { return false }
+            guard allowNameMatch else { return nil }
             let app = appName.lowercased().trimmingCharacters(in: .whitespaces)
-            return app.count >= 4 && name == app
+            return app.count >= 4 && name == app ? .name : nil
         }
 
         /// `id` appears in `name` with a dot (or the string edge) on both sides.
@@ -147,19 +155,52 @@ enum CleanupTools {
     }
 
     static func leftovers(bundleID: String, appName: String, library: URL) -> [CleanupCandidate] {
+        leftoverMatches(bundleID: bundleID, appName: appName, library: library).map(\.candidate)
+    }
+
+    /// Each leftover with how it matched (see `LeftoverMatcher.matchKind`).
+    static func leftoverMatches(bundleID: String, appName: String, library: URL)
+        -> [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)] {
         let matcher = LeftoverMatcher(bundleID: bundleID, appName: appName)
-        var found: [CleanupCandidate] = []
+        var found: [(candidate: CleanupCandidate, kind: LeftoverMatcher.MatchKind)] = []
         var seen = Set<String>()
         for location in LeftoverMatcher.locations {
             let folder = library.appendingPathComponent(location.path, isDirectory: true)
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { continue }
-            for entry in names.sorted() where matcher.matches(entry, allowNameMatch: location.matchesName) {
+            for entry in names.sorted() {
+                guard let kind = matcher.matchKind(entry, allowNameMatch: location.matchesName) else { continue }
                 let url = folder.appendingPathComponent(entry)
                 guard seen.insert(url.standardizedFileURL.path).inserted else { continue }
-                found.append(CleanupCandidate(url: url, size: allocatedSize(url), note: location.label))
+                found.append((CleanupCandidate(url: url, size: allocatedSize(url), note: location.label), kind))
             }
         }
         return found
+    }
+
+    /// The uninstaller's review (design-3.4.0 b.16): the app first, then
+    /// its leftovers by folder. The app and bundle-ID matches are checked;
+    /// matches on the name alone are listed unchecked ("Notes" could be
+    /// another app's folder).
+    struct UninstallReview: Equatable {
+        let items: [CleanupCandidate]
+        let preselected: Set<String>
+        /// Leftovers that matched only by the app's name.
+        let nameOnly: Set<String>
+    }
+
+    static func uninstallReview(for app: URL, library: URL,
+                                isRunning: (String) -> Bool = { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }) throws -> UninstallReview {
+        let plan = try uninstallPlan(for: app, library: library, isRunning: isRunning)
+        guard let bundle = Bundle(url: app), let bundleID = bundle.bundleIdentifier else { throw UninstallRefusal.notAnApp }
+        let name = (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? app.deletingPathExtension().lastPathComponent
+        let byName = Set(leftoverMatches(bundleID: bundleID, appName: name, library: library)
+            .filter { $0.kind == .name }.map(\.candidate.id))
+        let order = LeftoverMatcher.locations.map(\.label)
+        let leftovers = plan.dropFirst().sorted {
+            (order.firstIndex(of: $0.note) ?? 99, $0.url.lastPathComponent) < (order.firstIndex(of: $1.note) ?? 99, $1.url.lastPathComponent)
+        }
+        let items = Array(plan.prefix(1)) + leftovers
+        return UninstallReview(items: items, preselected: Set(items.map(\.id)).subtracting(byName), nameOnly: byName)
     }
 
     // MARK: - Large files

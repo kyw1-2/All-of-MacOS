@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The System Tools page's groups, in page order.
 enum SystemToolGroup: String, CaseIterable, Identifiable {
-    case toggles, displaySound, power, energy, apps, finderDock, screenshots, disk, maintenance, cleanup, files, network, info
+    case toggles, displaySound, power, energy, apps, homebrew, finderDock, screenshots, disk, maintenance, cleanup, files, pdf, network, info
 
     var id: String { rawValue }
 
@@ -13,12 +13,14 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         case .power: return "Power & Session"
         case .energy: return "Battery & Energy"
         case .apps: return "Apps & Processes"
+        case .homebrew: return "Homebrew"
         case .finderDock: return "Finder & Dock"
         case .screenshots: return "Screenshots"
         case .disk: return "Disk & Storage"
         case .maintenance: return "Maintenance"
         case .cleanup: return "Cleanup"
-        case .files: return "Files, PDF & Media"
+        case .files: return "Files & Media"
+        case .pdf: return "PDF"
         case .network: return "Network"
         case .info: return "System Info"
         }
@@ -32,12 +34,14 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         case .power: return "power"
         case .energy: return "battery.75percent"
         case .apps: return "app.badge"
+        case .homebrew: return "mug"
         case .finderDock: return "folder"
         case .screenshots: return "camera.viewfinder"
         case .disk: return "internaldrive"
         case .maintenance: return "wrench.and.screwdriver"
         case .cleanup: return "trash"
         case .files: return "doc.on.doc"
+        case .pdf: return "doc.richtext"
         case .network: return "network"
         case .info: return "info.circle"
         }
@@ -51,12 +55,14 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         case .power: return .purple
         case .energy: return .green
         case .apps: return .red
+        case .homebrew: return .orange
         case .finderDock: return .cyan
         case .screenshots: return .mint
         case .disk: return .brown
         case .maintenance: return .indigo
         case .cleanup: return .teal
         case .files: return .orange
+        case .pdf: return .red
         case .network: return .green
         case .info: return .gray
         }
@@ -98,8 +104,55 @@ enum SystemToolID: String, CaseIterable, Identifiable {
     case airDropSettings, bluetoothSettings
     // System Info
     case aboutMac, copySerial, bootReasons, settingsPane
+    // 3.4.0: Homebrew, VPN, PDF page tools, Metal HUD
+    case brewOutdated, brewUpgradeAll, brewInstalled, brewUpdate, brewCleanup, brewDoctor, brewServices, brewSearch
+    case vpn, tailscale, openVPN
+    case pdfSplit, pdfExtract, pdfRemovePages, pdfRotate, pdfReorder, imagesToPDF, pdfToImages, pdfProtect, pdfUnlock, pdfPageNumbers
+    case metalHUD
 
     var id: String { rawValue }
+}
+
+/// What a tool needs on this Mac to be offered at all. Tools whose app or
+/// command isn't installed aren't shown (or counted).
+enum SystemToolRequirement: Equatable {
+    case homebrew, tailscale, openVPNConnect
+
+    var isMet: Bool {
+        switch self {
+        case .homebrew: return SystemToolAvailability.shared.hasHomebrew
+        case .tailscale: return SystemToolAvailability.shared.hasTailscale
+        case .openVPNConnect: return SystemToolAvailability.shared.hasOpenVPNConnect
+        }
+    }
+}
+
+/// Which optional apps and commands exist, looked up at most every 10 s
+/// (the page asks on every redraw).
+final class SystemToolAvailability: @unchecked Sendable {
+    static let shared = SystemToolAvailability()
+    private let lock = NSLock()
+    private var checkedAt: TimeInterval = -.infinity
+    private var values = (homebrew: false, tailscale: false, openVPN: false)
+
+    var hasHomebrew: Bool { current().homebrew }
+    var hasTailscale: Bool { current().tailscale }
+    var hasOpenVPNConnect: Bool { current().openVPN }
+
+    func invalidate() {
+        lock.lock(); checkedAt = -.infinity; lock.unlock()
+    }
+
+    private func current() -> (homebrew: Bool, tailscale: Bool, openVPN: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        if now - checkedAt < 10 { let cached = values; lock.unlock(); return cached }
+        lock.unlock()
+        let fresh = (homebrew: Homebrew.locate() != nil, tailscale: VPNTools.tailscaleExecutable() != nil,
+                     openVPN: VPNTools.openVPNConnectURL() != nil)
+        lock.lock(); values = fresh; checkedAt = now; lock.unlock()
+        return fresh
+    }
 }
 
 /// What a tile shows and searches: name, glyph, group, search keywords and
@@ -112,6 +165,10 @@ struct SystemToolInfo: Identifiable {
     let keywords: [String]
     let help: String
     var isToggle = false
+    /// Offered only when this is met (an app or command is installed).
+    var requirement: SystemToolRequirement?
+
+    var isAvailable: Bool { requirement?.isMet ?? true }
 
     /// Title, group name, keywords and the tooltip all count, so "awake",
     /// "lsof", "battery" or "trash" find their tools.
@@ -125,7 +182,13 @@ struct SystemToolInfo: Identifiable {
 enum SystemToolCatalog {
     static func info(_ id: SystemToolID) -> SystemToolInfo { byID[id]! }
 
+    /// Every tool of the group, offered on this Mac or not.
     static func tools(in group: SystemToolGroup) -> [SystemToolInfo] { all.filter { $0.group == group } }
+
+    /// The tools the page shows: everything whose requirement is met.
+    static var available: [SystemToolInfo] { all.filter(\.isAvailable) }
+
+    static func availableTools(in group: SystemToolGroup) -> [SystemToolInfo] { available.filter { $0.group == group } }
 
     private static let byID: [SystemToolID: SystemToolInfo] = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
 
@@ -156,6 +219,7 @@ enum SystemToolCatalog {
         .init(id: .volume, title: "Volume", symbol: "speaker.wave.2", group: .displaySound, keywords: ["output volume", "loudness", "preset"], help: "Sets the output volume to a preset level.", isToggle: true),
         .init(id: .alertVolume, title: "Alert Volume", symbol: "bell", group: .displaySound, keywords: ["beep", "alert sound", "system sounds"], help: "Sets the volume of alert sounds, separate from the output volume.", isToggle: true),
         .init(id: .startupChime, title: "Startup Sound", symbol: "power.circle", group: .displaySound, keywords: ["chime", "boot sound", "startupmute", "nvram"], help: "Turns the startup chime on or off (the StartupMute firmware setting; asks for an administrator).", isToggle: true),
+        .init(id: .metalHUD, title: "Metal HUD", symbol: "gauge.with.dots.needle.67percent", group: .displaySound, keywords: ["fps", "frame rate", "gpu", "games", "mtl_hud_enabled", "performance"], help: "Shows Apple's Metal Performance HUD (frame rate, GPU time) in games and apps opened after you turn it on, until you log out. Apps already open aren't affected.", isToggle: true),
         // Power & Session
         .init(id: .lockScreen, title: "Lock Screen", symbol: "lock", group: .power, keywords: ["away", "security"], help: "Locks the screen right away."),
         .init(id: .sleep, title: "Sleep", symbol: "moon.zzz", group: .power, keywords: ["suspend", "power"], help: "Puts the Mac to sleep."),
@@ -213,13 +277,11 @@ enum SystemToolCatalog {
         .init(id: .cache, title: "Clear Caches", symbol: "paintbrush", group: .cleanup, keywords: ["library", "caches", "space"], help: "Permanently deletes the contents of ~/Library/Caches (apps rebuild them)."),
         .init(id: .dsstore, title: "Erase .DS_Store", symbol: "trash.slash", group: .cleanup, keywords: ["finder", "metadata"], help: "Deletes .DS_Store files inside a folder you choose."),
         .init(id: .trash, title: "Empty Trash", symbol: "trash.fill", group: .cleanup, keywords: ["delete", "bin"], help: "Asks first, then permanently deletes everything in the Trash."),
-        .init(id: .uninstall, title: "Uninstall App…", symbol: "xmark.bin", group: .cleanup, keywords: ["appcleaner", "pearcleaner", "leftovers", "remove"], help: "Lists an app with its leftovers in ~/Library, then moves what you keep checked to the Trash."),
+        .init(id: .uninstall, title: "Uninstall App…", symbol: "xmark.bin", group: .apps, keywords: ["appcleaner", "pearcleaner", "leftovers", "remove", "residue", "cleanup"], help: "Lists an app with the files it left in ~/Library, grouped by folder. Files named with its bundle ID are checked, files that only share its name are not; what stays checked moves to the Trash. You can also drop an app on this tile."),
         .init(id: .largeFiles, title: "Large Files…", symbol: "externaldrive.badge.exclamationmark", group: .cleanup, keywords: ["big", "space", "disk"], help: "Finds files over a size you choose in a folder, so you can move some to the Trash."),
         .init(id: .oldDownloads, title: "Old Downloads…", symbol: "arrow.down.circle", group: .cleanup, keywords: ["downloads", "stale", "space"], help: "Lists Downloads items untouched for 30 days to a year, to move to the Trash."),
         .init(id: .devJunk, title: "Xcode Junk…", symbol: "hammer", group: .cleanup, keywords: ["deriveddata", "simulator", "developer"], help: "Lists rebuildable Xcode data (DerivedData, simulator caches, device support); archives are never listed."),
-        // Files, PDF & Media
-        .init(id: .pdfmerge, title: "Merge PDFs", symbol: "doc.badge.plus", group: .files, keywords: ["combine", "join"], help: "Combines PDFs into one file, ordered by name."),
-        .init(id: .pdfcompress, title: "Compress PDF", symbol: "doc.badge.gearshape", group: .files, keywords: ["shrink", "smaller"], help: "Saves a smaller copy of a PDF (pages become images)."),
+        // Files & Media
         .init(id: .imageconvert, title: "Convert Image", symbol: "photo.badge.arrow.down", group: .files, keywords: ["png", "jpeg", "heic", "webp"], help: "Saves a copy of an image as PNG, JPEG, HEIC or WebP."),
         .init(id: .videoconvert, title: "Convert Video", symbol: "film", group: .files, keywords: ["mp4", "h264", "movie"], help: "Saves a copy of a video as MP4."),
         .init(id: .qr, title: "QR Code", symbol: "qrcode", group: .files, keywords: ["barcode", "link"], help: "Makes a QR code PNG from text or a link."),
@@ -230,6 +292,19 @@ enum SystemToolCatalog {
         .init(id: .fileHash, title: "File SHA-256", symbol: "number", group: .files, keywords: ["checksum", "hash", "verify", "sha"], help: "Copies a file's SHA-256 and checks it against a hash on the clipboard."),
         .init(id: .duplicates, title: "Find Duplicates…", symbol: "square.on.square", group: .files, keywords: ["duplicate", "same file", "gemini", "space"], help: "Finds identical files (same size and SHA-256) in a folder. Copies are checked, the oldest stays unchecked, and only the Trash is used."),
         .init(id: .folderSizes, title: "Folder Sizes…", symbol: "chart.bar.doc.horizontal", group: .files, keywords: ["daisydisk", "disk usage", "biggest", "space"], help: "Adds up what each item in a folder takes on disk, biggest first, with Show in Finder."),
+        // PDF (3.4.0: PDFgear's page tools; every tool saves a new file)
+        .init(id: .pdfmerge, title: "Merge PDFs", symbol: "doc.badge.plus", group: .pdf, keywords: ["combine", "join"], help: "Combines PDFs into one file, ordered by name."),
+        .init(id: .pdfcompress, title: "Compress PDF", symbol: "doc.badge.gearshape", group: .pdf, keywords: ["shrink", "smaller"], help: "Saves a smaller copy of a PDF (pages become images)."),
+        .init(id: .pdfSplit, title: "Split PDF…", symbol: "rectangle.split.3x1", group: .pdf, keywords: ["pdfgear", "separate", "single pages", "ranges"], help: "Saves every page as its own PDF, or one PDF per range you type (1-3, 4-6, 7-), into a folder you choose."),
+        .init(id: .pdfExtract, title: "Extract Pages…", symbol: "doc.on.doc", group: .pdf, keywords: ["pdfgear", "copy pages", "subset"], help: "Saves the pages you type (1-3, 5) as a new PDF, in that order."),
+        .init(id: .pdfRemovePages, title: "Remove Pages…", symbol: "doc.badge.ellipsis", group: .pdf, keywords: ["pdfgear", "delete pages"], help: "Saves a copy of a PDF without the pages you type; the original stays as it is."),
+        .init(id: .pdfRotate, title: "Rotate Pages…", symbol: "rotate.right", group: .pdf, keywords: ["pdfgear", "turn", "landscape", "portrait"], help: "Saves a copy with the pages you type (or all) turned 90° left, 90° right or 180°."),
+        .init(id: .pdfReorder, title: "Reorder Pages…", symbol: "arrow.up.arrow.down", group: .pdf, keywords: ["pdfgear", "move pages", "order", "sort"], help: "Saves a copy with the pages in the order you type (3, 1-2); pages you leave out follow in their old order."),
+        .init(id: .imagesToPDF, title: "Images to PDF…", symbol: "photo.on.rectangle.angled", group: .pdf, keywords: ["pdfgear", "jpg to pdf", "png to pdf", "scan"], help: "Makes one PDF with a page per image, in name order, at each image's size or on A4 or Letter pages. JPEGs aren't recompressed."),
+        .init(id: .pdfToImages, title: "PDF to Images…", symbol: "photo.stack", group: .pdf, keywords: ["pdfgear", "pdf to png", "pdf to jpg", "export", "dpi"], help: "Saves every page as a PNG or JPEG at 72, 150 or 300 dpi into a folder you choose."),
+        .init(id: .pdfProtect, title: "Add PDF Password…", symbol: "lock.doc", group: .pdf, keywords: ["pdfgear", "encrypt", "protect", "secure"], help: "Saves a copy that asks for a password to open. AOM never stores the password."),
+        .init(id: .pdfUnlock, title: "Remove PDF Password…", symbol: "lock.open", group: .pdf, keywords: ["pdfgear", "decrypt", "unlock", "unprotect"], help: "Saves a copy without the password, once you type the password that opens it."),
+        .init(id: .pdfPageNumbers, title: "Add Page Numbers…", symbol: "number.square", group: .pdf, keywords: ["pdfgear", "paginate", "page numbers", "footer"], help: "Saves a copy with a number on every page (1, 2, 3 or Page 1 of 9) at the bottom or top right. The pages themselves, their links and forms stay untouched."),
         // Network
         .init(id: .dns, title: "Flush DNS", symbol: "network", group: .network, keywords: ["cache", "mdnsresponder", "resolver"], help: "Clears the DNS cache (asks for an administrator if macOS requires it)."),
         .init(id: .speedTest, title: "Speed Test", symbol: "speedometer", group: .network, keywords: ["networkquality", "bandwidth", "internet"], help: "Measures download, upload and responsiveness with Apple's networkQuality (about 20 s)."),
@@ -243,6 +318,18 @@ enum SystemToolCatalog {
         .init(id: .listeningPorts, title: "Listening Ports", symbol: "antenna.radiowaves.left.and.right", group: .network, keywords: ["lsof", "server", "open ports", "listen"], help: "Lists the processes you can see listening for TCP connections (lsof), with Quit."),
         .init(id: .airDropSettings, title: "AirDrop Settings", symbol: "dot.radiowaves.left.and.right", group: .network, keywords: ["airdrop", "handoff", "receiving"], help: "Opens System Settings › AirDrop & Handoff."),
         .init(id: .bluetoothSettings, title: "Bluetooth Settings", symbol: "gearshape", group: .network, keywords: ["bluetooth", "pair", "devices"], help: "Opens System Settings › Bluetooth."),
+        .init(id: .vpn, title: "VPN Connections…", symbol: "lock.shield", group: .network, keywords: ["vpn", "ipsec", "l2tp", "wireguard", "scutil", "tunnel"], help: "Lists the VPNs set up in System Settings with their live state, and connects or disconnects them (scutil --nc). Tailscale and OpenVPN Connect are listed there too.", isToggle: true),
+        .init(id: .tailscale, title: "Tailscale", symbol: "point.3.filled.connected.trianglepath.dotted", group: .network, keywords: ["vpn", "tailnet", "mesh", "exit node", "wireguard"], help: "Shows whether Tailscale is connected, this Mac's Tailscale address and exit node, and connects or disconnects it with the Tailscale app's own command.", isToggle: true, requirement: .tailscale),
+        .init(id: .openVPN, title: "OpenVPN Connect", symbol: "shield.lefthalf.filled", group: .network, keywords: ["vpn", "openvpn", "ovpn", "profile"], help: "Opens OpenVPN Connect, which keeps its profiles to itself, so connecting happens there.", requirement: .openVPNConnect),
+        // Homebrew (3.4.0; shown only when brew is installed)
+        .init(id: .brewOutdated, title: "Outdated Packages", symbol: "arrow.up.circle", group: .homebrew, keywords: ["brew", "outdated", "updates", "formulae", "casks"], help: "Checks which formulae and casks have newer versions (brew outdated, without updating Homebrew first) and lists them with Upgrade.", isToggle: true, requirement: .homebrew),
+        .init(id: .brewUpgradeAll, title: "Upgrade All…", symbol: "arrow.up.square", group: .homebrew, keywords: ["brew", "upgrade", "update packages"], help: "Shows what is outdated, then upgrades everything (brew upgrade) with a live log you can cancel.", requirement: .homebrew),
+        .init(id: .brewInstalled, title: "Installed Packages", symbol: "shippingbox", group: .homebrew, keywords: ["brew", "list", "formulae", "casks", "uninstall"], help: "Lists every installed formula and cask with its version, and uninstalls one after asking.", requirement: .homebrew),
+        .init(id: .brewUpdate, title: "Update Homebrew", symbol: "arrow.triangle.2.circlepath", group: .homebrew, keywords: ["brew", "update", "taps"], help: "Fetches the newest Homebrew and package lists (brew update), with a live log.", requirement: .homebrew),
+        .init(id: .brewCleanup, title: "Clean Up…", symbol: "sparkles", group: .homebrew, keywords: ["brew", "cleanup", "cache", "space", "old versions"], help: "Measures what brew cleanup -s would free, asks, then removes old versions and the download cache and says how much it freed.", requirement: .homebrew),
+        .init(id: .brewDoctor, title: "Brew Doctor", symbol: "stethoscope", group: .homebrew, keywords: ["brew", "doctor", "problems", "diagnose"], help: "Runs brew doctor and shows what it found.", requirement: .homebrew),
+        .init(id: .brewServices, title: "Services", symbol: "gearshape.2", group: .homebrew, keywords: ["brew", "services", "launchd", "start", "stop", "postgres", "redis"], help: "Lists Homebrew services with their state, and starts, stops or restarts them.", requirement: .homebrew),
+        .init(id: .brewSearch, title: "Search & Install…", symbol: "magnifyingglass.circle", group: .homebrew, keywords: ["brew", "search", "install", "cask", "formula"], help: "Searches formulae and casks by name and installs one after asking.", requirement: .homebrew),
         // System Info
         .init(id: .aboutMac, title: "About This Mac", symbol: "laptopcomputer", group: .info, keywords: ["model", "chip", "memory", "macos version", "build"], help: "Shows the model, chip, memory and macOS version and build, with Copy."),
         .init(id: .copySerial, title: "Copy Serial Number", symbol: "barcode", group: .info, keywords: ["serial", "warranty", "applecare"], help: "Copies this Mac's serial number."),
