@@ -33,8 +33,10 @@ final class SystemTools335Tests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count, "No tool is listed twice")
         XCTAssertEqual(Set(ids), Set(SystemToolID.allCases), "Every id has a tile")
         XCTAssertGreaterThanOrEqual(ids.count, 42, "12 tools from 3.3.4 plus at least 30 new ones")
-        XCTAssertEqual(SystemToolsInventory.count, ids.count)
-        XCTAssertEqual(SystemToolsInventory.groups.flatMap(\.toolIDs).count, ids.count)
+        // 3.4.0: the page and the inventory count only the tools this Mac
+        // can run (Homebrew, Tailscale and OpenVPN Connect tools need them).
+        XCTAssertEqual(SystemToolsInventory.count, SystemToolCatalog.available.count)
+        XCTAssertEqual(SystemToolsInventory.groups.flatMap(\.toolIDs).count, SystemToolCatalog.available.count)
         for group in SystemToolGroup.allCases {
             XCTAssertFalse(SystemToolCatalog.tools(in: group).isEmpty, "\(group.name) has tools")
         }

@@ -34,7 +34,7 @@ final class SystemTools336Tests: XCTestCase {
         XCTAssertFalse(SystemToolGroup.allCases.map(\.name).contains("Text & Developer"))
         for id in Self.removedIDs { XCTAssertNil(SystemToolID(rawValue: id), "\(id) was removed") }
         XCTAssertGreaterThanOrEqual(SystemToolCatalog.all.count, 59 + 25, "59 kept tools plus at least 25 new ones")
-        XCTAssertEqual(SystemToolsInventory.count, SystemToolCatalog.all.count)
+        XCTAssertEqual(SystemToolsInventory.count, SystemToolCatalog.available.count)
         for group in [SystemToolGroup.displaySound, .energy, .apps, .disk, .info] {
             XCTAssertGreaterThanOrEqual(SystemToolCatalog.tools(in: group).count, 4, group.name)
         }
