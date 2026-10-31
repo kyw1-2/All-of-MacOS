@@ -141,6 +141,10 @@ final class AppInputSourceMemory: ObservableObject {
         settings = store.load()
     }
 
+    /// Starts following app activation. Nothing calls it on its own: the app
+    /// may run only one input-source switcher (two would fight over every
+    /// activation), so whoever picks this one starts it from
+    /// `AOMProductivityModules.start()`.
     func start() {
         guard !started else { return }
         started = true

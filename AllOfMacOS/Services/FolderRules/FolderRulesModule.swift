@@ -12,9 +12,6 @@ enum FolderRulesModule {
         let engine = FolderRulesEngine.shared
         engine.start()
         FolderRulesApprovalPanel.shared.observe(engine)
-        // Per-app input sources ship with this branch (see docs/folder-rules-3.4.0.md);
-        // the integrator may move this call to AOMProductivityModules.start().
-        AppInputSourceMemory.shared.start()
     }
 
     /// This module's items in the status menu's Productivity section.
