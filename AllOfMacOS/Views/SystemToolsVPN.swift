@@ -232,17 +232,30 @@ struct VPNSheet: View {
         return "Connected: " + up.map(\.name).joined(separator: ", ")
     }
 
-    /// The type, and the one case where two true states disagree: macOS
-    /// reports Tailscale's tunnel as connected while Tailscale itself isn't
-    /// logged in or is stopped, so no traffic goes through it.
+    /// The type (left out when it repeats the name), and the one case where
+    /// two true states disagree. Short, because the row shows one line; the
+    /// ⓘ explains the disagreement.
     private func detail(for service: VPNTools.Service) -> String {
-        var text = service.kindTitle
-        if !service.enabled { text += " · turned off in Settings" }
-        if service.state == .connected, service.providerBundleID?.lowercased().contains("tailscale") == true,
-           let backend = model.tailscale?.backend, backend != .running {
-            text += " · the tunnel is up, but Tailscale is \(backend.title.lowercased())"
+        var parts: [String] = []
+        if service.kindTitle.caseInsensitiveCompare(service.name) != .orderedSame { parts.append(service.kindTitle) }
+        if !service.enabled { parts.append("turned off in Settings") }
+        if let backend = tailscaleBehindTunnel(service) { parts.append("Tailscale is \(backend.title.lowercased())") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// macOS reports Tailscale's tunnel as connected while Tailscale itself
+    /// isn't logged in or is stopped, so no traffic goes through it.
+    private func tailscaleBehindTunnel(_ service: VPNTools.Service) -> VPNTools.TailscaleStatus.Backend? {
+        guard service.state == .connected, service.providerBundleID?.lowercased().contains("tailscale") == true,
+              let backend = model.tailscale?.backend, backend != .running else { return nil }
+        return backend
+    }
+
+    private func help(for service: VPNTools.Service) -> String? {
+        tailscaleBehindTunnel(service).map {
+            "macOS shows this tunnel as connected, but Tailscale is \($0.title.lowercased()), so no traffic goes "
+                + "through it. Use Open Tailscale below to log in or connect."
         }
-        return text
     }
 
     private var servicesSection: some View {
@@ -254,7 +267,8 @@ struct VPNSheet: View {
             } else {
                 ForEach(model.services) { service in
                     AOMSettingRow(service.name, detail: detail(for: service),
-                                  symbol: service.state == .connected ? "lock.shield.fill" : "lock.shield") {
+                                  symbol: service.state == .connected ? "lock.shield.fill" : "lock.shield",
+                                  help: help(for: service)) {
                         HStack(spacing: AOMSpace.x2) {
                             AOMStatusPill(service.state.title, tone: service.state == .connected ? .success
                                           : (service.state == .connecting || service.state == .disconnecting) ? .info : .neutral)
