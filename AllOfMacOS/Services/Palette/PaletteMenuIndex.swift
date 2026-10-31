@@ -153,10 +153,9 @@ enum PaletteMenuSearch {
     /// Items matching `query`, best first: the title counts more than the
     /// path, unavailable items sink, ties keep menu order.
     static func results(_ items: [PaletteMenuItem], query: String, limit: Int = 30) -> [PaletteMenuItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
+        guard let prepared = PaletteFuzzy.Query(query) else { return [] }
         let scored: [(item: PaletteMenuItem, score: Int, order: Int)] = items.enumerated().compactMap { order, item in
-            guard var score = PaletteFuzzy.bestScore(trimmed, fields: [(item.title, 0), (item.fullPath, 60)]) else { return nil }
+            guard var score = PaletteFuzzy.bestScore(prepared, fields: [(item.title, 0), (item.fullPath, 60)]) else { return nil }
             if !item.isEnabled { score -= 400 }
             return (item, score, order)
         }

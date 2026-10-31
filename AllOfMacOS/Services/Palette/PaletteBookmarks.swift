@@ -142,10 +142,10 @@ enum PaletteBookmarkSearch {
     /// folder; one result per URL and browser profile; at most `limit`.
     static func results(_ bookmarks: [PaletteBookmark], query: String, limit: Int = 20) -> [PaletteBookmark] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else { return [] }
+        guard trimmed.count >= 2, let prepared = PaletteFuzzy.Query(trimmed) else { return [] }
         var seen = Set<String>()
         let scored: [(PaletteBookmark, Int, Int)] = bookmarks.enumerated().compactMap { order, bookmark in
-            guard let score = PaletteFuzzy.bestScore(trimmed, fields: [
+            guard let score = PaletteFuzzy.bestScore(prepared, fields: [
                 (bookmark.title, 0), (bookmark.url.host ?? "", 40), (bookmark.folderPath, 120),
             ]), score >= PaletteFuzzy.subsequenceFloor + 40 else { return nil }
             return (bookmark, score, order)

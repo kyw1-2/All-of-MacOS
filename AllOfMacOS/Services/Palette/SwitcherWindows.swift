@@ -178,11 +178,10 @@ enum SwitcherFilter {
     /// ("chr git" → Chrome's GitHub window), best first; ties keep the
     /// switcher's order (most recently used first).
     static func filtered<Item>(_ items: [Item], query: String, appName: (Item) -> String, title: (Item) -> String) -> [Item] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return items }
+        guard let prepared = PaletteFuzzy.Query(query) else { return items }
         let scored: [(item: Item, score: Int, order: Int)] = items.enumerated().compactMap { order, item in
             let name = appName(item), window = title(item)
-            guard let score = PaletteFuzzy.bestScore(trimmed, fields: [(window, 0), (name, 10), ("\(name) \(window)", 20)])
+            guard let score = PaletteFuzzy.bestScore(prepared, fields: [(window, 0), (name, 10), ("\(name) \(window)", 20)])
             else { return nil }
             return (item, score, order)
         }
