@@ -549,17 +549,17 @@ struct ResolutionSliderView: View {
             // Top row: Icon + Dimensions + Badges
             HStack(spacing: 6) {
                 Image(systemName: "rectangle.split.2x1.fill")
-                    .font(.system(size: 12))
+                    .font(.system(.callout))
                     .foregroundStyle(Color.accentColor)
 
                 if let selected {
                     Text("\(selected.pointWidth) × \(selected.pointHeight)")
-                        .font(.system(size: 12, weight: .semibold, design: .default))
+                        .font(.system(.callout, design: .default, weight: .semibold))
                         .foregroundStyle(Color(nsColor: .labelColor))
 
                     if selected.isHiDPI {
                         Text("HiDPI")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(.caption2, weight: .bold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
@@ -568,14 +568,14 @@ struct ResolutionSliderView: View {
 
                     if isDefault {
                         Text("Default")
-                            .font(.system(size: 9, weight: .medium))
+                            .font(.system(.caption2, weight: .medium))
                             .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(Capsule().fill(Color.secondary.opacity(0.14)))
                     } else if let percentage {
                         Text("\(percentage)%")
-                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .font(.system(.caption2, weight: .medium).monospacedDigit())
                             .foregroundStyle(Color(nsColor: .secondaryLabelColor))
                     }
                 }

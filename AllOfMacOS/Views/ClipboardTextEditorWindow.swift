@@ -126,7 +126,8 @@ final class ClipboardRichTextModel: NSObject, ObservableObject, NSTextViewDelega
         let text = value.string
         let words = text.split(whereSeparator: \.isWhitespace).count
         let lines = text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
-        return "\(text.count.formatted()) characters · \(words.formatted()) words · \(lines.formatted()) lines"
+        return [ClipboardPreviewCache.counted(text.count, "character"), ClipboardPreviewCache.counted(words, "word"),
+                ClipboardPreviewCache.counted(lines, "line")].joined(separator: " · ")
     }
     func rtfData() throws -> Data {
         try value.data(from: NSRange(location: 0, length: value.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
@@ -329,9 +330,12 @@ private struct ClipboardAttributedTextView: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = true
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.textContainerInset = NSSize(width: 9, height: 10)
+        // The clip is a document with black text (it pastes that way), so it
+        // sits on a white page in light and dark mode alike; a dark text
+        // background made the black text unreadable in Dark Mode.
         text.drawsBackground = true
-        text.backgroundColor = .textBackgroundColor
-        text.textColor = .textColor
+        text.backgroundColor = .white
+        text.textColor = .black
         text.insertionPointColor = .black
         text.font = .systemFont(ofSize: 14)
         text.textStorage?.setAttributedString(model.value)
@@ -391,8 +395,9 @@ struct ClipboardReadOnlyTextPreview: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = true
         text.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         text.textContainerInset = NSSize(width: 9, height: 10)
-        text.backgroundColor = .textBackgroundColor
-        text.textColor = .textColor
+        // Plain clips preview as black text, so the page stays white (Dark Mode).
+        text.backgroundColor = .white
+        text.textColor = .black
         text.font = .systemFont(ofSize: 14)
         scroll.documentView = text
         updateNSView(scroll, context: context)

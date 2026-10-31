@@ -51,7 +51,7 @@ struct AnnotationBackgroundPanel: View {
             }
         }
         .frame(width: 264)
-        .background(.regularMaterial)
+        .background(.bar)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Background tool")
         .task {
@@ -72,7 +72,7 @@ struct AnnotationBackgroundPanel: View {
     private var header: some View {
         HStack {
             Image(systemName: "photo.artframe").foregroundStyle(.secondary)
-            Text("Background").font(.headline)
+            Text("Background").font(AOMFont.headline)
             Spacer()
             Button("None") { change { $0 = AnnotationBackground() } }
                 .controlSize(.small)
@@ -140,12 +140,12 @@ struct AnnotationBackgroundPanel: View {
                     store.save()
                 }))
                 .toggleStyle(.checkbox)
-                .font(.caption)
+                .font(AOMFont.caption)
                 .disabled(selectedPresetID == nil)
                 .help(selectedPresetID == nil ? "Choose or save a preset first"
                                               : "New screenshots open with this background")
             if let auto = store.autoApplyPreset, auto.id != selectedPresetID {
-                Text("Auto-applied: \(auto.name)").font(.caption2).foregroundStyle(.secondary)
+                Text("Auto-applied: \(auto.name)").font(AOMFont.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -153,7 +153,7 @@ struct AnnotationBackgroundPanel: View {
     private func namingSheet(_ mode: NamingMode) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text({ if case .add = mode { return "Add New Preset" } else { return "Rename Preset" } }())
-                .font(.headline)
+                .font(AOMFont.headline)
             TextField("Preset name", text: $presetName)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 260)
@@ -198,19 +198,19 @@ struct AnnotationBackgroundPanel: View {
                     LinearGradient(colors: [Color(nsColor: background.gradientStart.nsColor),
                                             Color(nsColor: background.gradientEnd.nsColor)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .overlay(Image(systemName: "slider.horizontal.3").font(.caption).foregroundStyle(.white))
+                        .overlay(Image(systemName: "slider.horizontal.3").font(AOMFont.caption).foregroundStyle(.white))
                 } action: {
                     change(revealing: true) { $0.kind = .gradient; $0.gradientPreset = .custom }
                 }
             }
             if all.count > 8 {
                 Button(showsAllGradients ? "Show Less" : "Show More") { showsAllGradients.toggle() }
-                    .buttonStyle(.link).font(.caption)
+                    .buttonStyle(.link).font(AOMFont.caption)
             }
             if on(.gradient) && background.gradientPreset == .custom {
-                Text("From").font(.caption2).foregroundStyle(.secondary)
+                Text("From").font(AOMFont.caption).foregroundStyle(.secondary)
                 swatches(selection: background.gradientStart) { color in change { $0.gradientStart = color } }
-                Text("To").font(.caption2).foregroundStyle(.secondary)
+                Text("To").font(AOMFont.caption).foregroundStyle(.secondary)
                 swatches(selection: background.gradientEnd) { color in change { $0.gradientEnd = color } }
             }
         }
@@ -219,7 +219,7 @@ struct AnnotationBackgroundPanel: View {
     private var wallpaperSection: some View {
         section("Wallpapers") {
             if wallpapers.isEmpty {
-                Text("No system desktop pictures found.").font(.caption).foregroundStyle(.secondary)
+                Text("No system desktop pictures found.").font(AOMFont.caption).foregroundStyle(.secondary)
             } else {
                 LazyVGrid(columns: grid, spacing: 6) {
                     ForEach(showsAllWallpapers ? wallpapers : Array(wallpapers.prefix(12))) { wallpaper in
@@ -235,7 +235,7 @@ struct AnnotationBackgroundPanel: View {
                     Button(showsAllWallpapers ? "Show Less" : "Show All \(wallpapers.count)") {
                         showsAllWallpapers.toggle()
                     }
-                    .buttonStyle(.link).font(.caption)
+                    .buttonStyle(.link).font(AOMFont.caption)
                 }
             }
         }
@@ -270,7 +270,7 @@ struct AnnotationBackgroundPanel: View {
                         let hex = String(AnnotationColorLibrary.hex(of: rgb).prefix(6))
                         change(revealing: true) { $0.kind = .solid; $0.solidHex = hex }
                     }), supportsOpacity: false)
-                    .font(.caption)
+                    .font(AOMFont.caption)
                     .help("Choose any plain colour")
             }
         }
@@ -349,7 +349,7 @@ struct AnnotationBackgroundPanel: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            Text(title).font(AOMFont.caption).fontWeight(.semibold).foregroundStyle(.secondary)
             content()
         }
     }
@@ -397,7 +397,7 @@ struct AnnotationBackgroundPanel: View {
     private func slider(_ title: String, value: Binding<CGFloat>, range: ClosedRange<CGFloat>, unit: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(title).font(.caption)
+                Text(title).font(AOMFont.caption)
                 Spacer()
                 Text("\(Int(value.wrappedValue.rounded())) \(unit)").font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)

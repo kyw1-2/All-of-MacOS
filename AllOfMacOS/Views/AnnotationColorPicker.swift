@@ -27,7 +27,7 @@ struct AnnotationColorPickerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Color").font(.headline)
+                Text("Color").font(AOMFont.headline)
                 Spacer()
                 Button { pickFromScreen() } label: {
                     Label("Pick from Screen", systemImage: "eyedropper")
@@ -71,7 +71,7 @@ struct AnnotationColorPickerView: View {
                         }
                     }
                     Button { addToMyColors() } label: {
-                        Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "plus").font(.system(.caption2, weight: .bold))
                             .frame(width: 20, height: 20)
                             .overlay(Circle().strokeBorder(Color.secondary.opacity(0.6),
                                                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
@@ -82,7 +82,7 @@ struct AnnotationColorPickerView: View {
                 }
                 if library.myColors.isEmpty {
                     Text("Click + to save the current colour. Right-click a saved colour to update or remove it.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(AOMFont.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -110,10 +110,10 @@ struct AnnotationColorPickerView: View {
                         .strokeBorder(Color.primary.opacity(0.2), lineWidth: 0.5))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hex").font(.caption).foregroundStyle(.secondary)
+                    Text("Hex").font(AOMFont.caption).foregroundStyle(.secondary)
                     TextField("RRGGBB", text: $hexText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12).monospaced())
+                        .font(.system(.callout).monospaced())
                         .frame(width: 96)
                         .onSubmit { applyHex(hexText); noteRecent() }
                         .accessibilityLabel("Hex color")
@@ -148,7 +148,7 @@ struct AnnotationColorPickerView: View {
             }
 
             if let message {
-                Text(message).font(.caption).foregroundStyle(.orange)
+                Text(message).font(AOMFont.caption).foregroundStyle(.orange)
             }
         }
         .padding(16)
@@ -230,7 +230,7 @@ struct AnnotationColorPickerView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            Text(title).font(AOMFont.caption).fontWeight(.semibold).foregroundStyle(.secondary)
             content()
         }
     }
@@ -258,11 +258,11 @@ struct AnnotationColorPickerView: View {
                                                    commitFields() }),
                       format: .number)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12).monospacedDigit())
+                .font(.system(.callout).monospacedDigit())
                 .multilineTextAlignment(.center)
                 .frame(width: 52)
                 .accessibilityLabel(title == "A" ? "Alpha percent" : "\(title) component")
-            Text(title + suffix).font(.caption2).foregroundStyle(.secondary)
+            Text(title + suffix).font(AOMFont.caption).foregroundStyle(.secondary)
         }
     }
 }

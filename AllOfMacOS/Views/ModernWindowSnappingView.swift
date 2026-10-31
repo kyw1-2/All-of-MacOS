@@ -162,7 +162,7 @@ struct ModernWindowSnappingView: View {
                 .help("Thumbnail switcher for every open window (bind it in Settings › Shortcuts)")
             }
         }
-        .aomToast(toast.message)
+        .aomToast(toast)
         .sheet(isPresented: $showingSnapZones) {
             CustomSnapZonesEditor(preset: appState.currentPreset, profile: appState.activeSnapProfile)
                 .environmentObject(appState)
@@ -640,7 +640,7 @@ struct ModernWindowSnappingView: View {
     /// (Loop, Moom, Swish). Clicking a layout moves the front window.
     private func gallerySection(compact: Bool) -> some View {
         AOMSection("Tile the front window",
-                   help: "Point at a layout to preview it, click to move the frontmost window there right away.",
+                   help: "Point at a layout (or move the keyboard focus to it) to preview it; click to move the frontmost window there right away.",
                    padding: AOMSpace.cardPadding) {
             VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 layoutPreview
@@ -709,7 +709,7 @@ struct ModernWindowSnappingView: View {
                     .offset(x: inset + region.minX, y: inset + bar + region.minY)
                     .animation(AOMMotion.panel, value: hoveredLayout)
                 Text(hoveredLayout.map { $0 == .nextDisplay ? "Moves to the next display" : "Click to apply · \($0.rawValue)" }
-                     ?? "Point at a layout to see it")
+                     ?? "Point at a layout to preview it")
                     .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.textSecondary)
                     .padding(.horizontal, AOMSpace.x2)
@@ -896,12 +896,19 @@ struct ModernWindowSnappingView: View {
         showToast("Applied “\(collection.rawValue)” snap layout set")
     }
 
+    /// Says what really happened: a failed move is a danger toast with the
+    /// usual reason, never "Tiled".
     private func executeSnap(_ layout: CustomSnapZone.Layout) {
         AOMTilingGeometry.apply(layout) { success in
-            if layout == .center {
-                showToast(success ? "Centered window" : "Could not center window")
-            } else {
-                showToast("Tiled window to “\(layout.rawValue)”")
+            guard success else {
+                toast.show("Couldn't move the front window. Check that a window is open and Accessibility is allowed.",
+                           tone: .danger)
+                return
+            }
+            switch layout {
+            case .center: showToast("Centered the front window")
+            case .nextDisplay: showToast("Moved the front window to the next display")
+            default: showToast("Tiled the front window: \(layout.rawValue)")
             }
         }
     }
@@ -933,6 +940,8 @@ private struct SnapLayoutChip: View {
     let isHovered: Bool
     let onHover: (Bool) -> Void
     let onExecute: () -> Void
+    /// Keyboard focus previews the layout too (b.4: nothing only on hover).
+    @FocusState private var focused: Bool
 
     var body: some View {
         Button(action: onExecute) {
@@ -953,7 +962,12 @@ private struct SnapLayoutChip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
+        .focused($focused)
         .onHover { onHover($0) }
+        .onChange(of: focused) { _, isFocused in onHover(isFocused) }
+        .contextMenu {
+            Button(layout == .nextDisplay ? "Move Front Window to Next Display" : "Tile Front Window", action: onExecute)
+        }
         .help("Move the front window: \(layout.rawValue)")
         .accessibilityLabel("Tile front window: \(layout.rawValue)")
     }

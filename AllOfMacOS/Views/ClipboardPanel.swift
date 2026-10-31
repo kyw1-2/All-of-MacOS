@@ -87,6 +87,9 @@ final class ClipboardPanelState: ObservableObject {
     @Published var editor: ClipboardEditorRequest?
     @Published var preview: ClipboardEntry?
     @Published var editingTitleID: UUID?
+    /// A card asked to rename its title in place (Rename in the card menu,
+    /// ⌘R on the selection), Paste-style; the card clears it when it starts.
+    @Published var renameRequestID: UUID?
     /// Intelligent Clipboard picks for the current destination, best first.
     /// Shown at the front of Clipboard History when no search or filter is on.
     @Published var suggestedIDs: [UUID] = []
@@ -880,6 +883,18 @@ final class ClipboardPanelController {
         return "Paste"
     }
 
+    /// Rename in place on the card, as Paste does (3.4.0; until then a
+    /// "Rename Item" sheet). A card that is not on screen cannot take it, so
+    /// the sheet still opens when no card started editing.
+    func requestRename(_ item: ClipboardEntry) {
+        state.renameRequestID = item.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self, self.state.renameRequestID == item.id else { return }
+            self.state.renameRequestID = nil
+            self.state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+        }
+    }
+
     func editEntry(_ item: ClipboardEntry) {
         if item.kind == .image, let data = item.imageData,
            let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -1130,7 +1145,7 @@ final class ClipboardPanelController {
             case .edit:
                 editEntry(item)
             case .rename:
-                state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
+                requestRename(item)
             }
             state.searchFieldActive = false
             return true
@@ -1192,6 +1207,8 @@ struct ClipboardPanelView: View {
     let controller: ClipboardPanelController
     @FocusState private var searchFocused: Bool
     @State private var boardPendingDeletion: ClipboardPinboard?
+    /// The pinboard tab a card is being dragged over (design-3.4.0 #99).
+    @State private var dropTargetTab: String?
     /// Link cards follow their switches without reopening the shelf.
     @ObservedObject private var preferences = ClipboardPreferences.shared
 
@@ -1219,7 +1236,8 @@ struct ClipboardPanelView: View {
                     Text(state.status)
                         .font(AOMFont.callout.weight(.medium))
                         .foregroundStyle(AOMColor.text)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("ClipboardStatus")
                     Button { state.status = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary)
@@ -1237,7 +1255,12 @@ struct ClipboardPanelView: View {
         .task(id: state.status) {
             guard !state.status.isEmpty else { return }
             let shown = state.status
-            try? await Task.sleep(for: .seconds(3.5))
+            // VoiceOver hears every message; longer ones stay long enough to
+            // read (about three words a second, 3.5 to 8 seconds).
+            NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                                 userInfo: [.announcement: shown,
+                                            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            try? await Task.sleep(for: .seconds(ClipboardStatusTiming.seconds(for: shown)))
             if !Task.isCancelled, state.status == shown { state.status = "" }
         }
         .modifier(PastePanelBackground())
@@ -1264,6 +1287,14 @@ struct ClipboardPanelView: View {
             Button("Cancel", role: .cancel) { boardPendingDeletion = nil }
         } message: {
             Text(ClipboardBoardDeletionCopy.message(onlyHere: boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0))
+        }
+        // `--aom-clipboard-preview-open` (isolated previews only): opens the
+        // first card's preview, so its title bar can be reviewed.
+        .task {
+            guard PresetManager.isUIPreview,
+                  ProcessInfo.processInfo.arguments.contains("--aom-clipboard-preview-open") else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if let first = entries.first { controller.openPreview(first) }
         }
         .onChange(of: state.searchFocusToken) { _, _ in
             withAnimation(AOMMotion.quick) {
@@ -1487,6 +1518,7 @@ struct ClipboardPanelView: View {
                         }
                     if store.indexingImages {
                         ProgressView().controlSize(.mini).help("Indexing image text…")
+                            .accessibilityLabel("Indexing image text")
                     }
                     if !state.query.isEmpty || hasFilters {
                         Text(resultsLabel)
@@ -1502,6 +1534,7 @@ struct ClipboardPanelView: View {
                     } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
                     .buttonStyle(.plain)
                     .help("Close Search")
+                    .accessibilityLabel("Close Search")
                     Button { state.filtersExpanded.toggle() } label: {
                         Image(systemName: "line.3.horizontal.decrease")
                             .foregroundStyle(hasFilters ? AOMColor.accent : AOMColor.textSecondary)
@@ -1609,6 +1642,7 @@ struct ClipboardPanelView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Clipboard Options and Filters")
+            .accessibilityLabel("Clipboard Options")
         }
         .padding(.horizontal, AOMSpace.x5)
         .frame(height: AOMSize.rowDetail)
@@ -1646,6 +1680,9 @@ struct ClipboardPanelView: View {
         }
         .buttonStyle(.plain)
         .help(name)
+        // The name stays readable to VoiceOver while search hides it.
+        .accessibilityLabel(name)
+        .aomDropTarget(dropTargetTab == (id?.uuidString ?? "history"), radius: (AOMIcon.hitArea + AOMSpace.x0_5) / 2)
         .accessibilityIdentifier("PasteStylePinboard_\(id?.uuidString ?? "clipboard-history")")
         .accessibilityAddTraits(state.board == id ? [.isSelected] : [])
         .onDrag {
@@ -1653,7 +1690,13 @@ struct ClipboardPanelView: View {
             if let id { provider.registerDataRepresentation(forTypeIdentifier: PasteClipboardDrag.boardType, visibility: .ownProcess) { done in done(Data(id.uuidString.utf8), nil); return nil } }
             return provider
         }
-        .onDrop(of: [PasteClipboardDrag.entryType, PasteClipboardDrag.boardType], isTargeted: nil) { providers in
+        .onDrop(of: [PasteClipboardDrag.entryType, PasteClipboardDrag.boardType], isTargeted: Binding(
+            get: { dropTargetTab == (id?.uuidString ?? "history") },
+            // History takes no drops, so it never lights up as a target.
+            set: { targeted in
+                let key = id?.uuidString ?? "history"
+                if targeted, id != nil { dropTargetTab = key } else if dropTargetTab == key { dropTargetTab = nil }
+            })) { providers in
             if let id, let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(PasteClipboardDrag.boardType) }) {
                 provider.loadDataRepresentation(forTypeIdentifier: PasteClipboardDrag.boardType) { data, _ in
                     guard let data, let raw = String(data: data, encoding: .utf8), let moved = UUID(uuidString: raw) else { return }
@@ -1985,6 +2028,26 @@ final class AppMetadataCache {
         return color
     }
 
+    private var darkTextCache: [String: Bool] = [:]
+
+    /// Whether a banner is light enough that white text would drop under
+    /// 3:1 (WCAG relative luminance), so the header uses dark text.
+    func bannerUsesDarkText(for bundleID: String?, name: String?) -> Bool {
+        let key = (bundleID ?? name ?? "").lowercased()
+        if let cached = darkTextCache[key] { return cached }
+        var dark = false
+        if let color = NSColor(bannerColor(for: bundleID, name: name)).usingColorSpace(.sRGB) {
+            func linear(_ value: CGFloat) -> CGFloat {
+                value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            let luminance = 0.2126 * linear(color.redComponent) + 0.7152 * linear(color.greenComponent)
+                + 0.0722 * linear(color.blueComponent)
+            dark = 1.05 / (luminance + 0.05) < 3
+        }
+        darkTextCache[key] = dark
+        return dark
+    }
+
     static func dominantColor(of image: NSImage) -> Color? {
         // Raw RGBA bytes from one 24×24 draw; NSBitmapImageRep.colorAt plus a
         // colour-space conversion per pixel made the first shelf open stall.
@@ -2130,8 +2193,8 @@ private struct ClipboardCardView: View, Equatable {
     @State private var characterCount: Int?
     @FocusState private var titleFocused: Bool
 
-    /// Paste-style cards, on the card radius every surface shares (c.3).
-    static let radius: CGFloat = AOMRadius.card
+    /// Paste's card corner (design-3.4.0 b.17: the shelf keeps Paste's look).
+    static let radius: CGFloat = ShelfCardMetrics.radius
 
     /// Hover, selection and scrolling elsewhere in the shelf leave unchanged
     /// cards alone instead of re-running every visible card body.
@@ -2144,6 +2207,12 @@ private struct ClipboardCardView: View, Equatable {
     }
 
     private var accent: Color { AppMetadataCache.shared.bannerColor(for: entry.sourceBundleID, name: entry.sourceName) }
+    /// White on the app's colour like Paste; dark on a light banner (Notes'
+    /// yellow), so the title keeps at least 3:1.
+    private var headerText: Color {
+        AppMetadataCache.shared.bannerUsesDarkText(for: entry.sourceBundleID, name: entry.sourceName)
+            ? Color.black.opacity(0.85) : Color.white
+    }
     private var headerTitle: String {
         if let text = entry.text {
             return entry.title == Self.automaticTitle(text) ? entry.kind.displayName : entry.title
@@ -2165,13 +2234,15 @@ private struct ClipboardCardView: View, Equatable {
 
     var body: some View {
         VStack(spacing: 0) {
-            // One header line (3.3.5, was the kind over the time): the kind,
-            // then the time, then the source app's icon at the trailing edge.
-            HStack(alignment: .center, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1) {
+            // Paste's header (design-3.4.0 b.17, as AOM had it before the 3.3.5
+            // restyle): the source app's colour, the title over the time, and
+            // the app's icon drawn large at the trailing edge, cut by the card.
+            HStack(alignment: .top, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                VStack(alignment: .leading, spacing: 1) {
                     if isEditingTitle {
                         TextField("Title", text: $editedTitle)
                             .textFieldStyle(.plain).focused($titleFocused)
+                            .font(compact ? AOMFont.callout.weight(.semibold) : AOMFont.title)
                             .onSubmit { commitTitle() }.onExitCommand { cancelTitle() }
                             .onChange(of: titleFocused) { _, focused in
                                 if !focused && isEditingTitle { commitTitle() }
@@ -2183,27 +2254,30 @@ private struct ClipboardCardView: View, Equatable {
                                     .help("Suggested for the app you are pasting into")
                                     .accessibilityLabel("Suggested")
                             }
-                            Text(headerTitle).font((compact ? AOMFont.caption : AOMFont.callout).weight(.semibold)).lineLimit(1)
+                            Text(headerTitle).font(compact ? AOMFont.callout.weight(.semibold) : AOMFont.title).lineLimit(1)
                         }
                     }
                     // "16 minutes ago", refreshed while the shelf is open.
                     TimelineView(.everyMinute) { context in
                         Text(ClipboardRelativeDate.string(entry.lastCopiedAt, now: context.date))
-                            .font(compact ? AOMFont.badge : AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                            .font(compact ? Font.caption : AOMFont.callout).opacity(0.85).lineLimit(1)
                     }
                 }
-                .padding(.leading, compact ? AOMSpace.x2 : AOMSpace.x3)
+                .padding(.leading, AOMSpace.x3)
+                .padding(.top, compact ? AOMSpace.x1 + AOMSpace.x0_5 : AOMSpace.x2)
                 // Room for the app icon drawn over the trailing edge.
-                Spacer(minLength: AOMIcon.row + AOMSpace.x4)
+                Spacer(minLength: compact ? ShelfCardMetrics.iconCompact - 5 : ShelfCardMetrics.icon - 4)
             }
-            .foregroundStyle(AOMColor.text)
-            .frame(height: compact ? ShelfCardMetrics.headerCompact : ShelfCardMetrics.header)
-            .background(AOMColor.sunken)
+            .foregroundStyle(headerText)
+            .frame(height: compact ? ShelfCardMetrics.headerCompact : ShelfCardMetrics.header, alignment: .top)
+            .background(accent)
             .overlay(alignment: .trailing) {
                 if let appIcon {
                     Image(nsImage: appIcon).resizable().scaledToFill()
-                        .frame(width: AOMIcon.row + AOMSpace.x0_5, height: AOMIcon.row + AOMSpace.x0_5)
-                        .padding(.trailing, AOMSpace.x3 - AOMSpace.x0_5).help(entry.sourceName ?? "Source App")
+                        .frame(width: compact ? ShelfCardMetrics.iconCompact : ShelfCardMetrics.icon,
+                               height: compact ? ShelfCardMetrics.iconCompact : ShelfCardMetrics.icon)
+                        .offset(x: 3).help(entry.sourceName ?? "Source App")
+                        .accessibilityHidden(true)
                 }
             }
             .clipped()
@@ -2333,6 +2407,13 @@ private struct ClipboardCardView: View, Equatable {
             ClipboardPreviewSheet(entry: entry, store: store, state: state, controller: controller)
         }
         .contextMenu { entryMenu(entry) }
+        // Rename in the menu or ⌘R starts the in-place title edit (3.4.0).
+        // The state is not observed here, so the request arrives as an event.
+        .onReceive(state.$renameRequestID) { id in
+            guard let id, id == entry.id, !isEditingTitle else { return }
+            DispatchQueue.main.async { if state.renameRequestID == id { state.renameRequestID = nil } }
+            beginTitleEdit()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(entry.kind.displayName): \(entry.title), \(entry.sourceName ?? "Unknown app")")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
@@ -2520,7 +2601,7 @@ private struct ClipboardCardView: View, Equatable {
             if entry.kind == .image {
                 Button("Remove Background") { controller.removeBackground(entry) }
             }
-            Button("Rename…") { state.editor = .init(operation: .renameEntry(entry.id), title: "Rename Item", text: entry.title) }
+            Button("Rename") { controller.requestRename(entry) }
                 .keyboardShortcut("r", modifiers: .command)
         }
         Button("Delete\(suffix)", role: .destructive) {
@@ -2541,7 +2622,12 @@ private struct ClipboardCardView: View, Equatable {
                         else { store.pin(entryID: id, boardID: board.id) }
                     }
                     if deleted > 0 {
-                        state.status = "Removed from \(board.name). \(deleted == 1 ? "It was" : "\(deleted) items were") older than your history limit, so \(deleted == 1 ? "it was" : "they were") deleted — ⌘Z brings \(deleted == 1 ? "it" : "them") back."
+                        state.status = "Removed from \(board.name). \(deleted == 1 ? "It was" : "\(deleted) items were") older than the history limit, so \(deleted == 1 ? "it was" : "they were") deleted. ⌘Z brings \(deleted == 1 ? "it" : "them") back."
+                    } else if allPinned {
+                        state.status = ids.count == 1 ? "Unpinned from \(board.name)." : "Unpinned \(ids.count) items from \(board.name)."
+                    } else {
+                        state.status = moves ? "Moved to \(board.name)."
+                            : (ids.count == 1 ? "Pinned to \(board.name)." : "Pinned \(ids.count) items to \(board.name).")
                     }
                 } label: {
                     Label { Text(pinned ? "Unpin from \(board.name)" : moves ? "Move to \(board.name)" : board.name) } icon: {
@@ -2584,7 +2670,9 @@ private struct ClipboardCardView: View, Equatable {
                     catch { state.status = error.localizedDescription }
                 }.disabled(entry.recognizedText?.isEmpty != false)
             }
-            Button("Duplicate") { _ = store.duplicate(entryID: entry.id) }
+            Button("Duplicate") {
+                if store.duplicate(entryID: entry.id) != nil { state.status = "Duplicated." }
+            }
         }
     }
 
@@ -2703,9 +2791,11 @@ private struct ClipboardPreviewSheet: View {
     /// A region dragged out on an image (P04) and the text read from it.
     @State private var regionSelection: CGRect?
     @State private var regionText: String?
-    // Paste-style rename: the title shows in the preview and edits in place
-    // on double-click. The preview key handler already yields to editingTitleID.
+    // Paste-style rename: one click on the title edits it in place (Return
+    // saves, Esc cancels, a click elsewhere saves). The preview key handler
+    // yields to editingTitleID while the field has the keyboard.
     @State private var isEditingTitle = false
+    @State private var titleHovered = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
     private var currentContent: ClipboardPreviewCache.Content? { loadedVersion == current.contentVersion ? content : nil }
@@ -2775,11 +2865,8 @@ private struct ClipboardPreviewSheet: View {
             return true
         }
         if flags == .command, event.keyCode == 15 {
-            let item = current
-            controller.closePreview()
-            DispatchQueue.main.async {
-                state.editor = .init(operation: .renameEntry(item.id), title: "Rename Item", text: item.title)
-            }
+            // ⌘R renames in place, like a click on the title.
+            if !event.isARepeat { beginTitleEdit() }
             return true
         }
         if (flags.isEmpty || flags == ClipboardPreferences.shared.plainModifier.flags), [36, 76].contains(event.keyCode) {
@@ -2820,7 +2907,7 @@ private struct ClipboardPreviewSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: AOMSpace.x2) {
                 Button { controller.closePreview() } label: {
-                    Image(systemName: "xmark.circle.fill").font(AOMFont.section.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
+                    Image(systemName: "xmark.circle.fill").font(AOMFont.title.weight(.regular)).foregroundStyle(AOMColor.textSecondary)
                 }.help("Close Preview (Space / Esc)").accessibilityLabel("Close Preview")
                 if isEditingTitle {
                     TextField("Title", text: $editedTitle)
@@ -2829,6 +2916,9 @@ private struct ClipboardPreviewSheet: View {
                         .focused($titleFocused)
                         .onSubmit { commitTitle() }
                         .onExitCommand { finishTitleEdit() }
+                        .onChange(of: titleFocused) { _, focused in
+                            if !focused && isEditingTitle { commitTitle() }
+                        }
                         .frame(maxWidth: AOMSize.tileMin)
                         .accessibilityLabel("Title")
                 } else {
@@ -2837,9 +2927,18 @@ private struct ClipboardPreviewSheet: View {
                         .foregroundStyle(current.title.isEmpty ? AOMColor.textSecondary : AOMColor.text)
                         .lineLimit(1).truncationMode(.middle)
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { beginTitleEdit() }
-                        .help(current.title.isEmpty ? "Double-click to name this item" : "Double-click to rename")
-                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Double-click to rename.")
+                        .onTapGesture { beginTitleEdit() }
+                        .onHover { inside in
+                            guard inside != titleHovered else { return }
+                            titleHovered = inside
+                            if inside { NSCursor.iBeam.push() } else { NSCursor.pop() }
+                        }
+                        .onDisappear { if titleHovered { NSCursor.pop(); titleHovered = false } }
+                        .help(current.title.isEmpty ? "Click to name this item (⌘R)" : "Click to rename (⌘R)")
+                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title)")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Renames the item")
+                        .accessibilityAction { beginTitleEdit() }
                 }
                 Spacer()
                 Menu {
@@ -2849,18 +2948,23 @@ private struct ClipboardPreviewSheet: View {
                             else { store.pin(entryID: current.id, boardID: board.id) }
                         }
                     }
-                    if store.boards.isEmpty { Text("Create a pinboard in the timeline") }
+                    if store.boards.isEmpty { Text("No pinboards yet. Add one with + in the shelf.") }
                 } label: { Image(systemName: current.pinboardIDs.isEmpty ? "pin" : "pin.fill") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Pinboard")
-                Button { controller.detachPreview(current) } label: { Image(systemName: "arrow.up.right.square") }.help("Detach Preview")
+                .accessibilityLabel(current.pinboardIDs.isEmpty ? "Pin to a Pinboard" : "Pinboards")
+                Button { controller.detachPreview(current) } label: { Image(systemName: "arrow.up.right.square") }
+                    .help("Detach Preview").accessibilityLabel("Detach Preview")
                 ClipboardPreviewShareButton(entry: current).frame(width: AOMIcon.row + AOMSpace.x1, height: AOMIcon.row + AOMSpace.x1)
                 if current.kind == .image || canEditText {
+                    // Paste's Edit capsule.
                     Button("Edit") {
                         if current.kind == .image { controller.editEntry(current) }
                         else { beginEditing() }
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .font(AOMFont.callout.weight(.medium))
+                    .padding(.horizontal, AOMSpace.x3).frame(height: AOMIcon.row + AOMSpace.x1)
+                    .background(AOMColor.text.opacity(0.07), in: Capsule())
+                    .contentShape(Capsule())
                     .help("Edit Content (⌘E)")
                 }
             }.buttonStyle(.plain).padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowStandard)
@@ -2898,7 +3002,7 @@ private struct ClipboardPreviewSheet: View {
             }.padding(.horizontal, AOMSpace.x3).frame(height: AOMSize.rowSingle)
         }
         .frame(width: previewSize.width, height: previewSize.height)
-        .background(AOMColor.canvas)
+        .background(Color(nsColor: .windowBackgroundColor))
         .background(ClipboardPreviewKeyHandler(controller: controller, handle: handlePreviewKey))
         .task(id: current.contentVersion) {
             content = nil; loadedVersion = nil
@@ -3312,7 +3416,21 @@ enum ClipboardRelativeDate {
 }
 
 /// The shelf card's header strip: one line (3.3.5, was 38 / 42 pt for two).
+/// How long a shelf message stays: long enough to read it.
+enum ClipboardStatusTiming {
+    static func seconds(for message: String) -> Double {
+        let words = message.split(whereSeparator: \.isWhitespace).count
+        return min(8, max(3.5, Double(words) / 3))
+    }
+}
+
+/// Paste's card measurements, which the shelf keeps (design-3.4.0 b.17).
 private enum ShelfCardMetrics {
-    static let header: CGFloat = 28
-    static let headerCompact: CGFloat = 24
+    /// The coloured header: the title over the time.
+    static let header: CGFloat = 48
+    static let headerCompact: CGFloat = 38
+    /// The source app's icon, drawn over the header's trailing edge.
+    static let icon: CGFloat = 56
+    static let iconCompact: CGFloat = 43
+    static let radius: CGFloat = 10
 }

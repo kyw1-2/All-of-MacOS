@@ -169,7 +169,9 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     init(capture: CaptureHistoryEntry, url: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
         self.capture = capture
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
-        let width = min(screen.width - 40, min(1280, max(1000, capture.pointSize.width + 48)))
+        // 3.4: 1120 pt fits the whole tool bar (tools, Undo/Redo and the output
+        // actions) without scrolling, on screens wide enough for it.
+        let width = min(screen.width - 40, min(1280, max(1120, capture.pointSize.width + 48)))
         let height = min(screen.height - 60, min(900, max(640, capture.pointSize.height + 100)))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
@@ -258,6 +260,8 @@ private struct AnnotationEditorView: View {
     @State private var smartHighlightBusy = false
     @State private var cropRect: CGRect?
     @State private var status: String?
+    /// The file the last save wrote, for Show in Finder in the status capsule.
+    @State private var lastSavedURL: URL?
     /// F-04C: a full-image export is encoding/writing off the main thread; this
     /// blocks re-entry so a double click can never start two writes.
     @State private var exportInFlight = false
@@ -420,9 +424,9 @@ private struct AnnotationEditorView: View {
         }
         .sheet(isPresented: $showingSmartHighlight) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Highlight Matching Text").font(.headline)
+                Text("Highlight Matching Text").font(AOMFont.headline)
                 Text("Finds text in this screenshot locally with Apple's Vision OCR and adds editable highlights.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).foregroundStyle(.secondary)
                 TextField("Words to highlight", text: $smartHighlightQuery)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Text to highlight")
@@ -457,10 +461,20 @@ private struct AnnotationEditorView: View {
             capsuleButton("photo.badge.plus", help: "Add Screenshot From File… (⌘I)") { addScreenshot() }
                 .keyboardShortcut("i", modifiers: .command)
             capsuleButton(AnnotationToolbarItem.imageLayer.symbol,
-                          help: "Insert Image Layer… (⌥⌘I) — move, resize and rotate it freely") {
+                          help: "Insert Image Layer… (⌥⌘I): move, resize and rotate it freely") {
                 selectToolbarItem(.imageLayer)
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
+            // Undo and Redo in view (they were only in the … menu); the keys
+            // stay on the menu items.
+            capsuleButton("arrow.uturn.backward", help: "Undo (⌘Z)") {
+                document.undo(); restoreSelectionAfterHistoryChange()
+            }
+            .disabled(!document.canUndo)
+            capsuleButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)") {
+                document.redo(); restoreSelectionAfterHistoryChange()
+            }
+            .disabled(!document.canRedo)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
                     ForEach(AnnotationToolbarItem.segments) { item in
@@ -477,6 +491,13 @@ private struct AnnotationEditorView: View {
                 .background(NativeScrollChrome(.hidden))
             }
             .scrollIndicators(.hidden)
+            // When the window is too narrow for every tool, the strip fades at
+            // its ends so the hidden tools read as "scroll for more".
+            .mask {
+                LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.96),
+                                       .init(color: .black.opacity(0.25), location: 1)],
+                               startPoint: .leading, endPoint: .trailing)
+            }
             .frame(maxWidth: .infinity)
             moreMenu
             outputActions
@@ -506,7 +527,8 @@ private struct AnnotationEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut("s", modifiers: .command)
-                .help("Save to the export location (⌘S)")
+                .disabled(exportInFlight)
+                .help(exportInFlight ? "Saving…" : "Save to the export location (⌘S)")
                 Menu {
                     Button("Save") { saveToExportLocation() }
                     Button("Save As…") { saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
@@ -541,6 +563,7 @@ private struct AnnotationEditorView: View {
                     .background(AOMColor.accent, in: Capsule())
             }
             .buttonStyle(.plain).fixedSize()
+            .disabled(exportInFlight)
             .help(onApply != nil ? "Apply to the clipboard and close" : "Save changes and close")
             .accessibilityLabel("Done")
         }
@@ -604,6 +627,8 @@ private struct AnnotationEditorView: View {
                 .disabled(!document.objects.contains { $0.kind.isRedaction })
                 .help("Burns redactions into the pixels so even a saved project no longer contains the original")
             Divider()
+            Button("Zoom In") { zoomIn() }.keyboardShortcut("=", modifiers: .command)
+            Button("Zoom Out") { zoomOut() }.keyboardShortcut("-", modifiers: .command)
             Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
             Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
         } label: { Image(systemName: "ellipsis").frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea).contentShape(Rectangle()) }
@@ -984,8 +1009,16 @@ private struct AnnotationEditorView: View {
                 // The same quiet track as the tool group, so every bar button reads as one.
                 .background(active ? AOMColor.accent : AOMColor.track, in: Capsule())
                 .contentShape(Capsule())
-        }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+        }.buttonStyle(.plain).help(help)
+            // VoiceOver reads the name, not the shortcut glyphs of the tooltip.
+            .accessibilityLabel(Self.spokenLabel(help))
             .accessibilityAddTraits(active ? .isSelected : [])
+    }
+
+    /// "Copy to Clipboard (⇧⌘C)" → "Copy to Clipboard".
+    static func spokenLabel(_ help: String) -> String {
+        guard let open = help.lastIndex(of: "("), help.hasSuffix(")") else { return help }
+        return String(help[..<open]).trimmingCharacters(in: .whitespaces)
     }
 
     private func highlightMatchingText() {
@@ -1072,7 +1105,7 @@ private struct AnnotationEditorView: View {
         return Button { selectToolbarItem(item) } label: {
             Image(systemName: item.symbol)
                 .font(AOMFont.section)
-                .frame(width: AOMIcon.headerBadge + 1, height: AOMIcon.hitArea + 1)
+                .frame(width: AnnotationBarMetrics.toolWidth, height: AOMIcon.hitArea + 1)
                 .background(active ? AOMColor.accent : Color.clear, in: Capsule())
                 .foregroundStyle(active ? AOMTheme.onAccent(AOMColor.accent) : AOMColor.text)
                 .contentShape(Capsule())
@@ -1106,7 +1139,7 @@ private struct AnnotationEditorView: View {
             Text("\(document.croppedImage.width) × \(document.croppedImage.height) px")
                 .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
             if !cropMode {
-                AnnotationShareButton(image: renderedImage(), scale: scale)
+                AnnotationShareButton(render: { renderedImage() }, scale: scale)
                     .frame(width: AOMFeatureSize.barButtonWidth, height: AOMFeatureSize.barControlHeight)
                     .background(AOMColor.track, in: Capsule())
             }
@@ -1222,17 +1255,24 @@ private struct AnnotationEditorView: View {
                                     selectionHandles(for: object, fit: fit)
                                 }
                             } else if extraSelection.contains(object.id), tool == .move {
-                                Rectangle().path(in: object.rect.scaled(by: fit))
-                                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                                    .allowsHitTesting(false)
+                                ZStack {
+                                    Rectangle().path(in: object.rect.scaled(by: fit))
+                                        .stroke(Color.white.opacity(0.85), lineWidth: 2)
+                                    Rectangle().path(in: object.rect.scaled(by: fit))
+                                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                                }
+                                .allowsHitTesting(false)
                             }
                         }
                         if let draft, draft.kind != .blur && draft.kind != .pixelate { DraftOverlay(object: draft, fit: fit, scale: scale) }
                         if cropMode, let cropRect { cropOverlay(cropRect: cropRect, fit: fit, imageSize: imageSize) }
                         if tool == .eraser, let eraserLast {
+                            // Black under white: the ring reads on light and dark
+                                // pixels in either appearance (Color.primary turned white).
                             Circle()
                                 .fill(Color.white.opacity(0.22))
-                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.75), lineWidth: 1))
+                                .overlay(Circle().strokeBorder(Color.black.opacity(0.55), lineWidth: 2))
+                                .overlay(Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
                                 .frame(width: eraserSize * 2 * fit, height: eraserSize * 2 * fit)
                                 .position(eraserLast.scaled(by: fit))
                                 .allowsHitTesting(false)
@@ -1267,16 +1307,97 @@ private struct AnnotationEditorView: View {
             }
             .background(Color(nsColor: .underPageBackgroundColor))
             .overlay(alignment: .bottom) {
-                if let status {
-                    // A message over the canvas: the opaque capsule, not a material (c.4).
-                    Text(status).font(AOMFont.caption).foregroundStyle(AOMColor.text)
-                        .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5).padding(.vertical, AOMSpace.x1 + 1)
-                        .aomInPanelCapsule().padding(.bottom, AOMSpace.x3)
-                        .allowsHitTesting(false)
+                if exportInFlight || status != nil {
+                    statusCapsule
                 }
             }
+            .contextMenu { canvasMenu }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Messages clear themselves once read (3.3 kept the last one forever);
+        // one that ends in "…" stays until the work it names is done.
+        .task(id: status) {
+            guard let shown = status else { return }
+            NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                                 userInfo: [.announcement: shown,
+                                            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            guard !shown.hasSuffix("…") else { return }
+            let seconds = ClipboardStatusTiming.seconds(for: shown) + (Self.isProblem(shown) ? 3 : 0)
+            try? await Task.sleep(for: .seconds(seconds))
+            if !Task.isCancelled, status == shown { status = nil }
+        }
+    }
+
+    /// A failure or a "nothing to do" message: shown with the warning glyph.
+    static func isProblem(_ message: String) -> Bool {
+        ["failed", "Could not", "Couldn't", "Nothing to", "No image", "No matching", "too large"]
+            .contains { message.localizedCaseInsensitiveContains($0) }
+    }
+
+    /// A message over the canvas: the opaque capsule, not a material (c.4),
+    /// with a spinner while a save runs and Show in Finder after one.
+    private var statusCapsule: some View {
+        let message = exportInFlight ? "Saving…" : (status ?? "")
+        let problem = !exportInFlight && Self.isProblem(message)
+        return HStack(spacing: AOMSpace.x2) {
+            if exportInFlight {
+                ProgressView().controlSize(.small).accessibilityHidden(true)
+            } else if problem {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(AOMColor.warning)
+                    .accessibilityHidden(true)
+            }
+            Text(message).font(AOMFont.callout).foregroundStyle(AOMColor.text)
+                .lineLimit(2)
+            if !exportInFlight, let url = lastSavedURL, message.hasPrefix("Saved ") {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    .buttonStyle(.link)
+                    .font(AOMFont.callout.weight(.medium))
+            }
+        }
+        .padding(.horizontal, AOMSpace.x3).padding(.vertical, AOMSpace.x1 + 1)
+        .aomInPanelCapsule().padding(.bottom, AOMSpace.x3)
+        .frame(maxWidth: AOMSize.toastMaxWidth)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// Right-click on the canvas: what the … menu and the keys do, nearest
+    /// first (b.4: every surface has its context menu).
+    @ViewBuilder private var canvasMenu: some View {
+        if document.canUndo { Button("Undo") { document.undo(); restoreSelectionAfterHistoryChange() } }
+        if document.canRedo { Button("Redo") { document.redo(); restoreSelectionAfterHistoryChange() } }
+        Divider()
+        if selectedID != nil {
+            Button("Copy Object") { copyObjects() }
+            Button("Duplicate Object") { duplicateObjects() }
+            Menu("Arrange") {
+                Button(AnnotationArrangement.bringToFront.title) { arrangeSelection(.bringToFront) }
+                Button(AnnotationArrangement.bringForward.title) { arrangeSelection(.bringForward) }
+                Button(AnnotationArrangement.sendBackward.title) { arrangeSelection(.sendBackward) }
+                Button(AnnotationArrangement.sendToBack.title) { arrangeSelection(.sendToBack) }
+            }
+            Button("Delete Object", role: .destructive) { deleteSelection() }
+            Divider()
+        }
+        Button("Copy Image") { copyToClipboard() }
+        Button("Paste Object") { pasteObjects() }
+        if !document.objects.isEmpty { Button("Select All Objects") { selectAllObjects() } }
+        Divider()
+        Button("Zoom In") { zoomIn() }
+        Button("Zoom Out") { zoomOut() }
+        Button("Fit to Window") { zoom = nil }
+    }
+
+    private static let zoomSteps: [CGFloat] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]
+
+    private func zoomIn() {
+        let current = zoom ?? 1
+        zoom = Self.zoomSteps.first { $0 > current + 0.001 } ?? 4
+    }
+
+    private func zoomOut() {
+        let current = zoom ?? 1
+        zoom = Self.zoomSteps.last { $0 < current - 0.001 } ?? 0.25
     }
 
     private func fitScale(for imageSize: CGSize, in available: CGSize) -> CGFloat {
@@ -1634,7 +1755,7 @@ private struct AnnotationEditorView: View {
                         ForEach(document.objects) { object in
                             HStack {
                                 Image(systemName: object.kind.iconName).frame(width: 16)
-                                Text(object.displayName).lineLimit(1).font(.caption)
+                                Text(object.displayName).lineLimit(1).font(AOMFont.caption)
                                 Spacer()
                                 Button { document.reorder(object.id, offset: 1) } label: { Image(systemName: "arrow.up") }
                                     .buttonStyle(.plain).help("Bring Forward")
@@ -1657,7 +1778,7 @@ private struct AnnotationEditorView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            Text(title).font(AOMFont.caption).fontWeight(.semibold).foregroundStyle(.secondary)
             content()
         }
     }
@@ -1668,7 +1789,7 @@ private struct AnnotationEditorView: View {
             Slider(value: Binding(get: { Double(value.wrappedValue) },
                                   set: { value.wrappedValue = CGFloat($0); applyStyleToSelection() }),
                    in: Double(range.lowerBound)...Double(range.upperBound))
-            Text(label).font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
+            Text(label).font(AOMFont.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
         }
     }
 
@@ -1678,7 +1799,7 @@ private struct AnnotationEditorView: View {
             Slider(value: Binding(get: { value.wrappedValue },
                                   set: { value.wrappedValue = $0; applyStyleToSelection() }),
                    in: range)
-            Text(label).font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
+            Text(label).font(AOMFont.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
         }
     }
 
@@ -2248,6 +2369,7 @@ private struct AnnotationEditorView: View {
                     // F-04C: the full-resolution encode and the atomic write run
                     // on the export queue, never on the main actor.
                     try await encodeAndWrite(result, format: format, to: url)
+                    lastSavedURL = url
                     if markExported(exportedState) {
                         status = "Saved \(url.lastPathComponent). Newer changes are not saved yet."
                     } else {
@@ -2294,9 +2416,12 @@ private struct AnnotationEditorView: View {
                     closeAfterExport = false
                     status = "Saved \(url.lastPathComponent). Newer changes are not saved yet."
                 } else {
+                    lastSavedURL = url
                     status = "Saved \(url.lastPathComponent)."
                     if closeAfterExport {
                         closeAfterExport = false
+                        // The window goes away with the message: say it outside.
+                        GestureHUD.shared.show(title: "Saved", detail: url.lastPathComponent)
                         session?.close()
                     }
                 }
@@ -2347,7 +2472,9 @@ private struct AnnotationEditorView: View {
 
 /// Uses the native macOS sharing picker with the rendered document.
 private struct AnnotationShareButton: NSViewRepresentable {
-    let image: CGImage?
+    /// Renders the document when Share is clicked; rendering it on every view
+    /// update (3.3) cost a full render per change on large images.
+    let render: () -> CGImage?
     let scale: CGFloat
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -2362,20 +2489,21 @@ private struct AnnotationShareButton: NSViewRepresentable {
     }
 
     func updateNSView(_ button: NSButton, context: Context) {
-        context.coordinator.image = image.map {
-            NSImage(cgImage: $0, size: NSSize(width: CGFloat($0.width) / scale, height: CGFloat($0.height) / scale))
-        }
-        button.isEnabled = image != nil
+        context.coordinator.render = render
+        context.coordinator.scale = scale
         // The capsule behind the button is drawn by SwiftUI (`AOMColor.track`),
         // so it follows the window's appearance; a layer colour resolved here
         // came out dark in a light window when the main window was dark.
     }
 
     final class Coordinator: NSObject {
-        var image: NSImage?
+        var render: (() -> CGImage?)?
+        var scale: CGFloat = 2
         private var picker: NSSharingServicePicker?
         @objc func share(_ sender: NSButton) {
-            guard let image else { return }
+            guard let rendered = render?() else { NSSound.beep(); return }
+            let image = NSImage(cgImage: rendered, size: NSSize(width: CGFloat(rendered.width) / scale,
+                                                                height: CGFloat(rendered.height) / scale))
             let picker = NSSharingServicePicker(items: [image])
             self.picker = picker
             picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
@@ -2599,9 +2727,9 @@ private struct AnnotationResizeDialog: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Resize Image").font(.headline)
+            Text("Resize Image").font(AOMFont.headline)
             Text("Original size: \(originalWidth) × \(originalHeight) pixels")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AOMFont.caption).foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
                 TextField("Width", value: widthEntry, format: .number)
@@ -2634,11 +2762,11 @@ private struct AnnotationResizeDialog: View {
 
             Toggle("Flatten Annotations", isOn: $flattenAnnotations)
             Text("This action will flatten all annotations, making them uneditable.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AOMFont.caption).foregroundStyle(.secondary)
 
             if !dimensionsValid {
                 Text("Dimensions must be 1–16,384 pixels and at most 100 million pixels total.")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(AOMFont.caption).foregroundStyle(.red)
             }
             HStack {
                 Spacer()
@@ -2718,4 +2846,12 @@ private struct AnnotationSavedState: Equatable {
         lhs.objects == rhs.objects && lhs.cropRect == rhs.cropRect
             && lhs.background == rhs.background && lhs.baseImage === rhs.baseImage
     }
+}
+
+
+/// The editor bar's own size the shared scale has no token for.
+private enum AnnotationBarMetrics {
+    /// One tool in the segmented tool group: 34 pt keeps the 28 pt hit area
+    /// and fits all fifteen tools beside the output actions at 1120 pt.
+    static let toolWidth: CGFloat = 34
 }

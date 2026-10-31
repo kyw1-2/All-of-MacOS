@@ -56,7 +56,7 @@ struct LiveTouchView: View {
                         HStack {
                             Spacer()
                             Text(touchState.isPressed ? "PRESS" : "TOUCH")
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .font(.system(.caption2, design: .monospaced, weight: .bold))
                                 .foregroundColor(
                                     touchState.isPressed
                                         ? appState.accentColorChoice.color
@@ -82,7 +82,7 @@ struct LiveTouchView: View {
                 if touchState.touches.isEmpty && touchState.trails.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "hand.point.up")
-                            .font(.system(size: 20))
+                            .font(.system(.title2))
                             .foregroundColor(.secondary.opacity(0.4))
                         Text("Touch trackpad")
                             .font(.caption2)

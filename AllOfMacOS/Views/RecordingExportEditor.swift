@@ -39,6 +39,11 @@ struct RecordingExportEditor: View {
     @State private var cursorSize = 1.0
     @State private var isExporting = false
     @State private var status = ""
+    /// The status line's tone: a failure reads as one (3.3 showed "Export
+    /// failed" in grey, and every message green after one export).
+    @State private var statusTone: AOMTone = .neutral
+    /// Sources with an export running; the window refuses to close meanwhile.
+    static var exporting: Set<URL> = []
     @State private var resultURL: URL?
     @State private var clips: [AOMStudioClip] = []
     @State private var outputAspect: AOMStudioAspect = .source
@@ -76,56 +81,53 @@ struct RecordingExportEditor: View {
     }
 
     var body: some View {
-        AOMPage(maxWidth: AOMFeatureSize.recordingEditorWidth, spacing: AOMSpace.x5) {
-            AOMPageHeader("Edit Recording", symbol: "film.stack.fill", subtitle: source.lastPathComponent,
-                          help: "Edits are saved as a Studio project beside the movie, and the original recording is never changed. Ranges, zooms and layers stay anchored to the recording's own time, so reordering never moves them.") {
-                Button("Close") { if let onClose { onClose() } else { dismiss() } }.disabled(isExporting)
-            }
-
-            if duration > 0 {
-                if let previewPlayer {
-                    VideoPlayer(player: previewPlayer)
-                        .frame(height: AOMFeatureSize.videoPreviewHeight)
+        // The preview stays in view while the options below scroll, so every
+        // change is seen where it is made (3.3 scrolled the picture away).
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: AOMSpace.x3) {
+                AOMPageHeader("Edit Recording", symbol: "film.stack.fill", subtitle: source.lastPathComponent,
+                              help: "Edits are saved as a Studio project beside the movie, and the original recording is never changed. Ranges, zooms and layers stay anchored to the recording's own time, so reordering never moves them.") {
+                    Button("Close") { if let onClose { onClose() } else { dismiss() } }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(isExporting)
+                        .help(isExporting ? "Wait for the export to finish" : "Close (Esc)")
+                }
+                if duration > 0, let previewPlayer {
+                    AOMPlayerView(player: previewPlayer)
+                        .frame(minHeight: AOMFeatureSize.videoPreviewHeight, maxHeight: AOMFeatureSize.videoPreviewHeight * 1.5)
                         .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
                             .strokeBorder(AOMColor.hairline, lineWidth: 0.5))
                         .accessibilityLabel("Recording preview")
                 }
-                trimSection
-                timelineControls.disabled(isExporting)
-                studioControls.disabled(isExporting)
-                outputSection
-                exportSection
-            } else if loadFailed {
-                AOMNotice(.error, "Could not open this recording.")
-            } else {
-                ProgressView("Reading recording…")
-                    .frame(maxWidth: .infinity)
+                statusLine
             }
-
-            if isExporting || !status.isEmpty || resultURL != nil {
-                VStack(alignment: .leading, spacing: AOMSpace.x2) {
-                    if isExporting {
-                        ProgressView("Exporting…")
-                            .controlSize(.small)
-                    }
-                    if !status.isEmpty {
-                        Text(status)
-                            .font(AOMFont.caption)
-                            .foregroundStyle(resultURL == nil ? AOMColor.textSecondary : AOMColor.successText)
-                            .lineLimit(3)
-                    }
-                    if let resultURL {
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([resultURL])
-                        }
-                        .buttonStyle(.link)
+            .padding(.horizontal, AOMSpace.pageMargin)
+            .padding(.top, AOMSpace.x4)
+            .padding(.bottom, AOMSpace.x3)
+            AOMDivider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: AOMSpace.x5) {
+                    if duration > 0 {
+                        trimSection
+                        timelineControls.disabled(isExporting)
+                        studioControls.disabled(isExporting)
+                        outputSection
+                        exportSection
+                    } else if loadFailed {
+                        AOMNotice(.error, "Couldn't open this recording.", detail: status.isEmpty ? nil : status)
+                    } else {
+                        ProgressView("Reading recording…")
+                            .frame(maxWidth: .infinity)
                     }
                 }
-                .padding(.horizontal, AOMSpace.x1)
+                .padding(AOMSpace.pageMargin)
             }
         }
-        .frame(width: AOMFeatureSize.recordingEditorWidth, height: Self.preferredHeight)
+        .background(AOMColor.canvas)
+        .frame(minWidth: AOMFeatureSize.recordingEditorWidth - AOMSpace.x10,
+               idealWidth: AOMFeatureSize.recordingEditorWidth,
+               minHeight: AOMFeatureSize.recordingEditorHeight.lowerBound, idealHeight: Self.preferredHeight)
         .onChange(of: start) { _, value in
             restoreSourcePreview()
             saveProject()
@@ -157,7 +159,7 @@ struct RecordingExportEditor: View {
                     clips = project.clips
                     restore(project.settings)
                     muteAudio = project.muteAudio
-                    status = "Recovered saved Studio project."
+                    report("Recovered the saved Studio project.")
                 } else {
                     // Start from what the recording's Presentation showed.
                     restore(AOMStudioSettings.recordingDefaults(track: editableCursorTrack))
@@ -165,9 +167,41 @@ struct RecordingExportEditor: View {
                 updatePreview()
             } catch {
                 loadFailed = true
-                status = error.localizedDescription
+                report(error.localizedDescription, tone: .danger)
             }
         }
+    }
+
+    /// Export progress and the last result, under the preview: a spinner
+    /// while exporting, the message in its tone, Show in Finder after a save.
+    @ViewBuilder private var statusLine: some View {
+        if isExporting || !status.isEmpty || resultURL != nil {
+            HStack(spacing: AOMSpace.x2) {
+                if isExporting {
+                    ProgressView().controlSize(.small).accessibilityHidden(true)
+                    Text("Exporting…").font(AOMFont.callout).foregroundStyle(AOMColor.text)
+                } else if !status.isEmpty {
+                    if statusTone != .neutral {
+                        Image(systemName: statusTone.symbol).foregroundStyle(statusTone.color).accessibilityHidden(true)
+                    }
+                    Text(status)
+                        .font(AOMFont.callout)
+                        .foregroundStyle(statusTone == .danger ? AOMColor.dangerText : AOMColor.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: AOMSpace.x2)
+                if !isExporting, let resultURL {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([resultURL]) }
+                }
+            }
+            .frame(minHeight: AOMSize.rowSingle)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func report(_ message: String, tone: AOMTone = .neutral) {
+        status = message
+        statusTone = tone
     }
 
     // MARK: - Rows
@@ -236,22 +270,26 @@ struct RecordingExportEditor: View {
                     Button("Source") { restoreSourcePreview() }
                 }
             }
-            AOMSettingRow("Project", detail: "Saved beside the original movie") {
-                Button("Save Project") { saveProject() }
+            AOMSettingRow("Project", detail: "Saved beside the original movie as you edit") {
+                Button("Save Project") {
+                    saveProject()
+                    if statusTone != .danger { report("Studio project saved beside the original movie.", tone: .success) }
+                }
             }
             ForEach(Array(clips.enumerated()), id: \.element.id) { index, clip in
                 cardRow {
                     Text("\(index + 1). \(Self.clock(clip.start)) → \(Self.clock(clip.end))")
                         .font(AOMFont.body.monospacedDigit()).foregroundStyle(AOMColor.text)
                     Spacer()
-                    Button("↑") { clips.swapAt(index, index - 1); saveProject() }.disabled(index == 0)
-                    Button("↓") { clips.swapAt(index, index + 1); saveProject() }.disabled(index + 1 == clips.count)
-                    Button("Split at Playhead") {
-                        guard zoomAt > clip.start + 0.05, zoomAt < clip.end - 0.05 else { return }
-                        clips.replaceSubrange(index...index, with: [AOMStudioClip(start: clip.start, end: zoomAt), AOMStudioClip(start: zoomAt, end: clip.end)])
-                        saveProject()
-                    }.disabled(zoomAt <= clip.start + 0.05 || zoomAt >= clip.end - 0.05)
-                    Button("Remove") { clips.remove(at: index); saveProject() }
+                    AOMIconButton("arrow.up", label: "Move Range Up") { clips.swapAt(index, index - 1); saveProject() }
+                        .disabled(index == 0)
+                    AOMIconButton("arrow.down", label: "Move Range Down") { clips.swapAt(index, index + 1); saveProject() }
+                        .disabled(index + 1 == clips.count)
+                    // Splits where the player stands (3.3 split at the Zoom
+                    // "At" value instead).
+                    Button("Split at Playhead") { split(clipAt: index) }
+                        .help("Split this range where the preview's playhead is")
+                    AOMIconButton("trash", label: "Remove Range", role: .destructive) { clips.remove(at: index); saveProject() }
                 }
             }
         }
@@ -289,7 +327,7 @@ struct RecordingExportEditor: View {
                 HStack(spacing: AOMSpace.x2) {
                     Button("Add Keyframe") {
                         guard zoomAt >= start, zoomAt <= end else {
-                            status = "Select a zoom time inside the trim range."
+                            report("Select a zoom time inside the trim range.", tone: .warning)
                             return
                         }
                         previousZoomKeyframes = zoomKeyframes
@@ -305,12 +343,12 @@ struct RecordingExportEditor: View {
                         guard let track = editableCursorTrack else { return }
                         let suggested = AOMStudioTimeline.suggestedZooms(track: track, start: start, end: end)
                         guard !suggested.isEmpty else {
-                            status = "No recorded interactions or sustained cursor pauses found. Add a keyframe manually."
+                            report("No recorded clicks or cursor pauses found. Add a keyframe by hand.", tone: .warning)
                             return
                         }
                         previousZoomKeyframes = zoomKeyframes
                         zoomKeyframes = suggested
-                        status = "Added \(suggested.count / 4) editable zoom suggestions."
+                        report("Added \(suggested.count / 4) editable zoom suggestions.", tone: .success)
                     }
                     .disabled(editableCursorTrack == nil || !validRange)
                     Button("Undo Zoom Edit") {
@@ -417,7 +455,6 @@ struct RecordingExportEditor: View {
                     sliderRow("Highlight size", value: $highlight.size, in: AOMCursorHighlight.sizeRange)
                 }
                 .disabled(!highlightOn)
-                .opacity(highlightOn ? 1 : 0.55)
             }
             .disabled(editableCursorTrack?.points.isEmpty ?? true)
         }
@@ -439,7 +476,6 @@ struct RecordingExportEditor: View {
                 }
             }
             .disabled(!showKeys)
-            .opacity(showKeys ? 1 : 0.55)
             ForEach($keyEvents) { $key in
                 cardRow {
                     Text(key.label).font(AOMFont.body).foregroundStyle(AOMColor.text)
@@ -463,7 +499,6 @@ struct RecordingExportEditor: View {
                 sliderRow("Camera Y", value: $cameraY, in: 0...1, label: Self.percent(cameraY))
             }
             .disabled(!showCamera)
-            .opacity(showCamera ? 1 : 0.55)
         }
     }
 
@@ -597,7 +632,6 @@ struct RecordingExportEditor: View {
                 sliderRow("Shadow", value: $background.shadow, in: AOMVideoBackground.shadowRange)
             }
             .disabled(isExporting || !background.isActive)
-            .opacity(background.isActive ? 1 : 0.55)
         }
         .disabled(isExporting)
     }
@@ -616,7 +650,7 @@ struct RecordingExportEditor: View {
             AOMStudioBackgroundImages.invalidate(path)
             background.imagePath = path
             background.kind = .wallpaper
-            if path == nil { status = "The desktop picture is not a readable image file; the \(background.gradient.displayName) gradient is used instead." }
+            if path == nil { report("The desktop picture isn't a readable image file, so the \(background.gradient.displayName) gradient is used instead.", tone: .warning) }
         default:
             background.kind = kind
         }
@@ -665,10 +699,27 @@ struct RecordingExportEditor: View {
         }
     }
 
+    private func split(clipAt index: Int) {
+        guard clips.indices.contains(index) else { return }
+        let clip = clips[index]
+        guard !previewIsSequence, let time = previewPlayer?.currentTime().seconds, time.isFinite else {
+            report("Show the source (not the sequence preview) and move its playhead into the range to split it.", tone: .warning)
+            return
+        }
+        guard time > clip.start + 0.05, time < clip.end - 0.05 else {
+            report("Move the playhead inside \(Self.clock(clip.start)) → \(Self.clock(clip.end)) to split this range.", tone: .warning)
+            return
+        }
+        clips.replaceSubrange(index...index, with: [AOMStudioClip(start: clip.start, end: time), AOMStudioClip(start: time, end: clip.end)])
+        saveProject()
+        report("Split at \(Self.clock(time)).")
+    }
+
     private func export(gif: Bool, rendered: Bool = false) {
         guard validRange, !isExporting else { return }
         isExporting = true
-        status = ""
+        Self.exporting.insert(source)
+        report("")
         resultURL = nil
         let begin = start, finish = end, frames = fps
         let gifSide = gifSize, gifRepeats = gifLoops
@@ -694,11 +745,12 @@ struct RecordingExportEditor: View {
                         muteAudio: muted, quality: selectedQuality, studio: studio, clips: selected)
                 }
                 resultURL = exported
-                status = "Saved \(exported.lastPathComponent). The original recording was not modified."
+                report("Saved \(exported.lastPathComponent). The original recording was not modified.", tone: .success)
             } catch {
-                status = "Export failed: \(error.localizedDescription)"
+                report("Couldn't export: \(error.localizedDescription)", tone: .danger)
             }
             isExporting = false
+            Self.exporting.remove(source)
         }
     }
 
@@ -735,7 +787,7 @@ struct RecordingExportEditor: View {
                 updatePreview()
                 previewPlayer?.isMuted = muteAudio
                 previewPlayer?.play()
-            } catch { status = "Sequence preview failed: \(error.localizedDescription)" }
+            } catch { report("Couldn't preview the sequence: \(error.localizedDescription)", tone: .danger) }
         }
     }
 
@@ -743,10 +795,11 @@ struct RecordingExportEditor: View {
         guard duration > 0 else { return }
         do {
             let bytes = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            // Autosave is silent: it ran on almost every change and wiped the
+            // export result. Only a failure is reported.
             try AOMStudioProject(sourceName: source.lastPathComponent, sourceBytes: bytes, sourceDuration: duration,
                                  clips: exportClips, settings: studioSettings, muteAudio: muteAudio).write(for: source)
-            status = "Studio project saved beside the original movie."
-        } catch { status = "Project could not be saved: \(error.localizedDescription)" }
+        } catch { report("Couldn't save the Studio project: \(error.localizedDescription)", tone: .danger) }
     }
 
     private func restore(_ settings: AOMStudioSettings) {
@@ -791,8 +844,10 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
         }
         let height = RecordingExportEditor.preferredHeight
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: AOMFeatureSize.recordingEditorWidth, height: height),
-                              styleMask: [.titled, .closable, .miniaturizable],
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
                               backing: .buffered, defer: false)
+        window.minSize = NSSize(width: AOMFeatureSize.recordingEditorWidth - AOMSpace.x10,
+                                height: AOMFeatureSize.recordingEditorHeight.lowerBound)
         window.title = "Edit Recording — \(source.lastPathComponent)"
         window.applyCaptureVisibilityPreference()
         window.isReleasedWhenClosed = false
@@ -805,9 +860,39 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// An export writes from this window's state; closing waits for it.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard let source = windows.first(where: { $0.value === sender })?.key,
+              RecordingExportEditor.exporting.contains(source) else { return true }
+        NSSound.beep()
+        GestureHUD.shared.show(title: "Exporting", detail: "The window closes once the export finishes")
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               let source = windows.first(where: { $0.value === window })?.key else { return }
         windows.removeValue(forKey: source)
+    }
+}
+
+/// AVKit's AppKit player view in SwiftUI. The SwiftUI `VideoPlayer` overlay
+/// aborted while building its view on macOS 27.2 (the preview build crashed
+/// in `_AVKit_SwiftUI` class metadata), so AOM hosts `AVPlayerView`
+/// directly: the same inline controls, no overlay library involved.
+struct AOMPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = false
+        view.player = player
+        view.setAccessibilityLabel("Video preview")
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
     }
 }

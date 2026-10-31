@@ -47,7 +47,13 @@ final class TextCaptureHUDController {
     func show(_ model: TextCaptureHUDModel, anchor: CGRect?, duration: TimeInterval) {
         guard NSApp != nil else { return }
         currentModel = model
-        self.duration = duration
+        // Long results stay long enough to read (about one line a second on
+        // top of 4 s, at most 20 s); the setting is the floor.
+        self.duration = max(duration, Self.readingTime(for: model.text))
+        // VoiceOver hears the result too: the HUD never takes focus.
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: "\(model.title). \(model.subtitle)",
+                                        .priority: NSAccessibilityPriorityLevel.high.rawValue])
         let panel = panel ?? makePanel()
         self.panel = panel
 
@@ -85,6 +91,11 @@ final class TextCaptureHUDController {
             panel.animator().alphaValue = 1
         }
         scheduleDismiss()
+    }
+
+    static func readingTime(for text: String) -> TimeInterval {
+        let lines = text.split(whereSeparator: \.isNewline).count
+        return min(20, 4 + Double(min(lines, 8)) * 1.0 + Double(text.count) / 120)
     }
 
     func dismiss() {
@@ -206,9 +217,12 @@ struct TextCaptureHUDView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(AOMSpace.x2)
                 .background(RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous).fill(AOMColor.sunken))
+                // The label names it; the value is the text itself (a label
+                // alone replaced the text for VoiceOver).
                 .accessibilityLabel("Recognized text")
+                .accessibilityValue(model.text)
 
-            if !model.links.isEmpty {
+            if !model.links.isEmpty || !model.barcodes.isEmpty {
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5 + 1) {
                     ForEach(model.links.prefix(3), id: \.self) { url in
                         Button { onOpen(url) } label: {
@@ -217,6 +231,19 @@ struct TextCaptureHUDView: View {
                         }
                         .buttonStyle(.link)
                         .help(url.absoluteString)
+                    }
+                    // Codes found in the selection (3.3 read them but never showed them).
+                    ForEach(model.barcodes.prefix(2), id: \.self) { code in
+                        Label(code, systemImage: "qrcode")
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            .lineLimit(1).truncationMode(.middle)
+                            .help(code)
+                            .textSelection(.enabled)
+                    }
+                    let more = max(0, model.links.count - 3) + max(0, model.barcodes.count - 2)
+                    if more > 0 {
+                        Text("\(more) more in the copied text")
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
                     }
                 }
             }

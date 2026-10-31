@@ -888,6 +888,9 @@ final class AirPlayPCMBridge {
         // The share of one device cycle the callback takes on average.
         let cycleMicros = Double(deviceFramesValue.load()) / max(1, rate) * 1e6
         result["renderCycleLoadPercent"] = cycleMicros > 0 ? (cost.meanMicros / cycleMicros * 1000).rounded() / 10 : 0
+        // 3.4.0: the realtime buffers AOM keeps resident (process-wide).
+        result["wiredKilobytes"] = AudioRealtimeMemory.wiredBytes / 1024
+        result["wireFailures"] = AudioRealtimeMemory.failures
         return result
     }
     func discard() { queue.requestClear() }

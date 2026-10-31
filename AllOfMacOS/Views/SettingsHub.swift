@@ -488,6 +488,8 @@ enum SettingsCatalog {
         "launchAtLogin": "Startup", "showMenuBarIcon": "Startup",
         "appearance": "Appearance", "accentColor": "Appearance",
         "hud": "Feedback", "hudOpacity": "Feedback",
+        "inputSourcesSwitch": "Input sources", "inputSourcesRules": "Input sources",
+        "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources",
         // The window-tiling rows mirror the Window Tiling page and use its
         // row names, in boxes of 8 rows or fewer (e.2).
         "titleBarSnap": "Window tiling", "titleBarSnapGrid": "Window tiling", "titleBarSnapAlmost": "Window tiling",
@@ -529,6 +531,11 @@ enum SettingsCatalog {
             item("accentColor", .general, "Highlight color", "Accent for buttons and selections", ["색", "컬러", "accent"], AnyView(AccentColorRow())),
             item("hud", .general, "On-screen HUD", "Show feedback when actions run", ["hud", "오버레이", "알림"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "On-screen HUD", subtitle: "Show feedback when actions run", key: "AOMHUDEnabled", fallback: true))),
             item("hudOpacity", .general, "HUD background", "Background opacity", ["투명도", "opacity"], AnyView(HubSliderRow(icon: "circle.dashed", tint: .teal, title: "HUD background", subtitle: "", key: "AOMHUDBackgroundOpacity", fallback: 0.06, range: 0...0.3, step: 0.01, percent: true))),
+            // 3.4: per-app input sources (Input Source Pro parity).
+            item("inputSourcesSwitch", .general, "Switch input sources by app", "Each app types in the input source you choose", ["input source", "입력 소스", "한영", "한/영", "한글", "영어", "korean", "english", "keyboard", "자판", "input source pro"], AnyView(InputSourcesSwitchRow())),
+            item("inputSourcesRules", .general, "Apps and their input sources", "Terminal in English, KakaoTalk in Korean", ["input source", "입력 소스", "한영", "terminal", "터미널", "kakaotalk", "카카오톡", "app", "앱"], AnyView(InputSourcesRulesRows())),
+            item("inputSourcesRemember", .general, "Remember in other apps", "Apps without a rule get back the input source they used last", ["remember", "기억", "input source", "입력 소스", "한영"], AnyView(InputSourcesRememberRow())),
+            item("inputSourcesFallback", .general, "Other apps", "The input source for apps without a rule", ["default", "기본", "input source", "입력 소스", "한영"], AnyView(InputSourcesFallbackRow())),
             // Window tiling: the Window Tiling page's row names. Words of the
             // old titles stay searchable as keywords ("title-bar", "snap").
             item("titleBarSnap", .general, "Swipe to snap", "Swipe two fingers on a title bar to snap the window", ["snap", "swish", "스냅", "창", "트랙패드", "trackpad", "title-bar"], AnyView(HubToggleRow(icon: "hand.draw", tint: .indigo, title: "Swipe to snap", subtitle: "Swipe two fingers on a title bar to snap the window", key: TitleBarWindowSnap.enabledKey, fallback: false))),

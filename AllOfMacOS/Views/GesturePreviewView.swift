@@ -311,7 +311,7 @@ struct SwipeAnimation: View {
 
             // Arrow trail
             Image(systemName: arrowName)
-                .font(.system(size: 20, weight: .light))
+                .font(.system(.title2, weight: .light))
                 .foregroundColor(themeColor.opacity(animating ? 0.6 : 0))
                 .offset(
                     x: animating ? offsetX * 0.4 : 0,
@@ -410,7 +410,7 @@ struct DoubleTapAnimation: View {
 
             // "x2" badge
             Text("x2")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
                 .foregroundColor(themeColor)
                 .offset(y: 28)
                 .opacity(phase == 2 ? 1 : 0)
@@ -591,7 +591,7 @@ private struct CircleAnimationContent: View {
     private var directionArrow: some View {
         let name = clockwise ? "arrow.clockwise" : "arrow.counterclockwise"
         return Image(systemName: name)
-            .font(.system(size: 14, weight: .light))
+            .font(.system(.title3, weight: .light))
             .foregroundColor(themeColor.opacity(0.3))
     }
 
@@ -706,7 +706,7 @@ struct EdgeDragAnimation: View {
 
             // Arrow indicator
             Image(systemName: direction == .up ? "arrow.up" : "arrow.down")
-                .font(.system(size: 12, weight: .light))
+                .font(.system(.callout, weight: .light))
                 .foregroundColor(themeColor.opacity(0.3))
                 .offset(x: edgeX, y: 0)
 

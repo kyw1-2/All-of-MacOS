@@ -125,19 +125,43 @@ struct TutorialOverlayView: View {
         }
     }
 
-    /// The six tools in the sidebar, each with its module badge.
+    /// The tools in the sidebar, each with its module badge; the four 3.4
+    /// Productivity pages share one row.
     private var welcomePage: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
-            pageTitle("Welcome to All of MacOS", "Six tools that work together, one shortcut away.")
+            pageTitle("Welcome to All of MacOS", "Ten tools that work together, one shortcut away.")
             VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                feature(.capture, "Capture your screen", "Screenshots, recordings and text, with a preview to copy, edit or drag.")
+                feature(.capture, "Capture your screen", "Screenshots, recordings, text and measuring, with a preview to copy, edit or drag.")
                 feature(.clipboard, "Keep everything you copy", "A searchable clipboard shelf, encrypted on this Mac.")
                 feature(.gestures, "Automate what you repeat", "Turn gestures, keys and mouse buttons into actions.")
                 feature(.snapping, "Tile your windows", "Drag a window to an edge or zone and it snaps into place.")
                 feature(.audio, "Shape every app's sound", "Per-app volume, Magic Boost and an equalizer for each output.")
                 feature(.tools, "Keep utilities close", "Finder, network, PDF, media and file tools, one click each.")
+                productivityFeature
             }
         }
+    }
+
+    /// Folder Rules, Text Actions, Files and Focus: their four squircles in
+    /// the badge's place, one line for what they do together.
+    private var productivityFeature: some View {
+        let modules: [AOMModule] = [.folderRules, .textActions, .files, .focus]
+        let side = (Self.featureBadge - AOMSpace.x0_5) / 2
+        return HStack(alignment: .top, spacing: AOMSpace.x3) {
+            Grid(horizontalSpacing: AOMSpace.x0_5, verticalSpacing: AOMSpace.x0_5) {
+                GridRow { ForEach(modules.prefix(2), id: \.self) { AOMModuleBadge($0, size: side) } }
+                GridRow { ForEach(modules.suffix(2), id: \.self) { AOMModuleBadge($0, size: side) } }
+            }
+            .frame(width: Self.featureBadge, height: Self.featureBadge)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text("Stay in flow").font(AOMFont.headline).foregroundStyle(AOMColor.text)
+                Text("Folder rules, actions for selected text, a file shelf and focus sessions.")
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// Each tool with its module badge, the same identity the Workspace tiles use.
@@ -190,6 +214,8 @@ struct TutorialOverlayView: View {
                             keys: CaptureShortcuts.shared.shortcut(for: .captureArea)?.displayString, first: true)
                 shortcutRow("Open the clipboard shelf", symbol: "doc.on.clipboard",
                             keys: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString)
+                shortcutRow("Measure the screen", symbol: "ruler",
+                            keys: CaptureShortcuts.shared.shortcut(for: .measureScreen)?.displayString)
                 shortcutRow("Search everything in AOM", symbol: "magnifyingglass",
                             keys: AOMPaletteShortcut.current(appState.currentPreset).displayString)
             }

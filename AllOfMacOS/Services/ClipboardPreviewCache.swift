@@ -81,7 +81,8 @@ final class ClipboardPreviewCache: @unchecked Sendable {
                 if character.isWhitespace { inWord = false }
                 else if !inWord { words += 1; inWord = true }
             }
-            summary = "\(characters.formatted()) characters · \(words.formatted()) words · \(lines.formatted()) lines"
+            summary = [Self.counted(characters, "character"), Self.counted(words, "word"), Self.counted(lines, "line")]
+                .joined(separator: " · ")
             characterCount = characters
             if let rtf = entry.items.first?[NSPasteboard.PasteboardType.rtf.rawValue],
                let rich = try? NSAttributedString(data: rtf,
@@ -96,9 +97,14 @@ final class ClipboardPreviewCache: @unchecked Sendable {
             characterCount = nil
             attributedText = nil
             let files = entry.fileURLs
-            if !files.isEmpty { summary = "\(files.count) file(s)" }
+            if !files.isEmpty { summary = Self.counted(files.count, "file") }
             else { summary = dimensions ?? entry.kind.displayName }
         }
         return Content(summary: summary, characterCount: characterCount, image: image, attributedText: attributedText)
+    }
+
+    /// "1 line", "2 lines" (3.4.0: the summary said "1 lines" and "1 file(s)").
+    static func counted(_ count: Int, _ noun: String) -> String {
+        "\(count.formatted()) \(count == 1 ? noun : noun + "s")"
     }
 }
