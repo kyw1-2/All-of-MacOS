@@ -317,15 +317,19 @@ final class ProfileBackupRestoreTests: XCTestCase {
         // Valid enough to have been picked as "latest backup" by 3.3.0.
         try PresetCodec.encode(Preset(name: "Someone else's file")).write(to: foreign)
         let original = profile()
-        for _ in 0..<(PresetManager.maxBackups + 3) {
-            XCTAssertNotNil(PresetManager.saveBackup(data: try PresetCodec.encode(original), directory: backups, settings: try defaults()))
+        // Each save a different preset: identical saves keep one backup (3.4.0).
+        for index in 0..<(PresetManager.maxBackups + 3) {
+            var preset = original
+            preset.name = "\(original.name) \(index)"
+            XCTAssertNotNil(PresetManager.saveBackup(data: try PresetCodec.encode(preset), directory: backups, settings: try defaults()))
         }
         try FileManager.default.setAttributes([.creationDate: Date().addingTimeInterval(3600)], ofItemAtPath: foreign.path)
         XCTAssertTrue(FileManager.default.fileExists(atPath: foreign.path), "pruning left the user's file alone")
         let listed = PresetManager.listBackups(in: backups)
         XCTAssertEqual(listed.count, PresetManager.maxBackups, "rolling backups are capped")
         XCTAssertFalse(listed.contains { $0.url.lastPathComponent == "notes.json" })
-        XCTAssertEqual(PresetManager.loadLatestBackup(in: backups)?.name, original.name, "the newer foreign file is not restored")
+        XCTAssertEqual(PresetManager.loadLatestBackup(in: backups)?.name, "\(original.name) \(PresetManager.maxBackups + 2)",
+                       "the newer foreign file is not restored")
     }
 
     func testASafetySnapshotSurvivesLaterRollingBackups() throws {

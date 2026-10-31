@@ -133,8 +133,11 @@ final class TriggerSuppression: ObservableObject {
 
     @Published private(set) var pause = PauseState()
     @Published var settings: TriggerSuppressionSettings {
-        didSet { if settings != oldValue { persist() } }
+        didSet { if settings != oldValue, !reloading { persist() } }
     }
+    /// Set while `settings` takes what the defaults hold, so it is not written back.
+    private var reloading = false
+    private var settingsObserver: NSObjectProtocol?
 
     // MARK: Injected environment
 
@@ -163,12 +166,40 @@ final class TriggerSuppression: ObservableObject {
         self.heldModifiers = heldModifiers
         self.secondsSinceLastKeyDown = secondsSinceLastKeyDown
         self.schedulesExpiry = schedulesExpiry
-        if let data = defaults.data(forKey: Self.settingsKey),
-           let stored = try? JSONDecoder().decode(TriggerSuppressionSettings.self, from: data) {
-            settings = stored
-        } else {
-            settings = TriggerSuppressionSettings()
+        settings = Self.storedSettings(in: defaults)
+        // 3.4.0 audit: Reset Preferences and Restore Backup change the
+        // defaults underneath; the rules read at launch stayed in force and
+        // the next edit wrote them back, undoing the reset or the restore.
+        // Both post .aomSettingChanged, as every Settings control does.
+        settingsObserver = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil,
+                                                                  queue: nil) { [weak self] _ in
+            guard Thread.isMainThread else {
+                DispatchQueue.main.async { self?.reloadSettings() }
+                return
+            }
+            self?.reloadSettings()
         }
+    }
+
+    deinit {
+        if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
+    }
+
+    private static func storedSettings(in defaults: UserDefaults) -> TriggerSuppressionSettings {
+        guard let data = defaults.data(forKey: settingsKey),
+              let stored = try? JSONDecoder().decode(TriggerSuppressionSettings.self, from: data) else {
+            return TriggerSuppressionSettings()
+        }
+        return stored
+    }
+
+    /// Takes the settings the defaults hold now, without writing them back.
+    func reloadSettings() {
+        let stored = Self.storedSettings(in: defaults)
+        guard stored != settings else { return }
+        reloading = true
+        settings = stored
+        reloading = false
     }
 
     private func persist() {

@@ -311,6 +311,17 @@ class PresetManager {
     @discardableResult
     static func saveBackup(data: Data, reason: String? = nil, directory: URL = backupDirectory,
                            settings defaults: UserDefaults = .standard, protecting: URL? = nil) -> URL? {
+        // 3.4.0 audit: every launch and every save wrote another rolling
+        // backup even when nothing had changed, so five identical copies of
+        // the current preset pushed every older version out. When the preset
+        // and the settings are the newest backup's, that backup is kept.
+        if reason == nil, let newest = newestRollingBackup(in: directory),
+           (try? Data(contentsOf: newest)) == data,
+           let saved = readSettings(fromFile: settingsURL(forBackup: newest)),
+           settingsMatch(saved, defaults) {
+            saveUserDefaultsBackup(from: defaults, to: directory)
+            return newest
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
@@ -343,6 +354,33 @@ class PresetManager {
     /// `preset_backup_….json` → `preset_backup_….settings.plist`.
     static func settingsURL(forBackup url: URL) -> URL {
         url.deletingPathExtension().appendingPathExtension("settings.plist")
+    }
+
+    /// The newest rolling backup (not a safety snapshot) in `directory`.
+    static func newestRollingBackup(in directory: URL) -> URL? {
+        listBackups(in: directory).first { !isSafetySnapshot($0.url) }?.url
+    }
+
+    /// Whether a settings file holds exactly the backed-up settings of
+    /// `defaults` now: the same values and the same ones unset.
+    static func settingsMatch(_ saved: SettingsSnapshot, _ defaults: UserDefaults) -> Bool {
+        let current = backedUpSettings(in: defaults)
+        return saved.format >= 2 && Set(saved.unsetKeys) == Set(current.unset)
+            && NSDictionary(dictionary: saved.values).isEqual(to: current.values)
+    }
+
+    /// The backed-up settings in `defaults`: their values, and those unset.
+    static func backedUpSettings(in defaults: UserDefaults) -> (values: [String: Any], unset: [String]) {
+        var values: [String: Any] = [:]
+        var unset: [String] = []
+        for key in userDefaultsKeys where isBackedUpSetting(key) {
+            if let value = defaults.object(forKey: key) { values[key] = value } else { unset.append(key) }
+        }
+        for key in defaults.dictionaryRepresentation().keys
+        where backedUpSettingPrefixes.contains(where: { key.hasPrefix($0) }) && isBackedUpSetting(key) {
+            if let value = defaults.object(forKey: key) { values[key] = value }
+        }
+        return (values, unset.sorted())
     }
 
     /// Internal for the backup-scope test (@testable).
@@ -388,15 +426,9 @@ class PresetManager {
     /// the file could not be written.
     @discardableResult
     static func saveUserDefaultsBackup(from defaults: UserDefaults = .standard, toFile url: URL) -> Bool {
-        var dict: [String: Any] = [:]
-        var unset: [String] = []
-        for key in userDefaultsKeys where isBackedUpSetting(key) {
-            if let value = defaults.object(forKey: key) { dict[key] = value } else { unset.append(key) }
-        }
-        for key in defaults.dictionaryRepresentation().keys
-        where backedUpSettingPrefixes.contains(where: { key.hasPrefix($0) }) && isBackedUpSetting(key) {
-            if let value = defaults.object(forKey: key) { dict[key] = value }
-        }
+        let current = backedUpSettings(in: defaults)
+        var dict = current.values
+        let unset = current.unset
         let info = Bundle.main.infoDictionary
         dict[backupFormatKey] = settingsFormat
         dict[backupAppVersionKey] = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
@@ -599,7 +631,9 @@ class PresetManager {
         }
     }
 
-    /// Returns the most recent backup, if any.
+    /// Returns the most recent backup that can be read, if any. 3.4.0 audit:
+    /// only the newest file was tried, so one unreadable backup (written by
+    /// a newer AOM, or damaged) hid every older one that would have loaded.
     static func loadLatestBackup(in directory: URL = backupDirectory) -> Preset? {
         do {
             let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey])
@@ -609,10 +643,15 @@ class PresetManager {
                     let db = (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
                     return da > db
                 }
-            guard let latest = files.first else { return nil }
-            NSLog("[AOM] Restoring from backup: %@", latest.path)
-            let data = try Data(contentsOf: latest)
-            return try PresetCodec.decode(data)
+            for file in files {
+                guard let data = try? Data(contentsOf: file), let preset = try? PresetCodec.decode(data) else {
+                    NSLog("[AOM] Backup could not be read, trying an older one: %@", file.lastPathComponent)
+                    continue
+                }
+                NSLog("[AOM] Restoring from backup: %@", file.path)
+                return preset
+            }
+            return nil
         } catch {
             NSLog("[AOM] Failed to load backup: %@", error.localizedDescription)
             return nil
@@ -620,6 +659,17 @@ class PresetManager {
     }
 
     // MARK: - Load
+
+    /// Set when launch found a master preset it could not read: where the
+    /// file was kept (nil if it could not be kept). Read once by AppState.
+    private static let unreadableLock = NSLock()
+    nonisolated(unsafe) private static var unreadableCopy: (kept: URL?, at: Date)?
+    static func takeUnreadablePresetReport() -> (kept: URL?, at: Date)? {
+        unreadableLock.lock(); defer { unreadableLock.unlock() }
+        let report = unreadableCopy
+        unreadableCopy = nil
+        return report
+    }
 
     static func loadPreset() -> Preset? {
         let manager = PresetManager()
@@ -632,22 +682,53 @@ class PresetManager {
         return persistenceQueue.sync { readPreset() }
     }
 
+    /// Folders whose unreadable master could not be copied aside: nothing
+    /// may replace it this session (any PresetManager of that folder; launch
+    /// reads through a throwaway instance).
+    nonisolated(unsafe) private static var blockedFolders = Set<String>()
+    private var masterWritesBlocked: Bool {
+        get { Self.unreadableLock.lock(); defer { Self.unreadableLock.unlock() }
+              return Self.blockedFolders.contains(presetsDirectory.standardizedFileURL.path) }
+        set { Self.unreadableLock.lock(); defer { Self.unreadableLock.unlock() }
+              if newValue { Self.blockedFolders.insert(presetsDirectory.standardizedFileURL.path) }
+              else { Self.blockedFolders.remove(presetsDirectory.standardizedFileURL.path) } }
+    }
+
     private func readPreset() -> Preset? {
         if let data = try? Data(contentsOf: masterPresetURL), let preset = try? PresetCodec.decode(data) {
             trackpadStore?.saveAsync(preset)
             return preset
         }
+        // 3.4.0 audit: a master preset that exists but cannot be read (a newer
+        // AOM's file, or damage) is copied aside before anything else is
+        // tried. Until then it was kept only when the database had a copy;
+        // the backup fallback and an empty start kept nothing, and the first
+        // edit overwrote the user's automations.
+        if FileManager.default.fileExists(atPath: masterPresetURL.path) {
+            let preserved = presetsDirectory.appendingPathComponent("unreadable-preset-\(UUID().uuidString).json")
+            do {
+                try FileManager.default.copyItem(at: masterPresetURL, to: preserved)
+                Self.noteUnreadable(kept: preserved)
+            } catch {
+                // Never overwrite input that could not be preserved.
+                masterWritesBlocked = true
+                Self.noteUnreadable(kept: nil)
+            }
+        }
         // Recover the last fully committed graph before looking at rolling JSON backups.
         if let restored = try? trackpadStore?.load() {
-            if FileManager.default.fileExists(atPath: masterPresetURL.path) {
-                let preserved = presetsDirectory.appendingPathComponent("unreadable-preset-\(UUID().uuidString).json")
-                do { try FileManager.default.copyItem(at: masterPresetURL, to: preserved) }
-                catch { return restored } // Never overwrite input that could not be preserved.
+            if !masterWritesBlocked, let data = try? PresetCodec.encode(restored) {
+                try? data.write(to: masterPresetURL, options: .atomic)
             }
-            if let data = try? PresetCodec.encode(restored) { try? data.write(to: masterPresetURL, options: .atomic) }
             return restored
         }
         return Self.loadLatestBackup()
+    }
+
+    private static func noteUnreadable(kept: URL?) {
+        unreadableLock.lock(); unreadableCopy = (kept, Date()); unreadableLock.unlock()
+        NSLog("[AOM] The preset file could not be read; %@", kept.map { "a copy was kept as \($0.lastPathComponent)" }
+              ?? "no copy could be made, so AOM will not overwrite it")
     }
 
     func flushPendingWrites() {
@@ -698,6 +779,7 @@ class PresetManager {
 
     private func persist(_ preset: Preset, createBackup: Bool) {
         do {
+            guard !masterWritesBlocked else { throw PresetWriteBlocked() }
             let data = try PresetCodec.encode(preset)
             _ = try PresetCodec.decode(data)
             try data.write(to: masterPresetURL, options: .atomic)
@@ -714,6 +796,15 @@ class PresetManager {
 
     func save(_ preset: Preset) {
         save(preset, createBackup: Self.backupsEnabled)
+    }
+
+    /// The master preset could not be read at launch and no copy of it could
+    /// be made, so AOM keeps it as it is for this session (3.4.0 audit).
+    struct PresetWriteBlocked: LocalizedError {
+        var errorDescription: String? {
+            "The automations file could not be read and no copy of it could be made, so AOM does not overwrite it. "
+                + "Free some disk space and reopen AOM."
+        }
     }
 
     /// Throws instead of printing: a failed export used to look exactly like

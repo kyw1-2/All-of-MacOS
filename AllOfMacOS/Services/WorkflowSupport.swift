@@ -42,7 +42,14 @@ struct SystemConditions {
 enum WorkflowVariables {
     private static let lock = NSLock()
     private static let defaults = TriggerSuppression.defaultsForCurrentProcess(tag: "Variables")
-    private static var values: [String: String] = defaults.dictionary(forKey: "AOMWorkflowVariables") as? [String: String] ?? [:]
+    private static let key = "AOMWorkflowVariables"
+    /// Read through to the defaults every time (3.4.0 audit): a copy cached at
+    /// launch outlived Restore Backup, and the next write (a script result,
+    /// Set Variable) put the old variables back over the restored ones.
+    private static var values: [String: String] {
+        get { defaults.dictionary(forKey: key) as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: key) }
+    }
     static let changed = Notification.Name("AOMWorkflowVariablesChanged")
 
     static func snapshot() -> [String: String] {
@@ -51,8 +58,9 @@ enum WorkflowVariables {
     }
     static func remove(_ name: String) {
         lock.lock()
-        let removed = values.removeValue(forKey: name) != nil
-        if removed { defaults.set(values, forKey: "AOMWorkflowVariables") }
+        var stored = values
+        let removed = stored.removeValue(forKey: name) != nil
+        if removed { values = stored }
         lock.unlock()
         if removed { notify() }
     }
@@ -97,16 +105,23 @@ enum WorkflowVariables {
     }
     @discardableResult
     static func set(_ name: String, value: String) -> Bool {
-        guard !name.isEmpty, name.count <= 64, value.count <= 512,
-              name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return false }
+        guard isValid(name: name, value: value) else { return false }
         lock.lock()
-        guard values[name] != nil || values.count < 128 else { lock.unlock(); return false }
-        let changed = values[name] != value
-        values[name] = value
-        defaults.set(values, forKey: "AOMWorkflowVariables")
+        var stored = values
+        guard stored[name] != nil || stored.count < 128 else { lock.unlock(); return false }
+        let changed = stored[name] != value
+        stored[name] = value
+        values = stored
         lock.unlock()
         if changed { notify() }
         return true
+    }
+
+    /// What `set` accepts: a name of up to 64 ASCII letters, digits or _,
+    /// and a value of up to 512 characters.
+    static func isValid(name: String, value: String = "") -> Bool {
+        !name.isEmpty && name.count <= 64 && value.count <= 512
+            && name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") })
     }
 }
 
