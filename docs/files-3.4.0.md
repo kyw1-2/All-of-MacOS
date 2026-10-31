@@ -93,8 +93,12 @@ Data lives in Application Support/AllOfMacOS/Files: `shelf.json`, `recent-folder
 ## How the dialog helper works (for maintainers)
 
 - An AXObserver on the frontmost app watches focused-window, window and sheet creation, move and resize
-  notifications, plus destruction of the attached dialog; a once-a-second check runs only while a dialog is
-  attached. All Accessibility work runs on one serial queue with a 0.25 s timeout per element.
+  notifications, plus destruction of the attached dialog. After a window or sheet appears it looks again at
+  0.25, 0.6 and 1.2 s (a panel can answer slowly while its remote content loads), and a once-a-second check
+  runs only while a dialog is attached. All Accessibility work runs on one serial queue with a 0.25 s timeout
+  per element; ordinary document windows are never walked. A probe that runs this code against separate
+  Open and Save panels (kit folder f-340-evidence, integration-*) attached within about 0.2–0.6 s of the
+  panel's notifications, followed a move within 0.1–0.3 s and let go within 0.5–0.9 s of the panel closing.
 - A window is a dialog by its identifier ("open-panel", "save-panel"), else by its controls ("OKButton",
   "CancelButton", "where popup", "saveAsNameTextField"), else by the open-and-save panel service
   (com.apple.appkit.xpc.openAndSavePanelService) owning it or its content, with a Cancel button.
