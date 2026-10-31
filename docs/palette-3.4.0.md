@@ -101,11 +101,12 @@ were read, AOM reads them again before choosing.
 
 ## Bookmarks
 
-Type two or more letters to search your bookmarks (like Fastmarks): every Chrome profile (and Chrome Beta,
-Canary, Naver Whale, Brave, Edge, Vivaldi, Arc and Chromium when installed) and Safari's Favorites, bookmarks
-and Reading List. The row shows the site and folder, and the profile when Chrome has more than one. ↩ opens the
-bookmark in the browser it came from, a Chrome bookmark in its own profile; ⌘↩ copies the URL; the Actions panel
-also has Copy as Markdown. Only web pages are listed (no bookmarklets or browser pages).
+Type two or more letters to search your bookmarks (like Fastmarks): every Chrome profile, with the local bookmarks
+and, for profiles signed in to Google, the account's bookmarks (current Chrome keeps those in a separate file),
+Chrome Beta, Canary, Naver Whale, Brave, Edge, Vivaldi, Arc and Chromium when installed, and Safari's Favorites,
+bookmarks and Reading List. The row shows the site and folder, and the profile when Chrome has more than one. ↩
+opens the bookmark in the browser it came from, a Chrome bookmark in its own profile; ⌘↩ copies the URL; the
+Actions panel also has Copy as Markdown. Only web pages are listed (no bookmarklets or browser pages).
 
 Safari keeps bookmarks in a folder only **Full Disk Access** can read. Until All of MacOS has it, searching shows
 one row, **Allow Full Disk Access to Search Safari Bookmarks**, which opens Privacy & Security › Full Disk Access.
@@ -197,3 +198,15 @@ logged.
 off until you turn on "Route links by these rules". This needs the http and https URL types in AOM's Info.plist
 and the hand-off in AppDelegate; until the integrator adds them (see the 3.4.0 report), the button can't
 succeed and links keep opening in your browser directly.
+
+## Measured on this Mac (MacBook Air M1, 8 GB, macOS 27.2)
+
+Read-only probes that printed counts and times only:
+
+| What | Result |
+|---|---|
+| Bookmarks: Chrome (7 profiles) and Safari | 13 found (9 in the Default profile's account bookmarks, 4 in Safari), 42–158 ms to read, 1.5 ms when unchanged |
+| Menu search over 2,000 items, per keystroke | 4–5 ms (optimized build), 17–28 ms (debug build) |
+| Switcher window list (6 apps, 26 candidate windows) | 6 listed (5 on screen, 1 in another Space), 325 ms the first time, 16–26 ms after |
+| Spotlight: files used in 7 days | 639 found, 192 kept after the filter, 0.5 s |
+| Spotlight: newest download, newest screenshot | 396 ms, 181 ms |
