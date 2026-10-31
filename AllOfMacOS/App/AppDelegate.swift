@@ -573,6 +573,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(engine)
         menu.addItem(.separator())
 
+        // The window, then Settings (HIG The menu bar, menu bar extras: every
+        // item here is also in the window or the app's menus).
         menu.addItem(entry("Open All of MacOS", "macwindow", #selector(showMainWindow)))
         menu.addItem(entry("Settings…", "gearshape", #selector(openSettings), key: ","))
 
@@ -715,9 +717,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Keep Awake ▸ Indefinitely / 30 minutes / 1 hour / 2 hours / Turn Off.
     @MainActor private func keepAwakeMenu() -> NSMenuItem {
         let service = KeepAwakeService.shared
-        let item = NSMenuItem(title: service.isActive ? "Keep Awake (on)" : "Keep Awake",
-                              action: nil, keyEquivalent: "")
-        item.image = NSImage(systemSymbolName: service.isActive ? "flask.fill" : "flask", accessibilityDescription: nil)
+        // One stable title; a checkmark shows it's in effect (HIG Menus,
+        // toggled items) and the tooltip says until when.
+        let item = NSMenuItem(title: "Keep Awake", action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: service.isActive ? "cup.and.saucer.fill" : "cup.and.saucer",
+                             accessibilityDescription: nil)
+        item.state = service.isActive ? .on : .off
+        if service.isActive {
+            item.toolTip = service.endsAt.map { "On until \($0.formatted(date: .omitted, time: .shortened))" } ?? "On until you turn it off"
+        }
         let submenu = NSMenu()
         func duration(_ title: String, _ minutes: Int?) -> NSMenuItem {
             let entry = NSMenuItem(title: title, action: #selector(keepAwakeFor(_:)), keyEquivalent: "")
@@ -755,8 +763,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "Pause AOM ▸ for 5 min / 1 h / until resumed · Pause for <App> · Resume".
     private func pauseMenuItem() -> NSMenuItem {
         let suppression = TriggerSuppression.shared
-        let item = NSMenuItem(title: suppression.isPaused ? "Pause AOM (active)" : "Pause AOM", action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: "Pause AOM", action: nil, keyEquivalent: "")
         item.image = NSImage(systemSymbolName: suppression.isPaused ? "pause.circle.fill" : "pause.circle", accessibilityDescription: nil)
+        item.state = suppression.isPaused ? .on : .off
         let submenu = NSMenu()
         if let status = suppression.statusDescription {
             let header = NSMenuItem(title: status, action: nil, keyEquivalent: "")

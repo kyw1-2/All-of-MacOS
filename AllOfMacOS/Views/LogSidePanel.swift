@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LogSidePanel: View {
@@ -21,16 +22,13 @@ struct LogSidePanel: View {
                     .font(AOMFont.callout.weight(.semibold))
                     .foregroundStyle(AOMColor.text)
                 Spacer()
-                Button(action: { GestureLog.shared.entries.removeAll() }) {
-                    Image(systemName: "trash")
-                        .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-                        .contentShape(Rectangle())
+                AOMIconButton("doc.on.doc", label: "Copy Console") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(entries.map(LogEntryRow.line).joined(separator: "\n"), forType: .string)
                 }
-                .buttonStyle(.plain)
-                .help("Clear the console")
-                .accessibilityLabel("Clear console")
+                .disabled(entries.isEmpty)
+                AOMIconButton("trash", label: "Clear Console") { GestureLog.shared.entries.removeAll() }
+                    .disabled(entries.isEmpty)
             }
             .padding(.leading, AOMSpace.rowInset)
             .padding(.trailing, AOMSpace.x1)
@@ -39,7 +37,11 @@ struct LogSidePanel: View {
 
             AOMDivider()
 
-            // Log entries
+            // Log entries; an empty console says what will appear (b.6).
+            if entries.isEmpty {
+                AOMInlineEmpty(symbol: "waveform.path.ecg", message: "Gestures, shortcuts and the actions they run appear here as they happen.")
+                    .frame(maxHeight: .infinity, alignment: .top)
+            } else {
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -61,6 +63,7 @@ struct LogSidePanel: View {
                     }
                 }
             }
+            }
         }
         .background(AOMColor.canvas)
         .overlay(alignment: .leading) {
@@ -78,6 +81,11 @@ private struct LogEntryRow: View {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+
+    /// The row as one line of text (Copy, Copy Console).
+    static func line(_ entry: GestureLogEntry) -> String {
+        "\(timeFormatter.string(from: entry.timestamp))  \(entry.message)"
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: AOMSpace.x1) {
@@ -107,6 +115,12 @@ private struct LogEntryRow: View {
                 ? colorForLevel(entry.level).opacity(ripple ? 0 : 0.08)
                 : Color.clear
         )
+        .contextMenu {
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(Self.line(entry), forType: .string)
+            }
+        }
         .onAppear {
             if entry.level == .fire {
                 withAnimation(AOMDesign.animation(.easeOut(duration: 0.6))) {
@@ -116,13 +130,15 @@ private struct LogEntryRow: View {
         }
     }
 
+    /// Text colours that keep 4.5:1 on the canvas in both modes (3.4: the
+    /// raw cyan and orange read poorly on white).
     private func colorForLevel(_ level: LogLevel) -> Color {
         switch level {
-        case .detect:  return .cyan
-        case .fire:    return .green
-        case .action:  return .orange
-        case .noMatch: return Color(nsColor: .tertiaryLabelColor)
-        case .error:   return .red
+        case .detect:  return AOMColor.accent
+        case .fire:    return AOMColor.successText
+        case .action:  return AOMColor.text
+        case .noMatch: return AOMColor.textTertiary
+        case .error:   return AOMColor.dangerText
         }
     }
 }
