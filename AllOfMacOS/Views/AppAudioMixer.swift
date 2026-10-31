@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import SwiftUI
 
 /// Per-app audio mixer (SoundSource-lite): a floating panel listing every app
@@ -113,6 +114,17 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         }
         // Isolated UI previews only (a no-op otherwise); see AudioCapturePreviewHooks.
         AudioCapturePreviewHooks.start()
+        // `--aom-preview-mixer`: open the panel with the app list showing (the
+        // engine itself never taps audio in a preview).
+        if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-mixer") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.soundEnabled = true
+                    self?.showAllApps = true
+                    self?.showPanel()
+                }
+            }
+        }
     }
 
     func refresh() {
@@ -479,6 +491,18 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         refresh()
     }
 
+    /// Back to SoundSource's defaults for one app: volume 100 %, no Volume
+    /// Overdrive, balance centred, Magic Boost and the app's equalizer off.
+    /// The output route stays (it's where, not how, the app plays).
+    func resetEffects(bundleID: String, magicBoost: Bool) {
+        guard !bundleID.isEmpty else { return }
+        setGain(1, bundleID: bundleID)
+        setOverdrive(1, bundleID: bundleID)
+        setBalance(0, bundleID: bundleID)
+        if magicBoost { toggleMagicBoost(bundleID: bundleID) }
+        setAppEQEnabled(false, bundleID: bundleID)
+    }
+
     func addCustomApp(url: URL) {
         guard let bundle = Bundle(url: url), let bundleID = bundle.bundleIdentifier else { return }
         if #available(macOS 14.2, *) {
@@ -514,7 +538,9 @@ private struct AppAudioMixerView: View {
     /// the panel and scroll only when the panel is too short for them and the
     /// app list's minimum together.
     @State private var controlsHeight: CGFloat = 0
-    private static let appListMinimum = AOMSize.rowStandard * 4
+    @AppStorage("AOMAudioMixerShowsOutputEffects") private var showsOutputEffects = false
+    @State private var filter = ""
+    private static let appListMinimum = AOMSize.rowStandard * 5
 
     var body: some View {
         VStack(spacing: 0) {
@@ -566,56 +592,143 @@ private struct AppAudioMixerView: View {
 
     private var controls: some View {
         VStack(spacing: 0) {
-            MixerOutputSection()
-            AirPlayProcessingControls(service: service)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AOMSpace.x3)
-            Divider()
-            MasterBoostControls(service: service)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AOMSpace.x3)
-            Divider()
-            if let error = service.lastError {
-                VStack(spacing: AOMSpace.x2) {
-                    Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.dangerText)
-                        .multilineTextAlignment(.center)
-                    Button("Reconnect Audio") { service.reconnectAll() }.controlSize(.small)
+            if let competitor = service.competingMixer {
+                AOMNotice(.warning, "SoundSource is also changing app audio",
+                          detail: "Two per-app mixers on the same audio fight each other. Quit \(competitor.localizedName ?? "SoundSource") to use AOM's, or turn App Audio off.") {
+                    Button("Quit SoundSource") { service.quitCompetingMixer() }
                 }
-                .frame(maxWidth: .infinity)
                 .padding(AOMSpace.x3)
-                Divider()
             }
-            EQSection(service: service)
-            // 3.3.3: per-output curves and the Audio Unit effect follow the equalizer.
-            Divider()
-            HeadphoneEQCard(style: .panel)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let error = service.lastError {
+                AOMNotice(.error, "Some app audio isn't processed", detail: error) {
+                    Button("Reconnect Audio") { service.reconnectAll() }
+                }
                 .padding(AOMSpace.x3)
-            Divider()
-            AudioUnitEffectCard(style: .panel)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AOMSpace.x3)
+            }
+            MixerOutputSection()
+            // SoundSource keeps the output's effects folded under the output
+            // so the applications get the room; 3.4 does the same.
+            Button {
+                withAnimation(AOMMotion.standard) { showsOutputEffects.toggle() }
+            } label: {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: "chevron.right")
+                        .imageScale(.small)
+                        .rotationEffect(.degrees(showsOutputEffects ? 90 : 0))
+                        .foregroundStyle(AOMColor.textSecondary)
+                    Text("Output effects").font(AOMFont.bodyEmphasis)
+                    Text(outputEffectsSummary).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, AOMSpace.x3)
+                .frame(minHeight: AOMSize.rowStandard)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Output effects")
+            .accessibilityValue(showsOutputEffects ? "Expanded" : "Collapsed")
+            .help("HomePod / AirPlay effects, Magic Boost, equalizer, Headphone EQ and an Audio Unit effect for the output")
+            if showsOutputEffects {
+                Divider()
+                AirPlayProcessingControls(service: service)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AOMSpace.x3)
+                Divider()
+                MasterBoostControls(service: service)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AOMSpace.x3)
+                Divider()
+                EQSection(service: service)
+                // 3.3.3: per-output curves and the Audio Unit effect follow the equalizer.
+                Divider()
+                HeadphoneEQCard(style: .panel)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AOMSpace.x3)
+                Divider()
+                AudioUnitEffectCard(style: .panel)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AOMSpace.x3)
+            }
         }
     }
 
+    private var outputEffectsSummary: String {
+        var on: [String] = []
+        if service.allAppsBoostEnabled { on.append("Magic Boost") }
+        if service.eqEnabled { on.append("EQ \(service.eqPreset)") }
+        if service.airPlayProcessingActive { on.append("HomePod") }
+        return on.isEmpty ? "None on" : on.joined(separator: " · ")
+    }
+
+    // MARK: Applications (SoundSource: favourites, then what played recently)
+
     @ViewBuilder private var appList: some View {
-        if service.apps.isEmpty {
-            AOMEmptyState(service.isSupported ? "No app is playing audio" : "Per-app audio isn't available",
-                          systemImage: "waveform",
-                          message: service.isSupported ? "Apps appear here while they play."
-                                                       : "Per-app audio needs macOS 14.2 or newer.")
-        } else {
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 0) {
-                    ForEach(service.apps) { app in
-                        AppAudioRow(app: app,
-                                    onGain: { service.setGain($0, bundleID: app.bundleID) },
-                                    onMute: { service.toggleMute(bundleID: app.bundleID) })
-                        if app.id != service.apps.last?.id { AOMRowDivider(trailingInset: 0) }
+        let lists = service.listedApps(matching: filter)
+        VStack(spacing: 0) {
+            HStack(spacing: AOMSpace.x2) {
+                Text("Applications").font(AOMFont.bodyEmphasis).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: AOMSpace.x2)
+                TextField("Filter", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(maxWidth: 160)
+                    .accessibilityLabel("Filter applications")
+                Toggle("Show All", isOn: $service.showAllApps)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .help("Also list open apps that haven't played audio in the last minute")
+                Button { addApp() } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .help("Add an app that isn't open, to set it up before it plays")
+                    .accessibilityLabel("Add App")
+            }
+            .padding(.horizontal, AOMSpace.x3)
+            .padding(.vertical, AOMSpace.x2)
+            if service.apps.isEmpty || (lists.favorites.isEmpty && lists.active.isEmpty && lists.other.isEmpty) {
+                AOMEmptyState(!service.isSupported ? "Per-app audio isn't available"
+                                : filter.isEmpty ? "No app is playing audio" : "No app matches “\(filter)”",
+                              systemImage: "waveform",
+                              message: !service.isSupported ? "Per-app audio needs macOS 14.2 or newer."
+                                : "Apps appear here while they play and for a minute after. Show All lists every open app.")
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        group("Favorites", lists.favorites)
+                        group(lists.favorites.isEmpty ? nil : "Recently Active", lists.active)
+                        group("Other Apps", lists.other)
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func group(_ title: String?, _ apps: [AppAudioState]) -> some View {
+        if !apps.isEmpty {
+            if let title {
+                Text(title)
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .padding(.horizontal, AOMSpace.x3)
+                    .padding(.top, AOMSpace.x2)
+                    .padding(.bottom, AOMSpace.x0_5)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            ForEach(apps) { app in
+                MixerAppRow(service: service, app: app)
+                if app.id != apps.last?.id { AOMRowDivider(inset: AOMSpace.rowSymbolInset, trailingInset: 0) }
+            }
+        }
+    }
+
+    private func addApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Add"
+        panel.message = "Choose an app to set up its volume, boost and output before it plays."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        service.addCustomApp(url: url)
     }
 }
 
@@ -780,51 +893,304 @@ struct EQSection: View {
     }
 }
 
-struct AppAudioRow: View {
+/// One application in the mixer panel, SoundSource-style: icon and name with
+/// its live level, mute, volume (up to 100 %, Volume Overdrive beyond in the
+/// effects), Magic Boost, the output it plays to, and its effects (Volume
+/// Overdrive, balance, equalizer, Magic Boost preset, timed mute) folded
+/// under the chevron. Every control calls what the Audio page calls, so
+/// the two always agree.
+struct MixerAppRow: View {
+    @ObservedObject var service: AppAudioMixerService
     let app: AppAudioState
-    let onGain: (Float) -> Void
-    let onMute: () -> Void
     @State private var gain: Float
+    @State private var balance: Float
+    @State private var expanded = false
 
-    init(app: AppAudioState, onGain: @escaping (Float) -> Void, onMute: @escaping () -> Void) {
+    init(service: AppAudioMixerService, app: AppAudioState) {
+        self.service = service
         self.app = app
-        self.onGain = onGain
-        self.onMute = onMute
         _gain = State(initialValue: min(max(app.gain, 0), 1))
+        _balance = State(initialValue: AudioBalance.clamp(app.balance))
     }
 
+    private var hasBundle: Bool { !app.bundleID.isEmpty && !app.bundleID.hasPrefix("pid-") }
+
     var body: some View {
-        HStack(spacing: AOMSpace.x2) {
-            Text(app.name).font(AOMFont.callout).lineLimit(1)
-            Spacer(minLength: AOMSpace.x2)
-            Button { onMute() } label: {
-                Image(systemName: app.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(app.muted ? AOMColor.danger : AOMColor.textSecondary)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AOMSpace.x2) {
+                icon
+                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                    HStack(spacing: AOMSpace.x1) {
+                        Text(app.name).font(AOMFont.callout.weight(.medium)).lineLimit(1)
+                        if service.isFavorite(app.bundleID) {
+                            Image(systemName: "star.fill").imageScale(.small).foregroundStyle(AOMColor.warning)
+                                .accessibilityLabel("Favorite")
+                        }
+                        if let ends = service.timedMuteEnds[app.bundleID] {
+                            Text("muted until \(ends.formatted(date: .omitted, time: .shortened))")
+                                .font(AOMFont.caption).foregroundStyle(AOMColor.warningText).lineLimit(1)
+                        }
+                    }
+                    activityLine
+                }
+                .frame(minWidth: 110, alignment: .leading)
+                .layoutPriority(1)
+                Spacer(minLength: AOMSpace.x1)
+                Button { service.toggleMute(bundleID: app.bundleID) } label: {
+                    Image(systemName: app.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .foregroundStyle(app.muted ? AOMColor.danger : AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasBundle)
+                .help(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
+                .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
+                Slider(value: Binding(get: { Double(gain) }, set: { newValue in
+                    gain = Float(newValue)
+                    service.setGain(gain, bundleID: app.bundleID)
+                }), in: 0...1)
+                    .frame(width: AOMRowControlMetrics.sliderWidth)
+                    .controlSize(.small)
+                    .disabled(!hasBundle)
+                    .accessibilityLabel("Volume for \(app.name)")
+                    .accessibilityValue("\(Int((gain * app.overdrive * 100).rounded())) percent")
+                Text("\(Int((gain * app.overdrive * 100).rounded()))%")
+                    .font(AOMFont.caption.monospacedDigit())
+                    .foregroundStyle(app.overdrive > 1.0001 ? AOMColor.warningText : AOMColor.textSecondary)
+                    .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
+                    .help(app.overdrive > 1.0001 ? "Volume Overdrive \(Int((app.overdrive * 100).rounded()))%" : "Volume")
+                    .accessibilityHidden(true)
+                Button { service.toggleMagicBoost(bundleID: app.bundleID) } label: {
+                    Image(systemName: app.magicBoost ? "sparkles" : "sparkle")
+                        .foregroundStyle(app.magicBoost ? AOMTheme.indigo : AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasBundle)
+                .help(app.magicBoost ? "Turn off Magic Boost for \(app.name)" : "Magic Boost: lift quiet passages of \(app.name)")
+                .accessibilityLabel("Magic Boost for \(app.name)")
+                .accessibilityValue(app.magicBoost ? "On" : "Off")
+                outputMenu
+                Button { withAnimation(AOMMotion.standard) { expanded.toggle() } } label: {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasBundle)
+                .help(expanded ? "Hide effects" : "Effects: Volume Overdrive, balance, equalizer, timed mute")
+                .accessibilityLabel("Effects for \(app.name)")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             }
-            .buttonStyle(.plain)
-            .help(app.muted ? "Unmute" : "Mute")
-            .accessibilityLabel(app.muted ? "Unmute \(app.name)" : "Mute \(app.name)")
-            Slider(value: Binding(get: { Double(gain) }, set: { newValue in
-                gain = Float(newValue)
-                onGain(gain)
-            }), in: 0...1, step: 0.01)
-                .frame(width: AOMRowControlMetrics.sliderWidth)
-                .controlSize(.small)
-                .accessibilityLabel("Volume for \(app.name)")
-                .accessibilityValue("\(Int((gain * 100).rounded())) percent")
-            Text("\(Int((gain * 100).rounded()))%")
-                .font(AOMFont.caption.monospacedDigit())
-                .foregroundStyle(AOMColor.textSecondary)
-                .frame(width: AOMRowControlMetrics.valueWidth, alignment: .trailing)
+            .padding(.horizontal, AOMSpace.rowInset)
+            .padding(.vertical, AOMSpace.x1)
+            .frame(minHeight: AOMSize.rowDetail)
+            .contentShape(Rectangle())
+            .contextMenu { contextMenu }
+            if expanded { effects }
+        }
+        .onChange(of: app.gain) { _, value in gain = min(max(value, 0), 1) }
+        .onChange(of: app.balance) { _, value in balance = AudioBalance.clamp(value) }
+    }
+
+    @ViewBuilder private var icon: some View {
+        if let image = app.icon {
+            Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                .frame(width: AOMIcon.row, height: AOMIcon.row)
+                .opacity(app.isPlaying || app.tapped ? 1 : 0.6)
                 .accessibilityHidden(true)
+        } else {
+            Image(systemName: "app.dashed").frame(width: AOMIcon.row, height: AOMIcon.row).accessibilityHidden(true)
         }
-        .padding(.horizontal, AOMSpace.rowInset)
-        .frame(minHeight: AOMSize.rowStandard)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onMute() }
-        .onChange(of: app.gain) { _, newGain in
-            gain = min(max(newGain, 0), 1)
+    }
+
+    /// The live level while AOM processes the app; otherwise what it's doing
+    /// (SoundSource's outlined meter for "made noise in the last minute").
+    @ViewBuilder private var activityLine: some View {
+        if app.tapped {
+            AppAudioLevelMeter(pid: app.pid)
+        } else if let error = app.error {
+            Text(error).font(AOMFont.caption).foregroundStyle(AOMColor.warningText).lineLimit(1).help(error)
+        } else if app.isPlaying {
+            Label("Playing", systemImage: "waveform").font(AOMFont.caption).foregroundStyle(AOMColor.successText)
+        } else if app.pid <= 0 {
+            Text("Not open · settings kept").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+        } else if service.isActive(app) {
+            Capsule().strokeBorder(AOMColor.textTertiary, lineWidth: 1)
+                .frame(width: AppAudioLevelMeter.maxWidth, height: 5)
+                .help("Played in the last minute")
+                .accessibilityLabel("Played in the last minute")
+        } else {
+            Text("Silent").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
         }
+    }
+
+    // MARK: Output (SoundSource: per-app output redirection)
+
+    private var routeName: String {
+        guard let uid = app.outputDeviceUID else { return "System Output" }
+        return AudioOutputService.devices().first(where: { $0.uid == uid })?.name ?? "Disconnected device"
+    }
+
+    /// AirPlay outputs take one app only through AOM's buffered HomePod
+    /// sender; with HomePod / AirPlay effects off they can't be chosen here
+    /// (the app would silently stay on the Mac's output).
+    private var outputMenu: some View {
+        let devices = AudioOutputService.devices()
+        let current = app.outputDeviceUID
+        return Menu {
+            Toggle("System Output (Follows the Mac)", isOn: Binding(get: { current == nil }, set: { on in
+                if on, current != nil { service.setOutputRoute(uid: nil, bundleID: app.bundleID) }
+            }))
+            if let current, !devices.contains(where: { $0.uid == current }) {
+                Text("Chosen output is disconnected; using System Output")
+            }
+            Divider()
+            ForEach(devices) { device in
+                let airPlay = AudioOutputRestore.transportType(of: device.id) == kAudioDeviceTransportTypeAirPlay
+                Toggle(device.name, isOn: Binding(get: { current == device.uid }, set: { on in
+                    if on, current != device.uid { service.setOutputRoute(uid: device.uid, bundleID: app.bundleID) }
+                }))
+                .disabled(airPlay && !service.airPlayProcessingEnabled)
+            }
+            if !service.airPlayProcessingEnabled, devices.contains(where: { AudioOutputRestore.transportType(of: $0.id) == kAudioDeviceTransportTypeAirPlay }) {
+                Divider()
+                Text("AirPlay needs HomePod / AirPlay effects (Output effects)")
+            }
+        } label: {
+            Image(systemName: current == nil ? "hifispeaker" : "hifispeaker.fill")
+                .foregroundStyle(current == nil ? AOMColor.textSecondary : AOMColor.accent)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+        .disabled(!hasBundle)
+        .help("Plays to: \(routeName)")
+        .accessibilityLabel("Output for \(app.name)")
+        .accessibilityValue(routeName)
+    }
+
+    // MARK: Effects
+
+    private var effects: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x2) {
+            effectRow("Volume Overdrive") {
+                Slider(value: Binding(get: { Double(app.overdrive) },
+                                      set: { service.setOverdrive(Float($0), bundleID: app.bundleID) }),
+                       in: 1...Double(AudioVolumeOverdrive.maximum), step: 0.05)
+                    .controlSize(.small)
+                    .frame(width: AOMRowControlMetrics.sliderWidth)
+                    .accessibilityLabel("Volume Overdrive for \(app.name)")
+                    .accessibilityValue("\(Int((app.overdrive * 100).rounded())) percent")
+                    .help("Up to 400%, limited so loud audio never clips")
+                Text("\(Int((app.overdrive * 100).rounded()))%")
+                    .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
+            }
+            effectRow("Balance") {
+                Text("L").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
+                Slider(value: Binding(get: { Double(balance) }, set: { newValue in
+                    balance = AudioBalance.stepped(Float(newValue))
+                    service.setBalance(balance, bundleID: app.bundleID)
+                }), in: -1...1, step: 0.01)
+                    .controlSize(.small)
+                    .frame(width: AOMRowControlMetrics.sliderWidth)
+                    .accessibilityLabel("Balance for \(app.name)")
+                    .accessibilityValue(AudioBalance.spokenValue(balance))
+                Text("R").font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
+                Button("Center") { balance = 0; service.setBalance(0, bundleID: app.bundleID) }
+                    .controlSize(.small)
+                    .disabled(balance == 0)
+            }
+            effectRow("Magic Boost") {
+                Toggle("Magic Boost for \(app.name)", isOn: Binding(get: { app.magicBoost },
+                                                                   set: { _ in service.toggleMagicBoost(bundleID: app.bundleID) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                AudioBoostPresetPicker(bundleID: app.bundleID, style: .menu)
+                    .disabled(!app.magicBoost)
+            }
+            effectRow("Equalizer") {
+                Toggle("Equalizer for \(app.name)", isOn: Binding(get: { service.appEQEnabled(app.bundleID) },
+                                                                  set: { service.setAppEQEnabled($0, bundleID: app.bundleID) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                Picker("Equalizer preset for \(app.name)", selection: Binding(
+                    get: { service.appEQPreset(app.bundleID) },
+                    set: { service.setAppEQPreset($0, bundleID: app.bundleID) })) {
+                    ForEach(Array(AudioEQ.presets.keys.sorted()), id: \.self) { Text($0).tag($0) }
+                    if service.appEQPreset(app.bundleID) == "Custom" { Text("Custom").tag("Custom") }
+                }
+                .labelsHidden().controlSize(.small).fixedSize()
+                .disabled(!service.appEQEnabled(app.bundleID))
+            }
+            HStack(spacing: AOMSpace.x2) {
+                Menu("Timed Mute") { timedMuteItems }
+                    .controlSize(.small).fixedSize()
+                Button(service.isFavorite(app.bundleID) ? "Unfavorite" : "Favorite",
+                       systemImage: service.isFavorite(app.bundleID) ? "star.fill" : "star") {
+                    service.toggleFavorite(app.bundleID)
+                }
+                .controlSize(.small)
+                Spacer(minLength: AOMSpace.x2)
+                Button("Reset") { resetEffects() }
+                    .controlSize(.small)
+                    .help("Volume 100%, no overdrive, balance centered, Magic Boost and equalizer off")
+            }
+            if let error = app.error {
+                HStack(spacing: AOMSpace.x2) {
+                    Label(error, systemImage: "exclamationmark.triangle").font(AOMFont.caption).foregroundStyle(AOMColor.warningText)
+                    Spacer(minLength: AOMSpace.x2)
+                    Button("Reconnect") { service.reconnect(pid: app.pid) }.controlSize(.small)
+                        .disabled(app.pid <= 0 || !service.soundEnabled)
+                }
+            }
+        }
+        .padding(.leading, AOMSpace.rowSymbolInset)
+        .padding(.trailing, AOMSpace.rowInset)
+        .padding(.bottom, AOMSpace.x3)
+    }
+
+    private func effectRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: AOMSpace.x2) {
+            Text(title)
+                .font(AOMFont.caption)
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: 112, alignment: .leading)
+                .accessibilityHidden(true)
+            content()
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder private var timedMuteItems: some View {
+        Button("30 Seconds") { service.timedMute(bundleID: app.bundleID, seconds: 30) }
+        Button("1 Minute") { service.timedMute(bundleID: app.bundleID, seconds: 60) }
+        Button("2 Minutes") { service.timedMute(bundleID: app.bundleID, seconds: 120) }
+        Button("5 Minutes") { service.timedMute(bundleID: app.bundleID, seconds: 300) }
+        if service.timedMuteEnds[app.bundleID] != nil {
+            Divider()
+            Button("End Timed Mute") { service.cancelTimedMute(bundleID: app.bundleID) }
+        }
+    }
+
+    @ViewBuilder private var contextMenu: some View {
+        Button(app.muted ? "Unmute" : "Mute") { service.toggleMute(bundleID: app.bundleID) }
+        Menu("Timed Mute") { timedMuteItems }
+        Button(service.isFavorite(app.bundleID) ? "Remove from Favorites" : "Add to Favorites") {
+            service.toggleFavorite(app.bundleID)
+        }
+        Divider()
+        Button("Reset Effects") { resetEffects() }
+        Button("Reconnect") { service.reconnect(pid: app.pid) }.disabled(app.pid <= 0 || !service.soundEnabled)
+    }
+
+    private func resetEffects() {
+        gain = 1
+        balance = 0
+        service.resetEffects(bundleID: app.bundleID, magicBoost: app.magicBoost)
     }
 }
 
