@@ -97,8 +97,8 @@ Data lives in Application Support/AllOfMacOS/Files: `shelf.json`, `recent-folder
   0.25, 0.6 and 1.2 s (a panel can answer slowly while its remote content loads), and a once-a-second check
   runs only while a dialog is attached. All Accessibility work runs on one serial queue with a 0.25 s timeout
   per element; ordinary document windows are never walked. A probe that runs this code against separate
-  Open and Save panels (kit folder f-340-evidence, integration-*) attached within about 0.2–0.6 s of the
-  panel's notifications, followed a move within 0.1–0.3 s and let go within 0.5–0.9 s of the panel closing.
+  Open and Save panels (kit folder f-340-evidence, integration-*) attached 0.2–0.6 s after the panel's
+  notifications, and followed a move or let go of a closed panel within about 0.1 s of its notification.
 - A window is a dialog by its identifier ("open-panel", "save-panel"), else by its controls ("OKButton",
   "CancelButton", "where popup", "saveAsNameTextField"), else by the open-and-save panel service
   (com.apple.appkit.xpc.openAndSavePanelService) owning it or its content, with a Cancel button.
@@ -106,7 +106,7 @@ Data lives in Application Support/AllOfMacOS/Files: `shelf.json`, `recent-folder
   "open-panel"; Save is "save-panel", an AXSheet when attached to a document; a sandboxed app's panel has the same
   identifiers, and both kinds show content from the panel service. ⌘⇧G works only through the session event
   tap (posted to the app's process it does nothing). Go to Folder is the sheet "GoToWindow" with the field
-  "PathTextField"; setting its value through Accessibility and pressing Return goes there in about one second,
+  "PathTextField"; setting its value through Accessibility and pressing Return goes there 1.1–1.7 s after ⌘⇧G,
   `~` and spaces work, a file's path selects the file, and a folder that doesn't exist keeps the sheet open (the
   helper then presses Escape and reports it).
 - The dialog panel and the shelf are non-activating panels; clicks don't make All of MacOS the active app, so
