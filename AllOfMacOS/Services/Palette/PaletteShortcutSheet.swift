@@ -69,6 +69,7 @@ final class PaletteShortcutSheet {
     private var sticky = false
     private var stickyMonitors: [Any] = []
     private var generation = 0
+    private var armedAt: TimeInterval = 0
 
     var isEnabled: Bool { UserDefaults.standard.bool(forKey: Self.enabledKey) }
 
@@ -131,6 +132,7 @@ final class PaletteShortcutSheet {
 
     private func arm() {
         cancelTimers()
+        armedAt = ProcessInfo.processInfo.systemUptime
         let hold = holdSeconds
         let prefetch = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.load(show: false) } }
         let timer = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.load(show: true) } }
@@ -138,6 +140,16 @@ final class PaletteShortcutSheet {
         self.timer = timer
         DispatchQueue.main.asyncAfter(deadline: .now() + hold / 2, execute: prefetch)
         DispatchQueue.main.asyncAfter(deadline: .now() + hold, execute: timer)
+    }
+
+    /// Whether ⌘ has been held alone since `armedAt`: still down with no
+    /// other modifier, and no key or click since, counting the ones the
+    /// system keeps for itself (⌘Tab, ⌘Space never reach app monitors).
+    static func isStillAHold(since armedAt: TimeInterval, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard NSEvent.modifierFlags.intersection(PaletteHoldDetector.considered) == .command else { return false }
+        let elapsed = now - armedAt
+        let types: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        return types.allSatisfy { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) >= elapsed - 0.02 }
     }
 
     private func cancelTimers() {
@@ -159,7 +171,7 @@ final class PaletteShortcutSheet {
     }
 
     private func load(show: Bool) {
-        guard let app = Self.eligibleFrontApp() else { return }
+        guard Self.isStillAHold(since: armedAt), let app = Self.eligibleFrontApp() else { return }
         present(for: app, show: show, sticky: false)
     }
 
@@ -189,7 +201,7 @@ final class PaletteShortcutSheet {
             }.value
             guard let self, show else { return }
             // Still held (or opened from the palette)?
-            guard sticky || (current == self.generation && self.detector.armed) else { return }
+            guard sticky || (current == self.generation && self.detector.armed && Self.isStillAHold(since: self.armedAt)) else { return }
             switch result {
             case .success(let snapshot):
                 let groups = PaletteMenuSearch.shortcutGroups(snapshot.items)
@@ -279,7 +291,8 @@ final class PaletteShortcutSheet {
             ]),
         ]
         let items = PaletteMenuFlattener.flatten(nodes).map(\.item)
-        let icon = NSWorkspace.shared.icon(forFile: "/Applications/Safari.app")
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari")
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
         showPanel(PaletteShortcutSheetContent(appName: "Safari", icon: icon,
                                               groups: PaletteMenuSearch.shortcutGroups(items), sticky: true), sticky: true)
     }
