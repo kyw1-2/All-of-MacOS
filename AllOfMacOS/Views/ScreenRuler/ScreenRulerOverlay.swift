@@ -829,6 +829,8 @@ final class ScreenRulerMarksLayer: CALayer {
                               transform: nil)
             boxLayer.frame = box
             boxLayer.path = path
+            // Paths are rasterized: at the display's scale, or they blur on Retina.
+            boxLayer.contentsScale = scale
             boxLayer.lineWidth = width
             boxLayer.strokeColor = style.guide
             boxLayer.fillColor = style.fill
@@ -837,6 +839,7 @@ final class ScreenRulerMarksLayer: CALayer {
             if let halo = style.halo {
                 boxHalo.frame = box
                 boxHalo.path = path
+                boxHalo.contentsScale = scale
                 boxHalo.lineWidth = width + 2 * pixel
                 boxHalo.strokeColor = halo
                 boxHalo.fillColor = nil

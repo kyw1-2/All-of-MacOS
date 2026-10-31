@@ -91,8 +91,10 @@ final class ScreenRulerRenderTests: XCTestCase {
         try data.write(to: url)
     }
 
-    /// The Capture page's Screen Ruler section at the two window sizes, light,
-    /// dark and Increase Contrast (the shared defaults are only read).
+    /// The Capture page's Screen Ruler section at the two window sizes, light
+    /// and dark, with and without Screen Recording (the shared defaults are
+    /// only read). Increase Contrast is not rendered here: an NSAppearance
+    /// name does not change SwiftUI's contrast environment.
     func testRenderTheSettingsSection() throws {
         guard let path = ProcessInfo.processInfo.environment["AOM_UI_RENDER_PATH"] else {
             throw XCTSkip("Set AOM_UI_RENDER_PATH for the visual review")
@@ -104,7 +106,6 @@ final class ScreenRulerRenderTests: XCTestCase {
             ("section-wide-light", 1052, NSAppearance.Name.aqua, true),
             ("section-wide-dark", 1052, .darkAqua, true),
             ("section-narrow-light", 732, .aqua, true),
-            ("section-narrow-contrast", 732, .accessibilityHighContrastAqua, true),
             ("section-narrow-no-permission-dark", 732, .darkAqua, false)
         ] as [(String, CGFloat, NSAppearance.Name, Bool)] {
             let content = ScreenRulerSection(permissionOverride: permission)
