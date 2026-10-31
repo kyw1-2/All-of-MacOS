@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.3.8
+
+An L-shaped swipe on a title bar (left then up, or right then up, without lifting) now takes that side's top quarter, whether the turn is smooth or rests at the corner. A swipe up on its own still maximizes. See docs/window-snap-3.3.8.md.
+
 ## Version 3.3.7
 
 A two-finger swipe up on a title bar now always maximizes, from any half, quarter, third or sixth, and no title-bar gesture snaps to the top or bottom half any more. See docs/window-snap-3.3.7.md for the full gesture table, checked against the Swish 1.13.3 analysis.

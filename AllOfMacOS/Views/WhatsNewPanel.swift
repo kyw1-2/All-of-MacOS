@@ -23,6 +23,9 @@ enum WhatsNew {
     /// Highlights of the current version, bundled so the panel works offline.
     /// Items that alter defaults people already use say so with a note.
     static let items: [Item] = [
+        Item(symbol: "arrow.turn.left.up", title: "L-Shaped Swipe Takes the Top Corner",
+             detail: "On a title bar, swipe left then up without lifting your fingers to snap the window to the top-left quarter, or right then up for the top-right. It works as one smooth turn or with a short rest at the corner, from anywhere, including a maximized window. A swipe up on its own still maximizes.",
+             module: .tiling),
         Item(symbol: "arrow.up.left.and.arrow.down.right", title: "Swipe Up Always Maximizes",
              detail: "A two-finger swipe up on a title bar now maximizes the window from wherever it is: a half, any quarter (bottom-right no longer goes to top-right), a third or a sixth, also as the next motion in the same touch. No title-bar gesture snaps to the top or bottom half any more, and a swipe down on a bottom quarter puts the window back.",
              module: .tiling, note: "New default"),

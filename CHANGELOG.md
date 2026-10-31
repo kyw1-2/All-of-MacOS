@@ -1,3 +1,15 @@
+## 3.3.8 (2026-10-31)
+
+An L-shaped swipe in one touch takes the top corner. docs/window-snap-3.3.8.md has the cause and the updated rows. Nothing was tried on a real trackpad.
+
+Tests: only the new class and the class whose expectations changed were run: N338LShapeTopCornerTests (10 new, including 300 seeded random L strokes) and N337SwishUpMaximizeTests (13): 23 tests, 0 failures. Other recognizer test classes were not re-run (they passed before; the user's rule is not to re-run passing tests).
+
+### Swish title bar
+
+- In one touch, left then up takes the top-left quarter and right then up the top-right, as one smooth turn or with a rest at the corner, from anywhere (also a maximized window). The tooltip shows "↑ Top Left" / "↑ Top Right" during the up leg and never Maximize.
+- Cause in 3.3.7: an up leg leaning back over the start re-picked the axis as a plain up (which maximizes), and a rest at the corner committed the half and started a new up (which maximizes); a short up after a long sideways leg stayed the half.
+- Unchanged: a swipe up that starts a touch maximizes from every place; up after a vertical motion in the same touch maximizes; a second touch is never an L; no gesture reaches the top or bottom half. ⇧ with an L gives the corner; ⌥, ⌘ and tap and hold are unchanged.
+
 ## 3.3.7 (2026-10-30)
 
 Title-bar gestures rebuilt on the user's two rules, checked against DeepSeek's static analysis of Swish 1.13.3 (Oracle report swish-1.13.3-rea-20261027) and the Swish 1.13.2 help strings. docs/window-snap-3.3.7.md has the full gesture table and what matches Swish or differs on purpose. Nothing was tried on a real trackpad.
