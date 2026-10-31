@@ -10,6 +10,15 @@ final class FocusPreviewSystem: FocusSystem {
         PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-focus-sample")
     }
 
+    /// `--aom-preview-focus-scroll <section>`: the page opens scrolled there.
+    static var requestedSection: String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-focus-scroll"),
+              args.indices.contains(index + 1) else { return nil }
+        let section = args[index + 1]
+        return ["during", "idle", "memory", "inputSources"].contains(section) ? section : nil
+    }
+
     private let apps: [FocusRunningApp]
     private let footprints: [pid_t: UInt64]
 

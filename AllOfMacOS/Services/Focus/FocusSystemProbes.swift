@@ -187,9 +187,10 @@ enum FocusSystemProbes {
     }
 }
 
-/// "412 MB", "1.2 GB" (memory, base 1024 like Activity Monitor).
+/// "412 MB", "1.2 GB" (memory, base 1024 like Activity Monitor); "0 MB" for nothing.
 enum FocusByteFormat {
     static func string(_ bytes: UInt64) -> String {
+        guard bytes > 0 else { return "0 MB" }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .memory
         formatter.allowedUnits = [.useMB, .useGB]

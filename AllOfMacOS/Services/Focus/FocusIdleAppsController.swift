@@ -472,10 +472,7 @@ final class FocusIdleAppsController: ObservableObject {
         self.swapUsedBytes = swap
         isActive = true
         var tracker = FocusIdleTracker(startedAt: clock().addingTimeInterval(-6 * 3600), frontmost: system.frontmostBundleID)
-        for (bundleID, date) in idleSince.sorted(by: { $0.value < $1.value }) {
-            tracker.activated(bundleID, at: date)
-        }
-        tracker.activated(system.frontmostBundleID, at: clock())
+        for (bundleID, date) in idleSince { tracker.launched(bundleID, at: date) }
         self.tracker = tracker
     }
 }
