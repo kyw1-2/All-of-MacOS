@@ -265,9 +265,9 @@ struct QuickCommandPalette: View {
     private func commandItems() -> [PaletteItem] {
         var items: [PaletteItem] = []
         func command(_ id: String, _ title: String, _ subtitle: String, _ icon: String, keys: String? = nil,
-                     secondaries: [PaletteAction] = [], _ run: @escaping () -> Void) {
+                     primaryTitle: String = "Run", secondaries: [PaletteAction] = [], _ run: @escaping () -> Void) {
             items.append(PaletteItem(id: id, title: title, subtitle: subtitle, icon: icon, section: .commands, shortcut: keys,
-                                     primary: PaletteAction(title: "Run") { close(); run() }, secondaries: secondaries))
+                                     primary: PaletteAction(title: primaryTitle) { close(); run() }, secondaries: secondaries))
         }
         // Keycaps mirror the user's real bindings; unbound commands show none.
         // Capture Text resolves to the OCR binding, as in CaptureMenu.
@@ -295,7 +295,7 @@ struct QuickCommandPalette: View {
         }
         let source = session.target?.name
         let linkSubtitle = source.map { "From \($0): Markdown, rich text and the URL" } ?? "Markdown, rich text and the URL"
-        command("links.copyCurrent", "Copy Link to Current Item", linkSubtitle, "link.badge.plus",
+        command("links.copyCurrent", "Copy Link to Current Item", linkSubtitle, "link.badge.plus", primaryTitle: "Copy Link",
                 secondaries: [
                     PaletteAction(title: "Copy as Markdown", symbol: "text.badge.checkmark") { close(); session.copyLink(style: .markdown) },
                     PaletteAction(title: "Copy URL", symbol: "link") { close(); session.copyLink(style: .plainURL) },
@@ -304,7 +304,7 @@ struct QuickCommandPalette: View {
         }
         if let app = source {
             command("menus.shortcuts", "Show Keyboard Shortcuts for \(app)", "Every menu shortcut in \(app), grouped by menu",
-                    "command.square") {
+                    "command.square", primaryTitle: "Show") {
                 PaletteShortcutSheet.shared.showForPreviousApp()
             }
         }
@@ -789,7 +789,7 @@ struct QuickCommandPalette: View {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if showsHeader(at: index, in: items) {
                             // Sentence case, no tracking (c.2).
-                            Text(sectionTitle(item.section))
+                            Text(item.placement == .fallback ? "Search with" : sectionTitle(item.section))
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .padding(.horizontal, AOMSpace.x2)
@@ -1151,7 +1151,7 @@ struct PaletteQuicklinksEditor: View {
                 Text("Keyword").frame(width: QuicklinkColumns.keyword, alignment: .leading)
                 Text("Name").frame(width: QuicklinkColumns.name, alignment: .leading)
                 Text("URL").frame(maxWidth: .infinity, alignment: .leading)
-                Color.clear.frame(width: AOMIcon.row)
+                Color.clear.frame(width: AOMIcon.row, height: 0)
             }
             .font(AOMFont.caption.weight(.semibold))
             .foregroundStyle(AOMColor.textSecondary)

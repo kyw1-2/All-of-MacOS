@@ -318,13 +318,20 @@ struct PaletteLinkRouterSettingsView: View {
             AOMSection("Clean links") {
                 AOMToggleRow("Remove tracking parameters", detail: "utm_source, fbclid, gclid and the names below",
                              symbol: "wand.and.stars", isOn: $settings.removesTracking)
-                AOMSettingRow("Parameters", symbol: "list.bullet") {
+                VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    Text("Parameters")
+                        .font(AOMFont.callout)
+                        .foregroundStyle(AOMColor.textSecondary)
                     AOMTokenField(tokens: $settings.trackingParameters, placeholder: "Add parameter",
                                   suggestions: ["utm_*", "fbclid", "gclid", "si", "igshid", "mc_cid", "mc_eid", "msclkid", "yclid", "ref_src"],
                                   normalize: { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.lowercased() })
-                        .frame(maxWidth: 360)
                         .disabled(!settings.removesTracking)
+                        .accessibilityLabel("Tracking parameters")
                 }
+                .padding(.leading, AOMSpace.rowSymbolInset)
+                .padding(.trailing, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.x2)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 AOMToggleRow("Open Figma, Zoom and Notion links in their apps", detail: "Only when the app is installed",
                              symbol: "app.badge", isOn: $settings.opensAppLinks)
             }
