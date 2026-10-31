@@ -591,7 +591,10 @@ final class SystemTools340Tests: XCTestCase {
     // MARK: - Catalog
 
     func testNewToolsAreInTheCatalogWithTheirRequirements() {
-        XCTAssertEqual(SystemToolCatalog.all.count, 104 + 22, "Every 3.3.x tool kept, 22 added")
+        // At least: the integrator adds tiles other branches made (such as
+        // Install Disk Image…), so the total is not fixed here.
+        let older = SystemToolCatalog.all.filter { !SystemToolsModel.tools340.contains($0.id) }
+        XCTAssertGreaterThanOrEqual(older.count, 104, "Every 3.3.x tool kept")
         for id in SystemToolsModel.tools340 {
             XCTAssertNotNil(SystemToolCatalog.all.first { $0.id == id }, id.rawValue)
         }
