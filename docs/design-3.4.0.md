@@ -521,3 +521,25 @@ processes use argument arrays with timeouts off the main thread, failures say wh
 
 Workspace can offer any of these as quick actions once their entry points exist: each one is one new case in
 `WorkspaceQuickActionKind` (title, symbol, module, help, shortcut, run) in WorkspaceCustomization.swift.
+
+### b.17 Four more features from the user's routine, and Paste parity for the clipboard (added 31 Oct)
+
+The user proposed four new features (none duplicates an existing AOM tool) and reported a clipboard regression.
+As in b.16, A fixes the look and behaviour; the integrator assigns the engines (suggested owners in brackets).
+
+| Feature | UI pattern | Rules |
+|---|---|---|
+| Shake-to-Shelf (Dropover, Yoink) [F: `FilesModule.showShelf()` already owns the shelf] | Shaking the pointer during a file drag (3 direction changes within 0.5 s) opens the existing drop shelf beside the pointer as floating chrome (`aomFloatingSurface(.panel)`, 12 pt from the pointer, kept on screen). Shelf actions: Drag All, Compress to ZIP, AirDrop (the system share sheet), Clear. | Off by default, one switch in Files › Shelf ("Shake while dragging opens the shelf") with ⇧-while-dragging as the alternative. The monitor exists only while the switch is on, sees only `.leftMouseDragged` and does nothing outside a drag (no cost when idle, #186). The shelf never takes focus; files stay where they are until dropped. ZIP goes next to the first file, never overwrites. |
+| Keyboard click hints (Homerow, Vimac) [D or H; the message's section for it was empty] | A shortcut overlays two-letter hint labels on the clickable elements of the front window: 22 pt capsules (`AOMKeycap` look, Callout semibold), the accent fill only on the matching prefix, Escape cancels. | Labels come from Accessibility, off the main thread, with `AXUIElementSetMessagingTimeout`; never over secure text fields or while secure input is on; the overlay panel ignores the mouse and disappears on any app switch. |
+| Menu shortcut sheet (KeyClu) [H: menu search already parses the front app's menu bar] | Holding ⌘ for 1.2 s shows the front app's menu shortcuts as a centred HUD sheet: columns per top-level menu (File, Edit, View…), each row the item title with `AOMShortcutKeys` caps trailing; releasing ⌘ hides it at once. | Off by default (Settings › Shortcuts, "Hold ⌘ to show the app's shortcuts"), never while another modifier or a mouse button is held, never in full-screen games; hold time adjustable 0.8–2 s. Parsing runs off the main thread and is cached per app version. AOM's own gesture Cheat Sheet stays separate. |
+| Smart link router and clean URLs (Velja, Choosy) [H: deep links and quicklinks] | Settings › Links: a list of rules (`AOMConditionRow`: "Host contains uos.ac.kr" → "Open in Safari"), a "Remove tracking parameters" switch with the parameter list as an `AOMTokenField` (utm_*, fbclid, gclid, si, igshid), and ⌥-click shows a compact browser picker (a menu at the pointer listing installed browsers with their icons). | AOM routes links only after the person makes it the default browser in System Settings (an explicit choice, explained first); unknown links go to the browser picked as fallback. App links (Figma, Zoom, Notion) open the app only when it is installed, otherwise the web page. Nothing is logged except the rule that matched. |
+
+**Clipboard shelf and preview keep Paste's design (exception to the 3.4 restyle).** The user reports that in
+Paste a single click on an item's title in the preview starts editing it, that AOM needs a double-click, and
+that the preview no longer looks like Paste. Rules for the owner of ClipboardPanel.swift [B]:
+- One click on the preview title edits it in place (I-beam on hover, Return saves, Escape cancels, a click outside
+  saves). Today ClipboardPanel.swift `ClipboardPreviewSheet` uses `.onTapGesture(count: 2) { beginTitleEdit() }`;
+  it becomes a single tap.
+- The shelf and preview follow Paste's layout as AOM had it before the token restyle (3d1e047, 137efed): the
+  card's coloured header with app icon, title and time, the content preview, and the preview's own title bar.
+  The 3.4 tokens apply to the Clipboard page in the main window, not to the shelf or its preview.
