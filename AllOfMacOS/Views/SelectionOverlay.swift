@@ -789,24 +789,24 @@ private struct SelectionView: View {
             // Window Information Pill (App Name, Window Title, Dimensions)
             HStack(spacing: 6) {
                 Image(systemName: "macwindow")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(.subheadline, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
 
                 Text(target.appName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(.callout, weight: .bold))
                     .foregroundStyle(.white)
 
                 if !target.title.isEmpty {
                     Text("•")
                         .foregroundStyle(.white.opacity(0.5))
                     Text(target.title)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(.subheadline, weight: .medium))
                         .lineLimit(1)
                         .foregroundStyle(.white.opacity(0.9))
                 }
 
                 Text("\(Int(target.sckRect.width)) × \(Int(target.sckRect.height))")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(.caption2, design: .rounded, weight: .semibold).monospacedDigit())
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1.5)
                     .background(Color.white.opacity(0.2), in: Capsule())
@@ -828,9 +828,9 @@ private struct SelectionView: View {
     private func windowCursor(size: CGSize) -> some View {
         HStack(spacing: 4) {
             Image(systemName: "camera.fill")
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(.body, weight: .bold))
             Text("Click to capture")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(.subheadline, weight: .semibold))
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 8)
@@ -889,21 +889,21 @@ private struct SelectionView: View {
         HStack(spacing: 7) {
             if state.mode == .window {
                 Image(systemName: "camera.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(.subheadline, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text("Click a window to capture it.")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(.body, weight: .semibold))
                 Text("Space for area · Esc to cancel")
-                    .font(.system(size: 11))
+                    .font(.system(.subheadline))
                     .foregroundStyle(.white.opacity(0.85))
             } else {
                 Image(systemName: "viewfinder")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(.subheadline, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
                 Text("Drag to select capture area.")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(.body, weight: .semibold))
                 Text("Space to select a window · Esc to cancel")
-                    .font(.system(size: 11))
+                    .font(.system(.subheadline))
                     .foregroundStyle(.white.opacity(0.85))
             }
         }
@@ -922,7 +922,7 @@ private struct SelectionView: View {
     private func dimensionLabel(rect: CGRect) -> some View {
         let pixels = pixelSize(for: rect)
         return Text("\(Int(pixels.width)) × \(Int(pixels.height))")
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .font(.system(.subheadline, design: .rounded, weight: .semibold))
             .monospacedDigit()
             .foregroundStyle(.white)
             .padding(.horizontal, 7)
@@ -945,7 +945,7 @@ private struct SelectionView: View {
 
             // A small coordinate readout beside the cursor
             Text("\(Int((pointer.x * screen.backingScaleFactor).rounded())), \(Int((pointer.y * screen.backingScaleFactor).rounded()))")
-                .font(.system(size: 10, design: .rounded))
+                .font(.system(.caption2, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 5)
@@ -1174,7 +1174,7 @@ private struct AllInOneToolbar: View {
             }
 
             Text(hint)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(.callout, weight: .medium))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(.black.opacity(0.66), in: Capsule())
@@ -1226,7 +1226,7 @@ private struct AllInOneToolbar: View {
                 .help("Height in pixels")
         }
         .textFieldStyle(.roundedBorder)
-        .font(.system(size: 13).monospacedDigit())
+        .font(.system(.body).monospacedDigit())
         .multilineTextAlignment(.center)
         .frame(width: 136)
         .disabled(state.pendingRect == nil)
@@ -1246,10 +1246,10 @@ private struct AllInOneToolbar: View {
         return Button { state.toggleRatioMenu() } label: {
             HStack(spacing: 3) {
                 Image(systemName: locked ? "lock.fill" : "aspectratio")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(.subheadline, weight: .semibold))
                 Text(locked ? state.aspectRatio.title : "Ratio")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                    .font(.system(.subheadline, weight: .semibold).monospacedDigit())
+                Image(systemName: "chevron.down").font(.system(.caption2, weight: .bold))
             }
             .foregroundStyle(locked ? Color.white : Color.primary)
             .padding(.horizontal, 7).frame(height: 26)
@@ -1313,7 +1313,7 @@ private struct SelectionRatioList: View {
                         .help("Lock the selection to this custom ratio")
                 }
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12).monospacedDigit())
+                .font(.system(.callout).monospacedDigit())
                 .frame(width: 168)
                 .padding(.horizontal, 6).padding(.vertical, 4)
                 .onSubmit(applyCustom)
@@ -1346,8 +1346,8 @@ private struct SelectionRatioList: View {
     private func row(title: String, selected: Bool, highlighted: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).opacity(selected ? 1 : 0)
-                Text(title).font(.system(size: 12, weight: .medium).monospacedDigit())
+                Image(systemName: "checkmark").font(.system(.caption2, weight: .bold)).opacity(selected ? 1 : 0)
+                Text(title).font(.system(.callout, weight: .medium).monospacedDigit())
                 Spacer(minLength: 0)
             }
             .foregroundStyle(highlighted ? Color.white : Color.primary)
@@ -1373,7 +1373,7 @@ private struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(.title3, weight: .medium))
                 .frame(width: 34, height: 30)
                 .foregroundStyle(selected ? Color.white : Color.primary)
                 .background(selected ? Color.accentColor : hovering ? Color.white.opacity(0.12) : .clear,
@@ -1422,7 +1422,7 @@ private struct MagnifierView: View {
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.35), lineWidth: 1))
 
             Text("\(Int((pointer.x * screen.backingScaleFactor).rounded())), \(Int((pointer.y * screen.backingScaleFactor).rounded()))")
-                .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+                .font(.system(.caption2, design: .rounded, weight: .medium).monospacedDigit())
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(.black.opacity(0.8), in: Capsule())

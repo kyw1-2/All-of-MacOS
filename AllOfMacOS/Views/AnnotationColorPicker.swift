@@ -71,7 +71,7 @@ struct AnnotationColorPickerView: View {
                         }
                     }
                     Button { addToMyColors() } label: {
-                        Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "plus").font(.system(.caption2, weight: .bold))
                             .frame(width: 20, height: 20)
                             .overlay(Circle().strokeBorder(Color.secondary.opacity(0.6),
                                                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
@@ -113,7 +113,7 @@ struct AnnotationColorPickerView: View {
                     Text("Hex").font(.caption).foregroundStyle(.secondary)
                     TextField("RRGGBB", text: $hexText)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12).monospaced())
+                        .font(.system(.callout).monospaced())
                         .frame(width: 96)
                         .onSubmit { applyHex(hexText); noteRecent() }
                         .accessibilityLabel("Hex color")
@@ -258,7 +258,7 @@ struct AnnotationColorPickerView: View {
                                                    commitFields() }),
                       format: .number)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12).monospacedDigit())
+                .font(.system(.callout).monospacedDigit())
                 .multilineTextAlignment(.center)
                 .frame(width: 52)
                 .accessibilityLabel(title == "A" ? "Alpha percent" : "\(title) component")

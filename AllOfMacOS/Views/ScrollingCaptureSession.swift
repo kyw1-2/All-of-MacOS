@@ -187,8 +187,8 @@ private struct ScrollSessionView: View {
                 } else { ProgressView() }
             }.frame(maxHeight: .infinity)
             Text("\(Int(session.pixelSize.width)) × \(Int(session.pixelSize.height)) px · \(session.frameCount) frames")
-                .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-            Text(session.message).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                .font(.system(.subheadline, design: .monospaced)).foregroundStyle(.secondary)
+            Text(session.message).font(.system(.callout)).frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle("Auto Scroll", isOn: $session.automatic).toggleStyle(.switch)
             HStack {

@@ -152,6 +152,10 @@ private struct WhatsNewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
+                // The panel's identity, like the page headers: a squircle
+                // with the release's glyph.
+                AOMModuleBadge(symbol: "sparkles", hue: AOMColor.accent, size: AOMIcon.headerBadge)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("What's New")
                         .font(AOMFont.heroSentence)

@@ -44,7 +44,7 @@ struct TriggerListPanel: View {
             // Header: Category Title + Trigger Count
             HStack(spacing: 6) {
                 Image(systemName: appState.selectedTriggerCategory.iconName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(.body, weight: .semibold))
                     .foregroundStyle(.tint)
                 Text(appState.selectedTriggerCategory == .all ? "All Triggers" : "\(appState.selectedTriggerCategory.rawValue) Triggers")
                     .font(.subheadline.weight(.semibold))
@@ -82,10 +82,10 @@ struct TriggerListPanel: View {
                 HStack(spacing: 8) {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(.caption2, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Text("Sort:")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(.subheadline, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                     Picker("", selection: $appState.triggerSortMode) {
@@ -116,7 +116,7 @@ struct TriggerListPanel: View {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: appState.selectedTriggerCategory.iconName)
-                        .font(.system(size: 37)).foregroundStyle(.secondary)
+                        .font(.system(.largeTitle)).foregroundStyle(.secondary)
                     Text(appState.isSearchingTriggers ? "No matching triggers" : appState.selectedTriggerCategory == .all ? "No configured triggers" :
                          "No \(appState.selectedTriggerCategory.rawValue) triggers")
                         .font(.headline).foregroundStyle(.secondary)
@@ -317,7 +317,7 @@ struct TriggerCategoryTabBar: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: category.iconName)
-                    .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                    .font(.callout.weight(selected ? .semibold : .regular))
                 if selected {
                     Text(category.rawValue)
                         .font(.caption.weight(.semibold))
@@ -365,7 +365,7 @@ struct TriggerRow: View {
                 .frame(width: 18).foregroundStyle(.tint).accessibilityLabel(trigger.input.category.rawValue)
             VStack(alignment: .leading, spacing: 2) {
                 Text(trigger.displayName)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(.body, weight: .medium))
                     .lineLimit(1)
 
                 if let label = trigger.colorLabel, !label.isEmpty {

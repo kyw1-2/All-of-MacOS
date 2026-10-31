@@ -1273,6 +1273,14 @@ struct ClipboardPanelView: View {
         } message: {
             Text(ClipboardBoardDeletionCopy.message(onlyHere: boardPendingDeletion.map { store.itemsOnlyOnBoard($0.id) } ?? 0))
         }
+        // `--aom-clipboard-preview-open` (isolated previews only): opens the
+        // first card's preview, so its title bar can be reviewed.
+        .task {
+            guard PresetManager.isUIPreview,
+                  ProcessInfo.processInfo.arguments.contains("--aom-clipboard-preview-open") else { return }
+            try? await Task.sleep(for: .seconds(2))
+            if let first = entries.first { controller.openPreview(first) }
+        }
         .onChange(of: state.searchFocusToken) { _, _ in
             withAnimation(AOMMotion.quick) {
                 state.searchExpanded = true

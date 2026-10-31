@@ -512,6 +512,9 @@ private struct PinnedScreenshotView: View {
         .aomAnimation(.quick, value: interaction.zoomBadgeVisible)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Pinned screenshot")
+        // The hover buttons as actions, so VoiceOver reaches them without hovering.
+        .accessibilityAction(named: "Close", onClose)
+        .accessibilityAction(named: "Lock", onLock)
     }
 
     private var clipShape: AnyShape {
@@ -537,14 +540,34 @@ private struct PinnedScreenshotView: View {
             Image(systemName: symbol)
                 .font(AOMFont.caption.weight(.semibold))
                 .foregroundStyle(AOMFeatureColor.onMedia)
-                .frame(width: AOMIcon.hitArea - AOMSpace.x1, height: AOMIcon.hitArea - AOMSpace.x1)
-                .background(AOMFeatureColor.mediaControl(pressed: false, hovering: false), in: Circle())
-                .overlay(Circle().strokeBorder(AOMFeatureColor.mediaControlEdge(hovering: false), lineWidth: 0.5))
+                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        // Hover and press now show (3.3 drew both states as "resting").
+        .buttonStyle(PinnedControlButtonStyle())
         .help(help)
         .accessibilityLabel(label)
         .accessibilityHint(help)
+    }
+}
+
+/// A round media control on the pin: the shared media-control fill that
+/// lightens on hover and darkens on press, like Quick Access's.
+private struct PinnedControlButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PinnedControlBody(configuration: configuration)
+    }
+
+    private struct PinnedControlBody: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(AOMFeatureColor.mediaControl(pressed: configuration.isPressed, hovering: hovering), in: Circle())
+                .overlay(Circle().strokeBorder(AOMFeatureColor.mediaControlEdge(hovering: hovering), lineWidth: 0.5))
+                .onHover { hovering = $0 }
+                .aomAnimation(.quick, value: hovering)
+        }
     }
 }

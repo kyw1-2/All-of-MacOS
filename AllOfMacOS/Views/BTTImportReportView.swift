@@ -18,6 +18,12 @@ struct BTTImportReportView: View {
             header
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                    if report.entries.isEmpty {
+                        // A file with nothing AOM can read says so (3.3 showed a blank area).
+                        AOMInlineEmpty(symbol: "doc.questionmark",
+                                       message: "Nothing in this file can be imported. Export the preset again from BetterTouchTool, or copy its triggers as JSON.")
+                            .aomCard(padding: 0)
+                    }
                     ForEach(BTTPresetImport.Entry.Group.allCases) { group in
                         let entries = report.entries(in: group)
                         if !entries.isEmpty { section(group, entries) }
@@ -47,8 +53,10 @@ struct BTTImportReportView: View {
                               topic: "the import")
             }
             if report.reviewCount > 0 {
-                AOMNotice(.warning, "\(report.reviewCount) item(s) contain scripts, Shortcuts, executable files or app links.",
-                          detail: "Read them before enabling.")
+                AOMNotice(.warning, report.reviewCount == 1
+                          ? "1 item contains a script, a shortcut, an executable file or an app link."
+                          : "\(report.reviewCount) items contain scripts, shortcuts, executable files or app links.",
+                          detail: "They're added turned off. Read them before you turn them on.")
             }
             if !namedTriggerCollisions.isEmpty {
                 AOMNotice(.warning, "Named triggers that already exist: \(namedTriggerCollisions.joined(separator: ", ")).",
@@ -60,6 +68,7 @@ struct BTTImportReportView: View {
     private func section(_ group: BTTPresetImport.Entry.Group, _ entries: [BTTPresetImport.Entry]) -> some View {
         let open = !collapsed.contains(group)
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            // The whole title row folds the group, as its doc comment says.
             AOMSectionTitle(group.rawValue, help: Self.help(group)) {
                 AOMStatusPill("\(entries.count)", tone: Self.tone(group), symbol: Self.symbol(group))
                 Button { toggle(group) } label: {
@@ -72,9 +81,11 @@ struct BTTImportReportView: View {
                 }
                 .buttonStyle(.plain)
                 .help(open ? "Hide \(group.rawValue)" : "Show \(group.rawValue)")
-                .accessibilityLabel("\(group.rawValue), \(entries.count) items")
+                .accessibilityLabel("\(group.rawValue), \(entries.count) item\(entries.count == 1 ? "" : "s")")
                 .accessibilityValue(open ? "Expanded" : "Collapsed")
             }
+            .contentShape(Rectangle())
+            .onTapGesture { toggle(group) }
             if open {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
@@ -113,7 +124,7 @@ struct BTTImportReportView: View {
                     .foregroundStyle(AOMColor.textSecondary)
             }
             ForEach(Array(entry.reasons.enumerated()), id: \.offset) { _, reason in
-                Text("• " + reason)
+                Label(reason, systemImage: "arrow.turn.down.right")
                     .font(AOMFont.caption)
                     .foregroundStyle(AOMColor.text)
                     .fixedSize(horizontal: false, vertical: true)
@@ -158,5 +169,36 @@ struct BTTImportReportView: View {
         case .skipped:
             return "BTT triggers and actions with no AOM equivalent, by BTT name and ID. A dropped step stays in its trigger as a disabled placeholder."
         }
+    }
+}
+
+/// `--aom-preview-btt-report` (isolated previews only): the report for a
+/// small fixture in BTT's documented JSON shape, in a window the size of the
+/// import alert, so the layout can be reviewed without importing anything.
+@MainActor
+enum BTTImportReportPreview {
+    private static var window: NSWindow?
+
+    static func open() {
+        guard PresetManager.isUIPreview else { return }
+        let fixture: [[String: Any]] = [
+            ["BTTTriggerClass": "BTTTriggerTypeTouchpadAll", "BTTTriggerType": 102, "BTTActionsToExecute": [["BTTPredefinedActionType": 5]]],
+            ["BTTTriggerClass": "BTTTriggerTypeKeyboardShortcut", "BTTTriggerType": 0, "BTTShortcutKeyCode": 8,
+             "BTTShortcutModifierKeys": 1_048_576, "BTTTriggerOnDown": 1, "BTTActionsToExecute": [["BTTPredefinedActionType": 22]]],
+            ["BTTTriggerClass": "BTTTriggerTypeTouchpadAll", "BTTTriggerType": 110,
+             "BTTActionsToExecute": [["BTTPredefinedActionType": 195, "BTTInlineAppleScript": "display dialog \"Hello\""]]],
+            ["BTTTriggerClass": "BTTTriggerTypeOtherTriggers", "BTTTriggerType": 99_999, "BTTActionsToExecute": [["BTTPredefinedActionType": 5]]],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fixture),
+              let report = try? BTTPresetImport.parse(data) else { return }
+        let host = NSHostingView(rootView: BTTImportReportView(report: report).padding(AOMSpace.x5))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Review BetterTouchTool Import"
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        self.window = window
     }
 }

@@ -267,7 +267,10 @@ struct ClipboardStudioView: View {
                 }
                 .background(AOMColor.canvas)
             } else {
-                AOMListDetail(listWidth: $listWidth) {
+                // The list + detail template (b.2) without `AOMListDetail`: its
+                // `.inspector` gives the panes a toolbar inset, which blurred the
+                // first row here, where the panes sit under the header.
+                HStack(spacing: 0) {
                     AOMListColumn(rows: {
                         List(selection: $selectedEntryID) {
                             ForEach(entries) { entry in libraryRow(entry) }
@@ -301,16 +304,31 @@ struct ClipboardStudioView: View {
                                 .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
                         }
                     })
-                } detail: {
-                    if let entry = entries.first(where: { $0.id == selectedEntryID }) ?? entries.first {
-                        detailPane(entry)
-                    } else {
-                        AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
-                                      message: "Select an item to see all of it, copy it or pin it.")
+                    .frame(width: CGFloat(min(AOMSize.moduleListRange.upperBound,
+                                              max(AOMSize.moduleListRange.lowerBound, listWidth))))
+                    AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+                    Group {
+                        if let entry = entries.first(where: { $0.id == selectedEntryID }) {
+                            detailPane(entry)
+                        } else {
+                            AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
+                                          message: "Select an item to see all of it, copy it or pin it.")
+                        }
                     }
+                    .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .background(AOMColor.canvas)
+                // The detail always shows the highlighted row: the first item
+                // is selected until another one is (and after a delete).
+                .onAppear { selectFirstIfNeeded(entries) }
+                .onChange(of: entries.map(\.id)) { _, _ in selectFirstIfNeeded(entries) }
             }
         }
+    }
+
+    private func selectFirstIfNeeded(_ entries: [ClipboardEntry]) {
+        guard !entries.contains(where: { $0.id == selectedEntryID }) else { return }
+        selectedEntryID = entries.first?.id
     }
 
     /// Two lines per item, like a Mail or Notes list: the title in Body over

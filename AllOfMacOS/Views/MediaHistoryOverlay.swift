@@ -481,7 +481,7 @@ struct MediaHistoryOverlayView: View {
                 controller?.isShowingSheet = true
                 let alert = NSAlert()
                 alert.messageText = "Turn off Capture History?"
-                alert.informativeText = "\(unkept) capture(s) will be removed from history. Kept captures and files you saved are not affected."
+                alert.informativeText = "\(unkept == 1 ? "1 capture" : "\(unkept) captures") will be removed from history. Kept captures and files you saved are not affected."
                 alert.addButton(withTitle: "Turn Off")
                 alert.addButton(withTitle: "Cancel")
                 let response = alert.runModal()
@@ -564,10 +564,10 @@ struct MediaHistoryOverlayView: View {
 
     private var footerBar: some View {
         HStack(spacing: AOMSpace.x3) {
-            Text("\(filteredEntries.count) captures").monospacedDigit().foregroundStyle(AOMColor.textSecondary)
+            Text(filteredEntries.count == 1 ? "1 capture" : "\(filteredEntries.count) captures").monospacedDigit().foregroundStyle(AOMColor.textSecondary)
             Spacer()
             if let entry = filteredEntries.first(where: { $0.id == selectedID }) {
-                Button(entry.isPinned ? "Unpin History" : "Keep in History") { history.togglePin(entry) }
+                Button(entry.isPinned ? "Don't Keep in History" : "Keep in History") { history.togglePin(entry) }
                 Button("Preview") { previewEntry = entry }.help("Preview (Space)")
                 Button(entry.kind == .videoRecording ? "Edit Recording" : "Annotate") { annotateEntry(entry) }
                     .help("Edit (⌘E)")
@@ -838,7 +838,8 @@ private struct CaptureHistoryCard: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
             HStack(spacing: AOMSpace.x1) {
-                if entry.isPinned { Image(systemName: "pin.fill").font(AOMFont.badge).foregroundStyle(AOMColor.accent) }
+                // Kept in history: the bookmark, so it never reads as Pin to the Screen.
+                if entry.isPinned { Image(systemName: "bookmark.fill").font(AOMFont.badge).foregroundStyle(AOMColor.accent).help("Kept in history").accessibilityLabel("Kept in history") }
                 Text(entry.displayName)
                 .font(AOMFont.callout.weight(.semibold))
                 .foregroundStyle(AOMColor.text)
@@ -906,7 +907,7 @@ private struct CaptureHistoryCard: View {
             }
         }
         Divider()
-        Button(entry.isPinned ? "Unpin from History" : "Keep in History") { CaptureHistory.shared.togglePin(entry) }
+        Button(entry.isPinned ? "Don't Keep in History" : "Keep in History") { CaptureHistory.shared.togglePin(entry) }
         Button("Delete from History…", role: .destructive, action: onDelete)
     }
 

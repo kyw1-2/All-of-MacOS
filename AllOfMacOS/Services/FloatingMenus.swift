@@ -83,7 +83,7 @@ final class FloatingMenuController {
     @discardableResult func show(_ nameOrID: String) -> Bool {
         guard let menu = FloatingMenuStore.shared.find(nameOrID), (try? menu.validate()) != nil else { return false }
         panels.removeValue(forKey: menu.id)?.close()
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: max(230, menu.columns * 150), height: 240),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: max(FloatingMenuMetrics.panelMinWidth, CGFloat(menu.columns) * 150), height: 240),
                             styleMask: [.titled, .closable, .nonactivatingPanel, .resizable], backing: .buffered, defer: false)
         panel.title = menu.name; panel.level = .floating; panel.isReleasedWhenClosed = false
         panel.applyCaptureVisibilityPreference()
@@ -108,7 +108,7 @@ final class FloatingMenuController {
     func hideAll() { panels.values.forEach { $0.close() }; panels.removeAll() }
     func edit() {
         if let editor { editor.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: FloatingMenuMetrics.editorSize),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Floating Menus & Widgets"; window.isReleasedWhenClosed = false
         window.applyCaptureVisibilityPreference()
@@ -122,100 +122,211 @@ private struct FloatingMenuView: View {
     let run: (FloatingMenuItem) -> Void
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: min(6, max(1, menu.columns))), spacing: 10) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x2), count: min(6, max(1, menu.columns))),
+                      spacing: AOMSpace.x2) {
                 ForEach(menu.items) { item in
                     switch item.kind {
                     case "clock": TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack { Text(item.title).font(.caption); Text(context.date, style: .time).monospacedDigit() }.padding()
+                        VStack(spacing: AOMSpace.x0_5) {
+                            Text(item.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            Text(context.date, style: .time).font(AOMFont.metric)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
+                        .padding(AOMSpace.x2)
                     }
                     case "variable": TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                        VStack { Text(item.title).font(.caption); Text(WorkflowVariables.value(item.variableName) ?? "—").textSelection(.enabled) }.padding()
+                        VStack(spacing: AOMSpace.x0_5) {
+                            Text(item.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                            Text(WorkflowVariables.value(item.variableName) ?? "—").font(AOMFont.body).textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail)
+                        .padding(AOMSpace.x2)
                     }
                     case "slider": FloatingValueSlider(item: item)
                     default: Button { run(item) } label: {
-                        Label(item.title, systemImage: item.symbol).frame(maxWidth: .infinity, minHeight: 45)
-                    }.buttonStyle(.bordered)
+                        Label(item.title, systemImage: item.symbol)
+                            .font(AOMFont.body)
+                            .frame(maxWidth: .infinity, minHeight: AOMSize.rowDetail - AOMSpace.x1)
+                    }
+                    .buttonStyle(.bordered)
+                    .help(item.title)
                     }
                 }
-            }.padding()
-        }.frame(minWidth: 230, minHeight: 120)
+            }
+            .padding(AOMSpace.x3)
+        }
+        .frame(minWidth: FloatingMenuMetrics.panelMinWidth, minHeight: FloatingMenuMetrics.panelMinHeight)
     }
 }
 
-/// Structured item editor plus an explicit native JSON import/export surface.
-/// JSON is staged and validated before it replaces the selected menu.
+/// Sizes the floating menu panel and editor use that no token covers.
+enum FloatingMenuMetrics {
+    static let panelMinWidth: CGFloat = 230
+    static let panelMinHeight: CGFloat = 120
+    static let editorSize = NSSize(width: 900, height: 620)
+    static let jsonHeight: CGFloat = 180
+}
+
+/// The floating menus editor (design-3.4.0 b.2 list + detail): the menus as
+/// a list with + − ⋯, the selected menu as sections (menu, items, JSON),
+/// Save with ⌘S, and a warning before an edited menu is left unsaved. JSON
+/// stays the explicit import/export surface and is validated before it
+/// replaces the draft.
 struct FloatingMenuEditor: View {
-    @ObservedObject private var store = FloatingMenuStore.shared
-    @State private var draft = FloatingMenuDefinition()
-    @State private var selectedItem: UUID?
+    @ObservedObject private var store: FloatingMenuStore
+    @State private var draft: FloatingMenuDefinition
+    @State private var selectedMenuID: UUID?
     @State private var json = ""
     @State private var error = ""
+    @State private var pendingSelection: UUID??
+    @State private var confirmingDelete = false
+    @StateObject private var toast = AOMToastModel()
+
+    init(store: FloatingMenuStore = .shared) {
+        self.store = store
+        let first = store.menus.first
+        _draft = State(initialValue: first ?? FloatingMenuDefinition())
+        _selectedMenuID = State(initialValue: first?.id)
+    }
+
+    /// The saved copy of the menu being edited, if it has been saved.
+    private var stored: FloatingMenuDefinition? { store.menus.first { $0.id == draft.id } }
+    private var isEdited: Bool { stored.map { $0 != draft } ?? true }
+    /// A new menu nobody has touched yet (its item ids are random, so it is
+    /// compared by content).
+    private var isPristineNew: Bool {
+        stored == nil && draft.name == FloatingMenuDefinition().name && draft.columns == 2 && !draft.staysOpen
+            && draft.items.count == 1 && draft.items[0].title == FloatingMenuItem().title && draft.items[0].actions.isEmpty
+    }
+
     var body: some View {
-        HSplitView {
-            VStack {
-                List(store.menus) { menu in Button(menu.name) { draft = menu; selectedItem = nil; error = "" } }
-                Button("New Menu") { draft = FloatingMenuDefinition(); selectedItem = nil }
-                Button("Delete Menu", role: .destructive) { store.remove(draft.id); draft = FloatingMenuDefinition() }
-            }.frame(minWidth: 150, idealWidth: 190)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextField("Menu name", text: $draft.name)
-                    Stepper("Columns: \(draft.columns)", value: $draft.columns, in: 1...6)
-                    Toggle("Keep menu open after an action", isOn: $draft.staysOpen)
-                    Picker("Placement", selection: Binding(get: { draft.placement ?? "pointer" }, set: { draft.placement = $0 })) {
-                        Text("At Pointer").tag("pointer"); Text("Display Center").tag("center"); Text("Below Notch / Menu Bar").tag("notch")
-                    }
-                    ForEach($draft.items) { $item in
-                        GroupBox {
-                            VStack(alignment: .leading) {
-                                HStack {
-                                    TextField("Item title", text: $item.title)
-                                    Picker("Kind", selection: $item.kind) {
-                                        Text("Action button").tag("button"); Text("Clock").tag("clock"); Text("Variable").tag("variable")
-                                        Text("Slider").tag("slider")
-                                    }
-                                    .onChange(of: item.kind) { _, kind in
-                                        if kind == "slider", item.valueBinding == nil { item.valueBinding = ContinuousValueBinding() }
-                                    }
-                                    Button(role: .destructive) { draft.items.removeAll { $0.id == item.id } } label: { Image(systemName: "trash") }
-                                }
-                                if item.kind == "button" {
-                                    TextField("SF Symbol", text: $item.symbol)
-                                    ForEach(item.actions) { action in
-                                        HStack {
-                                            Text(action.actionType.rawValue)
-                                            Spacer()
-                                            Button("Remove") { item.actions.removeAll { $0.id == action.id } }
-                                        }
-                                        ActionParameterForm(action: action, triggers: ActionExecutor.registeredTriggers) { mutate in
-                                            if let i = item.actions.firstIndex(where: { $0.id == action.id }) { mutate(&item.actions[i]) }
-                                        }
-                                        if !ActionParameterForm.handles(action.actionType) {
-                                            Text("For additional parameters, export JSON, edit the action parameters, then apply JSON.").font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Menu("Add Action") {
-                                        ForEach(ActionCategory.allCases) { category in
-                                            Menu(category.rawValue) {
-                                                ForEach(ActionType.actionsForCategory(category)) { type in
-                                                    Button(type.rawValue) { item.actions.append(TriggerAction(actionType: type)) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else if item.kind == "variable" { TextField("Variable name", text: $item.variableName) }
-                                else if item.kind == "slider" { FloatingSliderBindingFields(binding: $item.valueBinding) }
-                            }
+        HStack(spacing: 0) {
+            AOMListColumn(rows: {
+                List(selection: Binding<UUID?>(get: { selectedMenuID }, set: { select($0) })) {
+                    ForEach(store.menus) { menu in
+                        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                            Text(menu.name).font(AOMFont.body).lineLimit(1)
+                            Text("\(menu.items.count) item\(menu.items.count == 1 ? "" : "s") · \(Self.placementTitle(menu.placement))")
+                                .font(AOMFont.callout).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .padding(.vertical, AOMSpace.x0_5)
+                        .tag(menu.id)
+                        .contextMenu {
+                            Button("Show Menu") { FloatingMenuController.shared.show(menu.id.uuidString) }
+                            Button("Duplicate") { duplicate(menu) }
+                            Divider()
+                            Button("Delete…", role: .destructive) { select(menu.id); confirmingDelete = true }
                         }
                     }
-                    HStack {
-                        Button("Add Item") { draft.items.append(FloatingMenuItem()) }.disabled(draft.items.count >= 100)
-                        Button("Save") { save() }
-                        Button("Save & Preview") { if save() { FloatingMenuController.shared.show(draft.id.uuidString) } }
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: false))
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
+                .overlay {
+                    if store.menus.isEmpty {
+                        Text("No menus yet").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
                     }
-                    if !error.isEmpty { Text(error).foregroundStyle(.red) }
-                    DisclosureGroup("Native menu JSON · import / export") {
-                        TextEditor(text: $json).font(.system(.caption, design: .monospaced)).frame(height: 180)
+                }
+            }, footer: {
+                AOMAddRemoveBar(addLabel: "New Menu", add: { select(nil, makingNew: true) },
+                                removeLabel: "Delete Menu", remove: stored == nil ? nil : { confirmingDelete = true }) {
+                    if let stored {
+                        Button("Duplicate") { duplicate(stored) }
+                        Button("Show Menu") { FloatingMenuController.shared.show(stored.id.uuidString) }
+                    }
+                }
+            })
+            .frame(width: CGFloat(AOMSize.moduleListIdeal))
+            AOMDivider(axis: .vertical)
+            detail
+                .frame(minWidth: AOMSize.detailMinimum + AOMSpace.x10 * 2, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(AOMColor.canvas)
+        .aomToast(toast)
+        .confirmationDialog("Save changes to “\(draft.name)”?", isPresented: Binding(
+            get: { pendingSelection != nil }, set: { if !$0 { pendingSelection = nil } })) {
+            Button("Save") {
+                let next = pendingSelection ?? nil
+                pendingSelection = nil
+                if save() { load(next) }
+            }
+            Button("Don't Save", role: .destructive) {
+                let next = pendingSelection ?? nil
+                pendingSelection = nil
+                load(next)
+            }
+            Button("Cancel", role: .cancel) { pendingSelection = nil }
+        } message: {
+            Text("This menu has changes that aren't saved yet.")
+        }
+        .confirmationDialog("Delete “\(draft.name)”?", isPresented: $confirmingDelete) {
+            Button("Delete Menu", role: .destructive) {
+                let name = draft.name
+                store.remove(draft.id)
+                load(store.menus.first?.id)
+                toast.show("Deleted “\(name)”")
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The menu and its items are removed. Automations that show it by name stop finding it.")
+        }
+    }
+
+    // MARK: Detail
+
+    @ViewBuilder private var detail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                    Text(draft.name.isEmpty ? "Untitled Menu" : draft.name)
+                        .font(AOMFont.title).foregroundStyle(AOMColor.text).lineLimit(1)
+                    if isEdited { AOMStatusPill(stored == nil ? "Not Saved" : "Edited", tone: .neutral) }
+                    Spacer(minLength: AOMSpace.x2)
+                    Button("Show") { if save() { FloatingMenuController.shared.show(draft.id.uuidString) } }
+                        .help("Save and show this menu over the current app")
+                    Button("Save") { if save() { toast.show("Saved “\(draft.name)”") } }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut("s", modifiers: .command)
+                        .disabled(!isEdited)
+                        .help("Save (⌘S)")
+                }
+                if !error.isEmpty {
+                    AOMNotice(.error, "Couldn't save this menu", detail: error)
+                }
+                AOMSection("Menu") {
+                    AOMSettingRow("Name") {
+                        TextField("Menu name", text: $draft.name).textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: AOMEditorSize.rowField)
+                    }
+                    AOMSettingRow("Columns") {
+                        Stepper("\(draft.columns)", value: $draft.columns, in: 1...6).fixedSize()
+                    }
+                    AOMToggleRow("Keep open after an action", isOn: $draft.staysOpen)
+                    AOMSettingRow("Placement") {
+                        Picker("Placement", selection: Binding(get: { draft.placement ?? "pointer" }, set: { draft.placement = $0 })) {
+                            Text("At the Pointer").tag("pointer"); Text("Display Center").tag("center"); Text("Below the Menu Bar").tag("notch")
+                        }
+                        .labelsHidden().fixedSize()
+                    }
+                }
+                AOMSection("Items", detail: "\(draft.items.count) of 100", accessory: {
+                    Button { draft.items.append(FloatingMenuItem()) } label: { Label("Add Item", systemImage: "plus") }
+                        .disabled(draft.items.count >= 100)
+                }) {
+                    if draft.items.isEmpty {
+                        AOMInlineEmpty(symbol: "square.grid.2x2", message: "No items. A menu shows its items as buttons, clocks, values or sliders.",
+                                       actionTitle: "Add Item") { draft.items.append(FloatingMenuItem()) }
+                    }
+                    ForEach($draft.items) { $item in
+                        itemRows($item)
+                    }
+                }
+                DisclosureGroup("Menu as JSON (import and export)") {
+                    VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                        TextEditor(text: $json).font(AOMFont.mono).frame(height: FloatingMenuMetrics.jsonHeight)
+                            .scrollContentBackground(.hidden)
+                            .background(AOMColor.field, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                            .accessibilityLabel("Menu JSON")
                         HStack {
                             Button("Export Draft") {
                                 let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -226,17 +337,151 @@ struct FloatingMenuEditor: View {
                                     guard json.utf8.count <= 1_048_576 else { throw FloatingMenuDefinition.MenuError.invalid }
                                     let imported = try JSONDecoder().decode(FloatingMenuDefinition.self, from: Data(json.utf8))
                                     try imported.validate(); draft = imported; error = ""
+                                    toast.show("Applied the JSON to the draft; Save keeps it")
                                 } catch { self.error = error.localizedDescription }
                             }
                         }
                     }
-                }.padding()
-            }.frame(minWidth: 550)
+                    .padding(.top, AOMSpace.x2)
+                }
+                .font(AOMFont.body)
+            }
+            .padding(AOMSpace.pageMargin)
+            .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    /// One item: its kind, title and symbol, then what it does.
+    @ViewBuilder private func itemRows(_ item: Binding<FloatingMenuItem>) -> some View {
+        let value = item.wrappedValue
+        AOMSettingRow(value.title.isEmpty ? "Untitled item" : value.title, symbol: value.kind == "button" ? value.symbol : Self.kindSymbol(value.kind)) {
+            HStack(spacing: AOMSpace.x2) {
+                Picker("Kind", selection: item.kind) {
+                    Text("Action Button").tag("button"); Text("Clock").tag("clock"); Text("Variable").tag("variable")
+                    Text("Slider").tag("slider")
+                }
+                .labelsHidden().fixedSize()
+                .onChange(of: value.kind) { _, kind in
+                    if kind == "slider", item.wrappedValue.valueBinding == nil { item.wrappedValue.valueBinding = ContinuousValueBinding() }
+                }
+                AOMIconButton("trash", label: "Remove Item", role: .destructive) {
+                    draft.items.removeAll { $0.id == value.id }
+                }
+            }
+        }
+        AOMSettingRow("Title", indent: true) {
+            TextField("Item title", text: item.title).textFieldStyle(.roundedBorder).frame(maxWidth: AOMEditorSize.rowField)
+        }
+        if value.kind == "button" {
+            AOMSettingRow("Symbol", indent: true, help: "An SF Symbols name, for example bolt, star or keyboard") {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: NSImage(systemSymbolName: value.symbol, accessibilityDescription: nil) == nil ? "questionmark.square.dashed" : value.symbol)
+                        .font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
+                        .help(NSImage(systemSymbolName: value.symbol, accessibilityDescription: nil) == nil ? "No symbol has this name" : value.symbol)
+                    TextField("SF Symbol", text: item.symbol).textFieldStyle(.roundedBorder).frame(width: AOMEditorSize.rowField * 0.6)
+                }
+            }
+            ForEach(value.actions) { action in
+                AOMSettingRow(action.displayName, indent: true) {
+                    AOMIconButton("minus.circle", label: "Remove \(action.displayName)") {
+                        item.wrappedValue.actions.removeAll { $0.id == action.id }
+                    }
+                }
+                ActionParameterForm(action: action, triggers: ActionExecutor.registeredTriggers) { mutate in
+                    if let i = item.wrappedValue.actions.firstIndex(where: { $0.id == action.id }) { mutate(&item.wrappedValue.actions[i]) }
+                }
+                .padding(.horizontal, AOMSpace.rowInset)
+                if !ActionParameterForm.handles(action.actionType) {
+                    Text("This action's other settings are edited in the menu's JSON below.")
+                        .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .padding(.horizontal, AOMSpace.rowInset).padding(.bottom, AOMSpace.x2)
+                }
+            }
+            AOMSettingRow(value.actions.isEmpty ? "No actions yet" : "Then", indent: true) {
+                Menu("Add Action") {
+                    ForEach(ActionCategory.allCases) { category in
+                        Menu(category.rawValue) {
+                            ForEach(ActionType.actionsForCategory(category)) { type in
+                                Button(type.rawValue) { item.wrappedValue.actions.append(TriggerAction(actionType: type)) }
+                            }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
+        } else if value.kind == "variable" {
+            AOMSettingRow("Variable", indent: true) {
+                TextField("Variable name", text: item.variableName).textFieldStyle(.roundedBorder).frame(maxWidth: AOMEditorSize.rowField)
+            }
+        } else if value.kind == "slider" {
+            VStack(alignment: .leading, spacing: AOMSpace.x2) {
+                FloatingSliderBindingFields(binding: item.valueBinding)
+            }
+            .padding(.horizontal, AOMSpace.rowInset).padding(.vertical, AOMSpace.x2)
+        }
+    }
+
+    private static func kindSymbol(_ kind: String) -> String {
+        switch kind {
+        case "clock": return "clock"
+        case "variable": return "textformat.abc"
+        case "slider": return "slider.horizontal.3"
+        default: return "bolt"
+        }
+    }
+
+    private static func placementTitle(_ placement: String?) -> String {
+        switch placement {
+        case "center": return "display center"
+        case "notch": return "below the menu bar"
+        default: return "at the pointer"
+        }
+    }
+
+    // MARK: Actions
+
+    /// Selecting another menu (or New Menu) asks first when the draft has
+    /// unsaved changes, so nothing is dropped without a word.
+    private func select(_ id: UUID?, makingNew: Bool = false) {
+        guard makingNew || id != selectedMenuID else { return }
+        if isEdited, !isPristineNew {
+            pendingSelection = .some(makingNew ? nil : id)
+            return
+        }
+        load(makingNew ? nil : id)
+    }
+
+    private func load(_ id: UUID?) {
+        if let id, let menu = store.menus.first(where: { $0.id == id }) {
+            draft = menu
+            selectedMenuID = id
+        } else {
+            draft = FloatingMenuDefinition()
+            selectedMenuID = nil
+        }
+        error = ""
+    }
+
+    private func duplicate(_ menu: FloatingMenuDefinition) {
+        var copy = menu
+        copy.id = UUID()
+        copy.name = menu.name + " Copy"
+        copy.items = menu.items.map { var item = $0; item.id = UUID(); return item }
+        do {
+            try store.save(copy)
+            load(copy.id)
+            toast.show("Duplicated “\(menu.name)”")
+        } catch { self.error = error.localizedDescription }
+    }
+
     @discardableResult private func save() -> Bool {
-        do { try store.save(draft); error = ""; return true }
-        catch { self.error = error.localizedDescription; return false }
+        do {
+            try store.save(draft)
+            selectedMenuID = draft.id
+            error = ""
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
 }
 

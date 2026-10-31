@@ -69,7 +69,7 @@ struct AnnotationPlacementChooser: View {
     private func button(_ placement: AnnotationCombinePlacement, key: KeyEquivalent) -> some View {
         Button { choose(placement) } label: {
             Image(systemName: placement.symbol)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(.title2, weight: .semibold))
                 .frame(width: 44, height: 36)
         }
         .keyboardShortcut(key, modifiers: [])
@@ -94,7 +94,7 @@ struct AnnotationDropZoneOverlay: View {
                         .position(position(for: placement, in: size))
                 }
                 Text(active.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(.body, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(Color.accentColor, in: Capsule())
@@ -108,7 +108,7 @@ struct AnnotationDropZoneOverlay: View {
 
     private func arrow(_ placement: AnnotationCombinePlacement, highlighted: Bool) -> some View {
         Image(systemName: placement.symbol)
-            .font(.system(size: 18, weight: .bold))
+            .font(.system(.title2, weight: .bold))
             .foregroundStyle(highlighted ? Color.white : Color.accentColor)
             .frame(width: 40, height: 40)
             .background(highlighted ? Color.accentColor : Color(nsColor: .windowBackgroundColor).opacity(0.9),
