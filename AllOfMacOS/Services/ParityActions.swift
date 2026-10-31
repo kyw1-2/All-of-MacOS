@@ -874,10 +874,8 @@ enum ParityActions {
             default: value = "not autohide"
             }
             let script = "tell application \"System Events\" to tell dock preferences to set autohide to \(value)"
-            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 10) { code, output, _ in
-                if code != 0 { log("Dock: allow AOM to control System Events in Privacy & Security › Automation. \(output.prefix(160))") }
-                completion(code == 0)
-            }
+            // 3.4.0: Apple Events failures explained, -600 asked once more.
+            AppleEventScripts.run(script, action: "Dock hiding", timeout: 10, completion: completion)
         case .bluetoothDevice: bluetooth(p, completion)
         case .setWiFiPower:
             guard let interface = CWWiFiClient.shared().interface() else { log("No Wi-Fi interface"); completion(false); return }

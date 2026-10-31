@@ -199,6 +199,12 @@ final class AirPlayOutputRenderer {
     /// below its size is asked less and less often (each accepted set
     /// reconfigures AOM's IO, one possible gap).
     static let ioRerequestMaximumInterval: TimeInterval = 600
+    /// A device that ignored this many re-requests is not asked again by
+    /// this output (3.4.0 audit, HomePod crackle): the HomePod answers 0 and
+    /// keeps 128-frame IO, and every set on its running IO may restart that
+    /// IO (a gap, heard as a click). Until 3.4.0 it was asked every 10
+    /// minutes for as long as the output lived, 6 times an hour.
+    static let maximumUnheededIORequests = 2
 
     /// The wait before the next re-request after `attempts` that did not
     /// stick: 30 s, then doubling up to 10 minutes.
@@ -216,6 +222,7 @@ final class AirPlayOutputRenderer {
                                         secondsSinceLastRequest: TimeInterval,
                                         unheededRequests: Int = 0) -> Bool {
         guard configured < preferred else { return false }
+        guard unheededRequests < maximumUnheededIORequests else { return false }
         return secondsSinceLastRequest >= ioRerequestDelay(afterUnheededRequests: unheededRequests)
     }
 
@@ -240,6 +247,10 @@ final class AirPlayOutputRenderer {
         }
         lastIORequestAt = now
         cycleGapsAtLastRequest = gaps
+        // 3.4.0: each request is an event, so audio-health.json can put it
+        // next to the cycle gaps around it.
+        AudioEventLog.shared.record(.bufferSize, source: eventName, value: Int64(configuredFrames),
+                                    detail: "IO size re-request (\(ioTargetFrames) frames)")
         // The resulting BufferFrameSize notification retargets the bridge.
         requestIOBufferFrames()
     }

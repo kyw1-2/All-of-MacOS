@@ -170,9 +170,10 @@ enum ExtendedActions {
         case .startScreenSaver: openSystemApp(["/System/Library/CoreServices/ScreenSaverEngine.app"], completion)
         case .sleepDisplay: runProcess("/usr/bin/pmset", ["displaysleepnow"], completion)
         case .emptyTrash:
-            runScript(kind: "applescript", source: "tell application \"Finder\" to empty trash", timeout: 60, completion)
+            // 3.4.0: Apple Events failures explained, -600 asked once more.
+            AppleEventScripts.run("tell application \"Finder\" to empty trash", action: "Empty Trash", timeout: 60, completion: completion)
         case .logOut:
-            runScript(kind: "applescript", source: "tell application \"loginwindow\" to «event aevtrlgo»", timeout: 15, completion)
+            AppleEventScripts.run("tell application \"loginwindow\" to «event aevtrlgo»", action: "Log Out", timeout: 15, completion: completion)
         case .toggleHiddenFiles: toggleHiddenFiles(completion)
         case .openNotificationCenter: completion(MenuBarExtras.press(.notificationCenter))
         case .openControlCenter: completion(MenuBarExtras.press(.controlCenter))
@@ -216,6 +217,7 @@ enum ExtendedActions {
         case .runJavaScript:
             ScriptRunnerClient.shared.run(kind: "javascript", source: p.scriptContent ?? "", timeout: p.scriptTimeoutSeconds ?? 30) { code, output, timedOut in
                 ScriptActionResults.record(name: p.scriptResultVariable, output: output, code: code, timedOut: timedOut)
+                if code != 0, !timedOut { AppleEventScripts.explain(kind: "javascript", output: output) }
                 completion(code == 0 && !timedOut)
             }
 

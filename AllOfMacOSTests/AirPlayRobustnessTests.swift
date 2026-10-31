@@ -35,7 +35,9 @@ final class AirPlayRobustnessTests: XCTestCase {
                                                  secondsSinceLastRequest: 59, unheededRequests: 1))
         XCTAssertTrue(R.shouldRerequestIOBuffer(configured: 128, preferred: 1024, cycleGapsGrew: false,
                                                 secondsSinceLastRequest: 60, unheededRequests: 1))
-        // No lifetime cap: a device stuck small is still asked, every 10 minutes at most.
+        // 3.4.0: a device that ignored two re-requests (a HomePod keeps 128
+        // frames) is not asked again by this output; each set on its running
+        // IO may restart it (a click). Until 3.4.0: 9 in the first hour, then 6 an hour.
         var asked = 0, unheeded = 0, since = 0.0
         for _ in stride(from: 0.0, to: 3600, by: 30) {
             since += 30
@@ -44,7 +46,9 @@ final class AirPlayRobustnessTests: XCTestCase {
                 asked += 1; unheeded += 1; since = 0
             }
         }
-        XCTAssertEqual(asked, 9, "30, 60, 120, 240, 480 s, then every 600 s within the hour")
+        XCTAssertEqual(asked, R.maximumUnheededIORequests, "30 s, then 60 s, then never again within the hour")
+        XCTAssertFalse(R.shouldRerequestIOBuffer(configured: 128, preferred: 1024, cycleGapsGrew: false,
+                                                 secondsSinceLastRequest: 3600, unheededRequests: 2))
     }
 
     func testTheBridgeExposesSkippedCycles() {
