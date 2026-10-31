@@ -105,7 +105,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         audioObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 if #available(macOS 14.2, *) {
-                    if let self, self.soundEnabled != AppAudioEngine.shared.isEnabled {
+                    if let self, !self.previewShowsMixer, self.soundEnabled != AppAudioEngine.shared.isEnabled {
                         self.soundEnabled = AppAudioEngine.shared.isEnabled
                     }
                 }
@@ -119,6 +119,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-mixer") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 MainActor.assumeIsolated {
+                    self?.previewShowsMixer = true
                     self?.soundEnabled = true
                     self?.showAllApps = true
                     self?.showPanel()
@@ -126,6 +127,10 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             }
         }
     }
+
+    /// Isolated previews: keep the panel's list showing although the
+    /// engine never runs in a preview.
+    private var previewShowsMixer = false
 
     func refresh() {
         guard isSupported, #available(macOS 14.2, *) else { return }
@@ -540,6 +545,9 @@ private struct AppAudioMixerView: View {
     @State private var controlsHeight: CGFloat = 0
     @AppStorage("AOMAudioMixerShowsOutputEffects") private var showsOutputEffects = false
     @State private var filter = ""
+    /// The filter takes focus only when clicked (HIG Focus: don't move focus
+    /// without people's interaction), not when the panel opens.
+    @FocusState private var filterFocused: Bool
     private static let appListMinimum = AOMSize.rowStandard * 5
 
     var body: some View {
@@ -672,6 +680,8 @@ private struct AppAudioMixerView: View {
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
                     .frame(maxWidth: 160)
+                    .focused($filterFocused)
+                    .onAppear { DispatchQueue.main.async { filterFocused = false } }
                     .accessibilityLabel("Filter applications")
                 Toggle("Show All", isOn: $service.showAllApps)
                     .toggleStyle(.checkbox)

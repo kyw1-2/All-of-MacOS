@@ -13,9 +13,13 @@ final class MicMuteHUDPanel: MicMuteHUDPresenting {
     private var generation = UUID()
 
     func show(muted: Bool, title: String, detail: String?) {
+        show(muted: muted, title: title, detail: detail, seconds: 1.2)
+    }
+
+    func show(muted: Bool, title: String, detail: String?, seconds: TimeInterval) {
         present(AOMHUDContent(symbol: muted ? "mic.slash.fill" : "mic.fill", title: title, detail: detail,
                               tone: muted ? .warning : .success),
-                seconds: 1.2)
+                seconds: seconds)
     }
 
     func showFailure(title: String, detail: String) {

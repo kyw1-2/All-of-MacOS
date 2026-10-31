@@ -177,6 +177,22 @@ final class MicMute340Tests: XCTestCase {
     }
 
     @MainActor
+    func testTheSystemToolsTileTogglesWithoutAHUD() {
+        let (controller, mic, hud, cleanup) = makeController(muted: false)
+        defer { cleanup() }
+        XCTAssertEqual(controller.toggleInWindow(), true, "The new state, for the page's toast")
+        XCTAssertTrue(mic.muted)
+        XCTAssertTrue(hud.shown.isEmpty, "In the window the page shows a toast instead")
+        XCTAssertEqual(controller.toggleInWindow(), false)
+        mic.canChange = false
+        XCTAssertNil(controller.toggleInWindow(), "Nothing changed")
+        XCTAssertNotNil(controller.lastFailure)
+        XCTAssertTrue(hud.failures.isEmpty)
+        controller.toggle()
+        XCTAssertEqual(hud.failures.count, 1, "The hotkey still reports on the HUD")
+    }
+
+    @MainActor
     func testStatusMenuItemShowsTheState() {
         let (controller, mic, _, cleanup) = makeController(muted: true)
         defer { cleanup() }
