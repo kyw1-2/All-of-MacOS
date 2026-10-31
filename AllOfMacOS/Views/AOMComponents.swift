@@ -596,12 +596,14 @@ struct AOMModuleBadge: View {
 }
 
 /// A Workspace module tile (design-3.3.6 b.12, Reminders/Passwords/Home
-/// tiles): the 32 pt squircle, the name over one status line and the one
-/// control on the top row, then the live count in Title with its unit.
+/// tiles): the 32 pt squircle with the name over one status line, then the
+/// live count in Title with its unit and the one control at its trailing end.
 /// `AOMSize.tileHeight` tall. Clicking anywhere but the control opens the
 /// module page; the control is its own target beside the text instead of
 /// floating over it, so the status line uses the full width.
-struct AOMModuleTile<Control: View>: View {
+/// 3.4: `menu` adds the tile's own context-menu items after Open (Turn On,
+/// Hide from Workspace…); flat, no shortcuts (HIG Context menus).
+struct AOMModuleTile<Control: View, MenuItems: View>: View {
     let module: AOMModule
     let metric: String
     var unit: String?
@@ -611,11 +613,12 @@ struct AOMModuleTile<Control: View>: View {
     var running = false
     let open: () -> Void
     @ViewBuilder var control: Control
+    @ViewBuilder var menuItems: MenuItems
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ module: AOMModule, metric: String, unit: String? = nil, status: String, statusTone: AOMTone? = nil,
          active: Bool = true, running: Bool = false, open: @escaping () -> Void,
-         @ViewBuilder control: () -> Control) {
+         @ViewBuilder control: () -> Control, @ViewBuilder menu: () -> MenuItems) {
         self.module = module
         self.metric = metric
         self.unit = unit
@@ -625,6 +628,7 @@ struct AOMModuleTile<Control: View>: View {
         self.running = running
         self.open = open
         self.control = control()
+        self.menuItems = menu()
     }
 
     /// Warning, danger and recording statuses carry their glyph and text colour.
@@ -644,42 +648,50 @@ struct AOMModuleTile<Control: View>: View {
             .accessibilityLabel("\(module.title), \([metric, unit].compactMap { $0 }.joined(separator: " ")), \(status)")
             .accessibilityHint("Opens \(module.title)")
             .help("\(module.title): \(status)")
+            // 3.4: the name and status line use the tile's full width (a
+            // 1000 pt window no longer truncates "Needs Screen Recording");
+            // the control sits at the trailing end of the count row, like a
+            // Control Center module.
             VStack(alignment: .leading, spacing: AOMSpace.x3) {
                 HStack(alignment: .center, spacing: AOMSpace.x3) {
                     AOMModuleBadge(module, active: active)
                         .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
-                        .allowsHitTesting(false)
                     lines
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .allowsHitTesting(false)
+                }
+                .frame(height: AOMIcon.tileBadge)
+                .allowsHitTesting(false)
+                HStack(alignment: .center, spacing: AOMSpace.x2) {
+                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                        Text(metric)
+                            .font(AOMFont.metricLarge)
+                            .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
+                            .contentTransition(.numericText())
+                            .lineLimit(1)
+                        if let unit {
+                            Text(unit)
+                                .font(AOMFont.callout)
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .layoutPriority(1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    Spacer(minLength: AOMSpace.x2)
                     control
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .fixedSize()
                 }
-                .frame(height: AOMIcon.tileBadge)
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    Text(metric)
-                        .font(AOMFont.metricLarge)
-                        .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
-                        .contentTransition(.numericText())
-                        .lineLimit(1)
-                    if let unit {
-                        Text(unit)
-                            .font(AOMFont.callout)
-                            .foregroundStyle(AOMColor.textSecondary)
-                            .lineLimit(1)
-                    }
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
             }
             .padding(AOMSpace.cardPadding)
         }
         .frame(height: AOMSize.tileHeight)
         .contextMenu {
             Button("Open \(module.title)", action: open)
+            menuItems
         }
         .accessibilityElement(children: .contain)
     }
@@ -705,6 +717,15 @@ struct AOMModuleTile<Control: View>: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+extension AOMModuleTile where MenuItems == EmptyView {
+    init(_ module: AOMModule, metric: String, unit: String? = nil, status: String, statusTone: AOMTone? = nil,
+         active: Bool = true, running: Bool = false, open: @escaping () -> Void,
+         @ViewBuilder control: () -> Control) {
+        self.init(module, metric: metric, unit: unit, status: status, statusTone: statusTone, active: active,
+                  running: running, open: open, control: control, menu: { EmptyView() })
     }
 }
 

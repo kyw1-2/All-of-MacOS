@@ -52,6 +52,13 @@ struct AOMHomeView: View {
     @StateObject private var system = SystemStatusMonitor()
     @State private var dismissedSuggestions: Set<String> = []
     @State private var showsAllAttention = false
+    /// What this page shows and in which order (design-3.4.0 b.15).
+    @ObservedObject private var layout = AOMWorkspaceLayout.shared
+    @Environment(\.undoManager) private var undoManager
+    @State private var showsCustomize = false
+    /// The Productivity modules' `attention` lines, polled with the rest of
+    /// the status so a module's countdown never redraws the whole page.
+    @State private var moduleAttention: [AOMModule: String] = [:]
 
     static let maximumContentWidth: CGFloat = AOMSize.contentMaxWidth
     static let attentionLimit = 3
@@ -85,8 +92,15 @@ struct AOMHomeView: View {
                 if !snapshot.attention.isEmpty {
                     needsAttention(snapshot.attention)
                 }
-                modules(snapshot)
-                quickActions
+                if layout.shows(.tools) {
+                    toolModules(snapshot)
+                }
+                if layout.shows(.productivity) {
+                    productivityModules
+                }
+                if layout.shows(.quickActions) {
+                    quickActions
+                }
                 overview(snapshot)
             }
             .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
@@ -108,6 +122,13 @@ struct AOMHomeView: View {
         .background(AOMColor.canvas)
         .navigationTitle("Workspace")
         .toolbar {
+            // View options, then the page's one primary action (b.3).
+            ToolbarItem(placement: .primaryAction) {
+                Button { showsCustomize = true } label: {
+                    Label("Customize Workspace", systemImage: "slider.horizontal.3")
+                }
+                .help("Choose and order what Workspace shows")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button(action: newAutomation) {
                     Label("New Automation", systemImage: "plus")
@@ -115,6 +136,11 @@ struct AOMHomeView: View {
                 .help("New Automation (⌘N)")
             }
         }
+        .sheet(isPresented: $showsCustomize) {
+            WorkspaceCustomizeSheet(layout: layout)
+        }
+        .onAppear(perform: openRequestedCustomize)
+        .onChange(of: layout.customizeRequested) { _, _ in openRequestedCustomize() }
         // ⌘N and ⌘F work from the Workspace too: they open the Automation page.
         .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
             search: { appState.selectedMainTab = .gestures },
@@ -130,7 +156,7 @@ struct AOMHomeView: View {
         // The This Mac readouts sample only while Workspace is on screen.
         .onAppear { system.start() }
         .onDisappear { system.stop() }
-        .aomToast(toast.message)
+        .aomToast(toast)
     }
 
     /// Polled state that nothing publishes (permissions, Paste's shortcut,
@@ -150,6 +176,45 @@ struct AOMHomeView: View {
         let currentID = AudioOutputService.currentDeviceID()
         let device = AudioOutputService.devices().first { $0.id == currentID }?.name
         if device != outputDevice { outputDevice = device }
+        var attention: [AOMModule: String] = [:]
+        for status in AOMModuleStatusBoard.all {
+            if let text = status.attention, !text.isEmpty { attention[status.module] = text }
+        }
+        if attention != moduleAttention { moduleAttention = attention }
+    }
+
+    /// Hides one part, tile or quick action as an undoable step, with Undo in
+    /// the toast (HIG Undo and redo; no confirmation for undoable actions).
+    private func hide(_ id: String, name: String, title: String) {
+        let before = layout.state
+        layout.change("Hide \(name)", undoManager: undoManager) { $0.setHidden(id, true) }
+        toast.show("\(title) hidden from Workspace", action: { [undoManager] in
+            if let undoManager, undoManager.canUndo { undoManager.undo() } else { layout.restore(before) }
+        })
+    }
+
+    private func openRequestedCustomize() {
+        guard layout.customizeRequested else { return }
+        layout.customizeRequested = false
+        showsCustomize = true
+    }
+
+    private func move(_ kind: WorkspaceQuickActionKind, by offset: Int) {
+        layout.change("Move Quick Action", undoManager: undoManager) { $0.move(kind, by: offset) }
+    }
+
+    private func move(_ kind: WorkspaceQuickActionKind, before target: WorkspaceQuickActionKind) {
+        layout.change("Move Quick Action", undoManager: undoManager) { $0.move(kind, before: target) }
+    }
+
+    /// The items every tile's context menu ends with.
+    @ViewBuilder
+    private func tileMenu(_ module: AOMModule) -> some View {
+        Divider()
+        Button("Hide from Workspace") {
+            hide(AOMWorkspaceLayout.tileID(module), name: "Tile", title: module.title)
+        }
+        Button("Customize Workspace…") { showsCustomize = true }
     }
 
     private func newAutomation() {
@@ -295,6 +360,12 @@ struct AOMHomeView: View {
                                             text: permission.attentionSentence,
                                             actionTitle: "Allow…") { _ = permission.openSettings() })
         }
+        for module in AOMModule.allCases {
+            guard let text = moduleAttention[module] else { continue }
+            items.append(WorkspaceAttention(id: "module.\(module.rawValue)", kind: .fixNow, tone: .warning,
+                                            text: "\(module.title): \(text)",
+                                            actionTitle: "Open \(module.title)") { appState.selectedMainTab = module.tab })
+        }
         if let conflict = shortcutConflict {
             let alternative = ShortcutConflicts.alternativeHistoryShortcut
             items.append(WorkspaceAttention(
@@ -338,25 +409,70 @@ struct AOMHomeView: View {
 
     // MARK: Modules
 
-    /// Three columns from 3 × 240 pt (two rows of three at the default
-    /// window size), two below that or beside the diagnostics drawer.
-    private var moduleColumns: Int {
-        contentWidth >= 3 * AOMSize.tileMin + 2 * AOMSpace.tileGap ? 3 : 2
+    static let toolModuleList: [AOMModule] = [.automation, .tiling, .capture, .clipboard, .audio, .systemTools]
+    static let productivityModuleList: [AOMModule] = [.folderRules, .textActions, .files, .focus]
+
+    /// The most columns of `AOMSize.moduleTileMin` that fit, preferring a
+    /// count that divides the tiles evenly so no row is half empty (6 → 3 or
+    /// 2, 4 → 4 or 2; design-3.4.0 b.2).
+    static func gridColumns(count: Int, width: CGFloat, preferred: [Int],
+                            minimum: CGFloat = AOMSize.moduleTileMin) -> Int {
+        let fit = max(1, Int((width + AOMSpace.tileGap) / (minimum + AOMSpace.tileGap)))
+        if let even = preferred.first(where: { $0 <= fit && count > 0 && count % $0 == 0 }) { return even }
+        return max(1, min(fit, count))
     }
 
-    private func modules(_ snapshot: WorkspaceSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-            AOMSectionTitle("Modules", detail: "\(moduleOnCount) of \(AOMModule.allCases.count) on")
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top),
-                                     count: moduleColumns),
-                      alignment: .leading, spacing: AOMSpace.tileGap) {
-                ForEach(AOMModule.allCases) { module in
-                    tile(module, snapshot)
+    private func moduleGrid<Content: View>(columns: Int, @ViewBuilder content: () -> Content) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top),
+                                 count: columns),
+                  alignment: .leading, spacing: AOMSpace.tileGap, content: content)
+    }
+
+    private func toolModules(_ snapshot: WorkspaceSnapshot) -> some View {
+        let shown = Self.toolModuleList.filter(layout.shows)
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle("Tools", detail: "\(toolsOnCount) of \(Self.toolModuleList.count) on")
+            if shown.isEmpty {
+                hiddenTilesRow("Every Tools tile is hidden.")
+            } else {
+                moduleGrid(columns: Self.gridColumns(count: shown.count, width: contentWidth, preferred: [3, 2])) {
+                    ForEach(shown) { module in
+                        tile(module, snapshot)
+                    }
                 }
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Modules")
+        .accessibilityLabel("Tools")
+    }
+
+    /// Folder Rules, Text Actions, Files and Focus, each drawn from the live
+    /// status its module publishes on `AOMModuleStatusBoard`.
+    private var productivityModules: some View {
+        let shown = Self.productivityModuleList.filter(layout.shows)
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            WorkspaceProductivityTitle()
+            if shown.isEmpty {
+                hiddenTilesRow("Every Productivity tile is hidden.")
+            } else {
+                moduleGrid(columns: Self.gridColumns(count: shown.count, width: contentWidth, preferred: [4, 2])) {
+                    ForEach(shown) { module in
+                        if let status = AOMModuleStatusBoard.status(for: module) {
+                            AOMModuleStatusTile(status: status, open: { appState.selectedMainTab = module.tab }) {
+                                tileMenu(module)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Productivity")
+    }
+
+    private func hiddenTilesRow(_ message: String) -> some View {
+        AOMInlineEmpty(symbol: "eye.slash", message: message, actionTitle: "Customize…") { showsCustomize = true }
+            .aomCard(padding: 0)
     }
 
     /// Measured width of the content column (drives the grid and the
@@ -386,6 +502,9 @@ struct AOMHomeView: View {
                 } else {
                     WorkspaceTileChevron()
                 }
+            } menu: {
+                Button("New Automation", action: newAutomation)
+                tileMenu(.automation)
             }
         case .tiling:
             let zones = appState.effectiveSnapZones.filter(\.isEnabled).count
@@ -401,6 +520,11 @@ struct AOMHomeView: View {
                                                      set: { appState.setSnappingEnabled($0) }))
                     .disabled(globalPaused)
                     .help("Drag to Snap: place windows by dragging them to an edge, corner or snap area")
+            } menu: {
+                if !globalPaused {
+                    Button(drag ? "Turn Off Drag to Snap" : "Turn On Drag to Snap") { appState.setSnappingEnabled(!drag) }
+                }
+                tileMenu(.tiling)
             }
         case .capture:
             let today = Calendar.current.startOfDay(for: Date())
@@ -435,6 +559,12 @@ struct AOMHomeView: View {
                     .buttonStyle(.bordered)
                     .help("Capture Area" + (captureKeys(.captureArea).map { " (\($0))" } ?? ""))
                 }
+            } menu: {
+                if !needsSetup && !recording.isRecording {
+                    Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                    Button("Record Screen") { recording.toggleRecording() }
+                }
+                tileMenu(.capture)
             }
         case .clipboard:
             let count = clipboard.entries.count
@@ -453,6 +583,14 @@ struct AOMHomeView: View {
                                                                set: { $0 ? clipboard.resume() : clipboard.pause() }))
                     .disabled(globalPaused)
                     .help(clipboard.paused ? "Resume clipboard history" : "Stop saving what you copy until you resume")
+            } menu: {
+                Button("Show Clipboard Shelf") { ClipboardPanelController.shared.show() }
+                if !globalPaused {
+                    Button(clipboard.paused ? "Resume Clipboard History" : "Pause Clipboard History") {
+                        if clipboard.paused { clipboard.resume() } else { clipboard.pause() }
+                    }
+                }
+                tileMenu(.clipboard)
             }
         case .audio:
             let custom = audio.apps.filter(audio.hasCustomSettings).count
@@ -469,6 +607,11 @@ struct AOMHomeView: View {
                 Toggle("App Audio", isOn: $audio.soundEnabled)
                     .disabled(!audio.isSupported)
                     .help(audio.soundEnabled ? "Turn off per-app volume and effects" : "Turn on per-app volume and effects")
+            } menu: {
+                if audio.isSupported {
+                    Button(audio.soundEnabled ? "Turn Off App Audio" : "Turn On App Audio") { audio.soundEnabled.toggle() }
+                }
+                tileMenu(.audio)
             }
         case .folderRules, .textActions, .files, .focus:
             if let status = AOMModuleStatusBoard.status(for: module) {
@@ -483,6 +626,8 @@ struct AOMHomeView: View {
                           active: true,
                           open: { appState.selectedMainTab = .tools }) {
                 WorkspaceTileChevron()
+            } menu: {
+                tileMenu(.systemTools)
             }
         }
     }
@@ -498,54 +643,70 @@ struct AOMHomeView: View {
 
     // MARK: Quick actions
 
-    /// Launch tiles in the Shortcuts gallery style: one row of five at the
-    /// default window size, wrapping in narrow windows; pinned automations
-    /// follow the built-in actions.
+    /// Five columns of `AOMSize.quickActionMin` or wider (two rows of the
+    /// ten built-in actions at 1000 and 1320 pt windows).
+    private var quickActionColumns: Int {
+        max(1, min(5, Int((contentWidth + AOMSpace.tileGap) / (AOMSize.quickActionMin + AOMSpace.tileGap))))
+    }
+
+    /// Launch tiles (Shortcuts gallery, Control Center): the built-in actions
+    /// in the order chosen in Customize Workspace, then the automations you
+    /// pinned. Drag a tile onto another to move it; the context menu moves
+    /// and removes it too; every change is undoable.
     private var quickActions: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-            AOMSectionTitle("Quick actions", detail: pinned.isEmpty ? nil : "\(pinned.count) pinned")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 184), spacing: AOMSpace.tileGap, alignment: .top)],
-                      alignment: .leading, spacing: AOMSpace.tileGap) {
-                WorkspaceQuickAction("Capture Area", symbol: "viewfinder", hue: AOMModule.capture.hue,
-                                     keys: captureKeys(.captureArea)) {
-                    CaptureCoordinator.shared.captureArea()
-                }
-                WorkspaceQuickAction("Capture Window", symbol: "macwindow", hue: AOMModule.capture.hue,
-                                     keys: captureKeys(.captureWindow)) {
-                    CaptureCoordinator.shared.captureWindowInteractive()
-                }
-                WorkspaceQuickAction(recording.isRecording ? "Stop Recording" : "Record Screen",
-                                     symbol: recording.isRecording ? "stop.fill" : "record.circle",
-                                     hue: recording.isRecording ? AOMColor.recording : AOMModule.capture.hue,
-                                     keys: captureKeys(.recordScreen)) {
-                    recording.toggleRecording()
-                }
-                WorkspaceQuickAction("Copy Text", symbol: "text.viewfinder", hue: AOMModule.capture.hue,
-                                     keys: captureKeys(.ocr)) {
-                    CaptureCoordinator.shared.captureText()
-                }
-                WorkspaceQuickAction("Clipboard History", symbol: "doc.on.clipboard", hue: AOMModule.clipboard.hue,
-                                     keys: ClipboardShortcuts.shared.shortcut(for: .history)?.displayString) {
-                    ClipboardPanelController.shared.show()
-                }
-                ForEach(pinned) { trigger in
-                    let canRun = trigger.isEnabled && !trigger.actions.isEmpty && !trigger.aomTypesText
-                    WorkspaceQuickAction(trigger.displayName, symbol: canRun ? "bolt.fill" : "bolt",
-                                         hue: canRun ? AOMModule.automation.hue : nil,
-                                         keys: { if case .keyboardShortcut(let shortcut) = trigger.input { return shortcut.displayString }; return nil }(),
-                                         running: runStates[trigger.id] == .running,
-                                         help: canRun ? "Run “\(trigger.displayName)”" : "Open “\(trigger.displayName)” in Automation") {
-                        if canRun { run(trigger) } else { open(trigger) }
+        let kinds = layout.visibleQuickActions
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle("Quick actions", detail: pinned.isEmpty ? nil : "\(pinned.count) pinned") {
+                AOMCardLink("Customize", symbol: nil) { showsCustomize = true }
+            }
+            if kinds.isEmpty && pinned.isEmpty {
+                hiddenTilesRow("Every quick action is hidden.")
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top),
+                                         count: quickActionColumns),
+                          alignment: .leading, spacing: AOMSpace.tileGap) {
+                    ForEach(kinds) { kind in
+                        quickActionTile(kind)
                     }
-                    .contextMenu {
-                        Button("Open in Automation") { open(trigger) }
-                        Button("Unpin from Workspace") { appState.toggleFavorite(trigger) }
+                    ForEach(pinned) { trigger in
+                        let canRun = trigger.isEnabled && !trigger.actions.isEmpty && !trigger.aomTypesText
+                        WorkspaceQuickAction(trigger.displayName, symbol: canRun ? "bolt.fill" : "bolt",
+                                             hue: canRun ? AOMModule.automation.hue : nil,
+                                             keys: { if case .keyboardShortcut(let shortcut) = trigger.input { return shortcut.displayString }; return nil }(),
+                                             running: runStates[trigger.id] == .running,
+                                             help: canRun ? "Run “\(trigger.displayName)”" : "Open “\(trigger.displayName)” in Automation") {
+                            if canRun { run(trigger) } else { open(trigger) }
+                        }
+                        .contextMenu {
+                            if canRun { Button("Run") { run(trigger) } }
+                            Button("Open in Automation") { open(trigger) }
+                            Divider()
+                            Button("Unpin from Workspace") { appState.toggleFavorite(trigger) }
+                        }
                     }
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Quick actions")
+    }
+
+    private func quickActionTile(_ kind: WorkspaceQuickActionKind) -> some View {
+        let recordingNow = kind == .recordScreen && recording.isRecording
+        return WorkspaceQuickActionCell(kind: kind, recording: recordingNow,
+                                        accepts: { $0 != kind },
+                                        drop: { dragged in move(dragged, before: kind) }) {
+            kind.run()
+        }
+        .contextMenu {
+            Button(recordingNow ? "Stop Recording" : "Run") { kind.run() }
+            Button("Open \(kind.module.title)") { appState.selectedMainTab = kind.module.tab }
+            Divider()
+            if layout.canMove(kind, by: -1) { Button("Move Left") { move(kind, by: -1) } }
+            if layout.canMove(kind, by: 1) { Button("Move Right") { move(kind, by: 1) } }
+            Button("Remove from Quick Actions") { hide(kind.layoutID, name: "Quick Action", title: kind.title) }
+            Button("Customize Workspace…") { showsCustomize = true }
+        }
     }
 
     private func run(_ trigger: Trigger) {
@@ -580,14 +741,15 @@ struct AOMHomeView: View {
     /// narrower windows, one column below that.
     @ViewBuilder
     private func overview(_ snapshot: WorkspaceSnapshot) -> some View {
-        if contentWidth >= 960 {
+        let parts = [AOMWorkspaceLayout.Part.recent, .today, .thisMac].filter(layout.shows)
+        if parts.count == 3 && contentWidth >= 960 {
             HStack(alignment: .top, spacing: AOMSpace.tileGap) {
-                recentActivity(snapshot.recent).frame(maxWidth: .infinity, maxHeight: .infinity)
-                todayCard.frame(maxWidth: .infinity, maxHeight: .infinity)
-                thisMacCard.frame(maxWidth: .infinity, maxHeight: .infinity)
+                ForEach(parts) { part in
+                    overviewCard(part, snapshot).frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
-        } else if contentWidth >= 600 {
+        } else if parts.count == 3 && contentWidth >= 600 {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 HStack(alignment: .top, spacing: AOMSpace.tileGap) {
                     todayCard.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -596,12 +758,27 @@ struct AOMHomeView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 recentActivity(snapshot.recent)
             }
-        } else {
-            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
-                todayCard
-                thisMacCard
-                recentActivity(snapshot.recent)
+        } else if parts.count == 2 && contentWidth >= 600 {
+            HStack(alignment: .top, spacing: AOMSpace.tileGap) {
+                ForEach(parts) { part in
+                    overviewCard(part, snapshot).frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+        } else if !parts.isEmpty {
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                ForEach(parts) { part in overviewCard(part, snapshot) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func overviewCard(_ part: AOMWorkspaceLayout.Part, _ snapshot: WorkspaceSnapshot) -> some View {
+        switch part {
+        case .recent: recentActivity(snapshot.recent)
+        case .today: todayCard
+        case .thisMac: thisMacCard
+        default: EmptyView()
         }
     }
 
@@ -769,6 +946,10 @@ struct AOMHomeView: View {
         !setupSkipped && triggers.isEmpty && history.entries.isEmpty && stats.totalFired == 0
     }
     fileprivate var moduleOnCount: Int {
+        toolsOnCount + AOMModuleStatusBoard.all.filter { $0.isOn == true }.count
+    }
+    /// The six Tools modules that are on (System Tools is always available).
+    fileprivate var toolsOnCount: Int {
         let enabled = appState.globalEnabled
         var count = 0
         if enabled && triggers.contains(where: \.isEnabled) { count += 1 }
@@ -777,7 +958,6 @@ struct AOMHomeView: View {
         if enabled && !clipboard.paused { count += 1 }
         if audio.soundEnabled { count += 1 }
         count += 1 // System Tools are always available.
-        count += AOMModuleStatusBoard.all.filter { $0.isOn == true }.count
         return count
     }
     fileprivate var automationsOnCount: Int { triggers.filter(\.isEnabled).count }
@@ -1314,57 +1494,147 @@ private struct WorkspaceTileChevron: View {
     }
 }
 
-/// A launch tile (Shortcuts gallery): a 28 pt squircle in the module hue,
-/// the name in Body, the shortcut under it like a menu's key equivalent.
+/// A launch tile (Shortcuts gallery, Control Center): a 28 pt squircle in
+/// the module hue, the name in Body and the shortcut under it like a menu's
+/// key equivalent. Beside each other when the cell is wide enough, the glyph
+/// over the name in narrow windows (five per row either way). A tile whose
+/// action is running (a recording, a focus session) pulses its glyph.
 private struct WorkspaceQuickAction: View {
     let title: String
     let symbol: String
     var hue: Color?
     var keys: String?
     var running = false
+    var live = false
     var help: String?
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ title: String, symbol: String, hue: Color?, keys: String? = nil, running: Bool = false,
-         help: String? = nil, action: @escaping () -> Void) {
+         live: Bool = false, help: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
         self.hue = hue
         self.keys = keys
         self.running = running
+        self.live = live
         self.help = help
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: AOMSpace.x3) {
-                ZStack {
-                    if running {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        AOMModuleBadge(symbol: symbol, hue: hue, size: AOMIcon.hitArea)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AOMSpace.x3) {
+                    badge
+                    VStack(alignment: .leading, spacing: 1) {
+                        name
+                        shortcut
+                    }
+                    .fixedSize()
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                    badge
+                    VStack(alignment: .leading, spacing: 1) {
+                        name
+                        shortcut
                     }
                 }
-                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(AOMFont.body.weight(.medium))
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Text(keys ?? "No shortcut")
-                        .font(AOMFont.caption)
-                        .foregroundStyle(keys == nil ? AOMColor.textTertiary : AOMColor.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
-        .help(help ?? (keys.map { "\(title) (\($0))" } ?? title))
+        .help(help.map { keys == nil ? $0 : "\($0) (\(keys!))" } ?? (keys.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(keys.map { "Shortcut \($0)" } ?? "")
+        .accessibilityAddTraits(live ? .updatesFrequently : [])
+    }
+
+    private var badge: some View {
+        ZStack {
+            if running {
+                ProgressView().controlSize(.small)
+            } else {
+                AOMModuleBadge(symbol: symbol, hue: hue, size: AOMIcon.hitArea)
+                    .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion)
+            }
+        }
+        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+    }
+
+    private var name: some View {
+        Text(title)
+            .font(AOMFont.body.weight(.medium))
+            .foregroundStyle(AOMColor.text)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+
+    private var shortcut: some View {
+        Text(keys ?? "No shortcut")
+            .font(AOMFont.caption)
+            .foregroundStyle(keys == nil ? AOMColor.textTertiary : AOMColor.textSecondary)
+            .lineLimit(1)
+    }
+}
+
+/// A built-in quick action on Workspace: the tile, its live state (the
+/// focus session from `AOMModuleStatusBoard`, observed here so a countdown
+/// redraws one tile, not the page), and drag to reorder: drop another quick
+/// action on it to put that one in front (an accent ring while it hovers).
+private struct WorkspaceQuickActionCell: View {
+    let kind: WorkspaceQuickActionKind
+    var recording = false
+    let accepts: (WorkspaceQuickActionKind) -> Bool
+    let drop: (WorkspaceQuickActionKind) -> Void
+    let action: () -> Void
+    @ObservedObject private var focus = AOMModuleStatusBoard.focus
+    @State private var targeted = false
+
+    init(kind: WorkspaceQuickActionKind, recording: Bool, accepts: @escaping (WorkspaceQuickActionKind) -> Bool,
+         drop: @escaping (WorkspaceQuickActionKind) -> Void, action: @escaping () -> Void) {
+        self.kind = kind
+        self.recording = recording
+        self.accepts = accepts
+        self.drop = drop
+        self.action = action
+    }
+
+    var body: some View {
+        let focusing = kind == .focusSession && focus.isOn == true
+        WorkspaceQuickAction(recording ? "Stop Recording" : kind.title,
+                             symbol: recording ? "stop.fill" : kind.symbol,
+                             hue: recording ? AOMColor.recording : kind.module.hue,
+                             keys: kind.shortcut,
+                             live: recording || focusing,
+                             help: recording ? "Stops the screen recording" : kind.help,
+                             action: action)
+            .aomDropTarget(targeted, radius: AOMRadius.card)
+            .draggable(kind.rawValue)
+            .dropDestination(for: String.self) { items, _ in
+                guard let dragged = items.first.flatMap(WorkspaceQuickActionKind.init(rawValue:)), accepts(dragged) else {
+                    return false
+                }
+                drop(dragged)
+                return true
+            } isTargeted: { targeted = $0 }
+    }
+}
+
+/// "Productivity  n of 4 on", observing the four modules' status objects so
+/// the count stays live without redrawing the whole page.
+private struct WorkspaceProductivityTitle: View {
+    @ObservedObject private var folderRules = AOMModuleStatusBoard.folderRules
+    @ObservedObject private var textActions = AOMModuleStatusBoard.textActions
+    @ObservedObject private var files = AOMModuleStatusBoard.files
+    @ObservedObject private var focus = AOMModuleStatusBoard.focus
+
+    var body: some View {
+        let statuses = [folderRules, textActions, files, focus]
+        let on = statuses.filter { $0.isOn == true }.count
+        let switchable = statuses.filter { $0.isOn != nil }.count
+        AOMSectionTitle("Productivity", detail: switchable == 0 ? nil : "\(on) of \(switchable) on")
     }
 }
 
@@ -1740,9 +2010,18 @@ enum GestureVisual {
 
 /// A 3.4 module's tile, drawn from the live `AOMModuleStatus` the module
 /// publishes: its count, one status line, and its switch when it has one.
-struct AOMModuleStatusTile: View {
+/// The context menu has Turn On/Off (when the module has a switch) and the
+/// caller's items (Hide from Workspace, Customize Workspace…).
+struct AOMModuleStatusTile<MenuItems: View>: View {
     @ObservedObject var status: AOMModuleStatus
     let open: () -> Void
+    @ViewBuilder var menuItems: MenuItems
+
+    init(status: AOMModuleStatus, open: @escaping () -> Void, @ViewBuilder menu: () -> MenuItems) {
+        self.status = status
+        self.open = open
+        self.menuItems = menu()
+    }
 
     var body: some View {
         let metric = status.count.map { $0.formatted() } ?? (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "…"))
@@ -1759,6 +2038,17 @@ struct AOMModuleStatusTile: View {
             } else {
                 WorkspaceTileChevron()
             }
+        } menu: {
+            if let isOn = status.isOn, let setOn = status.setOn {
+                Button(isOn ? "Turn Off \(status.module.title)" : "Turn On \(status.module.title)") { setOn(!isOn) }
+            }
+            menuItems
         }
+    }
+}
+
+extension AOMModuleStatusTile where MenuItems == EmptyView {
+    init(status: AOMModuleStatus, open: @escaping () -> Void) {
+        self.init(status: status, open: open, menu: { EmptyView() })
     }
 }
