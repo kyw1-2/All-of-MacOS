@@ -103,6 +103,7 @@ final class AudioSincKernel {
     /// tap j weighting input frame `position - (halfWidth - 1) + j`.
     let rows: UnsafeMutablePointer<Float>
     var taps: Int { 2 * halfWidth }
+    private let wired: (values: Bool, slopes: Bool, rows: Bool)
 
     init(halfWidth: Int = 32, phases: Int = 512, beta: Double = 9, cutoff: Double = 0.455) {
         self.halfWidth = halfWidth
@@ -144,8 +145,17 @@ final class AudioSincKernel {
                 rows[row * width + tap] = index < extent ? values[index] : 0
             }
         }
+        // 3.4.0: read by every realtime resampler; kept resident.
+        wired = (AudioRealtimeMemory.wire(values, count: extent + 2),
+                 AudioRealtimeMemory.wire(slopes, count: extent + 2),
+                 AudioRealtimeMemory.wire(rows, count: (phases + 1) * 2 * halfWidth))
     }
-    deinit { values.deallocate(); slopes.deallocate(); rows.deallocate() }
+    deinit {
+        AudioRealtimeMemory.unwire(values, count: extent + 2, wired: wired.values)
+        AudioRealtimeMemory.unwire(slopes, count: extent + 2, wired: wired.slopes)
+        AudioRealtimeMemory.unwire(rows, count: (phases + 1) * 2 * halfWidth, wired: wired.rows)
+        values.deallocate(); slopes.deallocate(); rows.deallocate()
+    }
 }
 
 /// Clock recovery between two free-running clocks from the queue's fill
@@ -272,6 +282,8 @@ final class StereoPCMQueue {
     private let blend: UnsafeMutablePointer<Float>
     /// One output frame's kernel taps (the widest stretched window).
     private let coefficientScratch: UnsafeMutablePointer<Float>
+    /// Which buffers macOS wired (3.4.0), so `deinit` releases exactly those.
+    private let wired: (samples: Bool, tail: Bool, work: Bool, blend: Bool, coefficients: Bool)
 
     init(capacity: Int, kernel: AudioSincKernel = .shared, events: AudioEventRing? = nil) {
         self.events = events
@@ -297,8 +309,21 @@ final class StereoPCMQueue {
         blend.initialize(repeating: 0, count: Self.maximumFade * 2)
         coefficientScratch = .allocate(capacity: 2 * kernel.halfWidth * Self.maximumStretch + 2)
         coefficientScratch.initialize(repeating: 0, count: 2 * kernel.halfWidth * Self.maximumStretch + 2)
+        // 3.4.0 (HomePod crackle): both ends run on realtime threads; their
+        // buffers stay resident (see `AudioRealtimeMemory`).
+        wired = (AudioRealtimeMemory.wire(samples, count: (capacity + mirror) * 2),
+                 AudioRealtimeMemory.wire(tail, count: Self.maximumFade * 2),
+                 AudioRealtimeMemory.wire(work, count: (Self.maximumFade + Self.maximumFrames) * 2),
+                 AudioRealtimeMemory.wire(blend, count: Self.maximumFade * 2),
+                 AudioRealtimeMemory.wire(coefficientScratch, count: 2 * kernel.halfWidth * Self.maximumStretch + 2))
     }
     deinit {
+        AudioRealtimeMemory.unwire(samples, count: (capacity + mirror) * 2, wired: wired.samples)
+        AudioRealtimeMemory.unwire(tail, count: Self.maximumFade * 2, wired: wired.tail)
+        AudioRealtimeMemory.unwire(work, count: (Self.maximumFade + Self.maximumFrames) * 2, wired: wired.work)
+        AudioRealtimeMemory.unwire(blend, count: Self.maximumFade * 2, wired: wired.blend)
+        AudioRealtimeMemory.unwire(coefficientScratch, count: 2 * kernel.halfWidth * Self.maximumStretch + 2,
+                                   wired: wired.coefficients)
         samples.deallocate(); tail.deallocate(); work.deallocate(); blend.deallocate()
         coefficientScratch.deallocate()
     }

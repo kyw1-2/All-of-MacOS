@@ -17,6 +17,14 @@ final class AppAudioTransport {
     let events = AudioEventRing(capacity: 64)
     private let queue: StereoPCMQueue
     private let scratch: UnsafeMutablePointer<Float>
+    /// 3.4.0 (HomePod crackle): capture-thread state that turns a dropout in
+    /// the app's own audio into a short dip (see `AudioDropoutSoftener`), its
+    /// gain scratch (wired) and how many it shaped.
+    private var softener = AudioDropoutSoftener()
+    private static let softenerFrames = 16384
+    private let softenerGains: UnsafeMutablePointer<Float>
+    private let softenerGainsWired: Bool
+    private let softenedDropouts = AudioAtomicCounter()
     private let rateBits: AudioAtomicCounter
     private let remote: AudioAtomicCounter
     private let largestPacket = AudioAtomicCounter()
@@ -85,8 +93,15 @@ final class AppAudioTransport {
         queue = StereoPCMQueue(capacity: 65536, events: events)
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
+        softenerGains = .allocate(capacity: Self.softenerFrames)
+        softenerGains.initialize(repeating: 1, count: Self.softenerFrames)
+        softenerGainsWired = AudioRealtimeMemory.wire(softenerGains, count: Self.softenerFrames)
     }
-    deinit { scratch.deallocate() }
+    deinit {
+        scratch.deallocate()
+        AudioRealtimeMemory.unwire(softenerGains, count: Self.softenerFrames, wired: softenerGainsWired)
+        softenerGains.deallocate()
+    }
 
     func updateSampleRate(_ rate: Double) {
         guard rate.isFinite, (8000...384000).contains(rate), rate.bitPattern != rateBits.load() else { return }
@@ -163,6 +178,7 @@ final class AppAudioTransport {
         result["pulledFrames"] = pulledFrames.load()
         result["handovers"] = handovers.load()
         result["handoverTakeovers"] = handoverTakeovers.load()
+        result["softenedDropouts"] = softenedDropouts.load()
         return result
     }
 
@@ -176,6 +192,7 @@ final class AppAudioTransport {
         result["app.renderContentions"] = renderContentions.load()
         result["app.handovers"] = handovers.load()
         result["app.handoverTakeovers"] = handoverTakeovers.load()
+        result["app.softenedDropouts"] = softenedDropouts.load()
         return result
     }
     func capture(_ input: UnsafePointer<AudioBufferList>) {
@@ -197,12 +214,30 @@ final class AppAudioTransport {
         let rate = Double(bitPattern: rateBits.load())
         let gapLimit = remote.load() == 1 ? max(1, Double(frames) / rate * 4) : 0.25
         let now = mach_absolute_time(), previous = captureTick.load()
-        if previous > 0 && Double(now - previous) * secondsPerTick > gapLimit { queue.requestClear() }
+        if previous > 0 && Double(now - previous) * secondsPerTick > gapLimit {
+            queue.requestClear()
+            softener.reset()
+        }
         largestPacket.raise(to: UInt64(frames))
+        // A dropout in the app's own audio (its IO missed one of the
+        // HomePod's 128-frame cycles) arrives as exact zeros; on AirPlay
+        // routes its edges are shaped before it is queued (3.4.0).
+        let shapedFrames = min(frames, Self.softenerFrames)
+        let softenedBefore = softener.softened
+        let gains = softenerGains
+        let shaped = remote.load() == 1 && softener.shape(frames: shapedFrames, sampleRate: rate, gains: gains) { frame in
+            (left[planar ? frame : frame * channels],
+             planar ? right[frame] : left[frame * channels + min(1, channels - 1)])
+        }
+        if softener.softened != softenedBefore { softenedDropouts.add(softener.softened - softenedBefore) }
         var peak: Float = 0
         queue.write(frames: frames) { frame in
-            let l = left[planar ? frame : frame * channels]
-            let r = planar ? right[frame] : left[frame * channels + min(1, channels - 1)]
+            var l = left[planar ? frame : frame * channels]
+            var r = planar ? right[frame] : left[frame * channels + min(1, channels - 1)]
+            if shaped, frame < shapedFrames {
+                let gain = gains[frame]
+                l *= gain; r *= gain
+            }
             peak = max(peak, max(l.isFinite ? abs(l) : 0, r.isFinite ? abs(r) : 0))
             return (l, r)
         }
