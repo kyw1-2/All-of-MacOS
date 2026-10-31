@@ -387,6 +387,8 @@ final class SystemToolsModel: ObservableObject {
         case .dsstore: eraseDSStore()
         case .trash: confirmEmptyTrash()
         case .uninstall: uninstallApp()
+        // Folder Rules' installer (Rapidmg-style): read-only mount, copy, eject, image to the Trash.
+        case .installDMG: FolderRulesModule.installDiskImage()
         case .largeFiles: largeFilesMenu()
         case .oldDownloads: oldDownloadsMenu()
         case .devJunk:

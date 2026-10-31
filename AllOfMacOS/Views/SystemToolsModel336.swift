@@ -468,7 +468,10 @@ extension SystemToolsModel {
         runInBackground(.loginItems, { ProcessTools.loginItems() }) { result in
             var lines = result.items.prefix(40).map { "\($0.name) — \($0.kind)" }
             if result.items.count > 40 { lines.append("… and \(result.items.count - 40) more") }
-            if result.systemEventsFailed { lines.insert("Open-at-login apps couldn't be read: allow All of MacOS to control System Events (Privacy & Security › Automation).", at: 0) }
+            if result.systemEventsFailed {
+                lines.insert("Open-at-login apps couldn't be read: "
+                    + (result.failureDetail ?? "allow All of MacOS to control System Events (Privacy & Security › Automation)."), at: 0)
+            }
             if lines.isEmpty { lines = ["No login items or launch agents found."] }
             lines.append("Items that apps add in the background are listed only in System Settings.")
             self.info(.loginItems, title: "Login Items", lines: lines, extra: ("Open Login Items Settings…", { self.openPane(.loginItems, .loginItems) }))

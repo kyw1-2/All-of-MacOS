@@ -65,11 +65,15 @@ enum ProcessTools {
     /// daemons by file name. Apps that register background items with
     /// SMAppService are listed only in System Settings, which is why the
     /// sheet links there.
-    static func loginItems(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> (items: [LoginItem], systemEventsFailed: Bool) {
+    static func loginItems(home: URL = FileManager.default.homeDirectoryForCurrentUser)
+        -> (items: [LoginItem], systemEventsFailed: Bool, failureDetail: String?) {
         var items: [LoginItem] = []
         let script = #"tell application "System Events" to get the name of every login item"#
         let output = try? SystemToolsCommand.run("/usr/bin/osascript", ["-e", script])
         let failed = output?.succeeded != true
+        // 3.4.0 audit: what the failure was (no permission, System Events
+        // not running or not answering), when osascript says.
+        let failureDetail = failed ? AppleEventFailure.classify(output: output?.stderr ?? "")?.detail : nil
         if let output, output.succeeded {
             items += output.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -82,7 +86,7 @@ enum ProcessTools {
             let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
             items += launchItemNames(names).map { LoginItem(name: $0, kind: kind) }
         }
-        return (items, failed)
+        return (items, failed, failureDetail)
     }
 
     // MARK: Apps

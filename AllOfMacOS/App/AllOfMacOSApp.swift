@@ -957,8 +957,14 @@ struct GeneralSettingsView: View {
         alert.addButton(withTitle: "Reset")
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
-            PreferenceResetRegistry.reset(.standard)
+            let removed = PreferenceResetRegistry.reset(.standard)
             NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
+            // 3.4.0 audit: the same notice as Settings › Data › Reset Preferences;
+            // parts that read their settings at launch need a reopen.
+            appState.presetOperationReporter("Preferences Reset", removed.isEmpty
+                ? "Every preference was already at its default."
+                : "\(removed.count) preference\(removed.count == 1 ? "" : "s") went back to the default. "
+                    + "Quit and reopen All of MacOS so every part uses the defaults.", .actionNeeded)
         }
     }
 }

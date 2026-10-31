@@ -46,7 +46,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>3.3.8</string>
+	<string>3.4.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -57,9 +57,20 @@
 				<string>aom</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.kyw.allofmacos.links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>http</string>
+				<string>https</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2026103006</string>
+	<string>2026110101</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -84,8 +95,12 @@
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AOM records microphone audio only when microphone recording is selected and you start a screen recording.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>All of MacOS works with files on network drives only in folders you choose, such as a folder you add to Folder Rules.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>All of MacOS works with files on removable drives and disk images only when you choose them, such as a folder you add to Folder Rules or a disk image you install.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>

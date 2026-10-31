@@ -5,8 +5,8 @@ reaching for the trackpad (Homerow, Vimac and Shortcat style).
 
 ## Show the hints
 
-- Press the **Click with Keyboard** shortcut (Settings › Shortcuts › Productivity; ⇧⌘Space is proposed as the
-  default, see "Shortcut" below). Press it again to hide the hints.
+- Press the **Click with Keyboard** shortcut (Settings › Shortcuts › Productivity; ⇧⌘Space by default, see
+  "Shortcut" below). Press it again to hide the hints.
 - Or choose **Click with Keyboard** in the menu bar menu (Productivity section).
 - Or press **Try It** in Text Actions › Click Hints: the hints appear over the AOM window after a moment.
 
@@ -90,7 +90,7 @@ finds 확인. Case, accents and spaces don't matter.
 
 ## Shortcut
 
-Proposed default: **⇧⌘Space**, the shortcut Homerow and Shortcat ship with. macOS doesn't use it by default
+Default: **⇧⌘Space**, the shortcut Homerow and Shortcat ship with. macOS doesn't use it by default
 (Spotlight is ⌘Space, Finder search ⌥⌘Space, input sources ⌃Space and ⌃⌥Space, emoji ⌃⌘Space), and AOM's own
 defaults don't (Pause Recording is ⌥⇧⌘Space, and only while recording). In VS Code it is Trigger Parameter Hints,
 which a global shortcut takes over; choose another one in Settings › Shortcuts if you use that.

@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.4.0
+
+A redesigned main window with a Productivity section: Folder Rules tidies folders like Hazel, Text Actions puts a PopClip-style bar over selected text, Files adds an Open and Save dialog helper and a Drop Shelf, and Focus runs focus sessions and quits idle apps. Also new: Screen Ruler (⇧⌘7), Click Hints (⇧⌘Space), a larger ⌘K palette with a window switcher and link rules, input sources per app, 23 more System Tools (Homebrew, VPN, PDF pages), microphone mute, 25 fixes and softer HomePod dropouts. See CHANGELOG.md and the docs/*-3.4.0.md guides.
+
 ## Version 3.3.8
 
 An L-shaped swipe on a title bar (left then up, or right then up, without lifting) now takes that side's top quarter, whether the turn is smooth or rests at the corner. A swipe up on its own still maximizes. See docs/window-snap-3.3.8.md.

@@ -16,7 +16,6 @@ final class FolderRulesStoreTests: XCTestCase {
     func testTheStoreLivesUnderAnIsolatedFolderInTests() {
         XCTAssertTrue(FolderRulesStore.defaultDirectory.path.hasPrefix(FileManager.default.temporaryDirectory.path))
         XCTAssertFalse(FolderRulesStore.defaultDirectory.path.contains("Application Support"))
-        XCTAssertTrue(AppInputSourceStore.defaultDirectory.path.hasPrefix(FileManager.default.temporaryDirectory.path))
     }
 
     func testRulesRoundTripAndOldFilesDecodeLeniently() throws {

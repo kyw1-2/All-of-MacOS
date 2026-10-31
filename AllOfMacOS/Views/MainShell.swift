@@ -501,7 +501,7 @@ private struct AOMModuleSidebarBadge: View {
             AOMSidebarStatusBadge(text: "1", tone: .warning, symbol: "exclamationmark.triangle.fill")
                 .help(attention)
                 .accessibilityLabel("Needs attention: \(attention)")
-        } else if status.module == .focus, status.isOn == true {
+        } else if status.module == .focus, FocusModule.isSessionActive {
             AOMSidebarStatusBadge(text: "On", tone: .success)
                 .help(status.detail)
         }

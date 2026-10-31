@@ -243,9 +243,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Action names follow the public screenshot-workflow terminology; the
     // namespace remains AOM-only to avoid hijacking another app's URLs.
+    // 3.4.0: web links arrive only after the user makes AOM the default
+    // browser (Settings › General › Link rules); the router passes each on
+    // to a browser and never back to AOM.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !PresetManager.isUIPreview else { return }
         for link in urls.prefix(8) {
+            if let scheme = link.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                Task { @MainActor in PaletteLinkRouter.shared.route(link) }
+                continue
+            }
             if let request = AOMSharedImages.parse(link) {
                 Task { @MainActor in
                     for file in request.files {

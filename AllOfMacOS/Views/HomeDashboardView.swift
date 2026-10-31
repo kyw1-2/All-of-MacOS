@@ -1602,7 +1602,7 @@ private struct WorkspaceQuickActionCell: View {
     }
 
     var body: some View {
-        let focusing = kind == .focusSession && focus.isOn == true
+        let focusing = kind == .focusSession && FocusModule.isSessionActive
         WorkspaceQuickAction(recording ? "Stop Recording" : kind.title,
                              symbol: recording ? "stop.fill" : kind.symbol,
                              hue: recording ? AOMColor.recording : kind.module.hue,

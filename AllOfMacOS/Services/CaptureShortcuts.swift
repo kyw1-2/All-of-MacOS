@@ -22,7 +22,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
     case choosePinnedWindow, selectPinnedWindow, togglePinFrontWindow, togglePinWindowUnderCursor, unpinAllWindows
     case windowSwitcher, keepAwake, appAudioMixer, muteFrontAppAudio
     // 3.4 productivity modules
-    case measureScreen, showDropShelf, toggleFocusSession, toggleMicMute, showTextActions
+    case measureScreen, showDropShelf, toggleFocusSession, toggleMicMute, showTextActions, showClickHints
 
     var id: String { rawValue }
 
@@ -55,6 +55,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .toggleFocusSession: return "Start or Stop Focus Session"
         case .toggleMicMute: return "Mute or Unmute Microphone"
         case .showTextActions: return "Show Text Actions"
+        case .showClickHints: return "Click with Keyboard"
         }
     }
 
@@ -68,7 +69,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
             return "System & Switching"
         case .ocr, .history, .toggleDesktopIcons, .pinLast, .openProject:
             return "Tools & Utilities"
-        case .measureScreen, .showDropShelf, .toggleFocusSession, .toggleMicMute, .showTextActions:
+        case .measureScreen, .showDropShelf, .toggleFocusSession, .toggleMicMute, .showTextActions, .showClickHints:
             return "Productivity"
         }
     }
@@ -98,6 +99,7 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .toggleFocusSession: return "timer"
         case .toggleMicMute: return "mic.slash"
         case .showTextActions: return "character.cursor.ibeam"
+        case .showClickHints: return "cursorarrow.click.2"
         }
     }
 
@@ -112,6 +114,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
             return nil
         case .measureScreen:
             return KeyboardShortcut(keyCode: 26, modifiers: [.command, .shift]) // ⇧⌘7
+        case .showClickHints:
+            return KeyboardShortcut(keyCode: 49, modifiers: [.command, .shift]) // ⇧⌘Space, as Homerow and Shortcat
         case .captureArea:
             return KeyboardShortcut(keyCode: 21, modifiers: [.command, .shift]) // ⇧⌘4
         case .captureFullscreen:
@@ -289,6 +293,7 @@ final class CaptureShortcuts: ObservableObject {
         case .toggleFocusSession: MainActor.assumeIsolated { FocusModule.toggleSession() }
         case .toggleMicMute: MainActor.assumeIsolated { MicMuteModule.toggleMute() }
         case .showTextActions: MainActor.assumeIsolated { TextActionsModule.showForCurrentSelection() }
+        case .showClickHints: MainActor.assumeIsolated { ClickHintsModule.showHints() }
         }
     }
 }

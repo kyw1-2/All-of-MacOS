@@ -37,10 +37,6 @@ struct FocusSettings: Codable, Equatable {
     var standBreaksEnabled = false
     var standMinutes = 50
 
-    // Input sources
-    var inputSourcesEnabled = false
-    var remembersInputSources = false
-
     static let endSounds = ["Glass", "Hero", "Ping", "Purr", "Submarine", "Tink"]
     static let minimumIdleRange = 1...120
     static let standRange = 20...120
@@ -50,7 +46,7 @@ struct FocusSettings: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case plan, showsMenuBarCountdown, endSound, hidesDistractions, showsDistractionHUD, mutesSound, keepsAwake
         case startShortcut, endShortcut, idleAppsEnabled, memoryPressureEnabled, memoryPressureMinimumIdleMinutes
-        case eyeBreaksEnabled, standBreaksEnabled, standMinutes, inputSourcesEnabled, remembersInputSources
+        case eyeBreaksEnabled, standBreaksEnabled, standMinutes
     }
 
     init(from decoder: Decoder) throws {
@@ -73,8 +69,6 @@ struct FocusSettings: Codable, Equatable {
         eyeBreaksEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .eyeBreaksEnabled)) ?? d.eyeBreaksEnabled
         standBreaksEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .standBreaksEnabled)) ?? d.standBreaksEnabled
         standMinutes = FocusPlan.clamp((try? c.decodeIfPresent(Int.self, forKey: .standMinutes)) ?? d.standMinutes, Self.standRange)
-        inputSourcesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .inputSourcesEnabled)) ?? d.inputSourcesEnabled
-        remembersInputSources = (try? c.decodeIfPresent(Bool.self, forKey: .remembersInputSources)) ?? d.remembersInputSources
     }
 }
 

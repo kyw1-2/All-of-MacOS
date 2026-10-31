@@ -33,6 +33,6 @@ Reset Preferences clears them.
 
 ## Known limits
 
-- At launch the switcher starts only after the integrator adds `AppInputSourcesModule.start()` to
-  `AOMProductivityModules.start()`. Until then it starts when the switch is turned on in Settings.
+- At launch `AOMProductivityModules.start()` starts the switcher (`AppInputSourcesModule.start()`); it does
+  nothing while **Switch input sources by app** is off. It is the only per-app switcher in 3.4.0. Until then it starts when the switch is turned on in Settings.
 - Not tested against a live Korean IME switch in this build (the policy and settings are unit-tested).

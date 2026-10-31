@@ -123,7 +123,7 @@ final class AuditFixTests: XCTestCase {
     // MARK: 7. Every shortcut action belongs to a rendered settings group
 
     func testEveryShortcutActionHasARenderedSettingsGroup() {
-        let rendered = ["Screen Capture", "Tools & Utilities", "Always on Top", "System & Switching"]
+        let rendered = ["Screen Capture", "Tools & Utilities", "Always on Top", "System & Switching", "Productivity"]
         for action in CaptureShortcutAction.allCases {
             XCTAssertTrue(rendered.contains(action.categoryName),
                           "\(action.displayName) has no settings group and would be invisible")

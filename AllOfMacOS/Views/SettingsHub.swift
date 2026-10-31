@@ -455,7 +455,7 @@ struct AccentColorRow: View {
 // MARK: - Catalog
 
 enum AdvancedSheet: String, Identifiable {
-    case gestures, shortcuts, permissions, backups, clipboardDetail, captureDetail
+    case gestures, shortcuts, permissions, backups, clipboardDetail, captureDetail, linkRules
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -465,13 +465,14 @@ enum AdvancedSheet: String, Identifiable {
         case .backups: "Backups"
         case .clipboardDetail: "Clipboard Storage"
         case .captureDetail: "Capture Options"
+        case .linkRules: "Link Rules"
         }
     }
 }
 
 enum SettingsCatalog {
     static func items(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
-        generalItems() + captureItems() + clipboardItems(sheet: sheet)
+        generalItems(sheet: sheet) + captureItems() + clipboardItems(sheet: sheet)
             + automationItems(sheet: sheet) + permissionItems(sheet: sheet)
             + dataItems(sheet: sheet) + aboutItems()
     }
@@ -490,6 +491,7 @@ enum SettingsCatalog {
         "hud": "Feedback", "hudOpacity": "Feedback",
         "inputSourcesSwitch": "Input sources", "inputSourcesRules": "Input sources",
         "inputSourcesRemember": "Input sources", "inputSourcesFallback": "Input sources",
+        "linkRules": "Links",
         // The window-tiling rows mirror the Window Tiling page and use its
         // row names, in boxes of 8 rows or fewer (e.2).
         "titleBarSnap": "Window tiling", "titleBarSnapGrid": "Window tiling", "titleBarSnapAlmost": "Window tiling",
@@ -523,7 +525,7 @@ enum SettingsCatalog {
         "backups": "Your data", "reset": "Your data", "tutorial": "Help",
     ]
 
-    private static func generalItems() -> [SettingItem] {
+    private static func generalItems(sheet: Binding<AdvancedSheet?>) -> [SettingItem] {
         [
             item("launchAtLogin", .general, "Launch at login", "Start automatically at login", ["Start", "로그인", "부팅", "startup"], AnyView(LaunchAtLoginRow())),
             item("showMenuBarIcon", .general, "Menu bar icon", "Keep quick controls in the menu bar", ["메뉴바", "menubar", "아이콘"], AnyView(HubToggleRow(icon: "menubar.rectangle", tint: .purple, title: "Menu bar icon", subtitle: "", key: "showMenuBarIcon", fallback: true))),
@@ -536,6 +538,10 @@ enum SettingsCatalog {
             item("inputSourcesRules", .general, "Apps and their input sources", "Terminal in English, KakaoTalk in Korean", ["input source", "입력 소스", "한영", "terminal", "터미널", "kakaotalk", "카카오톡", "app", "앱"], AnyView(InputSourcesRulesRows())),
             item("inputSourcesRemember", .general, "Remember in other apps", "Apps without a rule get back the input source they used last", ["remember", "기억", "input source", "입력 소스", "한영"], AnyView(InputSourcesRememberRow())),
             item("inputSourcesFallback", .general, "Other apps", "The input source for apps without a rule", ["default", "기본", "input source", "입력 소스", "한영"], AnyView(InputSourcesFallbackRow())),
+            // 3.4: link rules (Velja/Choosy): which browser opens which link, tracking parameters removed.
+            item("linkRules", .general, "Link rules", "Open links in the browser you choose and remove tracking parameters", ["link", "링크", "browser", "브라우저", "default browser", "기본 브라우저", "safari", "chrome", "utm", "fbclid", "tracking", "추적", "velja", "choosy", "router", "라우터"], AnyView(HubActionRow(icon: "arrow.triangle.branch", tint: .blue, title: "Link rules", subtitle: "Open links in the browser you choose, without tracking parameters") {
+                Button("Open…") { sheet.wrappedValue = .linkRules }
+            })),
             // Window tiling: the Window Tiling page's row names. Words of the
             // old titles stay searchable as keywords ("title-bar", "snap").
             item("titleBarSnap", .general, "Swipe to snap", "Swipe two fingers on a title bar to snap the window", ["snap", "swish", "스냅", "창", "트랙패드", "trackpad", "title-bar"], AnyView(HubToggleRow(icon: "hand.draw", tint: .indigo, title: "Swipe to snap", subtitle: "Swipe two fingers on a title bar to snap the window", key: TitleBarWindowSnap.enabledKey, fallback: false))),
@@ -844,6 +850,11 @@ struct SettingsHubView: View {
                args.indices.contains(index + 1), let pane = SettingsCategory(rawValue: args[index + 1]) {
                 category = pane
             }
+            // …and one of its sheets (`--aom-preview-settings-sheet linkRules`).
+            if PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-settings-sheet"),
+               args.indices.contains(index + 1), let preview = AdvancedSheet(rawValue: args[index + 1]) {
+                sheet = preview
+            }
         }
         .sheet(item: $sheet) { sheet in
             // Resizable from a sensible minimum, so long lists and editors
@@ -1033,6 +1044,12 @@ struct SettingsSheetHost: View {
         case .backups: BackupSettingsView()
         case .clipboardDetail: ClipboardSettingsView()
         case .captureDetail: CaptureSettingsView()
+        case .linkRules:
+            ScrollView {
+                PaletteLinkRouterSettingsView()
+                    .padding(AOMSpace.x5)
+                    .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
+            }
         }
     }
 }

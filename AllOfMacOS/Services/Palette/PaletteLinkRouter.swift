@@ -51,6 +51,9 @@ struct PaletteLinkRouterSettings: Codable, Equatable {
     var opensAppLinks = true
     var rules: [PaletteLinkRule] = [
         PaletteLinkRule(match: .hostContains, pattern: "uos.ac.kr", browserBundleID: "com.apple.Safari"),
+        // The user's examples (steer f9dff59d): GitHub and local servers in Chrome.
+        PaletteLinkRule(match: .hostContains, pattern: "github.com", browserBundleID: "com.google.Chrome"),
+        PaletteLinkRule(match: .hostIs, pattern: "localhost", browserBundleID: "com.google.Chrome"),
     ]
 
     static let storageKey = "AOMPaletteLinkRouter"
@@ -185,6 +188,15 @@ final class PaletteLinkRouter {
         return Bundle(url: handler)?.bundleIdentifier == Bundle.main.bundleIdentifier
     }
 
+    /// The browser that opens web links now, when it is not AOM.
+    var currentBrowserBundleID: String? {
+        guard let probe = URL(string: "https://example.com"),
+              let handler = NSWorkspace.shared.urlForApplication(toOpen: probe),
+              let id = Bundle(url: handler)?.bundleIdentifier,
+              id != Bundle.main.bundleIdentifier, !id.hasPrefix("com.kyw.allofmacos") else { return nil }
+        return id
+    }
+
     /// Asks macOS to make AOM the default browser; macOS shows its own
     /// confirmation first. AOM must declare the http and https URL schemes
     /// in Info.plist for this to succeed.
@@ -276,6 +288,12 @@ struct PaletteLinkRouterSettingsView: View {
                               symbol: isDefault ? "checkmark.seal" : "safari") {
                     if !isDefault {
                         Button("Make Default Browser…") {
+                            // Links no rule matches keep going to the browser
+                            // used until now, unless another one was chosen.
+                            if let previous = PaletteLinkRouter.shared.currentBrowserBundleID,
+                               settings.fallbackBrowserBundleID == PaletteLinkRouterSettings().fallbackBrowserBundleID {
+                                settings.fallbackBrowserBundleID = previous
+                            }
                             PaletteLinkRouter.shared.makeDefaultBrowser { error in
                                 isDefault = PaletteLinkRouter.shared.isDefaultBrowser
                                 if let error { message = "Couldn't change the default browser because \(error.localizedDescription)" }

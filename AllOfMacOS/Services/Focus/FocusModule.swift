@@ -18,7 +18,6 @@ final class FocusEnvironment {
     let session: FocusSessionController
     let idleApps: FocusIdleAppsController
     let reminders: FocusReminderController
-    let inputSources: FocusInputSourceController
     let statusItem: FocusStatusItemController
     private(set) var started = false
 
@@ -38,9 +37,6 @@ final class FocusEnvironment {
         idleApps = FocusIdleAppsController(system: system, settings: settings, lists: lists, activity: activity,
                                            schedules: schedules && !PresetManager.isUIPreview)
         reminders = FocusReminderController(system: system, settings: settings, schedules: schedules && !PresetManager.isUIPreview)
-        inputSources = FocusInputSourceController(inputSources: FocusTISInputSources(isolated: isolated), system: system,
-                                                  settings: settings, lists: lists,
-                                                  schedules: schedules && !PresetManager.isUIPreview)
         statusItem = FocusStatusItemController(isolated: isolated)
         statusItem.attach(session)
         statusItem.openPage = { FocusModule.openPage() }
@@ -59,7 +55,6 @@ final class FocusEnvironment {
         session.restoreAfterLaunch()
         idleApps.refresh()
         reminders.refresh()
-        inputSources.refresh()
         FocusModule.publishStatus()
         // Settings › Data › Reset Preferences removes the settings key and
         // posts this; Focus then runs with the defaults.
@@ -97,23 +92,20 @@ final class FocusEnvironment {
             || old.standMinutes != new.standMinutes {
             reminders.refresh()
         }
-        if old.inputSourcesEnabled != new.inputSourcesEnabled || old.remembersInputSources != new.remembersInputSources {
-            inputSources.refresh()
-        }
         FocusModule.publishStatus()
     }
 
     private func listsChanged(from old: FocusLists, to new: FocusLists) {
         if old.idleRules != new.idleRules { idleApps.refresh() }
-        if old.inputSourceRules != new.inputSourceRules { inputSources.refresh() }
         if old.distractingApps != new.distractingApps { session.updateDistractionWatch() }
         FocusModule.publishStatus()
     }
 }
 
 /// Focus (Session, Flow and Raycast Focus timers; Quitter's idle-app rules;
-/// a memory saver for 8 GB Macs; break reminders; Input Source Pro's
-/// per-app input sources). `AOMProductivityModules` calls the entry points.
+/// a memory saver for 8 GB Macs; break reminders). Per-app input sources
+/// live in Settings › General (`AppInputSourcesModule`). `AOMProductivityModules`
+/// calls the entry points.
 @MainActor
 enum FocusModule {
     static var environment: FocusEnvironment { .shared }

@@ -2,8 +2,8 @@
 
 Focus sessions with breaks, a menu bar countdown and a log (Session, Flow, Raycast Focus); hiding distracting
 apps while you focus; quitting apps you leave open in the background (Quitter), including a memory saver for
-8 GB Macs; optional break reminders; and a keyboard language per app (Input Source Pro). Everything is on the
-**Focus** page in the sidebar's Productivity section.
+8 GB Macs; and optional break reminders. Everything is on the **Focus** page in the sidebar's Productivity
+section.
 
 ## Focus sessions
 
@@ -94,21 +94,14 @@ sleep, a locked screen) counts as a break.
 
 ## Input sources by app
 
-Turn on **Switch input sources by app** and add apps with the source they should use, for example Terminal in
-ABC and KakaoTalk in 2-Set Korean (**Add Suggestions** adds installed terminals, code editors and KakaoTalk).
-When the app comes to the front, Focus selects its source. **Remember the source in other apps** gives every app
-without a rule back the source you used there last.
-
-It never switches while a password field has the keyboard (secure input), while AOM is paused, or for an app AOM
-is paused for. With Korean, Chinese, Japanese or Vietnamese sources, macOS sometimes shows the new source in the
-menu bar while the first keys still type in the old one (a known macOS behaviour of `TISSelectInputSource`);
-clicking in the window fixes it. Focus does not use the workarounds other apps use for this (briefly taking the
-keyboard focus, or pressing ⌃Space for you).
+Per-app input sources are not part of Focus in the release: the integration kept one switcher, in
+**Settings › General › Input sources** (see `docs/input-sources-3.4.0.md`), so two switchers never react to the
+same app switch.
 
 ## Where things are kept
 
 - Options: one setting, `AOMFocusSettings.v1`. Settings › Data › Reset Preferences resets it.
-- Lists you make (distracting apps, idle-app rules, input-source rules), the session log, the activity log and a
+- Lists you make (distracting apps, idle-app rules), the session log, the activity log and a
   running session: `~/Library/Application Support/AllOfMacOS/Focus/` (`lists.json`, `sessions.json`,
   `activity.json`, `state.json`). Reset Preferences does not delete them. The log keeps about a year.
 
@@ -117,4 +110,4 @@ keyboard focus, or pressing ⌃Space for you).
 Nothing runs for a feature that is off. While a session runs, one timer ticks once a second (none while paused
 or idle). Idle-app rules use app-switch notifications and one timer set for the next threshold, not polling;
 the memory-pressure watch is a system notification. Memory is measured only while the Focus page shows it and
-just before a quit. Input sources use the app-switch and input-source notifications only.
+just before a quit.

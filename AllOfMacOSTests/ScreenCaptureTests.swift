@@ -687,7 +687,10 @@ final class ScreenCaptureTests: XCTestCase {
                 || action == .selectPinnedWindow || action == .togglePinFrontWindow
                 || action == .togglePinWindowUnderCursor || action == .unpinAllWindows
                 || action == .windowSwitcher || action == .keepAwake
-                || action == .appAudioMixer || action == .muteFrontAppAudio {
+                || action == .appAudioMixer || action == .muteFrontAppAudio
+                // 3.4.0 modules: only Measure Screen and Click Hints have keys.
+                || action == .showDropShelf || action == .toggleFocusSession
+                || action == .toggleMicMute || action == .showTextActions {
                 XCTAssertNil(sc, "Optional commands must not reserve a default global shortcut")
             } else {
                 XCTAssertNotNil(sc, "\(action.displayName) should have a default shortcut")

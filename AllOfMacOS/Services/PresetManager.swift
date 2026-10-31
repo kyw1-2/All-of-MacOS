@@ -32,7 +32,7 @@ class PresetManager {
     /// window through Accessibility.
     static var previewWindowSize: CGSize? {
         let args = ProcessInfo.processInfo.arguments
-        guard isUIPreview, let index = args.firstIndex(of: "--aom-preview-size"), args.indices.contains(index + 1) else { return nil }
+        guard isUIPreview, let index = args.lastIndex(of: "--aom-preview-size"), args.indices.contains(index + 1) else { return nil }
         let parts = args[index + 1].split(separator: "x").compactMap { Double($0) }
         guard parts.count == 2, parts.allSatisfy({ $0 >= 400 && $0 <= 4000 }) else { return nil }
         return CGSize(width: parts[0], height: parts[1])
@@ -235,6 +235,28 @@ class PresetManager {
         // snap's five modifier roles (keys built as "AOMTitleBarSnapModifier" + role).
         keys += TrackpadUtilityGestures.settingsKeys333
         keys += SwishSnap.ModifierRole.allCases.map(\.defaultsKey)
+        // 3.4.0 modules: Screen Ruler, Click Hints, Text Actions, Focus, Files
+        // (the dialog helper and the Drop Shelf), Mic Mute, System Tools
+        // favorites and weather, per-app input sources, the palette's
+        // quicklinks, link router, shortcut sheet and switcher, and the
+        // Workspace sections and quick actions the user chose. Keys owned by
+        // main-actor types are spelled out.
+        keys += ScreenRulerSettings.backedUpKeys + ClickHintsSettings.backedUpKeys
+        keys += [
+            TextActionsSettings.defaultsKey, "AOMFocusSettings.v1",
+            "AOMFilesDialogHelper", "AOMFilesDialogFinderWindows", "AOMFilesDialogRecentFolders",
+            "AOMFilesDialogNewestFiles", "AOMFilesDialogClipboardPath", "AOMFilesDialogShortcuts",
+            "AOMFilesFavorites", "AOMFilesExcludedApps", "AOMFilesShelfShake", "AOMFilesShelfShift",
+            "AOMFilesShakeSensitivity",
+            "AOMMicMuteShowHUD", "AOMMicMuteMenuBarIndicator", "AOMMicMutePushToTalk", "AOMMicMutePushToTalkKey",
+            "AOMMicMuteAutoMute", "AOMMicMuteAutoMuteApps",
+            "AOMSystemToolsFavorites", "AOMSystemToolsWeatherEnabled", "AOMSystemToolsWeatherPlace",
+            AppInputSourcesSettings.enabledKey, AppInputSourcesSettings.rulesKey,
+            AppInputSourcesSettings.rememberKey, AppInputSourcesSettings.fallbackKey,
+            PaletteLinkRouterSettings.storageKey, PaletteQuicklinks.storageKey,
+            "AOMPaletteShortcutSheetEnabled", "AOMPaletteShortcutSheetHoldSeconds", "AOMPaletteSwitcherGroupByApp",
+            "AOMWorkspaceHidden", "AOMWorkspaceQuickActions"
+        ]
         // Add per-gesture swipe velocity keys
         for gesture in TrackpadGesture.allCases {
             keys.append("AOMSwipeMinVelocity_\(gesture.rawValue)")
@@ -291,7 +313,16 @@ class PresetManager {
             "AOMInsightsPeriod": "window layout", "AOMGroupTriggersByFolder": "window layout",
             "AOMShowLog": "window layout", "AOMShowTouchVisualizer": "window layout",
             "AOMAudioShowAllApps": "window layout", "AOMAnnotationBackgroundPanelOpen": "window layout",
-            "AOMAnnotationBackgroundPrevious": "window layout"
+            "AOMAnnotationBackgroundPrevious": "window layout",
+            // 3.4.0
+            "AOMClipboardListWidth": "window layout", "AOMFolderRulesListWidth": "window layout",
+            "AOMFolderRulesInspector": "window layout", "AOMTextActionsListWidth": "window layout",
+            "AOMSidebarCollapsed": "window layout", "AOMLastPage": "window layout",
+            "AOMAudioMixerShowsOutputEffects": "window layout",
+            "AOMSystemToolsRecent": "usage history",
+            AppInputSourcesSettings.memoryKey: "usage history (the input source each app used last)",
+            AppInputSourcesSettings.memoryOrderKey: "usage history (the input source each app used last)",
+            "AOMFilesDownloadsRead": "runtime state (Downloads was read once, so macOS has asked already)"
         ]
         for key in CaptureSettings.machineSpecificKeys {
             reasons[key] = "describes this Mac (folders, last area, camera and microphone devices)"

@@ -3,13 +3,14 @@ import SwiftUI
 
 /// What the Text Actions list shows.
 enum TextActionsPageItem: Hashable {
-    case bar, excludedApps, action(TextActionID)
+    case bar, excludedApps, clickHints, action(TextActionID)
 
     /// For `--aom-preview-text-actions-item <bar|excluded|actionID>`.
     init?(previewName: String) {
         switch previewName {
         case "bar": self = .bar
         case "excluded": self = .excludedApps
+        case "clickHints": self = .clickHints
         default:
             guard let id = TextActionID(rawValue: previewName) else { return nil }
             self = .action(id)
@@ -53,6 +54,8 @@ struct TextActionsPage: View {
                     Image(systemName: "hand.raised")
                 }
                 .tag(TextActionsPageItem.excludedApps)
+                ClickHintsListRow()
+                    .tag(TextActionsPageItem.clickHints)
             }
             Section("Actions") {
                 ForEach(settings.actions) { action in
@@ -131,6 +134,8 @@ struct TextActionsPage: View {
             TextActionsBarDetail(settings: $preferences.settings)
         case .excludedApps:
             TextActionsExcludedAppsDetail(settings: $preferences.settings)
+        case .clickHints:
+            ClickHintsDetail()
         case .action(let id):
             TextActionDetail(id: id, settings: $preferences.settings)
                 .id(id)

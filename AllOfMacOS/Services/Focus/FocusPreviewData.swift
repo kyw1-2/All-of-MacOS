@@ -16,7 +16,7 @@ final class FocusPreviewSystem: FocusSystem {
         guard PresetManager.isUIPreview, let index = args.firstIndex(of: "--aom-preview-focus-scroll"),
               args.indices.contains(index + 1) else { return nil }
         let section = args[index + 1]
-        return ["during", "idle", "memory", "inputSources"].contains(section) ? section : nil
+        return ["during", "idle", "memory"].contains(section) ? section : nil
     }
 
     private let apps: [FocusRunningApp]
@@ -90,11 +90,6 @@ final class FocusPreviewSystem: FocusSystem {
                           quitsUnderMemoryPressure: false),
             FocusIdleRule(bundleID: "com.apple.iCal", name: "Calendar", hideAfterMinutes: 15, quitAfterMinutes: 60)
         ]
-        lists.inputSourceRules = [
-            FocusInputSourceRule(bundleID: "com.apple.Terminal", appName: "Terminal", sourceID: "com.apple.keylayout.ABC"),
-            FocusInputSourceRule(bundleID: "com.kakao.KakaoTalkMac", appName: "KakaoTalk",
-                                 sourceID: "com.apple.inputmethod.Korean.2SetKorean")
-        ]
         env.lists.lists = lists
         var settings = FocusSettings()
         settings.hidesDistractions = true
@@ -104,7 +99,6 @@ final class FocusPreviewSystem: FocusSystem {
         settings.idleAppsEnabled = true
         settings.memoryPressureEnabled = true
         settings.eyeBreaksEnabled = true
-        settings.inputSourcesEnabled = true
         env.settings.settings = settings
         env.activity.replace(with: [
             FocusActivity(date: now.addingTimeInterval(-300), kind: .quitUnderPressure, appName: "Pages", idleSeconds: 3 * 3600,
@@ -119,7 +113,6 @@ final class FocusPreviewSystem: FocusSystem {
             pressure: .warning, swap: 4_254 << 20,
             idleSince: ["com.apple.mail": now.addingTimeInterval(-42 * 60), "com.apple.Music": now.addingTimeInterval(-26 * 60),
                         "com.apple.Notes": now.addingTimeInterval(-18 * 60), "com.apple.MobileSMS": now.addingTimeInterval(-72 * 60)])
-        env.inputSources.reloadSources()
         if !ProcessInfo.processInfo.arguments.contains("--aom-preview-focus-idle") {
             env.session.startForPreview(elapsed: 7 * 60 + 12)
         }

@@ -60,6 +60,12 @@ enum PreferenceResetRegistry {
             ("AOMGestureEvents", history), ("AOMGestureStatistics_fired", history),
             ("AOMGestureStatistics_total", history), ("AOMGestureStatistics.v2", history),
             ("AOMActionRecents.v1", history), ("AOMAnnotationRecentColors", history), ("AOMSessionStart", history),
+            // 3.4.0: recent System Tools, the input source each app used last,
+            // and whether Downloads was read once (macOS has asked already).
+            ("AOMSystemToolsRecent", history),
+            (AppInputSourcesSettings.memoryKey, "\(history) (the input source each app used last)"),
+            (AppInputSourcesSettings.memoryOrderKey, "\(history) (the input source each app used last)"),
+            ("AOMFilesDownloadsRead", "\(runtime) (Downloads was read once)"),
             ("AOMKeyRemapOwnedPairs", "the key remaps AOM applied, so it can take them back"),
             ("AOMParkedWindowRecoveryV1", "windows to bring back after a crash"),
             ("AOMQuickAccessRecentlyClosedIDs", runtime),
@@ -97,7 +103,12 @@ enum PreferenceResetRegistry {
         var pairs = ["AOMAllInOneLastRatio", "AOMAutomationListWidth", "AOMAutomationTableWidth",
                      "AOMAutomationViewMode", "AOMAudioWorkspaceSection", "AOMSidebarVisible", "AOMInsightsPeriod",
                      "AOMGroupTriggersByFolder", "AOMShowLog", "AOMShowTouchVisualizer", "AOMAudioShowAllApps",
-                     "AOMAnnotationBackgroundPanelOpen", "AOMAnnotationBackgroundPrevious"].map { ($0, layout) }
+                     "AOMAnnotationBackgroundPanelOpen", "AOMAnnotationBackgroundPrevious",
+                     // 3.4.0 list widths, the inspector, folded sidebar sections,
+                     // the last page and the mixer's effects row.
+                     "AOMClipboardListWidth", "AOMFolderRulesListWidth", "AOMFolderRulesInspector",
+                     "AOMTextActionsListWidth", "AOMSidebarCollapsed", "AOMLastPage",
+                     "AOMAudioMixerShowsOutputEffects"].map { ($0, layout) }
         for key in ["AOMCaptureSaveDirectory", CaptureSettings.RecordingKey.cameraID,
                     CaptureSettings.RecordingKey.microphoneID] {
             pairs.append((key, "a choice for this Mac (the save folder, the camera, the microphone): back to the default"))

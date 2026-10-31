@@ -91,7 +91,7 @@ enum SystemToolID: String, CaseIterable, Identifiable {
     // Screenshots
     case shotshadow, shotformat, shotfolder
     // Disk & Storage
-    case ejectAll, ejectDisk, verifyDisk, backupNow, backupStatus, snapshots
+    case ejectAll, ejectDisk, verifyDisk, backupNow, backupStatus, snapshots, installDMG
     // Maintenance
     case restartMenuBar, launchServices, spotlight, fontCaches, freeMemory
     // Cleanup
@@ -267,6 +267,7 @@ enum SystemToolCatalog {
         .init(id: .backupNow, title: "Back Up Now", symbol: "clock.arrow.2.circlepath", group: .disk, keywords: ["time machine", "tmutil", "backup"], help: "Starts a Time Machine backup (tmutil startbackup); the tile shows when one is running.", isToggle: true),
         .init(id: .backupStatus, title: "Time Machine Status", symbol: "clock.badge.checkmark", group: .disk, keywords: ["time machine", "latest backup", "tmutil"], help: "Shows whether a backup is running, its progress, and the latest backup."),
         .init(id: .snapshots, title: "Local Snapshots", symbol: "camera.on.rectangle", group: .disk, keywords: ["apfs", "tmutil", "purgeable", "space"], help: "Lists the startup disk's APFS local snapshots; Thin asks macOS to remove Time Machine's (administrator)."),
+        .init(id: .installDMG, title: "Install Disk Image…", symbol: "externaldrive.badge.plus", group: .disk, keywords: ["dmg", "rapidmg", "install", "hdiutil", "disk image", "app"], help: "Installs the app from a disk image you choose: mounts it read-only, copies the app to Applications (asks before replacing; the old copy goes to the Trash), ejects it and moves the image to the Trash."),
         // Maintenance
         .init(id: .restartMenuBar, title: "Restart Menu Bar", symbol: "menubar.arrow.up.rectangle", group: .maintenance, keywords: ["systemuiserver", "control center", "stuck"], help: "Restarts SystemUIServer and Control Center when menu bar icons are stuck."),
         .init(id: .launchServices, title: "Rebuild Open With", symbol: "list.bullet.rectangle", group: .maintenance, keywords: ["launch services", "lsregister", "duplicates", "default app"], help: "Re-registers apps with Launch Services to fix duplicate or missing Open With entries."),

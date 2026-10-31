@@ -179,25 +179,31 @@ Like KeyClu: hold ⌘ alone for 1.2 seconds in any app and its menu shortcuts ap
 one column per menu (File, Edit, View …). Let go of ⌘ and it disappears. Pressing a key (⌘C), clicking or adding
 another modifier cancels it, so normal shortcuts never show it.
 
-**Turn it on:** ⌘K › **Turn On Hold ⌘ for Shortcuts** (or the switch in Settings › Shortcuts once it is placed
-there; the hold time is adjustable from 0.8 to 2 seconds). ⌘K › **Show Keyboard Shortcuts for <app>** shows the
+**Turn it on:** ⌘K › **Turn On Hold ⌘ for Shortcuts**, or Settings › Shortcuts › Shortcut sheet (the hold time is
+adjustable there from 0.8 to 2 seconds). ⌘K › **Show Keyboard Shortcuts for <app>** shows the
 same sheet without holding; any key or click closes it. It never appears in games, in password fields (secure
 input), while AOM is paused or while a mouse button is held. Menus are read off the main thread and kept 10
 minutes per app version. AOM's own gesture Cheat Sheet is separate.
 
 ## Link rules (Velja and Choosy)
 
-⌘K › **Link Rules…** opens the settings (they belong in Settings › Links). When All of MacOS is your default
+⌘K › **Link Rules…** or Settings › General › Links › **Link rules** opens the settings. When All of MacOS is your default
 browser, a link you click anywhere first loses its tracking parameters (utm_*, fbclid, gclid, si, igshid and
 your own list), Figma, Zoom and Notion links open in their apps when installed, then the first matching rule picks
 the browser ("Host contains uos.ac.kr → Safari"), and anything else goes to the browser you choose for other
 links. Hold ⌥ while clicking a link to pick a browser from a menu at the pointer. Only the rule that matched is
 logged.
 
-**Make All of MacOS the default browser** with the button in Link Rules; macOS asks you to confirm. Routing stays
-off until you turn on "Route links by these rules". This needs the http and https URL types in AOM's Info.plist
-and the hand-off in AppDelegate; until the integrator adds them (see the 3.4.0 report), the button can't
-succeed and links keep opening in your browser directly.
+The first rules are "Host contains uos.ac.kr → Safari", "Host contains github.com → Chrome" and "Host is
+localhost → Chrome"; change or remove them in the list.
+
+**Make All of MacOS the default browser** with the button in Link Rules; macOS asks you to confirm. If "Other
+links open in" still shows Safari (the setting you start with), the button first sets it to the browser that
+opened your links until then (Chrome on this Mac), so links no rule matches keep opening where they did. Routing stays
+off until you turn on "Route links by these rules"; until then AOM passes every link to the browser for other
+links, after removing tracking parameters. AOM declares the http and https URL types (Info.plist) and hands each
+web link to the router (AppDelegate); it never sends a link back to itself. Not tested here: whether macOS 27
+lists AOM under System Settings › Desktop & Dock › Default web browser without an HTML document type.
 
 ## Measured on this Mac (MacBook Air M1, 8 GB, macOS 27.2)
 

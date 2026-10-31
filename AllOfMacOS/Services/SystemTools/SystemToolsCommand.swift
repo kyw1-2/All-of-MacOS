@@ -87,7 +87,15 @@ enum SystemToolsCommand {
     }
 
     static func perform(_ command: SessionCommand) throws {
-        try runChecked("/usr/bin/osascript", ["-e", sessionScript(command)])
+        let output = try run("/usr/bin/osascript", ["-e", sessionScript(command)])
+        guard output.succeeded else {
+            // 3.4.0 audit: say where to allow access (-1743) or that System
+            // Events did not answer, instead of osascript's raw message.
+            if let failure = AppleEventFailure.classify(output: output.stderr) {
+                throw SystemToolError.invalidInput("\(failure.title). \(failure.detail)")
+            }
+            throw SystemToolError.commandFailed(command: "osascript", status: output.status, message: output.stderr)
+        }
     }
 
     /// The user's own system UI processes that relaunch by themselves when

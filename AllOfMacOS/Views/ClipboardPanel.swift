@@ -859,7 +859,9 @@ final class ClipboardPanelController {
                 relinquishFocus: { [self] in self.hideImmediately(cancelPendingPaste: false) },
                 targetIsAlive: { !target.isTerminated },
                 targetIsFrontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier },
-                activateTarget: { target.activate(options: [.activateIgnoringOtherApps]) },
+                // macOS 14+ activation is cooperative: AOM (still the active
+                // app) yields first; ignoringOtherApps no longer has an effect.
+                activateTarget: { NSApp.yieldActivation(to: target); return target.activate(options: []) },
                 clipboardVersion: { NSPasteboard.general.changeCount },
                 send: { !PresetManager.isUIPreview && !PresetManager.isRunningTests && ClipboardStackPasteMonitor.sendPaste(to: target) }))
             switch result {

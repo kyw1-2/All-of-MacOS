@@ -200,6 +200,22 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
     }
 
     var body: some View {
+        // The system inspector only when a page passes one: an always-attached
+        // `.inspector(isPresented: false)` inset the first row under the
+        // toolbar and blurred it (B, C and D's pages, 3.4.0).
+        if let showsInspector {
+            columns
+                .inspector(isPresented: showsInspector) {
+                    inspector
+                        .inspectorColumnWidth(min: AOMSize.inspectorWidth.lowerBound, ideal: AOMSize.inspectorIdeal,
+                                              max: AOMSize.inspectorWidth.upperBound)
+                }
+        } else {
+            columns
+        }
+    }
+
+    private var columns: some View {
         HStack(spacing: 0) {
             list
                 .frame(width: CGFloat(min(AOMSize.moduleListRange.upperBound,
@@ -210,11 +226,6 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .background(AOMColor.canvas)
-        .inspector(isPresented: showsInspector ?? .constant(false)) {
-            inspector
-                .inspectorColumnWidth(min: AOMSize.inspectorWidth.lowerBound, ideal: AOMSize.inspectorIdeal,
-                                      max: AOMSize.inspectorWidth.upperBound)
-        }
     }
 }
 

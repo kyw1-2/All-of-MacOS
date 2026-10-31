@@ -1,25 +1,6 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// An app → input source rule ("Terminal always uses ABC").
-struct FocusInputSourceRule: Codable, Equatable, Identifiable {
-    var id: UUID
-    var bundleID: String
-    var appName: String
-    /// `kTISPropertyInputSourceID` ("com.apple.keylayout.ABC",
-    /// "com.apple.inputmethod.Korean.2SetKorean").
-    var sourceID: String
-    var isEnabled: Bool
-
-    init(id: UUID = UUID(), bundleID: String, appName: String, sourceID: String, isEnabled: Bool = true) {
-        self.id = id
-        self.bundleID = bundleID
-        self.appName = appName
-        self.sourceID = sourceID
-        self.isEnabled = isEnabled
-    }
-}
-
 /// The lists people make on the Focus page, in one file
 /// (Application Support/AllOfMacOS/Focus/lists.json). They are data, not
 /// preferences: Reset Preferences keeps them.
@@ -27,21 +8,16 @@ struct FocusLists: Codable, Equatable {
     var version = 1
     var distractingApps: [FocusAppRef] = []
     var idleRules: [FocusIdleRule] = []
-    var inputSourceRules: [FocusInputSourceRule] = []
-    /// The input source last used in each app without a rule (Remember mode).
-    var rememberedInputSources: [String: String] = [:]
 
     init() {}
 
-    enum CodingKeys: String, CodingKey { case version, distractingApps, idleRules, inputSourceRules, rememberedInputSources }
+    enum CodingKeys: String, CodingKey { case version, distractingApps, idleRules }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? 1
         distractingApps = (try? c.decodeIfPresent([FocusAppRef].self, forKey: .distractingApps)) ?? []
         idleRules = (try? c.decodeIfPresent([FocusIdleRule].self, forKey: .idleRules)) ?? []
-        inputSourceRules = (try? c.decodeIfPresent([FocusInputSourceRule].self, forKey: .inputSourceRules)) ?? []
-        rememberedInputSources = (try? c.decodeIfPresent([String: String].self, forKey: .rememberedInputSources)) ?? [:]
     }
 }
 
@@ -100,30 +76,6 @@ final class FocusListsStore: ObservableObject {
     func insertIdleRule(_ rule: FocusIdleRule, at index: Int) {
         guard !lists.idleRules.contains(where: { $0.id == rule.id }) else { return }
         lists.idleRules.insert(rule, at: min(max(0, index), lists.idleRules.count))
-    }
-
-    // MARK: Input sources
-
-    func setInputSourceRule(bundleID: String, appName: String, sourceID: String) {
-        if let index = lists.inputSourceRules.firstIndex(where: { $0.bundleID == bundleID }) {
-            lists.inputSourceRules[index].sourceID = sourceID
-            lists.inputSourceRules[index].isEnabled = true
-        } else {
-            lists.inputSourceRules.append(FocusInputSourceRule(bundleID: bundleID, appName: appName, sourceID: sourceID))
-        }
-    }
-
-    func removeInputSourceRule(_ id: UUID) {
-        lists.inputSourceRules.removeAll { $0.id == id }
-    }
-
-    func remember(sourceID: String, for bundleID: String) {
-        guard lists.rememberedInputSources[bundleID] != sourceID else { return }
-        lists.rememberedInputSources[bundleID] = sourceID
-    }
-
-    func forgetRememberedInputSources() {
-        lists.rememberedInputSources.removeAll()
     }
 }
 

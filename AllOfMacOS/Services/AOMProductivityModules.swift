@@ -15,6 +15,11 @@ enum AOMProductivityModules {
         FocusModule.start()
         ScreenRulerModule.start()
         MicMuteModule.start()
+        ClickHintsModule.start()
+        // Per-app input sources (Settings › General) and the palette's
+        // hold-⌘ sheet and link rules: each starts only when turned on.
+        AppInputSourcesModule.start()
+        PaletteModule.start()
     }
 
     /// The status menu's Productivity items, built fresh for each click.
@@ -23,6 +28,7 @@ enum AOMProductivityModules {
             + ScreenRulerModule.statusMenuItems()
             + FilesModule.statusMenuItems()
             + TextActionsModule.statusMenuItems()
+            + ClickHintsModule.statusMenuItems()
             + FolderRulesModule.statusMenuItems()
             + MicMuteModule.statusMenuItems()
     }

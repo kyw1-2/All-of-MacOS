@@ -15,7 +15,8 @@ struct ShortcutsSettingsView: View {
     /// Derived from the enum's own category metadata, so a new action can
     /// never ship registered-but-invisible again (the audit's completeness gap:
     /// pauseRecording, allInOne and openProject were missing from the lists).
-    private static let groupOrder = ["Screen Capture", "Tools & Utilities", "Always on Top", "System & Switching"]
+    private static let groupOrder = ["Screen Capture", "Tools & Utilities", "Productivity", "Always on Top",
+                                     "System & Switching"]
 
     private var groups: [(name: String, actions: [CaptureShortcutAction])] {
         Self.groupOrder.compactMap { name in
@@ -43,6 +44,8 @@ struct ShortcutsSettingsView: View {
                         }
                     }
                 }
+                // 3.4.0: hold ⌘ for the front app's shortcuts (KeyClu).
+                PaletteShortcutSheetSettings()
             }
             .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
             .padding(.horizontal, AOMSpace.pageMargin)
@@ -50,6 +53,8 @@ struct ShortcutsSettingsView: View {
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Isolated previews only (`--aom-preview-scroll-bottom`); nil otherwise.
+        .defaultScrollAnchor(PreviewScrollAnchor.current)
         .onDisappear {
             stopRecording()
         }
@@ -229,6 +234,7 @@ struct ShortcutsSettingsView: View {
         case .toggleFocusSession: return "Start a focus session, or end the current one"
         case .toggleMicMute: return "Mute or unmute the microphone in every app"
         case .showTextActions: return "Show the action bar for the selected text"
+        case .showClickHints: return "Type the letters on a button or link to click it"
         }
     }
 }

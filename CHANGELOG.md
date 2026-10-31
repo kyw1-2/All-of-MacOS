@@ -1,3 +1,51 @@
+## 3.4.0 (2026-11-01)
+
+A UI overhaul on a spec with 159 new references (docs/design-3.4.0.md, #96–#254: HIG pages, WWDC23–26 sessions, 38 Mac apps and Apple's own apps), four new Productivity pages (Folder Rules, Text Actions, Files, Focus), Screen Ruler, Click Hints, a larger ⌘K palette with a window switcher and link rules, per-app input sources, 23 more System Tools, microphone mute, a SoundSource-style mixer, 25 defect fixes and HomePod dropout work. Eleven branches were merged into one release; nothing was tried on a real trackpad, in the user's other apps or by listening to the HomePod.
+
+Tests: each branch ran its new test classes and re-ran only the tests that failed (all green in their logs, aom-335-kit). After the merge only the failing, changed and merge-affected tests were run: BackupScopeTests, N333PreferenceResetTests, StatusMenuLayoutTests, FolderRulesStoreTests, the Focus classes, two AuditFixTests, one ScreenCaptureTests, two System Tools catalog tests and the What's New test (43 tests, 0 failures); then ClickHintsModuleTests, HomePodCrackle340Tests and the two IO-size tests (17, 0 failures); then PaletteLinkRouterTests after the new default rules (5, 0 failures). Tests that had passed were not re-run.
+
+### Main window and Workspace
+
+- Sidebar: Tools, Productivity and Activity sections that fold, Back and Forward (⌘[ ⌘]), badges for attention and a running Focus session, a context menu on every row, and the last page restored at launch.
+- Workspace: Tools and Productivity tile groups with live counts, ten quick actions (Measure Screen, Drop Shelf, Focus Session, Mute Microphone and Window Switcher are new) that can be reordered, and View › Customize Workspace… to hide sections, with Undo.
+- Module kit for the new pages: list and detail with an inspector, condition rows, token fields, path rows, status headers, live logs, toasts with tone and Undo, tips and a HUD layout. Pages, Settings and panels follow the spec's 3.4 rules (docs/pages-3.4.0.md lists the 93 page items).
+- The clipboard shelf and its preview keep Paste's layout (coloured card headers, the preview above the card) and one click on the title renames an item, also in the detached preview.
+
+### New pages
+
+- **Folder Rules** (Hazel, Clop, Rapidmg): rules per folder with conditions (name, extension, kind, dates, size, download site, tags) and actions (move or copy with subfolders, rename, tags and labels, Trash, ZIP and unZIP, optimize images, install apps from disk images, open, notify, run an automation or a Shortcut). Rules start off, show what they would do first, ask before destructive actions and can be undone. Install Disk Image… is also in the status menu and System Tools (docs/folder-rules-3.4.0.md).
+- **Text Actions** (PopClip): a bar over selected text in any app with copy, cut, paste, search, open link, email, look up, Papago or Google translation, calculate, pin to clipboard and transforms; off by default, never in password fields or excluded apps (docs/text-actions-3.4.0.md).
+- **Files** (Default Folder X, Dropover, Yoink): a panel beside Open and Save dialogs with Finder windows, favourites (⌘⌥1–9), recent folders and the clipboard's path; a Drop Shelf opened by shaking the pointer or pressing ⇧ while dragging files; the newest downloads and screenshots (docs/files-3.4.0.md).
+- **Focus** (Session, Quitter): focus and break timers with a menu bar countdown and a log, hiding distracting apps, hiding or quitting idle apps with a memory saver for 8 GB Macs, and eye and stand-up reminders (docs/focus-3.4.0.md).
+
+### More tools
+
+- **Screen Ruler** (PixelSnap): ⇧⌘7 measures distances, sizes and colours on a still of every display, in points or pixels (docs/screen-ruler-3.4.0.md).
+- **Click Hints** (Homerow, Shortcat): ⇧⌘Space puts one- or two-letter labels on the front window's buttons, links and fields; typing them clicks. Settings are in Text Actions › Click Hints (docs/click-hints-3.4.0.md).
+- **⌘K palette**: calculator and unit conversion, quicklinks, the front app's menus, Safari and Chrome bookmarks, Copy Link to Current Item, recent files; a window switcher with thumbnails (AltTab, no default key); hold ⌘ for the front app's shortcuts (KeyClu, off by default, Settings › Shortcuts › Shortcut sheet) (docs/palette-3.4.0.md).
+- **Link rules** (Velja, Choosy): Settings › General › Links. Once All of MacOS is the default browser, links lose utm_*, fbclid, gclid, si and igshid, Figma, Zoom and Notion links open in their apps, rules pick the browser (uos.ac.kr → Safari, github.com and localhost → Chrome) and ⌥-click shows a browser menu. Making AOM the default browser keeps the previous browser for other links. Off until turned on.
+- **Input sources per app** (Input Source Pro): Settings › General › Input sources switches the keyboard when an app comes to the front (Terminal in English, KakaoTalk in Korean) and can bring back the source each other app used last (docs/input-sources-3.4.0.md).
+- **System Tools** (23 new, 127 in all, 126 on this Mac): Homebrew (outdated, upgrade, installed, services, search, clean up, doctor), VPN and Tailscale, ten PDF page tools, Metal HUD, an opt-in Open-Meteo weather card, Install Disk Image…; the uninstaller review groups what an app left in ~/Library and checks only bundle-ID matches (docs/system-tools-3.4.0.md).
+- **Audio**: microphone mute in every app with a shortcut, a HUD, a menu bar icon while muted, push to talk and mute when chosen apps open; the App Audio mixer lists apps the way SoundSource does.
+
+### Fixes (docs/release-3.4.0-fixes.md)
+
+- 25 defects, among them: abbreviations no longer act while AOM is paused; modifiers no longer stay held after macOS turns the keyboard or mouse tap off, or when one side of ⌘ ⇧ ⌥ ⌃ is released; a shortcut that switches apps no longer leaks autorepeat; Mission Control ✕ buttons respect Pause and the W/⇧W/M/H keys work without the buttons; the clipboard poller slows down while history is off; an unreadable automations file is kept before any fallback and older backups are found; unchanged launches keep older backups; Reset and Restore reach suppression rules, clipboard preferences and variables at once; Apple Events failures say what to allow (also for Restart, Shut Down and Login Items in System Tools).
+- The Reset All Preferences menu command now says to quit and reopen, as Settings › Data does. Pasting from the shelf yields activation to the target app (macOS 14 cooperative activation).
+- Backups and Reset Preferences cover every new setting; list widths, the inspector, folded sidebar sections and the last page are window layout, and recent tools and the remembered input sources are usage history.
+
+### HomePod (docs/homepod-crackle-3.4.0.md)
+
+- A dropout in an app's own audio (a run of exact zeros up to 85 ms) is faded out and back in over 2 ms instead of playing two hard edges, on AirPlay routes only.
+- The PCM queues, work buffers and the resampling kernel are wired in memory (`mlock`), so the audio threads never wait for paged-out memory.
+- The HomePod's IO size is requested at most twice per output, then left alone; each request is logged. New diagnostics counters: softenedDropouts, wiredKilobytes, wireFailures.
+- Not changed: the HomePod's fixed 128-frame IO and device-wide overloads; not listened to.
+
+### Default changes
+
+- New global shortcuts: ⇧⌘7 Measure Screen and ⇧⌘Space Click with Keyboard (free on this Mac; ⇧⌘Space is VS Code's Trigger Parameter Hints). Change or clear them in Settings › Shortcuts › Productivity.
+- AOM declares the http and https URL types so it can be chosen as the default browser; nothing changes until it is.
+
 ## 3.3.8 (2026-10-31)
 
 An L-shaped swipe in one touch takes the top corner. docs/window-snap-3.3.8.md has the cause and the updated rows. Nothing was tried on a real trackpad.
