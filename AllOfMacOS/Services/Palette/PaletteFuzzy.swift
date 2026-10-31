@@ -97,8 +97,12 @@ enum PaletteFuzzy {
     }
 
     private static func subsequence(_ needle: [Character], in text: [Character], original: [Character]) -> Int? {
+        // The match has to start where a word starts ("gc" finds Google
+        // Chrome, not "Big cache"); after that, letters may skip ahead.
+        guard let first = needle.first,
+              let start = text.indices.first(where: { matches(first, text[$0]) && isBoundary(original, $0) }) else { return nil }
         var total = 0
-        var cursor = 0
+        var cursor = start
         var previous = -2
         for wanted in needle {
             guard let found = (cursor..<text.count).first(where: { matches(wanted, text[$0]) }) else { return nil }

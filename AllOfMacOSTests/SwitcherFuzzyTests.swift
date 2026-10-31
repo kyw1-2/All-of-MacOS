@@ -49,11 +49,14 @@ final class SwitcherFuzzyTests: XCTestCase {
     }
 
     func testWordStartsBeatScatteredLetters() throws {
-        let initials = try XCTUnwrap(PaletteFuzzy.score("gc", "Google Chrome"))
-        let scattered = try XCTUnwrap(PaletteFuzzy.score("gc", "Big cache"))
-        XCTAssertGreaterThan(initials, scattered, "g and c starting words beat letters in the middle")
+        let initials = try XCTUnwrap(PaletteFuzzy.score("gch", "Google Chrome"))
+        let scattered = try XCTUnwrap(PaletteFuzzy.score("gch", "Gauche"))
+        XCTAssertGreaterThan(initials, scattered, "letters starting words beat letters in the middle")
+        XCTAssertNil(PaletteFuzzy.score("gc", "Big cache"), "a fuzzy match has to start where a word starts")
+        XCTAssertNil(PaletteFuzzy.score("uos", "Turn On Hold ⌘ for Shortcuts"))
         let camel = try XCTUnwrap(PaletteFuzzy.score("vsc", "VisualStudioCode"))
         XCTAssertGreaterThan(camel, PaletteFuzzy.subsequenceFloor + 40, "camel-case humps are word starts")
+        XCTAssertNotNil(PaletteFuzzy.score("chrm", "Chrome"), "after a word start, letters may skip")
     }
 
     func testHangulSyllablesAndInitialConsonants() throws {
