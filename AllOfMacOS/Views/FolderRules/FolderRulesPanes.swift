@@ -59,16 +59,13 @@ struct FolderRulesInspector: View {
     }
 
     private func previewSummary(_ preview: FolderRulePreview) -> String {
-        let ready = preview.willRun.count
-        var text = ready == 0 ? "No item matches now" : "Would act on \(ready) of \(preview.scanned) \(preview.scanned == 1 ? "item" : "items")"
-        if preview.inProgress > 0 { text += " · \(preview.inProgress) unfinished \(preview.inProgress == 1 ? "download" : "downloads") left alone" }
-        return text
+        FolderRulesText.previewSummary(preview)
     }
 
     @ViewBuilder private func test(_ rule: FolderRule) -> some View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
             HStack(spacing: AOMSpace.x2) {
-                Text(model.testFile?.lastPathComponent ?? "Drop a file here, or choose one.")
+                Text(model.testFile?.lastPathComponent ?? "Drop a file here")
                     .font(AOMFont.callout)
                     .foregroundStyle(model.testFile == nil ? AOMColor.textSecondary : AOMColor.text)
                     .lineLimit(1)
@@ -107,31 +104,17 @@ struct FolderRulesInspector: View {
     }
 
     @ViewBuilder private func history(_ rule: FolderRule) -> some View {
-        let entries = engine.activity.filter { $0.ruleID == rule.id }.prefix(8)
+        let entries = Array(engine.activity.filter { $0.ruleID == rule.id }.prefix(8))
         if entries.isEmpty {
             Text("This rule hasn't acted on anything yet.")
                 .font(AOMFont.callout)
                 .foregroundStyle(AOMColor.textSecondary)
         } else {
-            ForEach(Array(entries)) { entry in
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1) {
-                    Image(systemName: FolderRulesPageModel.logEntry(entry).tone.symbol)
-                        .foregroundStyle(FolderRulesPageModel.logEntry(entry).tone.color)
-                        .imageScale(.small)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.fileName).font(AOMFont.callout).lineLimit(1).truncationMode(.middle)
-                        Text(AOMRelativeTime.string(entry.date, now: Date()))
-                            .font(AOMFont.timestamp)
-                            .foregroundStyle(AOMColor.textTertiary)
-                    }
-                    Spacer(minLength: AOMSpace.x1)
-                    if entry.canUndo {
-                        Button("Undo") { model.undo(entry) }
-                            .help("Puts “\(entry.fileName)” back")
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    FolderRulesActivityRow(model: model, activity: entry, showsDivider: index > 0, compact: true)
+                        .padding(.horizontal, -AOMSpace.rowInset)
                 }
-                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -160,12 +143,8 @@ struct FolderRulesActivityView: View {
                 }
             }
             ForEach(days, id: \.day) { group in
-                AOMLogSection(title(for: group.day), entries: group.entries.map(FolderRulesPageModel.logEntry), limit: 12,
-                              emptyMessage: "Nothing that day.", trailing: { entry in
-                    if let activity = engine.activity.first(where: { $0.id == entry.id }) {
-                        FolderRulesActivityActions(model: model, activity: activity)
-                    }
-                })
+                FolderRulesActivitySection(model: model, title: title(for: group.day),
+                                           detail: FolderRulesText.dayCount(group.entries), entries: group.entries, limit: 12)
             }
         }
     }
@@ -178,12 +157,102 @@ struct FolderRulesActivityView: View {
 
     private func title(for day: Date) -> String {
         let calendar = Calendar.current
-        let count = engine.activity.filter { calendar.isDate($0.date, inSameDayAs: day) && $0.result == .succeeded }.count
-        let name: String
-        if calendar.isDateInToday(day) { name = "Today" } else if calendar.isDateInYesterday(day) { name = "Yesterday" } else {
-            name = day.formatted(date: .abbreviated, time: .omitted)
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        return day.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// A titled card of activity rows, newest first, with Show All.
+struct FolderRulesActivitySection: View {
+    @ObservedObject var model: FolderRulesPageModel
+    let title: String
+    var detail: String?
+    let entries: [FolderRuleActivity]
+    var limit = 6
+    var emptyMessage = "Nothing has happened yet."
+    @State private var showsAll = false
+
+    var body: some View {
+        let visible = showsAll ? entries : Array(entries.prefix(limit))
+        AOMSection(title, detail: detail) {
+            if entries.count > limit {
+                AOMCardLink(showsAll ? "Show Less" : "Show All", symbol: showsAll ? "chevron.up" : "chevron.down") {
+                    withAnimation(AOMMotion.standard) { showsAll.toggle() }
+                }
+            }
+        } content: {
+            if entries.isEmpty {
+                AOMInlineEmpty(symbol: "clock.arrow.circlepath", message: emptyMessage)
+            } else {
+                ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
+                    FolderRulesActivityRow(model: model, activity: entry, showsDivider: index > 0)
+                }
+            }
         }
-        return "\(name) · \(count) \(count == 1 ? "file" : "files")"
+    }
+}
+
+/// One activity line: the result glyph, the file, the rule and what it did,
+/// the time and Undo. The time and buttons keep their size; the text wraps.
+struct FolderRulesActivityRow: View {
+    @ObservedObject var model: FolderRulesPageModel
+    let activity: FolderRuleActivity
+    var showsDivider = true
+    /// The inspector's narrower rows: no rule name, shorter text.
+    var compact = false
+
+    var body: some View {
+        let entry = FolderRulesPageModel.logEntry(activity)
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+            Image(systemName: entry.tone.symbol)
+                .imageScale(.small)
+                .foregroundStyle(entry.tone.color)
+                .frame(width: AOMIcon.row)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.message)
+                    .font(compact ? AOMFont.callout : AOMFont.body)
+                    .foregroundStyle(activity.undone ? AOMColor.textSecondary : AOMColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let detail = entry.detail, !detail.isEmpty {
+                    Text(compact || activity.ruleName.isEmpty ? detail : "\(activity.ruleName) · \(detail)")
+                        .font(compact ? AOMFont.caption : AOMFont.callout)
+                        .foregroundStyle(entry.tone == .danger ? AOMColor.dangerText : AOMColor.textSecondary)
+                        .lineLimit(compact ? 2 : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(AOMRelativeTime.string(activity.date, now: context.date))
+                    .font(AOMFont.timestamp)
+                    .foregroundStyle(AOMColor.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help(activity.date.formatted(date: .abbreviated, time: .standard))
+            }
+            FolderRulesActivityActions(model: model, activity: activity)
+                .controlSize(.small)
+                .fixedSize()
+        }
+        .padding(.horizontal, AOMSpace.rowInset)
+        .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        .frame(minHeight: AOMSize.logRow)
+        .overlay(alignment: .top) { if showsDivider { AOMRowDivider(inset: AOMSpace.rowSymbolInset) } }
+        .contextMenu {
+            if activity.canUndo { Button("Undo") { model.undo(activity) } }
+            if let path = activity.finalPath, FolderRulesSafety.exists(path) {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            }
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString([activity.fileName, activity.ruleName, activity.detail].filter { !$0.isEmpty }
+                    .joined(separator: " — "), forType: .string)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -260,12 +329,10 @@ struct FolderRulesFolderView: View {
                     }
                 }
             }
-            AOMLogSection("Activity", entries: engine.activity.filter { $0.folderName == folder.name }.map(FolderRulesPageModel.logEntry),
-                          emptyMessage: "Nothing has happened in \(folder.name) yet.", trailing: { entry in
-                if let activity = engine.activity.first(where: { $0.id == entry.id }) {
-                    FolderRulesActivityActions(model: model, activity: activity)
-                }
-            })
+            FolderRulesActivitySection(model: model, title: "Activity",
+                                       detail: FolderRulesText.dayCount(engine.activity.filter { $0.folderName == folder.name }),
+                                       entries: engine.activity.filter { $0.folderName == folder.name },
+                                       emptyMessage: "Nothing has happened in \(folder.name) yet.")
             AOMSection {
                 AOMSettingRow("Stop watching \(folder.name)", detail: "Removes the folder and its rules from Folder Rules. Its files stay as they are.",
                               showsDivider: false) {

@@ -410,7 +410,7 @@ enum FolderRuleActionKind: String, Codable, CaseIterable, Identifiable {
         case .compress: return "Compress to ZIP"
         case .extract: return "Extract ZIP"
         case .optimizeImage: return "Optimize Image"
-        case .installApp: return "Install App from Disk Image"
+        case .installApp: return "Install App"
         case .openWith: return "Open"
         case .notify: return "Show Notification"
         case .runAutomation: return "Run Automation"

@@ -9,10 +9,72 @@ struct FolderRulesPage: View {
     @StateObject private var model = FolderRulesPageModel(engine: FolderRulesEngine.shared)
     @ObservedObject private var engine = FolderRulesEngine.shared
     @AppStorage("AOMFolderRulesListWidth") private var listWidth = AOMSize.moduleListIdeal
-    @AppStorage("AOMFolderRulesInspector") private var showsInspector = true
+    @AppStorage("AOMFolderRulesInspector") private var showsInspector = false
+    @State private var inspectorWidth = Double(AOMSize.inspectorIdeal)
     @Environment(\.undoManager) private var undoManager
+    @State private var pageWidth: CGFloat = 0
+
+    private static let inspectorRange = Double(AOMSize.inspectorWidth.lowerBound)...Double(AOMSize.inspectorWidth.upperBound)
+    /// What one resize divider takes in the row (a hairline and its padding).
+    private static let dividerAllowance = 2 * AOMSpace.x1
+
+    private var clampedListWidth: CGFloat {
+        CGFloat(min(AOMSize.moduleListRange.upperBound, max(AOMSize.moduleListRange.lowerBound, listWidth)))
+    }
+
+    /// The width left for the inspector beside the list and a 420 pt detail.
+    private var inspectorRoom: CGFloat {
+        pageWidth - clampedListWidth - AOMSize.detailMinimum - 2 * Self.dividerAllowance
+    }
+
+    /// The inspector only opens when the list, a 420 pt detail and the
+    /// inspector all fit; in a narrower window the preview shows in the detail.
+    private var inspectorFits: Bool { pageWidth > 0 && inspectorRoom >= AOMSize.inspectorWidth.lowerBound }
+
+    private var isInspectorShown: Bool { showsInspector && inspectorFits }
+
+    private var shownInspectorWidth: CGFloat {
+        let wanted = CGFloat(min(Self.inspectorRange.upperBound, max(Self.inspectorRange.lowerBound, inspectorWidth)))
+        return max(AOMSize.inspectorWidth.lowerBound, min(wanted, inspectorRoom))
+    }
+
+    private func showPreview() {
+        model.refreshPreview()
+        if inspectorFits {
+            withAnimation(AOMMotion.panel) { showsInspector = true }
+        } else {
+            withAnimation(AOMMotion.standard) { model.showsInlinePreview = true }
+        }
+    }
 
     var body: some View {
+        page
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The page's width, which the inspector doesn't change (the
+            // detail gives way), so the decision can't feed back into it.
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { pageWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in pageWidth = width }
+                }
+            }
+            .onChange(of: inspectorFits) { _, fits in if fits { model.showsInlinePreview = false } }
+        .aomPage("Folder Rules")
+        .aomToolbarSubtitle(toolbarSubtitle)
+        .toolbar { toolbarContent }
+        .aomToast(model.toast)
+        .onDeleteCommand { model.removeSelection(undoManager: undoManager) }
+        .task {
+            FolderRulesPreviewSamples.prepare(engine: engine, model: model)
+            model.selectDefault()
+            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-folder-rules-inspector") {
+                showsInspector = true
+            }
+        }
+    }
+
+    private var page: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: AOMSpace.x2) {
                 FolderRulesHeader(engine: engine)
@@ -21,24 +83,44 @@ struct FolderRulesPage: View {
             .padding(.horizontal, AOMSpace.pageMargin)
             .padding(.vertical, AOMSpace.x3)
             AOMDivider()
-            AOMListDetail(listWidth: $listWidth, showsInspector: $showsInspector) {
-                FolderRulesListColumn(model: model, engine: engine)
-            } detail: {
-                FolderRulesDetail(model: model, engine: engine)
-            } inspector: {
-                FolderRulesInspector(model: model, engine: engine)
+            columns
+        }
+        .background(AOMColor.canvas)
+    }
+
+    /// b.2's list + detail + inspector as plain columns. Below this page
+    /// header, `AOMListDetail` (whose `.inspector` expects to sit right under
+    /// the toolbar) drew a blurred, toolbar-high band over the top of the
+    /// list and the detail; plain columns don't.
+    private var columns: some View {
+        HStack(spacing: 0) {
+            FolderRulesListColumn(model: model, engine: engine)
+                .frame(width: clampedListWidth)
+                .frame(maxHeight: .infinity)
+            AOMResizeDivider(width: $listWidth, range: AOMSize.moduleListRange, paneEdge: .leading)
+            FolderRulesDetail(model: model, engine: engine, showPreview: showPreview)
+                .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if isInspectorShown {
+                HStack(spacing: 0) {
+                    AOMResizeDivider(width: $inspectorWidth, range: Self.inspectorRange, paneEdge: .trailing)
+                    FolderRulesInspector(model: model, engine: engine)
+                        .frame(width: shownInspectorWidth)
+                        .frame(maxHeight: .infinity)
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Inspector")
             }
         }
         .background(AOMColor.canvas)
-        .aomPage("Folder Rules")
-        .aomToolbarSubtitle(engine.statusDetail)
-        .toolbar { toolbarContent }
-        .aomToast(model.toast)
-        .onDeleteCommand { model.removeSelection(undoManager: undoManager) }
-        .task {
-            FolderRulesPreviewSamples.prepare(engine: engine, model: model)
-            model.selectDefault()
-        }
+    }
+
+    /// "3 of 5 rules on"; with no rules the header alone says so.
+    private var toolbarSubtitle: String {
+        let total = engine.config.rules.count
+        guard total > 0 else { return "" }
+        let on = engine.config.isEnabled ? engine.activeRules.count : 0
+        return "\(on) of \(total) \(total == 1 ? "rule" : "rules") on"
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -62,12 +144,19 @@ struct FolderRulesPage: View {
         }
         ToolbarItem(placement: .automatic) {
             Button {
-                withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                if inspectorFits {
+                    withAnimation(AOMMotion.panel) { showsInspector.toggle() }
+                } else {
+                    withAnimation(AOMMotion.standard) { model.showsInlinePreview.toggle() }
+                    model.refreshPreview()
+                }
             } label: {
-                Label(showsInspector ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
+                Label(isInspectorShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.trailing")
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
-            .help(showsInspector ? "Hide the preview and history (⌥⌘I)" : "Show the preview and history (⌥⌘I)")
+            .help(inspectorFits
+                  ? (showsInspector ? "Hide the preview and history (⌥⌘I)" : "Show the preview and history (⌥⌘I)")
+                  : "Shows the rule's preview in the page; widen the window for the inspector (⌥⌘I)")
         }
     }
 }
@@ -313,6 +402,8 @@ struct FolderRulesListColumn: View {
 struct FolderRulesDetail: View {
     @ObservedObject var model: FolderRulesPageModel
     @ObservedObject var engine: FolderRulesEngine
+    /// Opens the inspector on the rule's preview.
+    var showPreview: () -> Void = {}
 
     var body: some View {
         switch model.selection {
@@ -325,7 +416,7 @@ struct FolderRulesDetail: View {
                 empty
             }
         case .rule:
-            if model.draft != nil { FolderRulesRuleEditor(model: model, engine: engine) } else { empty }
+            if model.draft != nil { FolderRulesRuleEditor(model: model, engine: engine, showPreview: showPreview) } else { empty }
         case nil:
             empty
         }
@@ -348,6 +439,39 @@ struct FolderRulesDetail: View {
 
 /// Short sentences for rules, conditions and actions.
 enum FolderRulesText {
+    /// "Would act on 2 of 7 items · 1 unfinished download left alone".
+    static func previewSummary(_ preview: FolderRulePreview) -> String {
+        let ready = preview.willRun.count
+        let waiting = preview.items.filter { $0.state == .waiting }.count
+        let handled = preview.items.filter { $0.state == .handled }.count
+        let earlier = preview.items.filter { if case .earlierRule = $0.state { return true } else { return false } }.count
+        var parts: [String] = []
+        if ready > 0 {
+            parts.append("Would act on \(ready) of \(preview.scanned) \(preview.scanned == 1 ? "item" : "items")")
+        } else if preview.items.isEmpty {
+            parts.append("No item matches now")
+        } else {
+            parts.append("Nothing to do now")
+        }
+        if waiting > 0 { parts.append("\(waiting) still changing") }
+        if handled > 0 { parts.append("\(handled) already handled") }
+        if earlier > 0 { parts.append("\(earlier) taken by an earlier rule") }
+        if preview.inProgress > 0 {
+            parts.append("\(preview.inProgress) unfinished \(preview.inProgress == 1 ? "download" : "downloads") left alone")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "3 files" or "2 files · 1 failed" for a group of activity lines.
+    static func dayCount(_ entries: [FolderRuleActivity]) -> String? {
+        guard !entries.isEmpty else { return nil }
+        let done = entries.filter { $0.result == .succeeded }.count
+        let failed = entries.filter { $0.result == .failed }.count
+        var text = "\(done) \(done == 1 ? "file" : "files")"
+        if failed > 0 { text = done == 0 ? "\(failed) failed" : text + " · \(failed) failed" }
+        return text
+    }
+
     static func summary(_ rule: FolderRule) -> String {
         let condition = rule.conditions.first.map(sentence) ?? "No conditions"
         let more = rule.conditions.count > 1 ? " +\(rule.conditions.count - 1)" : ""

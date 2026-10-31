@@ -24,6 +24,8 @@ final class FolderRulesPageModel: ObservableObject {
     @Published var previewLoading = false
     /// The preview shown in place before a rule is turned on.
     @Published var turnOnPreview: FolderRulePreview?
+    /// The preview in the detail, for windows too narrow for the inspector.
+    @Published var showsInlinePreview = false
     @Published var testResult: FolderRulePreviewItem?
     @Published var testFile: URL?
     let toast = AOMToastModel()

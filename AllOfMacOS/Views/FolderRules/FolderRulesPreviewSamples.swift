@@ -45,9 +45,14 @@ enum FolderRulesPreviewSamples {
 
     private static func writeSamples(downloads: URL, desktop: URL) {
         let fileManager = FileManager.default
+        // Written an hour "ago", so the samples count as settled files.
+        let settled = Date().addingTimeInterval(-3_600)
         func write(_ name: String, in folder: URL, _ data: Data) -> URL {
             let url = folder.appendingPathComponent(name)
-            if !fileManager.fileExists(atPath: url.path) { try? data.write(to: url) }
+            if !fileManager.fileExists(atPath: url.path) {
+                try? data.write(to: url)
+                try? fileManager.setAttributes([.modificationDate: settled], ofItemAtPath: url.path)
+            }
             return url
         }
         let pdf = Data("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n".utf8)
@@ -61,6 +66,7 @@ enum FolderRulesPreviewSamples {
             let url = desktop.appendingPathComponent(name)
             guard !fileManager.fileExists(atPath: url.path) else { continue }
             writePNG(to: url, width: 1440 + index * 160, height: 900)
+            try? fileManager.setAttributes([.modificationDate: settled], ofItemAtPath: url.path)
             let flag = try? PropertyListSerialization.data(fromPropertyList: true, format: .binary, options: 0)
             if let flag { FolderRuleMetadata.setAttribute(FolderRuleMetadata.screenCaptureAttribute, flag, at: url.path) }
         }

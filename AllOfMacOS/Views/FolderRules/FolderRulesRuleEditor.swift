@@ -9,12 +9,15 @@ import UniformTypeIdentifiers
 struct FolderRulesRuleEditor: View {
     @ObservedObject var model: FolderRulesPageModel
     @ObservedObject var engine: FolderRulesEngine
+    var showPreview: () -> Void = {}
 
     var body: some View {
         if let rule = model.draft {
             AOMPage(maxWidth: AOMSize.readableWidth) {
                 AOMPageHeader(rule.name.isEmpty ? "Untitled rule" : rule.name, module: .folderRules,
                               subtitle: subtitle(rule), status: status(rule), active: savedEnabled(rule)) {
+                    Button("Preview", action: showPreview)
+                        .help("Shows which items the rule would act on now, without changing anything (⌥⌘I)")
                     Toggle("Rule", isOn: Binding(get: { savedEnabled(rule) }, set: { model.setEnabled($0) }))
                         .labelsHidden()
                         .toggleStyle(.switch)
@@ -23,6 +26,8 @@ struct FolderRulesRuleEditor: View {
                 }
                 if let preview = model.turnOnPreview, preview.ruleID == rule.id {
                     FolderRulesTurnOnPreview(model: model, preview: preview)
+                } else if model.showsInlinePreview {
+                    FolderRulesInlinePreview(model: model)
                 }
                 if model.hasUnappliedChanges {
                     AOMNotice(.info, "Changes take effect when you apply them",
@@ -64,17 +69,36 @@ struct FolderRulesRuleEditor: View {
             AOMConditionGroupHeader(match: Binding(get: { AOMConditionMatch(rawValue: rule.match.rawValue) ?? .all },
                                                    set: { value in model.edit { $0.match = FolderRuleMatch(rawValue: value.rawValue) ?? .all } }))
             ForEach(rule.conditions) { condition in
-                AOMConditionRow(canRemove: rule.conditions.count > 1,
-                                add: { addCondition(after: condition.id) },
-                                remove: { model.edit { $0.conditions.removeAll { $0.id == condition.id } } }) {
-                    FolderRuleConditionSubject(condition: conditionBinding(condition.id, fallback: condition))
-                } value: {
-                    FolderRuleConditionValue(condition: conditionBinding(condition.id, fallback: condition))
+                // One line when it fits ("Kind is PDF"); in a narrow window the
+                // value moves under the pop-ups instead of being squeezed.
+                ViewThatFits(in: .horizontal) {
+                    conditionRow(rule, condition, inline: true)
+                    conditionRow(rule, condition, inline: false)
                 }
             }
             if rule.conditions.isEmpty {
                 AOMInlineEmpty(symbol: "line.3.horizontal.decrease", message: "No conditions yet.",
                                actionTitle: "Add Condition") { addCondition(after: nil) }
+            }
+        }
+    }
+
+    private func conditionRow(_ rule: FolderRule, _ condition: FolderRuleCondition, inline: Bool) -> some View {
+        let binding = conditionBinding(condition.id, fallback: condition)
+        return VStack(alignment: .leading, spacing: 0) {
+            AOMConditionRow(canRemove: rule.conditions.count > 1,
+                            add: { addCondition(after: condition.id) },
+                            remove: { model.edit { $0.conditions.removeAll { $0.id == condition.id } } }) {
+                FolderRuleConditionSubject(condition: binding)
+            } value: {
+                if inline { FolderRuleConditionValue(condition: binding) } else { Spacer(minLength: 0) }
+            }
+            if !inline {
+                FolderRuleConditionValue(condition: binding)
+                    .labelsHidden()
+                    .padding(.leading, FolderRulesEditorMetrics.optionsInset)
+                    .padding(.trailing, AOMSpace.rowInset)
+                    .padding(.bottom, AOMSpace.x2)
             }
         }
     }
@@ -109,12 +133,17 @@ struct FolderRulesRuleEditor: View {
                 .padding(.horizontal, AOMSpace.rowInset)
                 .frame(minHeight: AOMSize.rowStandard)
             ForEach(rule.actions) { action in
-                AOMConditionRow(canRemove: rule.actions.count > 1, addLabel: "Add Action", removeLabel: "Remove Action",
-                                add: { addAction(after: action.id) },
-                                remove: { model.edit { $0.actions.removeAll { $0.id == action.id } } }) {
-                    FolderRuleActionSubject(action: actionBinding(action.id, fallback: action))
-                } value: {
-                    FolderRuleActionValue(action: actionBinding(action.id, fallback: action))
+                let binding = actionBinding(action.id, fallback: action)
+                VStack(alignment: .leading, spacing: 0) {
+                    AOMConditionRow(canRemove: rule.actions.count > 1, addLabel: "Add Action", removeLabel: "Remove Action",
+                                    add: { addAction(after: action.id) },
+                                    remove: { model.edit { $0.actions.removeAll { $0.id == action.id } } }) {
+                        FolderRuleActionSubject(action: binding)
+                    } value: {
+                        FolderRuleActionValue(action: binding)
+                    }
+                    // The action's settings under its row, at the full width of the card.
+                    FolderRuleActionOptions(action: binding)
                 }
                 .contextMenu {
                     Button("Move Up") { moveAction(action.id, by: -1) }
@@ -240,6 +269,31 @@ struct FolderRulesTurnOnPreview: View {
         let earlier = preview.items.filter { if case .earlierRule = $0.state { return true } else { return false } }.count
         if earlier > 0 { parts.append("\(earlier) go to an earlier rule.") }
         return parts.isEmpty ? "Turning it on approves these items; later ones that change or remove files still ask first." : parts.joined(separator: " ")
+    }
+}
+
+/// The dry run inside the detail when the window is too narrow for the inspector.
+struct FolderRulesInlinePreview: View {
+    @ObservedObject var model: FolderRulesPageModel
+
+    var body: some View {
+        AOMSection("Preview", detail: model.preview.map(FolderRulesText.previewSummary)) {
+            AOMCardLink("Hide", symbol: nil) { withAnimation(AOMMotion.standard) { model.showsInlinePreview = false } }
+        } content: {
+            if let preview = model.preview {
+                if let problem = preview.folderState.problem {
+                    AOMInlineEmpty(symbol: "exclamationmark.triangle", message: problem)
+                } else if preview.items.isEmpty {
+                    AOMInlineEmpty(symbol: "checkmark.circle", message: "No item in the folder matches right now.")
+                } else {
+                    ForEach(Array(preview.items.prefix(8).enumerated()), id: \.element.id) { index, item in
+                        FolderRulesPreviewRow(item: item, showsDivider: index > 0)
+                    }
+                }
+            } else {
+                AOMInlineEmpty(symbol: "hourglass", message: "Looking at the folder…")
+            }
+        }
     }
 }
 
@@ -411,6 +465,13 @@ struct FolderRuleActionSubject: View {
     }
 }
 
+/// Spacing shared by the rows' second lines (values and options under a row).
+enum FolderRulesEditorMetrics {
+    static let optionsInset: CGFloat = AOMSpace.rowInset + AOMSpace.x6
+}
+
+/// The part of an action that sits in its row: the folder, the pattern, the
+/// tags, a short summary for actions whose settings sit under the row.
 struct FolderRuleActionValue: View {
     @Binding var action: FolderRuleAction
     @EnvironmentObject private var appState: AppState
@@ -418,18 +479,9 @@ struct FolderRuleActionValue: View {
     var body: some View {
         switch action.kind {
         case .move, .copy:
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                FolderRulesChooseButton(path: action.folderPath, placeholder: "Choose Folder…", choosesApps: false) { url in
-                    action.folderPath = url.path
-                }
-                HStack(spacing: AOMSpace.x1) {
-                    TextField("Subfolders, such as {year}-{month}", text: $action.subfolderPattern)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Subfolders")
-                    FolderRulesTokenMenu(tokens: ["{year}", "{month}", "{day}", "{kind}", "{ext}", "/"]) { action.subfolderPattern += $0 }
-                }
+            FolderRulesChooseButton(path: action.folderPath, placeholder: "Choose Folder…", choosesApps: false) { url in
+                action.folderPath = url.path
             }
-            .padding(.vertical, AOMSpace.x1)
         case .rename:
             HStack(spacing: AOMSpace.x1) {
                 TextField("New name, such as {name} {date:yyyy-MM-dd}", text: $action.pattern)
@@ -451,24 +503,15 @@ struct FolderRuleActionValue: View {
             .fixedSize()
             .accessibilityLabel("Color label")
         case .moveToTrash:
-            note("The item goes to the Trash; Undo in the activity puts it back.")
+            summary("Undo puts it back.")
         case .compress:
-            Toggle("Then move the original to the Trash", isOn: $action.trashOriginal)
-                .toggleStyle(.checkbox)
+            summary("Like Finder's Compress")
         case .extract:
-            Toggle("Then move the archive to the Trash", isOn: $action.trashOriginal)
-                .toggleStyle(.checkbox)
+            summary("Into the same folder")
         case .optimizeImage:
-            FolderRulesImageOptionsEditor(options: $action.image)
+            summary(optimizeSummary)
         case .installApp:
-            VStack(alignment: .leading, spacing: AOMSpace.x1) {
-                Toggle("Then move the disk image to the Trash", isOn: $action.install.trashDiskImage)
-                    .toggleStyle(.checkbox)
-                Toggle("Open the app after installing", isOn: $action.install.openAfterInstall)
-                    .toggleStyle(.checkbox)
-                note("Asks before replacing an app that is already installed; the old copy goes to the Trash.")
-            }
-            .padding(.vertical, AOMSpace.x1)
+            summary("From the disk image to Applications")
         case .openWith:
             FolderRulesChooseButton(path: action.appPath, placeholder: "Default App", choosesApps: true,
                                     clear: { action.appPath = "" }) { url in action.appPath = url.path }
@@ -479,14 +522,96 @@ struct FolderRuleActionValue: View {
         case .runAutomation:
             automationPicker
         case .runShortcut:
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                TextField("Shortcut name", text: $action.shortcutName)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Shortcut name")
-                note("The Shortcuts app gets the file as its input.")
-            }
-            .padding(.vertical, AOMSpace.x1)
+            TextField("Shortcut name", text: $action.shortcutName)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Shortcut name")
         }
+    }
+
+    private func summary(_ text: String) -> some View {
+        Text(text)
+            .font(AOMFont.callout)
+            .foregroundStyle(AOMColor.textSecondary)
+            .lineLimit(2)
+    }
+
+    private var optimizeSummary: String {
+        let image = action.image
+        var parts: [String] = []
+        if image.maxDimension > 0 { parts.append("up to \(image.maxDimension) px") }
+        parts.append("\(Int((image.clampedQuality * 100).rounded()))%")
+        if image.stripLocation { parts.append("no location") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var automations: [Trigger] {
+        TriggerListQuery.sorted(appState.currentPreset.triggers, mode: .manual)
+    }
+
+    private var automationPicker: some View {
+        let options = automations
+        return Picker("Automation", selection: Binding(get: { action.automationID }, set: { id in
+            action.automationID = id
+            action.automationName = options.first { $0.id == id }?.displayName ?? ""
+        })) {
+            Text("Choose…").tag(UUID?.none)
+            ForEach(options) { trigger in
+                Text(trigger.displayName).tag(UUID?.some(trigger.id))
+            }
+        }
+        .accessibilityLabel("Automation")
+    }
+}
+
+/// An action's settings, under its row.
+struct FolderRuleActionOptions: View {
+    @Binding var action: FolderRuleAction
+
+    var body: some View {
+        switch action.kind {
+        case .move, .copy:
+            container {
+                HStack(spacing: AOMSpace.x1) {
+                    Text("Subfolders").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
+                    TextField("Optional, such as {year}-{month}", text: $action.subfolderPattern)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Subfolders")
+                    FolderRulesTokenMenu(tokens: ["{year}", "{month}", "{day}", "{kind}", "{ext}", "/"]) { action.subfolderPattern += $0 }
+                }
+            }
+        case .compress:
+            container {
+                Toggle("Then move the original to the Trash", isOn: $action.trashOriginal).toggleStyle(.checkbox)
+            }
+        case .extract:
+            container {
+                Toggle("Then move the archive to the Trash", isOn: $action.trashOriginal).toggleStyle(.checkbox)
+            }
+        case .optimizeImage:
+            container { FolderRulesImageOptionsEditor(options: $action.image) }
+        case .installApp:
+            container {
+                Toggle("Then move the disk image to the Trash", isOn: $action.install.trashDiskImage).toggleStyle(.checkbox)
+                Toggle("Open the app after installing", isOn: $action.install.openAfterInstall).toggleStyle(.checkbox)
+                note("Asks before replacing an app that is already installed; the old copy goes to the Trash.")
+            }
+        case .runAutomation:
+            container {
+                note("The automation can read the file as {{var:\(FolderRulesLive.fileVariable)}} and {{var:\(FolderRulesLive.fileNameVariable)}}.")
+            }
+        case .runShortcut:
+            container { note("The Shortcuts app gets the file as its input.") }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func container<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x1) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, FolderRulesEditorMetrics.optionsInset)
+            .padding(.trailing, AOMSpace.rowInset)
+            .padding(.bottom, AOMSpace.x2)
     }
 
     private func note(_ text: String) -> some View {
@@ -494,29 +619,6 @@ struct FolderRuleActionValue: View {
             .font(AOMFont.callout)
             .foregroundStyle(AOMColor.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var automations: [Trigger] {
-        TriggerListQuery.sorted(appState.currentPreset.triggers, mode: .manual)
-    }
-
-    @ViewBuilder private var automationPicker: some View {
-        let options = automations
-        VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-            Picker("Automation", selection: Binding(get: { action.automationID }, set: { id in
-                action.automationID = id
-                action.automationName = options.first { $0.id == id }?.displayName ?? ""
-            })) {
-                Text("Choose…").tag(UUID?.none)
-                ForEach(options) { trigger in
-                    Text(trigger.displayName).tag(UUID?.some(trigger.id))
-                }
-            }
-            .fixedSize()
-            .accessibilityLabel("Automation")
-            note("It can read the file as {{var:\(FolderRulesLive.fileVariable)}} and {{var:\(FolderRulesLive.fileNameVariable)}}.")
-        }
-        .padding(.vertical, AOMSpace.x1)
     }
 }
 
@@ -527,29 +629,31 @@ struct FolderRulesImageOptionsEditor: View {
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: AOMSpace.x2, verticalSpacing: AOMSpace.x1) {
             GridRow {
-                Text("Longest side").font(AOMFont.body)
+                label("Longest side")
                 HStack(spacing: AOMSpace.x1) {
                     TextField("Pixels", value: $options.maxDimension, format: .number)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 72)
                         .accessibilityLabel("Longest side in pixels")
-                    Text("px (0 keeps the size)").font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    Text("px").font(AOMFont.body).foregroundStyle(AOMColor.textSecondary)
                 }
+                .help("Larger images are scaled down to this; 0 keeps every size")
             }
             GridRow {
-                Text("Quality").font(AOMFont.body)
+                label("Quality")
                 HStack(spacing: AOMSpace.x1) {
                     Slider(value: $options.quality, in: 0.1...1, step: 0.05)
-                        .frame(maxWidth: 180)
+                        .frame(minWidth: 100, maxWidth: 180)
                         .accessibilityLabel("JPEG and HEIC quality")
                         .accessibilityValue("\(Int((options.clampedQuality * 100).rounded())) percent")
                     Text("\(Int((options.clampedQuality * 100).rounded()))%")
                         .font(AOMFont.body)
                         .monospacedDigit()
+                        .fixedSize()
                 }
             }
             GridRow {
-                Text("PNG screenshots").font(AOMFont.body)
+                label("PNG screenshots")
                 Picker("PNG screenshots", selection: $options.screenshotOutput) {
                     ForEach(FolderRuleImageOptions.Output.allCases) { Text($0.title).tag($0) }
                 }
@@ -557,7 +661,7 @@ struct FolderRulesImageOptionsEditor: View {
                 .fixedSize()
             }
             GridRow {
-                Text("Original").font(AOMFont.body)
+                label("Original")
                 Picker("Original", selection: $options.original) {
                     ForEach(FolderRuleImageOptions.Original.allCases) { Text($0.title).tag($0) }
                 }
@@ -570,7 +674,10 @@ struct FolderRulesImageOptionsEditor: View {
                     .toggleStyle(.checkbox)
             }
         }
-        .padding(.vertical, AOMSpace.x1)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).font(AOMFont.body).foregroundStyle(AOMColor.textSecondary).fixedSize()
     }
 }
 

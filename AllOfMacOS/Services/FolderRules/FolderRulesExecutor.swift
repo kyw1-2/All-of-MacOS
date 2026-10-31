@@ -472,9 +472,15 @@ enum FolderRulesSafety {
         return path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
-    /// "~/Pictures/Screenshots" for paths in the home folder.
+    /// "~/Pictures/Screenshots" for paths in the home folder. In an isolated
+    /// UI preview the sample folders stand in for the home folder, so they
+    /// show as "~/Downloads" too.
     static func display(_ url: URL) -> String {
         let path = url.standardizedFileURL.path
+        if let sample = FolderRulesLocations.sampleRoot?.standardizedFileURL.path {
+            if path == sample { return "~" }
+            if path.hasPrefix(sample + "/") { return "~" + path.dropFirst(sample.count) }
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if path == home { return "~" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
