@@ -148,10 +148,15 @@ struct QuickCommandPalette: View {
             guard !trimmed.isEmpty else {
                 return Section.allCases.flatMap { section in ranked.filter { $0.section == section } }
             }
-            let ordered = ranked.compactMap { item in rank(of: item, matching: trimmed).map { (item, $0) } }
+            // Fuzzy matches (rank 4) are ordered by how well they match:
+            // "pms" puts Paste and Match Style before Pick Color from Screen.
+            let ordered = ranked.compactMap { item -> (item: PaletteItem, rank: Int, closeness: Int)? in
+                guard let level = Self.rank(of: item, matching: trimmed) else { return nil }
+                return (item: item, rank: level, closeness: level == 4 ? -(PaletteFuzzy.score(trimmed, item.title) ?? 0) : 0)
+            }
                 .enumerated()
-                .sorted { ($0.element.1, $0.offset) < ($1.element.1, $1.offset) }
-                .map(\.element.0)
+                .sorted { ($0.element.rank, $0.element.closeness, $0.offset) < ($1.element.rank, $1.element.closeness, $1.offset) }
+                .map(\.element.item)
             return items.filter { $0.placement == .pinned } + ordered + items.filter { $0.placement == .fallback }
         }
 

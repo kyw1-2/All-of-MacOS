@@ -38,6 +38,12 @@ final class PalettePlacementTests: XCTestCase {
         XCTAssertNil(Palette.PaletteSearch.rank(of: items[0], matching: "zq"))
     }
 
+    func testCloserFuzzyMatchesComeFirst() {
+        let items = [item("weaker", title: "Pick Color from Screen"), item("closer", title: "Paste and Match Style")]
+        XCTAssertEqual(Palette.PaletteSearch.results(for: items, query: "pms").map(\.id), ["closer", "weaker"],
+                       "all three letters starting words beat one in the middle of a word")
+    }
+
     func testHangulInitialsFindCommands() {
         let items = [item("kakao", title: "카카오톡 열기"), item("other", title: "Capture Area")]
         XCTAssertEqual(Palette.PaletteSearch.results(for: items, query: "ㅋㅋㅇㅌ").map(\.id), ["kakao"])
