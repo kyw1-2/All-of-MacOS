@@ -111,7 +111,8 @@ first.
 
 **Activity** (top of the list) shows every run by day with a count per day: the rule, the file, each step and
 whether it worked. Moves, renames, the Trash and optimized images have **Undo**, which moves the item back
-(putting a Trashed item back is a move too). If the old name is taken, the item comes back as "name 2".
+(putting a Trashed item back is a move too). If the old name is taken, the item comes back as "name 2". **Clear**
+empties the list without touching any file; Undo in the message that appears (or Edit › Undo) brings it back.
 
 ## Templates
 

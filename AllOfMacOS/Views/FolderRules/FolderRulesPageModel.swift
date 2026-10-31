@@ -282,6 +282,19 @@ final class FolderRulesPageModel: ObservableObject {
         }
     }
 
+    /// Clears the activity list; Edit › Undo and the toast's Undo bring it back.
+    func clearActivity(undoManager: UndoManager?) {
+        var removed: [FolderRuleActivity] = []
+        AOMUndo.perform("Clear Activity", undoManager: undoManager, perform: { [weak self] in
+            removed = self?.engine.clearActivity() ?? []
+        }, revert: { [weak self] in
+            self?.engine.restoreActivity(removed)
+        })
+        toast.show("Activity cleared", tone: .neutral, actionTitle: "Undo") { [weak self] in
+            self?.engine.restoreActivity(removed)
+        }
+    }
+
     func deleteRule(_ id: UUID, undoManager: UndoManager?) {
         guard let rule = config.rules.first(where: { $0.id == id }) else { return }
         var removed: (rule: FolderRule, index: Int)?

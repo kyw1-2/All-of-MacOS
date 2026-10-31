@@ -126,4 +126,32 @@ final class FolderRulesEngineTests: XCTestCase {
         watcher.watch([])
         XCTAssertFalse(watcher.isWatching, "no folders, no stream")
     }
+
+    func testClearingTheActivityCanBeUndone() throws {
+        let engine = try engine()
+        let archive = try kit.folder("Archive")
+        try kit.writeSettled("notes.txt")
+        let folder = try XCTUnwrap(try? engine.addFolder(kit.watched).get())
+        var rule = engine.newRule(in: folder.id)
+        rule.conditions = [.fileExtension(.is, ["txt"])]
+        rule.actions = [.move(to: archive.path)]
+        engine.update(rule)
+        engine.setRule(rule.id, enabled: true)
+        engine.runNow()
+        waitUntil { engine.activity.contains { $0.fileName == "notes.txt" } }
+        let before = engine.activity
+        XCTAssertFalse(before.isEmpty)
+
+        let removed = engine.clearActivity()
+        XCTAssertEqual(removed, before)
+        XCTAssertTrue(engine.activity.isEmpty)
+        XCTAssertEqual(engine.filesToday, 0)
+        XCTAssertEqual(kit.names(in: archive), ["notes.txt"], "clearing the list leaves the files alone")
+
+        engine.restoreActivity(removed)
+        XCTAssertEqual(engine.activity, before)
+        XCTAssertEqual(engine.filesToday, 1)
+        engine.restoreActivity(removed)
+        XCTAssertEqual(engine.activity, before, "undoing twice doesn't double the lines")
+    }
 }

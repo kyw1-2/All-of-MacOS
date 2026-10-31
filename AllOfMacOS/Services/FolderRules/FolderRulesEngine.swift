@@ -564,8 +564,21 @@ final class FolderRulesEngine: ObservableObject {
         refreshStatus()
     }
 
-    func clearActivity() {
+    /// Clears the activity list (files stay where they are) and returns what
+    /// it held, so Clear can be undone.
+    @discardableResult
+    func clearActivity() -> [FolderRuleActivity] {
+        let removed = activity
         activity.removeAll()
+        saveActivity()
+        refreshStatus()
+        return removed
+    }
+
+    /// Undo of Clear: puts the cleared lines back beside any added since.
+    func restoreActivity(_ lines: [FolderRuleActivity]) {
+        let known = Set(activity.map(\.id))
+        activity = FolderRulesStore.trimmed(activity + lines.filter { !known.contains($0.id) }, now: Date())
         saveActivity()
         refreshStatus()
     }

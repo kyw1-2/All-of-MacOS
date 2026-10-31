@@ -126,6 +126,7 @@ struct FolderRulesInspector: View {
 struct FolderRulesActivityView: View {
     @ObservedObject var model: FolderRulesPageModel
     @ObservedObject var engine: FolderRulesEngine
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
@@ -133,8 +134,8 @@ struct FolderRulesActivityView: View {
                           subtitle: "\(engine.filesToday) \(engine.filesToday == 1 ? "file" : "files") handled today",
                           active: engine.config.isEnabled) {
                 if !engine.activity.isEmpty {
-                    Button("Clear") { engine.clearActivity() }
-                        .help("Clears the activity list; files stay where they are")
+                    Button("Clear") { model.clearActivity(undoManager: undoManager) }
+                        .help("Clears the activity list; files stay where they are, and Undo brings the list back")
                 }
             }
             if engine.activity.isEmpty {
