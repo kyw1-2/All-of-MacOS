@@ -57,8 +57,10 @@ enum PaletteBookmarkParser {
 
     /// Chrome's `Bookmarks` JSON: roots bookmark_bar, other and synced, each a
     /// tree of `{"type": "folder", "children": […]}` and `{"type": "url"}`.
+    /// Signed-in profiles of current Chrome keep the same format in
+    /// `AccountBookmarks`; `file` keeps the two apart in the ids.
     static func chrome(_ data: Data, browser: PaletteBrowser, profileDirectory: String,
-                       profileName: String?) throws -> [PaletteBookmark] {
+                       profileName: String?, file: String = "Bookmarks") throws -> [PaletteBookmark] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let roots = root["roots"] as? [String: Any] else { throw PaletteBookmarkError.notBookmarks }
         var result: [PaletteBookmark] = []
@@ -70,7 +72,8 @@ enum PaletteBookmarkParser {
                 guard let raw = node["url"] as? String, let url = URL(string: raw), isOpenable(url) else { return }
                 let name = (node["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.host ?? raw
                 let key = node["guid"] as? String ?? node["id"] as? String ?? "\(result.count)"
-                result.append(PaletteBookmark(id: "\(browser.bundleID)|\(profileDirectory)|\(key)", title: name, url: url,
+                let scope = file == "Bookmarks" ? profileDirectory : "\(profileDirectory)|\(file)"
+                result.append(PaletteBookmark(id: "\(browser.bundleID)|\(scope)|\(key)", title: name, url: url,
                                               folder: folder, browser: browser, profileDirectory: profileDirectory,
                                               profileName: profileName))
             } else if let children = node["children"] as? [[String: Any]] {
@@ -182,6 +185,8 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
     private var cache: [String: CacheEntry] = [:]
     /// Files larger than this are not bookmarks worth parsing.
     static let maximumFileSize = 32 * 1024 * 1024
+    /// The bookmark files of a Chromium profile.
+    static let chromeFiles = ["Bookmarks", "AccountBookmarks"]
 
     /// Test seams.
     var home: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -197,11 +202,16 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
             let localState = try? Data(contentsOf: root.appendingPathComponent("Local State"))
             let profiles = PaletteBookmarkParser.chromeProfiles(localState: localState, folders: folders)
             for profile in profiles {
-                let file = root.appendingPathComponent(profile.directory, isDirectory: true).appendingPathComponent("Bookmarks")
+                let folder = root.appendingPathComponent(profile.directory, isDirectory: true)
                 let name = profiles.count > 1 ? profile.name ?? profile.directory : nil
-                all += cached(file) { data in
-                    try PaletteBookmarkParser.chrome(data, browser: browser, profileDirectory: profile.directory, profileName: name)
-                } ?? []
+                // Local bookmarks, then the signed-in account's (Chrome 2025+).
+                // EncryptedAccountBookmarks* can't be read and are left alone.
+                for file in Self.chromeFiles {
+                    all += cached(folder.appendingPathComponent(file)) { data in
+                        try PaletteBookmarkParser.chrome(data, browser: browser, profileDirectory: profile.directory,
+                                                         profileName: name, file: file)
+                    } ?? []
+                }
             }
         }
         var safari = SafariAccess.missing

@@ -134,6 +134,10 @@ final class PaletteBookmarkTests: XCTestCase {
         }
         try Data(#"{"profile":{"info_cache":{"Default":{"name":"Personal"},"Profile 4":{"name":"School"}}}}"#.utf8)
             .write(to: chromeRoot.appendingPathComponent("Local State"))
+        // Signed-in Chrome keeps the account's bookmarks in AccountBookmarks.
+        try Data(#"{"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks bar","children":[{"type":"url","name":"Lecture videos","url":"https://lms.uos.ac.kr/","guid":"a1"}]}}}"#.utf8)
+            .write(to: chromeRoot.appendingPathComponent("Profile 4/AccountBookmarks"))
+        try Data("encrypted".utf8).write(to: chromeRoot.appendingPathComponent("Profile 4/EncryptedAccountBookmarks2"))
         let safariFolder = home.appendingPathComponent("Library/Safari", isDirectory: true)
         try FileManager.default.createDirectory(at: safariFolder, withIntermediateDirectories: true)
         try safariPlist().write(to: safariFolder.appendingPathComponent("Bookmarks.plist"))
@@ -143,7 +147,12 @@ final class PaletteBookmarkTests: XCTestCase {
         loader.isInstalled = { $0 == "com.google.Chrome" || $0 == "com.apple.Safari" }
         let snapshot = loader.load()
         XCTAssertEqual(snapshot.safari, .readable)
-        XCTAssertEqual(snapshot.bookmarks.filter { $0.browser == self.chrome }.count, 6, "three per profile")
+        let chromeMarks = snapshot.bookmarks.filter { $0.browser == self.chrome }
+        XCTAssertEqual(chromeMarks.count, 7, "three per profile's Bookmarks, plus the account's bookmark")
+        let account = try XCTUnwrap(chromeMarks.first { $0.title == "Lecture videos" })
+        XCTAssertEqual(account.profileName, "School")
+        XCTAssertTrue(account.id.contains("|AccountBookmarks|"), "account and local bookmarks never share an id")
+        XCTAssertEqual(Set(chromeMarks.map(\.id)).count, chromeMarks.count)
         XCTAssertEqual(Set(snapshot.bookmarks.compactMap(\.profileName)), ["Personal", "School"])
         XCTAssertEqual(snapshot.bookmarks.filter { $0.browser == .safari }.count, 3)
 
