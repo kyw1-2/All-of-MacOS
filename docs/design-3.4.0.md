@@ -129,7 +129,7 @@ Read part (b) first if you only need the rules. Section b.12 lists the new compo
 |---|---|---|---|
 | 190 | [Raycast Action Panel](https://manual.raycast.com/action-panel) | ⌘K shows every action for the selected item | Every tile, row and token has its full action list in a context menu; ⌘K lists page actions too. |
 | 191 | [Raycast API: Action Panel](https://developers.raycast.com/api-reference/user-interface/action-panel) | The first action is primary (↵), the second secondary (⌘↵) | A tile's click is its primary action (open, or run); the switch or second button is the secondary. |
-| 192 | [Raycast: Command Aliases and Hotkeys](https://manual.raycast.com/command-aliases-and-hotkeys) | Configure a command's hotkey from where it is used | A quick action's context menu has Set Shortcut…, which opens Settings › Shortcuts at that row. |
+| 192 | [Raycast: Command Aliases and Hotkeys](https://manual.raycast.com/command-aliases-and-hotkeys) | Configure a command's hotkey from where it is used | Each quick action shows its hotkey on the tile and in Customize Workspace; Settings › Shortcuts lists every Productivity hotkey to change it. |
 | 193 | [Things 3 for Mac keyboard shortcuts](https://culturedcode.com/things/support/articles/2785159/) | Every command has a shortcut, shown where the command is | Quick-action tiles show their shortcut under the name; tooltips add it to every button. |
 | 194 | [Things 3: Quick Entry](https://culturedcode.com/things/support/articles/2249437/) | One global shortcut captures from anywhere without opening the app | Productivity entry points (Measure ⇧⌘7, Drop Shelf, Focus, Mute) run from anywhere and from Workspace. |
 | 195 | [Linear: Invisible details](https://linear.app/blog/invisible-details) | Contextual menus everywhere show the action and its shortcut | Context menus everywhere (b.4); the shortcut appears in the matching main-menu item. |
@@ -293,7 +293,7 @@ would need a stable id from five different owners, and the fixed pattern above a
 - **Context menus on every item** (flat, no shortcuts, unavailable items hidden):
   - Sidebar row: Open, Turn On/Off (modules with a switch), Show/Hide on Workspace (modules).
   - Module tile: Open, Turn On/Off, Hide from Workspace, Customize Workspace….
-  - Quick action: Run, Move Left, Move Right, Remove from Quick Actions, Set Shortcut…, Customize Workspace….
+  - Quick action: Run, Open <Module>, Move Left, Move Right, Remove from Quick Actions, Customize Workspace….
   - Attention row: the row's action, Dismiss (suggestions only).
   - Activity, log and history rows: Open, Copy, Show in Finder (files).
   - Token: Copy, Remove. Folder row: Show in Finder, Copy Path, Choose…, Remove.
@@ -463,7 +463,7 @@ Existing components unchanged in name and signature: `AOMPage`, `AOMPageHeader`,
 
 - Title Case: buttons, menu items, tool and page names, toolbar items, HUD titles ("Microphone Muted").
 - Sentence case: section titles, descriptions, tips, toasts, empty-state sentences.
-- Ellipsis when more input follows (Choose…, Customize Workspace…, Set Shortcut…).
+- Ellipsis when more input follows (Choose…, Customize Workspace…, Uninstall App…).
 - Toasts: past tense, what happened ("Tile hidden", "Moved 3 files to Invoices"). Errors: "Couldn't … because …".
 - Empty states: what is missing and the one next step ("No rules yet. New Rule").
 - No possessives ("Your…"), no jargon without a tooltip, no exclamation marks.
@@ -502,3 +502,22 @@ Customize Workspace (toolbar button, View menu, tile and quick-action context me
 switches for Tools, Productivity, each module tile, Quick actions (each one, reorderable), Recent activity,
 Today and This Mac; Reset Layout; Done. Keys: `AOMWorkspaceHidden` (part ids), `AOMWorkspaceQuickActions`
 (ordered ids). Needs attention and the status header can't be hidden (they carry critical state).
+
+### b.16 Patterns for the five features from the user's app analysis (added 31 Oct)
+
+The user reverse-engineered Rapidmg, AppCleaner, TextSniper, Mission Control Plus and Raycast's Homebrew
+extension and asked that AOM consider five features. A owns none of their engines; this section fixes how they
+look and behave so whichever agent builds them (the integrator assigns; suggested owners in brackets) lands on the
+same patterns. The brief's behaviour rules apply on top: destructive work asks first and moves to the Trash,
+processes use argument arrays with timeouts off the main thread, failures say why.
+
+| Feature | Where it lives | UI pattern | Rules |
+|---|---|---|---|
+| Auto DMG install (Rapidmg) [C, already in Folder Rules] | A built-in Folder Rules rule ("Install apps from disk images in Downloads"), off by default | The rule's detail is a normal `AOMConditionGroupHeader` + `AOMConditionRow`s (Kind is Disk Image) with one action row "Install the app and move the disk image to the Trash". Each install is an `AOMLogRow` (Show in Finder, Open) and one summary notification per run | Never replace an app in /Applications without asking: an existing app with the same name gets an alert ("Replace “X” in Applications?" Replace / Keep Both / Cancel); the old copy goes to the Trash. Detach in all paths; never `-force` unless the normal detach failed. A disk image without exactly one app logs "Skipped: no app inside" instead of guessing. |
+| App uninstaller with leftovers (AppCleaner) [I, System Tools] | System Tools › Apps: Uninstall App… (an open panel, or drop an app on the row) | A review sheet: the app and each leftover as an `AOMPathRow` with a checkbox and its size in the accessory, grouped Application Support / Caches / Preferences / Containers / Logs…, the selected total in the footer, Move to Trash as the destructive button, Cancel as default | Matches on the bundle id are checked; matches on the name only are listed unchecked (a name like "Notes" matches other apps' files). Never Apple apps, AOM itself or a running app (ask to quit first). Everything goes to the Trash (Finder's Put Back undoes it); the toast says "Moved 14 items (1.2 GB) to the Trash". |
+| Additive copy and direct OCR (TextSniper) [Capture/Clipboard owners; TextCaptureInstant and ClipboardStore exist] | A Capture setting "Add to the clipboard instead of replacing" and a Copy Text option to skip saving the image | In the window: a toast "Added to clipboard · 3 lines". Outside it: `AOMHUDContent(symbol: "doc.on.clipboard", title: "Added to Clipboard", detail: "3 lines")` for about 1.2 s, with the optional capture sound | Additive mode shows its state wherever Copy Text is offered (a checkmark in the menu, a pill on the Capture page) so a person always knows the next copy appends. Recognition runs off the main thread; nothing touches the disk when the option is on. Secure input and password fields are never read. |
+| Hover close in Mission Control (Mission Control Plus) [owner of MissionControlOverlayService] | Mission Control, over each window thumbnail | A 20–24 pt circular close button in the thumbnail's top-leading corner, drawn with `AOMFloatingIconButtonStyle(destructive: true)` (glass on macOS 26, material before), shown while the pointer is over that thumbnail | The one hover-only control in AOM (Mission Control is a transient overview); the W / ⇧W keys stay the keyboard path. Closing presses the window's own close button through Accessibility (`kAXCloseButtonAttribute`), so unsaved documents still ask. The overlay panel never takes focus and goes away with Mission Control. |
+| Homebrew outdated and cleanup (Raycast Homebrew) [I, System Tools, already in its scope] | System Tools › Homebrew | Header row "12 outdated · Homebrew 4.x" with Check Now; a list of `AOMListRow`s "name  1.2 → 1.3" with Upgrade; Upgrade All and Clean Up as buttons; a running task is an `AOMProgressRow` with Cancel; output goes to an `AOMLogSection` | Network and brew runs only after a click (no background polling on 8 GB). Find brew at /opt/homebrew/bin/brew or /usr/local/bin/brew and say so if neither exists. Clean Up first shows how much it will free (`brew cleanup -n -s`) and asks. Read pipes while the process runs (large JSON output fills the pipe) with a timeout. |
+
+Workspace can offer any of these as quick actions once their entry points exist: each one is one new case in
+`WorkspaceQuickActionKind` (title, symbol, module, help, shortcut, run) in WorkspaceCustomization.swift.
