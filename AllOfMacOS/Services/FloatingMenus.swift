@@ -299,7 +299,13 @@ struct FloatingMenuEditor: View {
                             .frame(maxWidth: AOMEditorSize.rowField)
                     }
                     AOMSettingRow("Columns") {
-                        Stepper("\(draft.columns)", value: $draft.columns, in: 1...6).fixedSize()
+                        // The row hides control labels, so the value sits beside the stepper.
+                        HStack(spacing: AOMSpace.x2) {
+                            Text(draft.columns.formatted()).monospacedDigit().foregroundStyle(.secondary)
+                            Stepper("Columns", value: $draft.columns, in: 1...6).labelsHidden()
+                                .accessibilityValue(draft.columns.formatted())
+                        }
+                        .fixedSize()
                     }
                     AOMToggleRow("Keep open after an action", isOn: $draft.staysOpen)
                     AOMSettingRow("Placement") {
@@ -499,9 +505,9 @@ struct FloatingValueSlider: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Label(item.title, systemImage: item.symbol).font(.caption)
+                Label(item.title, systemImage: item.symbol).font(AOMFont.caption)
                 Spacer()
-                Text(level.map { "\(Int(($0 * 100).rounded())) %" } ?? "—").font(.caption).monospacedDigit()
+                Text(level.map { "\(Int(($0 * 100).rounded())) %" } ?? "—").font(AOMFont.caption).monospacedDigit()
             }
             Slider(value: Binding(get: { value }, set: { newValue in
                 value = newValue
@@ -530,7 +536,7 @@ struct FloatingSliderBindingFields: View {
         Picker("Drives", selection: field(\.target)) {
             ForEach(ContinuousValueBinding.Target.allCases) { Text($0.title).tag($0) }
         }
-        Text((binding ?? ContinuousValueBinding()).target.help).font(.caption).foregroundStyle(.secondary)
+        Text((binding ?? ContinuousValueBinding()).target.help).font(AOMFont.caption).foregroundStyle(.secondary)
         if binding?.target == .appVolume {
             TextField("App bundle ID (empty = frontmost app)", text: field(\.appBundleID))
         }
@@ -543,7 +549,7 @@ struct FloatingSliderBindingFields: View {
             ForEach(ContinuousValueBinding.Curve.allCases) { Text($0.title).tag($0) }
         }
         Toggle("Invert", isOn: field(\.inverted))
-        if let problem = binding?.mappingProblem { Text(problem).font(.caption).foregroundStyle(.red) }
+        if let problem = binding?.mappingProblem { Text(problem).font(AOMFont.caption).foregroundStyle(.red) }
     }
 
     private func field<T>(_ keyPath: WritableKeyPath<ContinuousValueBinding, T>) -> Binding<T> {

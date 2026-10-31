@@ -424,9 +424,9 @@ private struct AnnotationEditorView: View {
         }
         .sheet(isPresented: $showingSmartHighlight) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Highlight Matching Text").font(.headline)
+                Text("Highlight Matching Text").font(AOMFont.headline)
                 Text("Finds text in this screenshot locally with Apple's Vision OCR and adds editable highlights.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AOMFont.caption).foregroundStyle(.secondary)
                 TextField("Words to highlight", text: $smartHighlightQuery)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Text to highlight")
@@ -1755,7 +1755,7 @@ private struct AnnotationEditorView: View {
                         ForEach(document.objects) { object in
                             HStack {
                                 Image(systemName: object.kind.iconName).frame(width: 16)
-                                Text(object.displayName).lineLimit(1).font(.caption)
+                                Text(object.displayName).lineLimit(1).font(AOMFont.caption)
                                 Spacer()
                                 Button { document.reorder(object.id, offset: 1) } label: { Image(systemName: "arrow.up") }
                                     .buttonStyle(.plain).help("Bring Forward")
@@ -1778,7 +1778,7 @@ private struct AnnotationEditorView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            Text(title).font(AOMFont.caption).fontWeight(.semibold).foregroundStyle(.secondary)
             content()
         }
     }
@@ -1789,7 +1789,7 @@ private struct AnnotationEditorView: View {
             Slider(value: Binding(get: { Double(value.wrappedValue) },
                                   set: { value.wrappedValue = CGFloat($0); applyStyleToSelection() }),
                    in: Double(range.lowerBound)...Double(range.upperBound))
-            Text(label).font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
+            Text(label).font(AOMFont.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
         }
     }
 
@@ -1799,7 +1799,7 @@ private struct AnnotationEditorView: View {
             Slider(value: Binding(get: { value.wrappedValue },
                                   set: { value.wrappedValue = $0; applyStyleToSelection() }),
                    in: range)
-            Text(label).font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
+            Text(label).font(AOMFont.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
         }
     }
 
@@ -2727,9 +2727,9 @@ private struct AnnotationResizeDialog: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Resize Image").font(.headline)
+            Text("Resize Image").font(AOMFont.headline)
             Text("Original size: \(originalWidth) × \(originalHeight) pixels")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AOMFont.caption).foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
                 TextField("Width", value: widthEntry, format: .number)
@@ -2762,11 +2762,11 @@ private struct AnnotationResizeDialog: View {
 
             Toggle("Flatten Annotations", isOn: $flattenAnnotations)
             Text("This action will flatten all annotations, making them uneditable.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AOMFont.caption).foregroundStyle(.secondary)
 
             if !dimensionsValid {
                 Text("Dimensions must be 1–16,384 pixels and at most 100 million pixels total.")
-                    .font(.caption).foregroundStyle(.red)
+                    .font(AOMFont.caption).foregroundStyle(.red)
             }
             HStack {
                 Spacer()

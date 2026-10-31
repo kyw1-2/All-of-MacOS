@@ -27,7 +27,7 @@ struct AnnotationColorPickerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Color").font(.headline)
+                Text("Color").font(AOMFont.headline)
                 Spacer()
                 Button { pickFromScreen() } label: {
                     Label("Pick from Screen", systemImage: "eyedropper")
@@ -82,7 +82,7 @@ struct AnnotationColorPickerView: View {
                 }
                 if library.myColors.isEmpty {
                     Text("Click + to save the current colour. Right-click a saved colour to update or remove it.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(AOMFont.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -110,7 +110,7 @@ struct AnnotationColorPickerView: View {
                         .strokeBorder(Color.primary.opacity(0.2), lineWidth: 0.5))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hex").font(.caption).foregroundStyle(.secondary)
+                    Text("Hex").font(AOMFont.caption).foregroundStyle(.secondary)
                     TextField("RRGGBB", text: $hexText)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.callout).monospaced())
@@ -148,7 +148,7 @@ struct AnnotationColorPickerView: View {
             }
 
             if let message {
-                Text(message).font(.caption).foregroundStyle(.orange)
+                Text(message).font(AOMFont.caption).foregroundStyle(.orange)
             }
         }
         .padding(16)
@@ -230,7 +230,7 @@ struct AnnotationColorPickerView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+            Text(title).font(AOMFont.caption).fontWeight(.semibold).foregroundStyle(.secondary)
             content()
         }
     }
@@ -262,7 +262,7 @@ struct AnnotationColorPickerView: View {
                 .multilineTextAlignment(.center)
                 .frame(width: 52)
                 .accessibilityLabel(title == "A" ? "Alpha percent" : "\(title) component")
-            Text(title + suffix).font(.caption2).foregroundStyle(.secondary)
+            Text(title + suffix).font(AOMFont.caption).foregroundStyle(.secondary)
         }
     }
 }

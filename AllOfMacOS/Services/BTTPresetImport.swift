@@ -79,7 +79,7 @@ enum BTTPresetImport {
         }
         var summary: String {
             let counts = triggerEntryCount
-            return "\(counts.imported) imported, \(counts.approximate) mapped approximately, \(counts.skipped) skipped of \(candidateCount) BTT trigger(s)."
+            return "\(counts.imported) imported, \(counts.approximate) mapped approximately, \(counts.skipped) skipped of \(candidateCount) BTT \(candidateCount == 1 ? "trigger" : "triggers")."
         }
         var reviewText: String {
             var lines = [summary,
@@ -216,7 +216,7 @@ enum BTTPresetImport {
                 }
                 let detail = converted.triggers.map { trigger in
                     let phase = trigger.input.category == .keyboard && trigger.keyboardPhase != .keyDown ? " (\(trigger.keyboardPhase.rawValue.lowercased()))" : ""
-                    return "→ \(trigger.input.displayName)\(phase), \(trigger.actions.count) step(s)"
+                    return "→ \(trigger.input.displayName)\(phase), \(trigger.actions.count) \(trigger.actions.count == 1 ? "step" : "steps")"
                 }.joined(separator: "; ")
                 add(exact ? .imported : .approximate, .trigger, title: identity.title, bttName: identity.name, bttID: identity.id,
                     scope: scopeLabel, detail: detail + (exact && converted.bttEnabled ? ", enabled" : ", disabled"),

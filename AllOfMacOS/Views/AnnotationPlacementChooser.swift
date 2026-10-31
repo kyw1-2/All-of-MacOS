@@ -21,11 +21,11 @@ struct AnnotationPlacementChooser: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("Place Screenshot").font(.headline)
+            Text("Place Screenshot").font(AOMFont.headline)
             Text(chooseLayer == nil
                  ? "Choose which side of the current image the new screenshot goes on."
                  : "Choose which side of the current image the new screenshot goes on, or add it as a layer you can move, resize and rotate.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AOMFont.caption).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {

@@ -389,7 +389,7 @@ struct ActionParameterForm: View {
             let selector = action.parameters.triggerSelector ?? ""
             let matches = triggers.filter { TriggerSelector.matches(selector, trigger: $0) }.count
             if !selector.isEmpty {
-                AOMEditorNote(matches == 0 ? "No trigger matches." : "\(matches) trigger(s) match.",
+                AOMEditorNote(matches == 0 ? "No trigger matches." : matches == 1 ? "1 trigger matches." : "\(matches) triggers match.",
                               tone: matches == 0 ? .warning : .success)
             }
             footnote("A UUID matches one trigger; a name matches every trigger with that name. Name triggers in their settings to make them selectable.")

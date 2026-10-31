@@ -130,7 +130,7 @@ final class ClipboardPreviewCacheTests: XCTestCase {
             items: [[NSPasteboard.PasteboardType.fileURL.rawValue:
                 Data("file:///aom-test-nonexistent-file.txt".utf8)]])
         let fileContent = await ClipboardPreviewCache.shared.content(for: file)
-        XCTAssertEqual(fileContent.summary, "1 file(s)")
+        XCTAssertEqual(fileContent.summary, "1 file", "3.4.0: one file is singular")
         XCTAssertNil(fileContent.image)
 
         let invalidImage = ClipboardEntry(title: "Invalid", kind: .image,

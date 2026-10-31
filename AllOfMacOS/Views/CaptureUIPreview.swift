@@ -30,7 +30,17 @@ enum CaptureUIPreview {
         }
         guard let entry = CaptureHistory.shared.mostRecent else { return }
         if args.contains("--aom-preview-pin") { PinnedScreenshotController.shared.pin(entry: entry, url: nil) }
-        if args.contains("--aom-preview-history") { MediaHistoryOverlayController.shared.present() }
+        if args.contains("--aom-preview-history") {
+            // Another app coming to the front closes the history (as it
+            // should), and parallel previews do that often; the review
+            // reopens it for half a minute so a screenshot finds it.
+            Task { @MainActor in
+                for _ in 0..<30 {
+                    MediaHistoryOverlayController.shared.present()
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        }
         if args.contains("--aom-preview-annotate") { AnnotationEditorController.shared.open(capture: entry, url: nil) }
         // 3.4: the Capture Text HUD with a sample result (it stays up for review).
         if args.contains("--aom-preview-text-hud") {

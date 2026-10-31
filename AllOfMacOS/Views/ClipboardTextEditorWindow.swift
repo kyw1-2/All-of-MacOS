@@ -126,7 +126,8 @@ final class ClipboardRichTextModel: NSObject, ObservableObject, NSTextViewDelega
         let text = value.string
         let words = text.split(whereSeparator: \.isWhitespace).count
         let lines = text.isEmpty ? 0 : text.components(separatedBy: .newlines).count
-        return "\(text.count.formatted()) characters · \(words.formatted()) words · \(lines.formatted()) lines"
+        return [ClipboardPreviewCache.counted(text.count, "character"), ClipboardPreviewCache.counted(words, "word"),
+                ClipboardPreviewCache.counted(lines, "line")].joined(separator: " · ")
     }
     func rtfData() throws -> Data {
         try value.data(from: NSRange(location: 0, length: value.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
