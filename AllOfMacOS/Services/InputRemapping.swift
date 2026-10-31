@@ -247,6 +247,16 @@ final class HyperKeyTap {
         tap = nil; source = nil; held = false
     }
 
+    /// What the tap knows after macOS disabled it (a slow callback or user
+    /// input) and it is turned on again. Key events of the gap never came, so
+    /// the held state is taken from the key itself: still down keeps Hyper
+    /// on, but counts as used, since its lone tap can no longer be told
+    /// apart. 3.4.0 audit: a F18 key-up lost in the gap left Hyper held, and
+    /// every later key got ⌃⌥⇧⌘ until F18 was pressed again.
+    static func resynchronized(hyperKeyDown: Bool) -> (held: Bool, used: Bool) {
+        (hyperKeyDown, hyperKeyDown)
+    }
+
     /// The event-tap decision, separated for tests. Returns nil to swallow.
     static func process(type: CGEventType, keyCode: Int64, isSynthetic: Bool,
                         state: inout (held: Bool, used: Bool)) -> (pass: Bool, addHyper: Bool, sendEscape: Bool) {
@@ -271,6 +281,9 @@ private func hyperKeyCallback(proxy: CGEventTapProxy, type: CGEventType, event: 
     guard let refcon else { return Unmanaged.passUnretained(event) }
     let hyper = Unmanaged<HyperKeyTap>.fromOpaque(refcon).takeUnretainedValue()
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        let state = HyperKeyTap.resynchronized(
+            hyperKeyDown: CGEventSource.keyState(.hidSystemState, key: CGKeyCode(kVK_F18)))
+        hyper.held = state.held; hyper.usedWhileHeld = state.used
         if let port = hyper.tap { CGEvent.tapEnable(tap: port, enable: true) }
         return Unmanaged.passUnretained(event)
     }

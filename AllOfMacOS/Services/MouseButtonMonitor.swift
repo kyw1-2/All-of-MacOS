@@ -187,6 +187,23 @@ class MouseButtonMonitor {
         scheduleWake()
     }
 
+    /// Whether a button is physically down now; replaced in tests.
+    var buttonIsDown: (Int) -> Bool = { button in
+        (0...31).contains(button)
+            && CGMouseButton(rawValue: UInt32(button)).map { CGEventSource.buttonState(.combinedSessionState, button: $0) } == true
+    }
+
+    /// macOS turned the tap off (a slow callback): the releases of that gap
+    /// went around it. 3.4.0 audit: the recognizer kept those presses and the
+    /// wake set for them, so a long press (or a drag) fired for a button
+    /// already let go. Presses and pending clicks go; a swallowed press whose
+    /// button is still down keeps its release swallowed.
+    func tapWasDisabled() {
+        wake?.cancel(); wake = nil
+        recognizer.reset()
+        suppressedButtons = suppressedButtons.filter(buttonIsDown)
+    }
+
     private func fire(_ entry: Entry) {
         if let onFire { onFire(entry); return }
         let button = entry.spec.button
@@ -223,6 +240,7 @@ class MouseButtonMonitor {
         let callback: CGEventTapCallBack = { _, type, event, _ -> Unmanaged<CGEvent>? in
             guard let monitor = MouseButtonMonitor.activeMonitor else { return Unmanaged.passUnretained(event) }
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                monitor.tapWasDisabled()
                 if let tap = monitor.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                 return Unmanaged.passUnretained(event)
             }
