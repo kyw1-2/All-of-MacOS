@@ -198,7 +198,9 @@ struct ClipboardDetachedPreview: View {
     @ObservedObject var store: ClipboardStore
     @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var content: ClipboardPreviewCache.Content?
-    // Paste-style rename: double-click the title to edit it in place.
+    // Paste-style rename: one click on the title edits it in place (3.4.0:
+    // it took a double-click here while Paste, and the shelf's own preview,
+    // take one; Return saves, Escape cancels, clicking elsewhere saves).
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
@@ -222,7 +224,7 @@ struct ClipboardDetachedPreview: View {
                         .font(.headline).lineLimit(1)
                         .foregroundStyle(current.title.isEmpty ? .secondary : .primary)
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 2) {
+                        .onTapGesture {
                             editedTitle = current.title
                             isEditingTitle = true
                             Task { @MainActor in
@@ -230,8 +232,9 @@ struct ClipboardDetachedPreview: View {
                                 titleFocused = true
                             }
                         }
-                        .help(current.title.isEmpty ? "Double-click to name this item" : "Double-click to rename")
-                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Double-click to rename.")
+                        .help(current.title.isEmpty ? "Click to name this item" : "Click to rename")
+                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Click to rename.")
+                        .accessibilityAddTraits(.isButton)
                 }
                 Spacer()
                 Button("Copy") { _ = try? store.write(entryIDs: [current.id]) }
