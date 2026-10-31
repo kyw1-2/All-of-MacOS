@@ -83,6 +83,56 @@ extension View {
     func aomToast(_ message: String?) -> some View {
         modifier(AOMToastPresenter(message: message))
     }
+
+    /// 3.4: the toast with its tone and its one action ("Undo"), from an
+    /// `AOMToastModel`. Failures use `.danger` and say why.
+    func aomToast(_ model: AOMToastModel) -> some View {
+        modifier(AOMToastModelPresenter(model: model))
+    }
+}
+
+private struct AOMToastModelPresenter: ViewModifier {
+    @ObservedObject var model: AOMToastModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if let message = model.message {
+                    HStack(spacing: AOMSpace.x2) {
+                        Image(systemName: model.tone.symbol)
+                            .foregroundStyle(model.tone.color)
+                            .accessibilityHidden(true)
+                        Text(message)
+                            .foregroundStyle(AOMColor.text)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let title = model.actionTitle {
+                            Button(title) { model.performAction() }
+                                .aomGlassButton()
+                                .controlSize(.small)
+                                .keyboardShortcut("z", modifiers: .command)
+                        }
+                    }
+                    .font(AOMFont.body.weight(.medium))
+                    .padding(.leading, AOMSpace.x3)
+                    .padding(.trailing, model.actionTitle == nil ? AOMSpace.x3 : AOMSpace.x2)
+                    .padding(.vertical, AOMSpace.x2 - 1)
+                    .frame(maxWidth: AOMSize.toastMaxWidth)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .aomChrome(radius: AOMRadius.panel, role: .hud, inWindow: true)
+                    .padding(.bottom, AOMSpace.x4)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityElement(children: .contain)
+                    .onAppear {
+                        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                                             userInfo: [.announcement: message,
+                                                        .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+                    }
+                }
+            }
+            .aomAnimation(.standard, value: model.message)
+    }
 }
 
 private struct AOMToastPresenter: ViewModifier {
@@ -336,20 +386,44 @@ struct AOMEmptyState<Actions: View>: View {
 
 // MARK: - Toast state
 
-/// Shared transient-message timer used by the pages' `aomToast`.
+/// Shared transient-message timer used by the pages' `aomToast`. 3.4: a
+/// toast can carry a tone and one action ("Undo"), which keeps it on screen
+/// longer (`AOMMotion.undoToastSeconds`) so the action can be reached.
 @MainActor
 final class AOMToastModel: ObservableObject {
     @Published private(set) var message: String?
+    @Published private(set) var tone: AOMTone = .success
+    @Published private(set) var actionTitle: String?
+    private(set) var action: (() -> Void)?
     private var task: Task<Void, Never>?
 
-    func show(_ text: String, seconds: Double = 2) {
+    func show(_ text: String, tone: AOMTone = .success, seconds: Double? = nil,
+              actionTitle: String? = nil, action: (() -> Void)? = nil) {
         task?.cancel()
+        self.tone = tone
+        self.actionTitle = action == nil ? nil : (actionTitle ?? "Undo")
+        self.action = action
         message = text
+        let duration = seconds ?? (action == nil ? AOMMotion.toastSeconds : AOMMotion.undoToastSeconds)
         task = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
-            self?.message = nil
+            self?.dismiss()
         }
+    }
+
+    /// Runs the toast's action (Undo) once and hides the toast.
+    func performAction() {
+        let run = action
+        dismiss()
+        run?()
+    }
+
+    func dismiss() {
+        task?.cancel()
+        message = nil
+        actionTitle = nil
+        action = nil
     }
 }
 

@@ -136,7 +136,7 @@ struct AOMPageHeader<Trailing: View>: View {
             HStack(spacing: AOMSpace.x2) { trailing }
                 .fixedSize()
             if let help {
-                AOMInfoButton(help, topic: title)
+                AOMInfoButton(help, topic: title, textStyle: AOMFont.pageStatus)
             }
         }
         .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x1)
@@ -176,12 +176,12 @@ struct AOMSectionTitle<Accessory: View>: View {
                     .monospacedDigit()
                     .lineLimit(1)
             }
-            if let help { AOMInfoButton(help, topic: title) }
+            if let help { AOMInfoButton(help, topic: title, textStyle: AOMFont.section) }
             Spacer(minLength: AOMSpace.x2)
             accessory
         }
         .padding(.horizontal, AOMSpace.x0_5)
-        .frame(minHeight: 22)
+        .frame(minHeight: AOMSize.sectionTitleHeight)
     }
 }
 
@@ -436,25 +436,35 @@ struct AOMDisclosureRows<Content: View>: View {
 
 /// The ⓘ button: opens a popover with at most a few sentences of help, in
 /// the same place on every row, section and page header (e.4, R142).
+/// 3.4: the glyph takes the text style of the label beside it (`textStyle`,
+/// Body by default) instead of a fixed size, so it matches a Headline section
+/// title, a Body row and a Callout footer alike.
 struct AOMInfoButton: View {
     let text: String
     var topic: String?
+    var textStyle: Font = AOMFont.body
     @State private var shown = false
+    @State private var hovering = false
 
-    init(_ text: String, topic: String? = nil) {
+    init(_ text: String, topic: String? = nil, textStyle: Font = AOMFont.body) {
         self.text = text
         self.topic = topic
+        self.textStyle = textStyle
     }
 
     var body: some View {
         Button { shown.toggle() } label: {
-            Image(systemName: "info.circle")
+            Image(systemName: shown ? "info.circle.fill" : "info.circle")
+                .font(textStyle)
                 .imageScale(.medium)
-                .foregroundStyle(AOMColor.textSecondary)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(hovering || shown ? AOMColor.accent : AOMColor.textSecondary)
                 .frame(width: AOMIcon.row, height: AOMIcon.row)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .aomAnimation(.quick, value: hovering)
         .help(topic.map { "About \($0)" } ?? "More information")
         .accessibilityLabel(topic.map { "About \($0)" } ?? "More information")
         .popover(isPresented: $shown, arrowEdge: .bottom) {

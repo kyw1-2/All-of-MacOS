@@ -361,11 +361,14 @@ struct AOMModeButton: View {
                 .contentShape(Rectangle())
             } else {
                 VStack(spacing: AOMSpace.x0_5 + 1) {
+                    // The glyph follows the text style (Body at the large
+                    // symbol scale, about 17 pt), not a fixed 14 pt font.
                     Image(systemName: symbol)
-                        .font(.system(size: 14))
+                        .font(AOMFont.body)
+                        .imageScale(.large)
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(tint)
-                        .frame(height: 18)
+                        .frame(height: AOMIcon.row)
                     Text(title)
                         .font(AOMFont.caption.weight(.medium))
                         .foregroundStyle(AOMTheme.text)

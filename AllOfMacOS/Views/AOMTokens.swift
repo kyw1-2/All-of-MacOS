@@ -121,6 +121,30 @@ enum AOMSize {
     static let drawerWidth: ClosedRange<CGFloat> = 280...340
     static let drawerSideBySideMinimum: CGFloat =
         CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
+
+    // 3.4 (design-3.4.0 b.10). New names only; the values above stay.
+    /// Workspace module tiles: three per row from 3 × 224 + 2 × 12 = 696 pt,
+    /// so a 1000 pt window still shows three columns.
+    static let moduleTileMin: CGFloat = 224
+    /// Quick-action tiles: five per row down to a 700 pt column; the tile
+    /// stacks its glyph over the name when the row is narrow.
+    static let quickActionMin: CGFloat = 132
+    /// A section title row: a 20 pt ⓘ or link with 1 pt above and below.
+    static let sectionTitleHeight: CGFloat = AOMIcon.row + 2
+    /// List + detail pages (Folder Rules, Text Actions, Files): the list
+    /// column, the detail minimum and the optional trailing inspector.
+    static let moduleListRange: ClosedRange<Double> = 240...360
+    static let moduleListIdeal: Double = 280
+    static let detailMinimum: CGFloat = 420
+    static let inspectorWidth: ClosedRange<CGFloat> = 260...360
+    static let inspectorIdeal: CGFloat = 300
+    /// A token (pill) in a token field, and the field's minimum height.
+    static let tokenHeight: CGFloat = 22
+    static let tokenFieldMinHeight: CGFloat = 28
+    /// A live log row: one line of Body with its time stamp.
+    static let logRow: CGFloat = 28
+    /// Floating confirmations (toasts) never grow wider than this.
+    static let toastMaxWidth: CGFloat = 520
 }
 
 // MARK: - Type ramp (design-3.3.6 b.1: macOS text styles)
@@ -157,6 +181,15 @@ enum AOMFont {
     static let metric = Font.body.weight(.semibold).monospacedDigit()
     /// Title (22) semibold: tile counts and summary figures (Workspace, Insights).
     static let metricLarge = Font.title.weight(.semibold).monospacedDigit()
+
+    // 3.4 (design-3.4.0 b.9)
+    /// Large Title (26) semibold, monospaced digits: the one big figure of a
+    /// status header (a Focus timer, files tidied today). Never a sentence.
+    static let display = Font.largeTitle.weight(.semibold).monospacedDigit()
+    /// Time stamps in live logs and history rows.
+    static let timestamp = Font.subheadline.monospacedDigit()
+    /// Token (pill) labels in token fields and condition values.
+    static let token = Font.callout
 }
 
 // MARK: - Corner radii (c.3: continuous corners everywhere)
@@ -241,6 +274,21 @@ enum AOMColor {
     static let successText = Color.aomDynamic(light: NSColor(srgbRed: 0.118, green: 0.482, blue: 0.204, alpha: 1), dark: .systemGreen)
     static let warningText = Color.aomDynamic(light: NSColor(srgbRed: 0.698, green: 0.314, blue: 0, alpha: 1), dark: .systemOrange)
     static let dangerText = Color.aomDynamic(light: NSColor(srgbRed: 0.769, green: 0.086, blue: 0.110, alpha: 1), dark: .systemRed)
+
+    // Interaction layer (3.4, design-3.4.0 b.4)
+    /// Keyboard focus ring for custom focusable views (the system colour).
+    static let focusRing = Color(nsColor: .keyboardFocusIndicatorColor)
+    /// Selected rows in custom lists: the system selection, grey while the
+    /// window is inactive.
+    static let selection = Color(nsColor: .selectedContentBackgroundColor)
+    static let selectionInactive = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
+    /// Row hover and press fills (the same values `AOMRowButtonStyle` draws).
+    static let rowHover = Color(nsColor: .tertiarySystemFill).opacity(0.7)
+    static let rowPressed = Color(nsColor: .tertiarySystemFill)
+    /// A drop target under a drag: an accent wash under an accent ring.
+    static let dropWash = Color.accentColor.opacity(0.12)
+    /// Text wells: token fields, path rows.
+    static let field = Color(nsColor: .textBackgroundColor)
 }
 
 /// The semantic tone of a status, notice or pill.
@@ -338,12 +386,17 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .clipboard: return Color(nsColor: .systemBrown)
         case .audio: return Color(nsColor: .systemPink)
         case .systemTools: return Color(nsColor: NSColor(srgbRed: 0.486, green: 0.486, blue: 0.510, alpha: 1))     // #7C7C82
-        case .folderRules: return Color.aomDynamic(light: NSColor(srgbRed: 0.118, green: 0.482, blue: 0.204, alpha: 1),    // #1E7B34
-                                                   dark: NSColor(srgbRed: 0.180, green: 0.588, blue: 0.290, alpha: 1))     // #2E964A
-        case .textActions: return Color.aomDynamic(light: NSColor(srgbRed: 0.769, green: 0.384, blue: 0, alpha: 1),        // #C46200
-                                                   dark: NSColor(srgbRed: 0.851, green: 0.467, blue: 0.024, alpha: 1))     // #D97706
-        case .files: return Color(nsColor: .systemBlue)
-        case .focus: return Color(nsColor: .systemRed)
+        // 3.4 hues (design-3.4.0 b.8): green, amber, blue and tangerine sit
+        // between the six existing hues; none is the danger red, so a running
+        // Focus session never reads as an error or a recording. White glyphs
+        // keep ≥ 3:1 (computed WCAG ratios in the comments).
+        case .folderRules: return Color.aomDynamic(light: NSColor(srgbRed: 0.118, green: 0.482, blue: 0.204, alpha: 1),    // #1E7B34 5.3:1
+                                                   dark: NSColor(srgbRed: 0.180, green: 0.588, blue: 0.290, alpha: 1))     // #2E964A 3.8:1
+        case .textActions: return Color.aomDynamic(light: NSColor(srgbRed: 0.690, green: 0.471, blue: 0, alpha: 1),        // #B07800 3.8:1
+                                                   dark: NSColor(srgbRed: 0.725, green: 0.522, blue: 0, alpha: 1))         // #B98500 3.3:1
+        case .files: return Color(nsColor: .systemBlue)                                                                       // 4.0 / 3.6:1
+        case .focus: return Color.aomDynamic(light: NSColor(srgbRed: 0.824, green: 0.337, blue: 0.039, alpha: 1),           // #D2560A 4.1:1
+                                             dark: NSColor(srgbRed: 0.910, green: 0.396, blue: 0.059, alpha: 1))            // #E8650F 3.3:1
         }
     }
 
@@ -415,6 +468,9 @@ enum AOMMotion {
     static let settleCurve = Animation.snappy(duration: 0.3)
     /// What every token becomes under Reduce Motion (pair with `.transition(.opacity)`).
     static let crossfade = Animation.easeInOut(duration: 0.15)
+    /// How long a confirmation stays: plain, and with an Undo button (3.4).
+    static let toastSeconds: Double = 2.5
+    static let undoToastSeconds: Double = 6
 
     /// The system setting, for code without a view environment. Views prefer
     /// `@Environment(\.accessibilityReduceMotion)` with `resolve(_:reduceMotion:)`
@@ -492,6 +548,16 @@ enum AOMIcon {
     static let hitArea: CGFloat = 28
     /// Status dot inside pills and badges.
     static let dot: CGFloat = 6
+
+    // 3.4 (design-3.4.0 b.9)
+    /// Large status header (Focus timer, Folder Rules today): the squircle
+    /// and the progress ring around it.
+    static let statusBadge: CGFloat = 48
+    static let statusRing: CGFloat = 64
+    /// Rows in a module's item list that carry a small squircle.
+    static let listBadge: CGFloat = 24
+    /// The glyph frame of a floating HUD (mic mute, focus start).
+    static let hudGlyph: CGFloat = 40
 }
 
 // MARK: - Dynamic colours
