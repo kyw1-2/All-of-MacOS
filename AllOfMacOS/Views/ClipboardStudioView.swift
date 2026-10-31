@@ -90,6 +90,18 @@ struct ClipboardStudioView: View {
     /// A pinboard awaiting the same delete-items-too choice as the shelf.
     @State private var boardPendingDeletion: ClipboardPinboard?
     @StateObject private var toast = AOMToastModel()
+    /// List + detail (design-3.4.0 b.2): the list column's width.
+    @AppStorage("AOMClipboardListWidth") private var listWidth: Double = 320
+    @Environment(\.undoManager) private var undoManager
+    @State private var showingNewTextSheet = false
+    @State private var newText = ""
+    /// The detail's title while it is being renamed in place.
+    @State private var renamingID: UUID?
+    @State private var renameText = ""
+    @FocusState private var renameFocused: Bool
+    /// Characters, words and lines (or pixels) for the detail, read off the
+    /// main thread by the preview cache.
+    @State private var detailSummary: [UUID: String] = [:]
 
     private let boardColors = ["blue", "purple", "pink", "red", "orange", "yellow", "green", "gray"]
 
@@ -186,6 +198,7 @@ struct ClipboardStudioView: View {
             }
         }
         .sheet(isPresented: $showingNewBoardSheet) { newBoardSheet }
+        .sheet(isPresented: $showingNewTextSheet) { newTextSheet }
         .onAppear {
             // Isolated previews can open the settings sheet for review
             // (`--aom-preview-clipboard-settings`).
@@ -217,7 +230,7 @@ struct ClipboardStudioView: View {
             Button("Archive Unreadable File and Resume", role: .destructive) { Task { await store.recoverStorage() } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("The unreadable file is renamed and kept; AOM then starts a new history file.") }
-        .aomToast(toast.message)
+        .aomToast(toast)
     }
 
     /// The retry or recovery for a storage problem, on the same screen that
@@ -239,10 +252,10 @@ struct ClipboardStudioView: View {
         }
     }
 
-    // MARK: - Library (Bear's list + preview; Paste's cards for the gallery)
+    // MARK: - Library (list + detail like Mail and Notes; Paste's cards for the gallery)
 
     private func library(_ entries: [ClipboardEntry]) -> some View {
-        GeometryReader { geometry in
+        Group {
             if gridLayout {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.tileMin, maximum: AOMSize.tileMax), spacing: AOMSpace.tileGap)],
@@ -254,70 +267,97 @@ struct ClipboardStudioView: View {
                 }
                 .background(AOMColor.canvas)
             } else {
-                let showsPreview = geometry.size.width >= AOMFeatureSize.previewPaneMinimumWidth
-                HStack(spacing: 0) {
-                    List(selection: $selectedEntryID) {
-                        ForEach(entries) { entry in libraryRow(entry) }
-                    }
-                    // Plain rows with hairlines: alternating fills also striped
-                    // the empty space under a short history.
-                    .listStyle(.inset(alternatesRowBackgrounds: false))
-                    .scrollContentBackground(.hidden)
-                    // Rows are one line. A floor keeps rows inserted at the
-                    // top (new copies) from being measured short.
-                    .environment(\.defaultMinListRowHeight, AOMSize.rowSingle + AOMSpace.x1)
-                    .frame(maxWidth: .infinity)
-                    .onKeyPress(.return) {
-                        guard let entry = entries.first(where: { $0.id == selectedEntryID }) else { return .ignored }
-                        copy(entry)
-                        return .handled
-                    }
-                    if showsPreview, let entry = entries.first(where: { $0.id == selectedEntryID }) ?? entries.first {
-                        AOMDivider(axis: .vertical)
-                        previewPane(entry)
-                            .frame(width: min(AOMFeatureSize.previewPane.upperBound,
-                                              max(AOMFeatureSize.previewPane.lowerBound,
-                                                  geometry.size.width * AOMFeatureSize.previewPaneShare)))
+                AOMListDetail(listWidth: $listWidth) {
+                    AOMListColumn(rows: {
+                        List(selection: $selectedEntryID) {
+                            ForEach(entries) { entry in libraryRow(entry) }
+                        }
+                        // Plain rows with hairlines: alternating fills also striped
+                        // the empty space under a short history.
+                        .listStyle(.inset(alternatesRowBackgrounds: false))
+                        .scrollContentBackground(.hidden)
+                        // Two-line rows (title over source and time), as Mail.
+                        .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
+                        .onKeyPress(.return) {
+                            guard let entry = entries.first(where: { $0.id == selectedEntryID }) else { return .ignored }
+                            copy(entry)
+                            return .handled
+                        }
+                        .onDeleteCommand {
+                            if let entry = entries.first(where: { $0.id == selectedEntryID }) { delete(entry, in: entries) }
+                        }
+                        .accessibilityLabel("Clipboard items")
+                    }, footer: {
+                        AOMAddRemoveBar(addLabel: "New Text Item", add: {
+                            newText = ""
+                            showingNewTextSheet = true
+                        }, removeLabel: "Delete Item", remove: entries.first(where: { $0.id == selectedEntryID }).map { entry in
+                            { delete(entry, in: entries) }
+                        }) {
+                            Button("New Pinboard…") { presentNewBoard() }
+                            Button("Open Shelf") { ClipboardPanelController.shared.show() }
+                            Divider()
+                            Button("Erase History…", role: .destructive) { showingEraseConfirmation = true }
+                                .disabled(!store.entries.contains { $0.pinboardIDs.isEmpty })
+                        }
+                    })
+                } detail: {
+                    if let entry = entries.first(where: { $0.id == selectedEntryID }) ?? entries.first {
+                        detailPane(entry)
+                    } else {
+                        AOMEmptyState("No Item Selected", systemImage: "doc.on.clipboard",
+                                      message: "Select an item to see all of it, copy it or pin it.")
                     }
                 }
             }
         }
     }
 
-    /// One line per item, like a Finder list row: the kind glyph, the title
-    /// in Body, then the source and time at the trailing edge in Callout.
-    /// Hierarchical styles turn white on selection.
+    /// Two lines per item, like a Mail or Notes list: the title in Body over
+    /// the source and the time in Callout. Hierarchical styles turn white on
+    /// selection.
     private func libraryRow(_ entry: ClipboardEntry) -> some View {
-        let detail = [Self.listSource(entry), AOMRelativeTime.string(entry.lastCopiedAt)].compactMap { $0 }.joined(separator: " · ")
+        let detail = [entry.kind.displayName, Self.listSource(entry), AOMRelativeTime.string(entry.lastCopiedAt)]
+            .compactMap { $0 }.joined(separator: " · ")
         return HStack(spacing: AOMSpace.x2) {
-            Image(systemName: entry.kind.symbol)
-                .font(AOMFont.body)
-                .foregroundStyle(.secondary)
-                .frame(width: AOMIcon.row)
-                .accessibilityHidden(true)
-            Text(entry.title)
-                .font(AOMFont.body)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(1)
-            Spacer(minLength: AOMSpace.x2)
-            Text(detail)
-                .font(AOMFont.callout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-            // Every row keeps the pin's column, so the times line up.
-            Image(systemName: "pin.fill").font(AOMFont.caption).foregroundStyle(.secondary)
-                .opacity(entry.pinboardIDs.isEmpty ? 0 : 1)
-                .accessibilityLabel("Pinned")
-                .accessibilityHidden(entry.pinboardIDs.isEmpty)
+            Group {
+                if entry.kind == .color, let hex = entry.text {
+                    Circle().fill(Color(hex: hex))
+                        .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                        .frame(width: AOMIcon.row - AOMSpace.x1, height: AOMIcon.row - AOMSpace.x1)
+                } else {
+                    Image(systemName: entry.kind.symbol)
+                        .font(AOMFont.body)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: AOMIcon.row)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                Text(entry.title)
+                    .font(AOMFont.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(detail)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: AOMSpace.x1)
+            if !entry.pinboardIDs.isEmpty {
+                Image(systemName: "pin.fill").font(AOMFont.caption).foregroundStyle(.secondary)
+                    .accessibilityLabel("Pinned")
+            }
         }
-        .frame(minHeight: AOMSize.rowSingle)
+        .padding(.vertical, AOMSpace.x0_5)
+        .frame(minHeight: AOMSize.rowDetail - AOMSpace.x2)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .help(entry.title)
         .tag(entry.id)
         .simultaneousGesture(TapGesture(count: 2).onEnded { copy(entry) })
+        .onDrag { ClipboardStudioDrag.provider(for: entry) }
         .contextMenu { entryMenu(entry) }
     }
 
@@ -332,11 +372,20 @@ struct ClipboardStudioView: View {
         return nil
     }
 
+    /// Flat, no shortcuts, unavailable items hidden (b.4).
     @ViewBuilder private func entryMenu(_ entry: ClipboardEntry) -> some View {
         Button("Copy") { copy(entry) }
         if entry.kind == .text || entry.kind == .link {
             Button("Copy as Plain Text") { copy(entry, plainText: true) }
         }
+        if entry.kind == .link, let url = URL(string: (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            Button("Open Link") { NSWorkspace.shared.open(url) }
+        }
+        if !entry.fileURLs.isEmpty {
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(entry.fileURLs) }
+        }
+        Button("Rename") { beginRename(entry) }
         if !store.boards.isEmpty {
             Menu("Pinboards") {
                 ForEach(store.boards) { board in
@@ -345,71 +394,157 @@ struct ClipboardStudioView: View {
             }
         }
         Divider()
-        Button("Delete", role: .destructive) { store.delete(entryID: entry.id); showToast("Deleted item") }
+        Button("Delete", role: .destructive) { delete(entry, in: filteredEntries) }
     }
 
-    /// The selected item, readable: a preview made for its kind, the source
-    /// and time beneath, and the actions next to it.
-    private func previewPane(_ entry: ClipboardEntry) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: AOMSpace.x2) {
-                if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
-                    Image(nsImage: icon).resizable().frame(width: AOMFeatureSize.appIcon, height: AOMFeatureSize.appIcon)
-                        .accessibilityHidden(true)
-                }
-                Text([entry.sourceName ?? entry.kind.displayName, AOMRelativeTime.string(entry.lastCopiedAt)].joined(separator: " · "))
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .lineLimit(1)
-                Spacer(minLength: AOMSpace.x1)
-                if !entry.pinboardIDs.isEmpty {
-                    AOMStatusPill("Pinned", tone: .neutral, symbol: "pin.fill")
+    /// The selected item, readable (design-3.4.0 b.2 detail): its title
+    /// (click to rename), what it is and where it came from, the actions, the
+    /// content made for its kind, then the details.
+    private func detailPane(_ entry: ClipboardEntry) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                detailHeader(entry)
+                ClipboardStudioCard.Preview(entry: entry, large: true)
+                    .frame(maxWidth: .infinity,
+                           minHeight: entry.kind == .text || entry.kind == .link ? AOMSize.tileHeight : AOMSize.tileMin,
+                           alignment: .topLeading)
+                    .padding(entry.kind == .image || entry.kind == .color ? 0 : AOMSpace.x4)
+                    .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+                    .onDrag { ClipboardStudioDrag.provider(for: entry) }
+                AOMSection("Details") {
+                    detailRow("Kind", entry.kind.displayName)
+                    detailRow("From", entry.sourceName ?? "Unknown app")
+                    detailRow("Copied", entry.lastCopiedAt.formatted(date: .abbreviated, time: .shortened))
+                    detailRow("Contents", detailSummary[entry.id] ?? "…")
+                    detailRow("Pinboards", pinboardNames(entry) ?? "None")
                 }
             }
-            .padding(.horizontal, AOMSpace.x4)
-            .frame(height: AOMSize.rowStandard + AOMSpace.x1)
-            AOMDivider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                    ClipboardStudioCard.Preview(entry: entry, large: true)
-                        .frame(maxWidth: .infinity, minHeight: entry.kind == .text ? nil : AOMSize.tileMin, alignment: .topLeading)
-                }
-                .padding(AOMSpace.x4)
-            }
-            AOMDivider()
-            // The one primary action, and the rest behind a quiet icon menu
-            // (the gallery cards' ⋯), not a second labelled button.
-            HStack(spacing: AOMSpace.x2) {
-                // The section's one prominent action at the regular size
-                // (design-336 b.6).
-                Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .help("Copy (⇧⌘C, or press Return in the list)")
-                Spacer(minLength: AOMSpace.x2)
-                Menu {
-                    entryMenu(entry)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .tint(AOMColor.textSecondary)
-                .help("More actions for this item")
-                .accessibilityLabel("More actions")
-            }
-            .padding(.horizontal, AOMSpace.x4)
-            .frame(height: AOMSize.rowDetail + AOMSpace.x1)
+            .padding(AOMSpace.pageMargin)
+            .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(AOMColor.canvas)
         .id(entry.id)
+        .task(id: entry.contentVersion) {
+            let content = await ClipboardPreviewCache.shared.content(for: entry)
+            guard !Task.isCancelled else { return }
+            detailSummary[entry.id] = content.summary
+        }
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        AOMSettingRow(title) {
+            Text(value)
+                .font(AOMFont.body)
+                .foregroundStyle(AOMColor.textSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func pinboardNames(_ entry: ClipboardEntry) -> String? {
+        let names = store.boards.filter { entry.pinboardIDs.contains($0.id) }.map(\.name)
+        return names.isEmpty ? nil : names.formatted(.list(type: .and))
+    }
+
+    private func detailHeader(_ entry: ClipboardEntry) -> some View {
+        HStack(alignment: .center, spacing: AOMSpace.x3) {
+            Group {
+                if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
+                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    AOMModuleBadge(symbol: entry.kind.symbol, hue: AOMModule.clipboard.hue, size: AOMIcon.tileBadge)
+                }
+            }
+            .frame(width: AOMIcon.tileBadge, height: AOMIcon.tileBadge)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                if renamingID == entry.id {
+                    TextField("Title", text: $renameText)
+                        .textFieldStyle(.plain)
+                        .font(AOMFont.title)
+                        .focused($renameFocused)
+                        .onSubmit { commitRename(entry) }
+                        .onExitCommand { renamingID = nil }
+                        .onChange(of: renameFocused) { _, focused in if !focused, renamingID == entry.id { commitRename(entry) } }
+                        .accessibilityLabel("Title")
+                } else {
+                    Text(entry.title)
+                        .font(AOMFont.title)
+                        .foregroundStyle(AOMColor.text)
+                        .lineLimit(2)
+                        .contentShape(Rectangle())
+                        .onTapGesture { beginRename(entry) }
+                        .help("Click to rename")
+                        .accessibilityLabel("Title, \(entry.title)")
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { beginRename(entry) }
+                }
+                Text([entry.kind.displayName, entry.sourceName, AOMRelativeTime.string(entry.lastCopiedAt)]
+                        .compactMap { $0 }.joined(separator: " · "))
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: AOMSpace.x2)
+            // The section's one prominent action (design-336 b.6).
+            Button { copy(entry) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .help("Copy (⇧⌘C, or press Return in the list)")
+            Menu {
+                entryMenu(entry)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .tint(AOMColor.textSecondary)
+            .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+            .help("More actions for this item")
+            .accessibilityLabel("More actions")
+        }
+    }
+
+    private func beginRename(_ entry: ClipboardEntry) {
+        selectedEntryID = entry.id
+        renameText = entry.title
+        renamingID = entry.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { renameFocused = true }
+    }
+
+    private func commitRename(_ entry: ClipboardEntry) {
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        renamingID = nil
+        guard !trimmed.isEmpty, trimmed != entry.title else { return }
+        store.rename(entryID: entry.id, title: trimmed)
+        toast.show("Renamed to “\(trimmed.prefix(40))”")
+    }
+
+    /// Deleting never asks: the toast and Edit › Undo bring the item back
+    /// (b.4), and the selection moves to the neighbouring item (#97).
+    private func delete(_ entry: ClipboardEntry, in entries: [ClipboardEntry]) {
+        if selectedEntryID == entry.id, let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            let next = entries.indices.contains(index + 1) ? entries[index + 1] : (index > 0 ? entries[index - 1] : nil)
+            selectedEntryID = next?.id
+        }
+        let store = store
+        let revert: @MainActor () -> Void = { _ = store.undoDeletion() }
+        AOMUndo.perform("Delete Item", undoManager: undoManager, perform: { store.delete(entryID: entry.id) }, revert: revert)
+        let manager = undoManager
+        toast.show("Deleted “\(entry.title.prefix(40))”", action: {
+            if let manager, manager.canUndo, manager.undoActionName == "Delete Item" { manager.undo() } else { revert() }
+        })
     }
 
     private func libraryCard(_ entry: ClipboardEntry) -> some View {
         ClipboardStudioCard(entry: entry, isHovered: hoveredCardID == entry.id, boards: store.boards,
             onCopy: { copy(entry) }, onTogglePin: { board in togglePin(entry, board) },
-            onDelete: { store.delete(entryID: entry.id); showToast("Deleted item") })
+            onDelete: { delete(entry, in: filteredEntries) })
             .onHover { hovering in
                 if hovering { hoveredCardID = entry.id } else if hoveredCardID == entry.id { hoveredCardID = nil }
             }
@@ -515,9 +650,7 @@ struct ClipboardStudioView: View {
                     }
                 }
                 Button {
-                    newBoardName = ""
-                    newBoardColor = "blue"
-                    showingNewBoardSheet = true
+                    presentNewBoard()
                 } label: {
                     Label("New Pinboard", systemImage: "plus")
                         .font(AOMFont.callout.weight(.medium))
@@ -533,7 +666,50 @@ struct ClipboardStudioView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - New Board Sheet
+    // MARK: - New Board and New Text sheets
+
+    private func presentNewBoard() {
+        newBoardName = ""
+        newBoardColor = "blue"
+        showingNewBoardSheet = true
+    }
+
+    /// A text item typed by hand (the shelf's New Text Item).
+    private var newTextSheet: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.x3) {
+            Text("New Text Item").font(AOMFont.title).foregroundStyle(AOMColor.text)
+            TextEditor(text: $newText)
+                .font(AOMFont.body)
+                .frame(minHeight: AOMSize.tileMin * 0.75)
+                .scrollContentBackground(.hidden)
+                .padding(AOMSpace.x1)
+                .background(AOMColor.field, in: RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous).strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                .accessibilityLabel("Text")
+            HStack {
+                Text("Saved in clipboard history, encrypted on this Mac.")
+                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                Spacer()
+                Button("Cancel") { showingNewTextSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Add") {
+                    let text = newText
+                    showingNewTextSheet = false
+                    if let entry = store.createTextItem(text) {
+                        selectedEntryID = entry.id
+                        showToast("Added “\(entry.title.prefix(40))”")
+                    } else {
+                        toast.show("Couldn't add the text because history can't be saved right now", tone: .danger)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(AOMSpace.x5)
+        .frame(width: AOMSize.readableWidth * 0.7)
+    }
 
     private var newBoardSheet: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
@@ -585,14 +761,14 @@ struct ClipboardStudioView: View {
             do {
                 _ = try await store.writeAsync(entryIDs: [entry.id], plainText: plainText, playSound: true)
                 showToast("Copied “\(entry.title.prefix(40))”")
-            } catch { showToast("Could not copy: \(error.localizedDescription)") }
+            } catch { toast.show("Couldn't copy because \(error.localizedDescription)", tone: .danger) }
         }
     }
 
     private func togglePin(_ entry: ClipboardEntry, _ board: ClipboardPinboard) {
         if entry.pinboardIDs.contains(board.id) {
             if store.unpin(entryID: entry.id, boardID: board.id) {
-                showToast("Unpinned from \(board.name) · It was older than your history limit, so it was deleted; Undo Delete restores it")
+                showToast("Unpinned from \(board.name). It was older than the history limit, so it was deleted; Undo Delete restores it")
             } else {
                 showToast("Unpinned from \(board.name)")
             }
@@ -610,8 +786,8 @@ struct ClipboardStudioView: View {
         if search.board == board.id { search.board = nil }
         let deleted = store.deleteBoard(id: board.id, deletingItems: deletingItems)
         boardPendingDeletion = nil
-        showToast(deleted > 0 ? "Deleted \(board.name) and \(deleted) item\(deleted == 1 ? "" : "s") · Undo Delete restores them"
-                              : "Deleted \(board.name) · Undo Delete restores it")
+        toast.show(deleted > 0 ? "Deleted \(board.name) and \(deleted) item\(deleted == 1 ? "" : "s")" : "Deleted \(board.name)",
+                   action: { _ = store.undoDeletion() })
     }
 
     private func colorForBoard(_ name: String) -> Color {
@@ -752,6 +928,7 @@ extension ClipboardStudioCard {
             case .color:
                 let hex = entry.text ?? "#000000"
                 Rectangle().fill(Color(hex: hex))
+                    .frame(minHeight: large ? AOMSize.tileMin : nil)
                     .overlay {
                         Text(hex.uppercased())
                             .font(AOMFont.mono.weight(.semibold))
@@ -830,6 +1007,23 @@ extension ClipboardStudioCard {
             }
         }
 
+    }
+}
+
+/// Dragging an item out of the library: its files, its link or its text,
+/// the way the shelf hands them to other apps (#100).
+enum ClipboardStudioDrag {
+    static func provider(for entry: ClipboardEntry) -> NSItemProvider {
+        if let url = entry.fileURLs.first {
+            return NSItemProvider(object: url as NSURL)
+        }
+        if entry.kind == .image, let data = entry.imageData, let image = NSImage(data: data) {
+            return NSItemProvider(object: image)
+        }
+        if entry.kind == .link, let url = URL(string: (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return NSItemProvider(object: url as NSURL)
+        }
+        return NSItemProvider(object: (entry.text ?? entry.title) as NSString)
     }
 }
 
