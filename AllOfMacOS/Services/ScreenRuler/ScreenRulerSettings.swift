@@ -24,8 +24,11 @@ enum ScreenRulerCopyFormat: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    /// The format applied to a 120 × 44 measurement, for pickers.
+    /// The format applied to a 120 × 44 measurement.
     var example: String { ScreenRulerFormat.copyText(width: 120, height: 44, format: self) }
+
+    /// The short name in the format menu.
+    var title: String { self == .css ? "CSS" : example }
 }
 
 /// Screen Ruler preferences, shown on the Capture page. Every key starts
