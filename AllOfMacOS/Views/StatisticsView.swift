@@ -8,6 +8,10 @@ struct StatisticsView: View {
     @EnvironmentObject var appState: AppState
     @State private var confirmingReset = false
     @AppStorage("AOMInsightsPeriod") private var period: Period = .week
+    /// The bar under the pointer (or clicked): its exact value is shown on
+    /// the chart (design-3.4.0 #169).
+    @State private var selectedBucket: Date?
+    @StateObject private var toast = AOMToastModel()
 
     /// The question each figure answers is scoped to one period.
     enum Period: String, CaseIterable, Identifiable {
@@ -134,10 +138,14 @@ struct StatisticsView: View {
             }
         }
         .confirmationDialog("Reset gesture statistics?", isPresented: $confirmingReset) {
-            Button("Reset Statistics", role: .destructive) { stats.reset() }
+            Button("Reset Statistics", role: .destructive) {
+                stats.reset()
+                toast.show("Statistics reset; counting starts again now")
+            }
         } message: {
             Text("Counts start again from zero. Your gestures and actions are not changed.")
         }
+        .aomToast(toast)
     }
 
     // MARK: - Header (d.9)
@@ -200,23 +208,48 @@ struct StatisticsView: View {
                           help: "Automations that ran per \(hourly ? "hour" : "day"), from the most recent \(GestureStatistics.recentEventLimit.formatted()) inputs. The current \(hourly ? "hour" : "day") is in the accent colour.",
                           padding: total == 0 ? 0 : AOMSpace.cardPadding) {
             if total == 0 {
-                AOMCardEmptyRow("No automations ran in the \(span).", systemImage: "chart.bar")
+                AOMInlineEmpty(symbol: "chart.bar", message: "No automations ran in the \(span).")
             } else {
                 activityChart(buckets, hourly: hourly, total: total, span: span)
             }
         }
     }
 
+    /// The bucket a chart selection falls in (the selection is a date inside it).
+    private func bucket(at date: Date?, in buckets: [ActivityBucket], hourly: Bool) -> ActivityBucket? {
+        guard let date else { return nil }
+        let unit: Calendar.Component = hourly ? .hour : .day
+        return buckets.first { Calendar.current.isDate($0.start, equalTo: date, toGranularity: unit) }
+    }
+
     private func activityChart(_ buckets: [ActivityBucket], hourly: Bool, total: Int, span: String) -> some View {
-        Chart(buckets) { bucket in
-            BarMark(x: .value(hourly ? "Hour" : "Day", bucket.start, unit: hourly ? .hour : .day),
-                    y: .value("Runs", bucket.runs))
-                .foregroundStyle(bucket.isCurrent ? Color.accentColor : Color.accentColor.opacity(0.4))
-                .cornerRadius(AOMRadius.keycap)
-                .accessibilityLabel(hourly ? bucket.start.formatted(date: .omitted, time: .shortened)
-                                           : bucket.start.formatted(.dateTime.weekday(.wide)))
-                .accessibilityValue("\(bucket.runs) run\(bucket.runs == 1 ? "" : "s")")
+        let selected = bucket(at: selectedBucket, in: buckets, hourly: hourly)
+        return Chart {
+            ForEach(buckets) { bucket in
+                BarMark(x: .value(hourly ? "Hour" : "Day", bucket.start, unit: hourly ? .hour : .day),
+                        y: .value("Runs", bucket.runs))
+                    .foregroundStyle(bucket.isCurrent || bucket.id == selected?.id ? Color.accentColor : Color.accentColor.opacity(0.4))
+                    .cornerRadius(AOMRadius.keycap)
+                    .accessibilityLabel(hourly ? bucket.start.formatted(date: .omitted, time: .shortened)
+                                               : bucket.start.formatted(.dateTime.weekday(.wide)))
+                    .accessibilityValue("\(bucket.runs) run\(bucket.runs == 1 ? "" : "s")")
+            }
+            if let selected {
+                RuleMark(x: .value(hourly ? "Hour" : "Day", selected.start, unit: hourly ? .hour : .day))
+                    .foregroundStyle(AOMColor.hairline)
+                    .annotation(position: .top, spacing: AOMSpace.x1,
+                                overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                        Text("\(hourly ? selected.start.formatted(date: .omitted, time: .shortened) : selected.start.formatted(.dateTime.weekday(.wide))) · \(selected.runs) run\(selected.runs == 1 ? "" : "s")")
+                            .font(AOMFont.caption.weight(.medium))
+                            .foregroundStyle(AOMColor.text)
+                            .padding(.horizontal, AOMSpace.x2)
+                            .padding(.vertical, AOMSpace.x0_5)
+                            .background(AOMColor.raised, in: Capsule())
+                            .overlay(Capsule().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
+                    }
+            }
         }
+        .chartXSelection(value: $selectedBucket)
         // Bars start at zero with few grid lines (HIG Charts, axes).
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
@@ -298,12 +331,40 @@ struct StatisticsView: View {
                 ForEach(Array(figures.entries.prefix(25).enumerated()), id: \.element.id) { index, entry in
                     GestureStatRow(rank: index + 1, entry: entry, maxCount: maxCount,
                                    accentColor: appState.accentColorChoice.color)
+                        .contentShape(Rectangle())
+                        .contextMenu { mostUsedMenu(entry) }
                         .overlay(alignment: .top) {
                             if index > 0 { AOMRowDivider(inset: AOMSpace.rowInset + StatisticsMetrics.rankColumn + AOMSpace.x3) }
                         }
                 }
             }
         }
+    }
+
+    /// Flat, unavailable items hidden (b.4).
+    @ViewBuilder private func mostUsedMenu(_ entry: GestureStatEntry) -> some View {
+        if let trigger = triggers.first(where: { $0.input.displayName == entry.gesture }) {
+            Button("Show in Automation") { show(trigger) }
+        }
+        Button("Copy Input Name") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(entry.gesture, forType: .string)
+            toast.show("Copied “\(entry.gesture)”")
+        }
+    }
+
+    /// Opens the Automation page on this automation, in its own scope.
+    private func show(_ trigger: Trigger) {
+        if let group = trigger.activationGroupID {
+            appState.selectedActivationGroupID = group
+        } else {
+            appState.selectedActivationGroupID = nil
+            appState.selectedAppTarget = trigger.appBundleID.flatMap { id in
+                appState.currentPreset.appTargets.first { $0.bundleID == id }
+            } ?? .allApps
+        }
+        appState.selectedTrigger = trigger
+        appState.selectedMainTab = .gestures
     }
 
     // MARK: - Configuration summary
