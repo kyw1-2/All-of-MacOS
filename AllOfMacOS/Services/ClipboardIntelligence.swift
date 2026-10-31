@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import Combine
 import NaturalLanguage
 #if canImport(FoundationModels)
 import FoundationModels
@@ -639,7 +640,11 @@ final class ClipboardIntelligence {
 
     var isEnabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.enabledKey)
+            // 3.4.0: suggestions already on screen go when the feature does.
+            if !newValue { withdrawLiveAnswerIfRefused() }
+        }
     }
     /// Opt-in: let the on-device model look at the destination window.
     var readsDestinationScreen: Bool {
@@ -764,6 +769,64 @@ final class ClipboardIntelligence {
         return store.settings.excludedBundleIDs == excluded ? nil : ClipboardDestinationContext(bundleID: bundleID)
     }
 
+    // MARK: Suggestions on screen (3.4.0 audit, the N333-03 follow-up)
+
+    /// The answer last published to a caller, kept so a privacy change made
+    /// after it was shown withdraws it. Until 3.4.0 only answers still being
+    /// worked out were checked again; suggestions already on the shelf stayed
+    /// when the destination app was excluded or Intelligent Clipboard was
+    /// turned off while it was open.
+    private struct LiveAnswer {
+        let generation: Int
+        let bundleID: String?
+        weak var store: ClipboardStore?
+        let excluded: Set<String>
+        let update: @MainActor ([UUID]) -> Void
+    }
+    private var liveAnswer: LiveAnswer?
+    private var liveStoreWatch: AnyCancellable?
+    private var settingsObserver: NSObjectProtocol?
+
+    /// Publishes `ids` for the request `generation` and remembers them while
+    /// they are not empty, watching what can refuse them later.
+    private func publish(_ ids: [UUID], generation: Int, bundleID: String?, store: ClipboardStore,
+                         excluded: Set<String>, update: @escaping @MainActor ([UUID]) -> Void) {
+        update(ids)
+        guard !ids.isEmpty else {
+            if liveAnswer?.generation == generation { liveAnswer = nil }
+            return
+        }
+        if liveAnswer?.store !== store {
+            // The excluded-app list is the store's setting; @Published sends
+            // before the value changes, so the check runs on the next turn.
+            liveStoreWatch = store.$settings.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.withdrawLiveAnswerIfRefused() }
+            }
+        }
+        if settingsObserver == nil {
+            settingsObserver = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil,
+                                                                      queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.withdrawLiveAnswerIfRefused() }
+            }
+        }
+        liveAnswer = LiveAnswer(generation: generation, bundleID: bundleID, store: store, excluded: excluded, update: update)
+    }
+
+    /// Withdraws the suggestions on screen when the current policy refuses
+    /// them: their destination excluded or its field secure now, the feature
+    /// off, or an app excluded that they were ranked with. A newer request
+    /// has replaced them already when its generation moved on.
+    func withdrawLiveAnswerIfRefused() {
+        guard let live = liveAnswer else { return }
+        guard live.generation == suggestionGeneration, let store = live.store else { liveAnswer = nil; return }
+        guard let refused = pendingRefusal(for: live.bundleID, store: store, rankedWith: live.excluded) else { return }
+        liveAnswer = nil
+        // A window look still running for it must not publish either.
+        suggestionGeneration &+= 1
+        lastContext = refused
+        live.update([])
+    }
+
     func suggestionsAsync(for destination: NSRunningApplication?, store: ClipboardStore,
                           update: @escaping @MainActor ([UUID]) -> Void) {
         suggestionsAsync(for: ClipboardSuggestionTarget(destination), store: store, update: update)
@@ -824,7 +887,8 @@ final class ClipboardIntelligence {
                         return
                     }
                     self.lastContext = context
-                    update(ids)
+                    self.publish(ids, generation: generation, bundleID: bundleID, store: store,
+                                 excluded: excluded, update: update)
                     if wantsModel, Self.allowsScreenRefinement(context) {
                         Task { @MainActor [weak self] in
                             // Re-checked at each step: focus may have moved to a
@@ -853,9 +917,12 @@ final class ClipboardIntelligence {
                             refined.kind = kind
                             refined.source = .model
                             self.lastContext = refined
-                            update(ClipboardSuggestionRanker.rank(store.entries, context: refined,
-                                                                  events: self.log(for: store).events, classes: self.itemClass,
-                                                                  excludedBundleIDs: store.settings.excludedBundleIDs))
+                            let rankedExclusions = store.settings.excludedBundleIDs
+                            self.publish(ClipboardSuggestionRanker.rank(store.entries, context: refined,
+                                                                        events: self.log(for: store).events, classes: self.itemClass,
+                                                                        excludedBundleIDs: rankedExclusions),
+                                         generation: generation, bundleID: bundleID, store: store,
+                                         excluded: rankedExclusions, update: update)
                         }
                     }
                 }

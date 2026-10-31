@@ -95,6 +95,17 @@ class AppState: ObservableObject {
         self.currentPreset = preset
         self.selectedAppTarget = preset.appTargets.first ?? .allApps
         NSLog("[AOM] Loaded preset with %d triggers", preset.triggers.count)
+        // 3.4.0 audit: a preset file AOM could not read used to open as an
+        // empty or older set of automations without a word.
+        if let unreadable = PresetManager.takeUnreadablePresetReport() {
+            let opened = preset.triggers.count
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.presetOperationReporter("Automations Could Not Be Read",
+                                                  Self.unreadablePresetDetail(kept: unreadable.kept, opened: opened), .failure)
+                }
+            }
+        }
         // Create a backup on startup so there's always a recent copy
         if preset.triggers.count > 0 {
             presetManager.save(preset)
@@ -509,6 +520,18 @@ class AppState: ObservableObject {
         alert.messageText = title
         alert.informativeText = detail
         alert.runModal()
+    }
+
+    /// What launch says about a preset file it could not read (3.4.0 audit).
+    static func unreadablePresetDetail(kept: URL?, opened: Int) -> String {
+        let source = opened == 0 ? "AOM started with no automations"
+            : "AOM opened \(opened) automation\(opened == 1 ? "" : "s") from the last copy it could read"
+        guard let kept else {
+            return "The file may come from a newer version of AOM or be damaged, and no copy of it could be made. "
+                + "\(source) and will not save automation changes until it is reopened, so the file stays as it is."
+        }
+        return "The file may come from a newer version of AOM or be damaged. \(source). "
+            + "The original is kept as \(kept.lastPathComponent) in \(kept.deletingLastPathComponent().path)."
     }
 
     @discardableResult

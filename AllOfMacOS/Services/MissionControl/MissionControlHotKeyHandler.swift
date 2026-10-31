@@ -30,6 +30,9 @@ final class MissionControlHotKeyHandler {
     static var isEnabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
 
     func start() {
+        // The poller that tells the keys Mission Control shows runs for them
+        // too, not only for the ✕ buttons (3.4.0 audit).
+        MissionControlOverlayService.shared.followSettings()
         guard eventMonitor == nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, MissionControlOverlayService.shared.isMissionControlActive else {

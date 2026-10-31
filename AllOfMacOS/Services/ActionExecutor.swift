@@ -124,14 +124,21 @@ class ActionExecutor {
     static func executeNamedTrigger(_ name: String, completion: ((Bool) -> Void)? = nil) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { completion?(false); return }
-        let candidates = TriggerResolver.resolve(registeredTriggers, payload: trimmed, frontBundleID: externalBundleID,
-            payloadOf: { if case .namedTrigger(let n) = $0.input { return n.trimmingCharacters(in: .whitespacesAndNewlines) }; return nil },
-            appBundleIDOf: { $0.appBundleID }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+        let candidates = namedTriggerCandidates(trimmed)
         guard candidates.count == 1, let named = candidates.first else {
             GestureLog.shared.logFromAnyThread("Named Trigger '\(trimmed)' missing or ambiguous", level: .error)
             completion?(false); return
         }
         executeActions(named.actions, triggerID: named.id, completion: completion)
+    }
+
+    /// The Named Triggers called `name` that apply in the frontmost app now;
+    /// one of them runs only when there is exactly one.
+    static func namedTriggerCandidates(_ name: String) -> [Trigger] {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TriggerResolver.resolve(registeredTriggers, payload: trimmed, frontBundleID: externalBundleID,
+            payloadOf: { if case .namedTrigger(let n) = $0.input { return n.trimmingCharacters(in: .whitespacesAndNewlines) }; return nil },
+            appBundleIDOf: { $0.appBundleID }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
     }
     private static func execute(_ actions: [TriggerAction], fromTrackpad: Bool, triggerID: UUID,
                                 context: ExecutionContext, path: [UUID], completion: ((Bool) -> Void)?) {
@@ -394,6 +401,8 @@ class ActionExecutor {
                 source: action.parameters.scriptContent ?? "", timeout: action.parameters.scriptTimeoutSeconds ?? 30) { code, output, timedOut in
                     ScriptActionResults.record(name: action.parameters.scriptResultVariable, output: output, code: code, timedOut: timedOut)
                     GestureLog.shared.logFromAnyThread(timedOut ? "Script timed out" : "Script completed (exit \(code))", level: code == 0 && !timedOut ? .action : .error)
+                    // 3.4.0: say when Apple Events were the reason (-1743, -600).
+                    if code != 0, !timedOut { AppleEventScripts.explain(kind: kind, output: output) }
                     completion(code == 0 && !timedOut)
                 }
             return
@@ -466,16 +475,13 @@ class ActionExecutor {
 
         if action.actionType == .toggleDarkMode {
             // Needs Automation permission for System Events; a denied or
-            // timed-out script used to be reported as success.
+            // timed-out script used to be reported as success. 3.4.0: the
+            // failure is explained (-1743 and friends) and a System Events
+            // that was not running (-600) is asked once more.
             let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
             // The system change propagates to AOM by itself; forcing
             // NSApp.appearance here pinned AOM and ignored "Follow System".
-            ScriptRunnerClient.shared.run(kind: "applescript", source: script, timeout: 5) { code, _, timedOut in
-                if code != 0 || timedOut {
-                    GestureLog.shared.logFromAnyThread("Dark Mode: allow AOM to control System Events in Privacy & Security › Automation.", level: .error)
-                }
-                completion(code == 0 && !timedOut)
-            }
+            AppleEventScripts.run(script, action: "Dark Mode", timeout: 5, completion: completion)
             return
         }
         if action.actionType == .recordScreen {
@@ -540,27 +546,10 @@ class ActionExecutor {
         // Application Control
         case .launchApplication:
             break // Completed above (activate/launch report their own result).
-        case .quitApplication:
-            if let name = action.parameters.applicationName {
-                let apps = NSRunningApplication.runningApplications(withBundleIdentifier: name)
-                apps.forEach { $0.terminate() }
-            }
+        case .quitApplication, .hideApplication, .toggleApplication:
+            break // Dispatched above (controlApplication reports its own result).
         case .forceQuitApplication:
             result = forceQuit(bundleID: action.parameters.applicationName)
-        case .hideApplication:
-            if let name = action.parameters.applicationName {
-                let apps = NSRunningApplication.runningApplications(withBundleIdentifier: name)
-                apps.forEach { $0.hide() }
-            }
-        case .toggleApplication:
-            if let name = action.parameters.applicationName {
-                let apps = NSRunningApplication.runningApplications(withBundleIdentifier: name)
-                if let app = apps.first {
-                    if app.isHidden { app.unhide() } else { app.hide() }
-                } else {
-                    NSWorkspace.shared.launchApplication(name)
-                }
-            }
 
         // System Actions
         case .sleepComputer:
@@ -677,7 +666,7 @@ class ActionExecutor {
                     completion(true)
                 } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: raw)
                             ?? (raw.hasPrefix("/") ? URL(fileURLWithPath: raw) : nil)
-                            ?? NSWorkspace.shared.urlsForApplications(toOpen: URL(fileURLWithPath: "/")).first(where: { $0.deletingPathExtension().lastPathComponent == name }) {
+                            ?? applicationURL(named: name) {
                     NSWorkspace.shared.openApplication(at: url, configuration: .init()) { app, _ in completion(app != nil) }
                 } else {
                     completion(false)
@@ -876,18 +865,48 @@ class ActionExecutor {
 
     // MARK: - Other helpers
 
+    /// The folders apps are installed in, for a lookup by name.
+    static let applicationFolders: [URL] = [
+        "/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+    ].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        + [FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)]
+
+    /// An app by its name ("Safari" or "Safari.app"): the folders apps are
+    /// installed in first, then Launch Services for one elsewhere. 3.4.0
+    /// audit: Toggle Application looked a name up among the apps that open a
+    /// folder (Finder, Terminal…), so an app given by name that was not
+    /// running never launched.
+    static func applicationURL(named name: String, in folders: [URL] = applicationFolders,
+                               fileManager: FileManager = .default,
+                               elsewhere: (String) -> URL? = launchServicesURL(named:)) -> URL? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("/") else { return nil }
+        let file = trimmed.lowercased().hasSuffix(".app") ? trimmed : trimmed + ".app"
+        var isFolder: ObjCBool = false
+        return folders.lazy.map { $0.appendingPathComponent(file, isDirectory: true) }
+            .first { fileManager.fileExists(atPath: $0.path, isDirectory: &isFolder) && isFolder.boolValue }
+            ?? elsewhere(trimmed)
+    }
+
+    /// AppKit has no other lookup by name (deprecated in macOS 11 in favour
+    /// of bundle identifiers, still answering on macOS 27); only reached for
+    /// an app outside the standard folders.
+    static func launchServicesURL(named name: String) -> URL? {
+        NSWorkspace.shared.fullPath(forApplication: name).map { URL(fileURLWithPath: $0) }
+    }
+
     private static func activateApplication(_ parameters: ActionParameters, completion: @escaping (Bool) -> Void) {
         let url = parameters.applicationPath.map { URL(fileURLWithPath: $0) }
             ?? parameters.applicationName.flatMap {
-                NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
-                    ?? NSWorkspace.shared.fullPath(forApplication: $0).map { URL(fileURLWithPath: $0) }
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) ?? applicationURL(named: $0)
             }
         guard let url, let bundleID = Bundle(url: url)?.bundleIdentifier else {
             GestureLog.shared.logFromAnyThread("Application not found", level: .error); completion(false); return
         }
         func activate(_ app: NSRunningApplication) {
             app.unhide()
-            guard app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) else { completion(false); return }
+            // ignoringOtherApps has no effect since macOS 14 (deprecated).
+            guard app.activate(options: [.activateAllWindows]) else { completion(false); return }
             func verify(_ left: Int) {
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier { completion(true) }
                 else if left > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { verify(left - 1) } }

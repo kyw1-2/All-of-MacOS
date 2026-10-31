@@ -197,7 +197,8 @@ final class WindowPinningService: NSObject, ObservableObject {
         guard pin.restoreSource(defaults: defaults) else { report("The source window could not be restored."); return }
         // Deliver subsequent input to the real window; never synthesize clicks.
         _ = AXUIElementSetAttributeValue(pin.target.window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        let activated = app.activate(options: [.activateIgnoringOtherApps])
+        // ignoringOtherApps has no effect since macOS 14 (deprecated).
+        let activated = app.activate(options: [])
         _ = AXUIElementSetAttributeValue(pin.target.window, kAXMainAttribute as CFString, kCFBooleanTrue)
         let raised = AXUIElementPerformAction(pin.target.window, kAXRaiseAction as CFString) == .success
         guard raised, activated else {
@@ -223,7 +224,7 @@ final class WindowPinningService: NSObject, ObservableObject {
 
     func closeSource(_ pin: LivePinnedWindow) {
         guard pin.restoreSource(defaults: defaults) else { report("The source window could not be restored."); return }
-        _ = NSRunningApplication(processIdentifier: pin.target.pid)?.activate(options: [.activateIgnoringOtherApps])
+        _ = NSRunningApplication(processIdentifier: pin.target.pid)?.activate(options: [])
         _ = AXUIElementPerformAction(pin.target.window, kAXRaiseAction as CFString)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(pin.target.window, kAXCloseButtonAttribute as CFString, &value) == .success,

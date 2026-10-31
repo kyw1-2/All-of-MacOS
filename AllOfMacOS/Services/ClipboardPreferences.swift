@@ -36,6 +36,7 @@ final class ClipboardPreferences: ObservableObject {
     @Published var showInScreenCapture: Bool { didSet { defaults.set(showInScreenCapture, forKey: "AOMClipboardShowInScreenCapture"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
     @Published var compact: Bool { didSet { defaults.set(compact, forKey: "AOMClipboardCompact"); NotificationCenter.default.post(name: Self.changed, object: nil) } }
     static let changed = Notification.Name("AOMClipboardPresentationChanged")
+    private var settingsObserver: NSObjectProtocol?
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         quickModifier = Modifier(rawValue: defaults.string(forKey: "AOMClipboardQuickModifier") ?? "command") ?? .command
@@ -46,6 +47,30 @@ final class ClipboardPreferences: ObservableObject {
         compact = defaults.bool(forKey: "AOMClipboardCompact")
         if quickModifier == .shift { quickModifier = .command }
         if plainModifier == .command || plainModifier == quickModifier { plainModifier = .shift }
+        // 3.4.0 audit: Reset Preferences and Restore Backup change these keys
+        // underneath; the values read at launch stayed in force (link
+        // previews went on fetching after a reset turned them off) until AOM
+        // was reopened. Both post .aomSettingChanged.
+        settingsObserver = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadFromDefaults() }
+        }
+    }
+
+    /// Takes what the defaults hold now; only values that differ are set.
+    func reloadFromDefaults() {
+        let quick = Modifier(rawValue: defaults.string(forKey: "AOMClipboardQuickModifier") ?? "command") ?? .command
+        let plain = Modifier(rawValue: defaults.string(forKey: "AOMClipboardPlainModifier") ?? "shift") ?? .shift
+        if quickModifier != quick { quickModifier = quick == .shift ? .command : quick }
+        if plainModifier != plain { plainModifier = plain == .command || plain == quickModifier ? .shift : plain }
+        let previews = defaults.bool(forKey: "AOMClipboardNetworkPreviews")
+        if networkPreviews != previews { networkPreviews = previews }
+        let cards = defaults.bool(forKey: Self.linkCardsKey)
+        if linkCards != cards { linkCards = cards }
+        let shows = defaults.object(forKey: "AOMClipboardShowInScreenCapture") as? Bool ?? true
+        if showInScreenCapture != shows { showInScreenCapture = shows }
+        let isCompact = defaults.bool(forKey: "AOMClipboardCompact")
+        if compact != isCompact { compact = isCompact }
     }
     func isPlain(_ flags: NSEvent.ModifierFlags) -> Bool { flags.contains(plainModifier.flags) }
     func isQuick(_ flags: NSEvent.ModifierFlags) -> Bool {
@@ -173,7 +198,9 @@ struct ClipboardDetachedPreview: View {
     @ObservedObject var store: ClipboardStore
     @ObservedObject private var preferences = ClipboardPreferences.shared
     @State private var content: ClipboardPreviewCache.Content?
-    // Paste-style rename: double-click the title to edit it in place.
+    // Paste-style rename: one click on the title edits it in place (3.4.0:
+    // it took a double-click here while Paste, and the shelf's own preview,
+    // take one; Return saves, Escape cancels, clicking elsewhere saves).
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @FocusState private var titleFocused: Bool
@@ -197,7 +224,7 @@ struct ClipboardDetachedPreview: View {
                         .font(.headline).lineLimit(1)
                         .foregroundStyle(current.title.isEmpty ? .secondary : .primary)
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 2) {
+                        .onTapGesture {
                             editedTitle = current.title
                             isEditingTitle = true
                             Task { @MainActor in
@@ -205,8 +232,9 @@ struct ClipboardDetachedPreview: View {
                                 titleFocused = true
                             }
                         }
-                        .help(current.title.isEmpty ? "Double-click to name this item" : "Double-click to rename")
-                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Double-click to rename.")
+                        .help(current.title.isEmpty ? "Click to name this item" : "Click to rename")
+                        .accessibilityLabel("Title, \(current.title.isEmpty ? current.kind.displayName : current.title). Click to rename.")
+                        .accessibilityAddTraits(.isButton)
                 }
                 Spacer()
                 Button("Copy") { _ = try? store.write(entryIDs: [current.id]) }

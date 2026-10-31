@@ -241,8 +241,11 @@ class KeyboardMonitor: ObservableObject {
     /// Internal for the registration integration test (@testable).
     var registeredTriggers: [Trigger] = []
     private var activationGroups: [ActivationGroup] = []
-    private var sequenceDetector = KeySequenceDetector()
+    /// Read by the 3.4.0 audit tests (@testable).
+    private(set) var sequenceDetector = KeySequenceDetector()
     private var pressed: [UInt16: [Trigger]] = [:]
+    /// Keys `releaseKeys` let go while their swallowed press may still be down.
+    private var releasedWhileDown = Set<UInt16>()
     private static var activeMonitor: KeyboardMonitor?
     private var secureHotKeys: SecureInputHotKeys?
 
@@ -287,7 +290,7 @@ class KeyboardMonitor: ObservableObject {
             eventsOfInterest: mask, callback: { _, type, event, _ in
                 guard let monitor = KeyboardMonitor.activeMonitor else { return Unmanaged.passUnretained(event) }
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    monitor.releaseKeys()
+                    monitor.tapWasDisabled()
                     if let tap = monitor.triggerEventTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passUnretained(event)
                 }
@@ -337,19 +340,45 @@ class KeyboardMonitor: ObservableObject {
     /// These events are observed but never swallowed, so normal typing continues.
     func handleSequenceModifierEvent(keyCode: UInt16, flags: CGEventFlags) {
         guard Self.modifierOnlyKeys.contains(keyCode) else { return }
-        let flag: CGEventFlags
+        observeSequence(keyCode: keyCode, modifiers: [], isDown: Self.modifierIsDown(keyCode: keyCode, flags: flags),
+                        isRepeat: false)
+    }
+
+    /// Whether the modifier key `keyCode` is down after this flags change.
+    /// The left and right keys of one modifier share its generic flag, so it
+    /// is read from the side's own device bit (IOLLEvent.h). 3.4.0 audit:
+    /// with the generic flag only, releasing left ⌘ while right ⌘ was held
+    /// read as a second press of left ⌘, which then stayed "held" and made
+    /// every ⌘ sequence and hold trigger fail until the front app changed.
+    /// Events without device bits for that modifier (some synthetic ones)
+    /// fall back to the generic flag.
+    static func modifierIsDown(keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        let generic: CGEventFlags
+        let side: UInt64
+        let bothSides: UInt64
         switch keyCode {
-        case 54, 55: flag = .maskCommand
-        case 56, 60: flag = .maskShift
-        case 58, 61: flag = .maskAlternate
-        case 59, 62: flag = .maskControl
-        default: flag = .maskSecondaryFn
+        case 55: (generic, side, bothSides) = (.maskCommand, 0x08, 0x18)        // left ⌘
+        case 54: (generic, side, bothSides) = (.maskCommand, 0x10, 0x18)        // right ⌘
+        case 56: (generic, side, bothSides) = (.maskShift, 0x02, 0x06)          // left ⇧
+        case 60: (generic, side, bothSides) = (.maskShift, 0x04, 0x06)          // right ⇧
+        case 58: (generic, side, bothSides) = (.maskAlternate, 0x20, 0x60)      // left ⌥
+        case 61: (generic, side, bothSides) = (.maskAlternate, 0x40, 0x60)      // right ⌥
+        case 59: (generic, side, bothSides) = (.maskControl, 0x01, 0x2001)      // left ⌃
+        case 62: (generic, side, bothSides) = (.maskControl, 0x2000, 0x2001)    // right ⌃
+        default: return flags.contains(.maskSecondaryFn)
         }
-        if flags.contains(flag) {
-            observeSequence(keyCode: keyCode, modifiers: [], isDown: true, isRepeat: false)
-        } else {
-            observeSequence(keyCode: keyCode, modifiers: [], isDown: false, isRepeat: false)
-        }
+        guard flags.contains(generic) else { return false }
+        let raw = flags.rawValue
+        return raw & bothSides == 0 ? true : raw & side != 0
+    }
+
+    /// macOS turned the trigger tap off (a callback ran too long, or user
+    /// input): key-ups that happened meanwhile never arrived, so nothing may
+    /// stay held. 3.4.0 audit: the sequence detector kept its held keys, so a
+    /// modifier released during the gap never pressed again for a sequence
+    /// trigger, and a hold trigger could fire for a key already let go.
+    func tapWasDisabled() {
+        releaseKeys()
     }
 
     private func observeSequence(keyCode: UInt16, modifiers: NSEvent.ModifierFlags,
@@ -435,6 +464,7 @@ class KeyboardMonitor: ObservableObject {
 
         observeSequence(keyCode: keyCode, modifiers: modifiers, isDown: isDown, isRepeat: isRepeat)
         if !isDown {
+            releasedWhileDown.remove(keyCode)
             guard let bindings = pressed.removeValue(forKey: keyCode) else { return false }
             let sameApp = pressApps.removeValue(forKey: keyCode) == (NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "")
             // Invalidate any pending hold timers for this physical press.
@@ -454,6 +484,12 @@ class KeyboardMonitor: ObservableObject {
             return true
         }
         if pressed[keyCode] != nil { return true } // Native autorepeat must not create additional macros.
+        // Nor reach the app: the autorepeat of a swallowed press that was let
+        // go early (an app change, a disabled tap) stays AOM's until the key
+        // goes up or is pressed afresh (3.4.0 audit: ⌥Space opening Terminal,
+        // held a little long, typed non-breaking spaces into it).
+        if isRepeat, releasedWhileDown.contains(keyCode) { return true }
+        releasedWhileDown.remove(keyCode)
         guard !isRepeat, AutomationGate.isOn else { return false }
 
         let shortcut = KeyboardShortcut(keyCode: keyCode, modifiers: modifiers.intersection([.command, .option, .control, .shift, .function]))
@@ -506,12 +542,7 @@ class KeyboardMonitor: ObservableObject {
     /// true when this key was the final character of an abbreviation and was
     /// swallowed; the erasure and expansion then run off the tap callback.
     private func processTypedString(text: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-        guard (AutomationGate.isOn),
-              registeredTriggers.contains(where: { if case .typedString = $0.input { return true }; return false }),
-              ActionExecutor.activeTextTypingSessions == 0,
-              !ScreenLock.isLocked,
-              NSApp.keyWindow == nil, // never expand into AOM's own fields
-              NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+        guard typedStringExpansionAllowed() else {
             MainActor.assumeIsolated { TypedStringEngine.shared.reset() }
             return false
         }
@@ -545,6 +576,22 @@ class KeyboardMonitor: ObservableObject {
         return true
     }
 
+    /// Whether typed-string expansion may look at this keystroke at all.
+    /// 3.4.0 audit: Pause AOM and a per-app pause were never asked here, so a
+    /// paused AOM still swallowed the last key of an abbreviation, erased it
+    /// and typed the replacement (an action-only abbreviation was erased and
+    /// then refused by the trigger gate). The cheap checks come first; the
+    /// window server and AppKit are asked last.
+    func typedStringExpansionAllowed() -> Bool {
+        AutomationGate.isOn
+            && registeredTriggers.contains(where: { if case .typedString = $0.input { return true }; return false })
+            && TriggerSuppression.shared.allows(kind: .keyboard)
+            && ActionExecutor.activeTextTypingSessions == 0
+            && !ScreenLock.isLocked
+            && NSApp.keyWindow == nil // never expand into AOM's own fields
+            && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
+    }
+
     private func fire(_ trigger: Trigger, keyCode: UInt16) {
         // Keep event tap callbacks short: launch the workflow after returning to the run loop.
         let generation = registrationGeneration
@@ -565,8 +612,14 @@ class KeyboardMonitor: ObservableObject {
         }
     }
     private func releaseKeys() {
-        let bindings = pressed.values.flatMap { $0 }; pressed.removeAll(); pressApps.removeAll()
+        let bindings = pressed.values.flatMap { $0 }
+        // Still down, maybe: their autorepeat stays swallowed (handleInput).
+        releasedWhileDown.formUnion(pressed.keys)
+        pressed.removeAll(); pressApps.removeAll()
         pressTimes.removeAll(); pressSerial.removeAll()
+        // The sequence detector's held keys too (3.4.0 audit): their key-ups
+        // may never come (a disabled tap, a shortcut recorder that took them).
+        sequenceDetector.reset()
         for trigger in bindings { ActionExecutor.releaseHold(trigger.id) }
     }
     func unregisterAll() {

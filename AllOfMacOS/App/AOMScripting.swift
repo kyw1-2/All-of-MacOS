@@ -56,6 +56,20 @@ enum AOMScriptingRoute {
     static func perform(_ url: URL) {
         AppDelegate.current?.application(NSApp, open: [url])
     }
+
+    /// Why `run trigger name` cannot run, or nil when exactly one Named
+    /// Trigger of that name applies now. 3.4.0 audit: the command handed the
+    /// link on and returned at once, so a typo or a name used twice reported
+    /// success to the script while nothing ran.
+    static func namedTriggerProblem(_ name: String, matches: (String) -> Int) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return Failure.emptyName.errorDescription }
+        switch matches(trimmed) {
+        case 1: return nil
+        case 0: return "No named trigger called “\(trimmed)” applies in the front app."
+        default: return "More than one named trigger called “\(trimmed)” applies in the front app; give each its own name."
+        }
+    }
 }
 
 /// Shared command plumbing: run on the main actor, report errors to the script.
@@ -77,6 +91,17 @@ class AOMScriptCommand: NSScriptCommand {
 @objc(AOMScriptRunTriggerCommand)
 final class AOMScriptRunTriggerCommand: AOMScriptCommand {
     override func route() throws -> URL { try AOMScriptingRoute.runTrigger(named: directParameter as? String ?? "") }
+
+    /// Scripting commands arrive on the main thread, where the triggers live.
+    override func performDefaultImplementation() -> Any? {
+        let name = directParameter as? String ?? ""
+        if let problem = AOMScriptingRoute.namedTriggerProblem(name, matches: { ActionExecutor.namedTriggerCandidates($0).count }) {
+            scriptErrorNumber = errOSAGeneralError
+            scriptErrorString = problem
+            return nil
+        }
+        return super.performDefaultImplementation()
+    }
 }
 
 @objc(AOMScriptCaptureCommand)

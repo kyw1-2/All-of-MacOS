@@ -23,11 +23,8 @@ extension ActionType {
         case .triggerNamedTrigger: return "Runs the actions of a trigger that has a matching Named Trigger name."
         case .showHUD: return "Shows a short message on screen."
         case .showCheatSheet: return "Shows or hides the list of triggers that apply right now."
-        case .showPinnedWindowPicker: return "Choose a live window to keep above other apps."
-        case .selectWindowToPin: return "Point at a window and click to pin or unpin it."
-        case .togglePinFrontWindow: return "Toggle always on top for the front window."
-        case .togglePinWindowUnderCursor: return "Toggle always on top for the window under the pointer."
-        case .unpinAllWindows: return "Remove live window pins without closing their source windows."
+        // The pin actions' descriptions are under Window management below
+        // (3.4.0: a second copy here made those unreachable).
         // Window management
         case .maximizeWindow: return "Fills the visible area of the window's display."
         case .minimizeWindow: return "Minimizes the focused window to the Dock."

@@ -1481,7 +1481,21 @@ class TrackpadMonitor {
                 LiveTouchState.shared.flashTrigger(trigger.id)
                 NotificationCenter.default.post(name: .gestureDidFire, object: nil, userInfo: ["name": gesture.rawValue, "actions": trigger.actions.filter(\.isEnabled).map { $0.actionType.rawValue }.joined(separator: " → ")])
             }
+            // 3.4.0 (N333-08, the other way round): a two-finger gesture the
+            // utility layer could also answer ran the user's trigger, so the
+            // rest of that touch is the trigger engine's.
+            if UtilityTouchClaim.covers(gesture) { tellUtilityTheTouchIsTaken(gesture) }
         }
+    }
+
+    /// Test seam: called instead of the shared utility layer when a trigger
+    /// took a touch the utility gestures could have answered (3.4.0).
+    var utilityTookTouchOverride: ((TrackpadGesture) -> Void)?
+
+    private func tellUtilityTheTouchIsTaken(_ gesture: TrackpadGesture) {
+        if let override = utilityTookTouchOverride { override(gesture); return }
+        guard systemMonitoringEnabled, !suspended, source.running else { return }
+        MainActor.assumeIsolated { TrackpadUtilityGestures.shared.triggerEngineTookTouch() }
     }
 
     /// Test-only: directly fire a gesture through the normal pipeline
