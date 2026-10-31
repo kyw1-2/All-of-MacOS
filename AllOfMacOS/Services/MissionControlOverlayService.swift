@@ -36,8 +36,43 @@ final class MissionControlOverlayService: ObservableObject {
         UserDefaults.standard.object(forKey: Self.defaultsEnabledKey) as? Bool ?? true
     }
 
+    /// Whether the poller may look at Mission Control now. It runs for the ✕
+    /// buttons and for the W/⇧W/M/H keys, which act only while it reports
+    /// Mission Control open. 3.4.0 audit: Pause AOM was not asked, so the ✕
+    /// buttons kept appearing over Mission Control while AOM was paused (a
+    /// click then did nothing), and with the ✕ buttons off the keys never
+    /// worked at all. `locked` is asked last (a window-server call).
+    static func shouldProbe(buttons: Bool, hotkeys: Bool, automationOn: Bool, paused: Bool,
+                            locked: @autoclosure () -> Bool) -> Bool {
+        (buttons || hotkeys) && automationOn && !paused && !locked()
+    }
+
+    private func mayProbe() -> Bool {
+        Self.shouldProbe(buttons: isEnabled, hotkeys: MissionControlHotKeyHandler.isEnabled,
+                         automationOn: AutomationGate.isOn, paused: TriggerSuppression.shared.isPaused,
+                         locked: ScreenLock.isLocked)
+    }
+
     /// Whether the poller runs, so `isMissionControlActive` is current.
     var isPolling: Bool { pollTimer != nil }
+    private var settingsObserver: NSObjectProtocol?
+
+    /// Launch (through `MissionControlHotKeyHandler.start`): the poller runs
+    /// while the ✕ buttons or the keys are on and follows Settings. Until
+    /// 3.4.0 it started only with the ✕ buttons on at launch, so turning them
+    /// on later did nothing until AOM was reopened.
+    func followSettings() {
+        guard settingsObserver == nil else { return }
+        settingsObserver = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applySettings() }
+        }
+        applySettings()
+    }
+
+    private func applySettings() {
+        if isEnabled || MissionControlHotKeyHandler.isEnabled { start() } else if isPolling { stop() }
+    }
 
     func start() {
         guard pollTimer == nil else { return }
@@ -56,7 +91,7 @@ final class MissionControlOverlayService: ObservableObject {
     // MARK: - Poll
 
     private func poll() {
-        guard isEnabled, AutomationGate.isOn, !ScreenLock.isLocked else {
+        guard mayProbe() else {
             generation += 1
             if isMissionControlActive || !tiles.isEmpty { teardown() }
             return
@@ -69,11 +104,12 @@ final class MissionControlOverlayService: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.probeInFlight = false
-                guard self.pollTimer != nil, self.generation == requestGeneration,
-                      self.isEnabled, AutomationGate.isOn, !ScreenLock.isLocked else { return }
+                guard self.pollTimer != nil, self.generation == requestGeneration, self.mayProbe() else { return }
                 if let thumbnails = snapshot.thumbnails {
                     if !self.isMissionControlActive { self.isMissionControlActive = true }
-                    self.rebuildTiles(thumbnails)
+                    // The keys alone need to know Mission Control shows; the
+                    // ✕ buttons only appear with their own switch on.
+                    if self.isEnabled { self.rebuildTiles(thumbnails) } else { self.removeTiles() }
                 } else if self.isMissionControlActive || !self.tiles.isEmpty {
                     self.teardown()
                 }
@@ -148,6 +184,10 @@ final class MissionControlOverlayService: ObservableObject {
 
     private func teardown() {
         if isMissionControlActive { isMissionControlActive = false }
+        removeTiles()
+    }
+
+    private func removeTiles() {
         for tile in tiles { tile.panel.orderOut(nil) }
         tiles.removeAll()
     }

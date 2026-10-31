@@ -577,6 +577,22 @@ final class TrackpadUtilityGestures: ObservableObject {
         claimLiftedAt = nil
     }
 
+    /// N333-08 the other way round (3.4.0 audit): the trigger engine ran one
+    /// of the user's two-finger triggers from the touch on the pad, so that
+    /// touch is the trigger engine's. Nothing more of it acts here: a pinch it
+    /// made and still holds is taken back, a switcher it opened closes without
+    /// switching, no Space switches, its fingers stay spent until they all
+    /// lift, and later gestures of it are not claimed. Until 3.4.0 a trigger
+    /// that ran first (a swipe this layer had not recognised) could be
+    /// followed by a Dock pinch in the same touch, so both acted. A touch that
+    /// has lifted is left alone: the next one decides afresh.
+    func triggerEngineTookTouch() {
+        guard recognizer.isTouching else { return }
+        abandonTouch()
+        recognizer.spendUntilLift()
+        releaseClaim()
+    }
+
     /// The place this touch resolved stays its claim's when `place` goes.
     private func rememberClaimPlace() {
         if claimLive, let place { claimPlace = place }
