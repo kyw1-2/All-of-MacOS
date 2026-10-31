@@ -1,42 +1,59 @@
 import AppKit
 import SwiftUI
 
-/// CleanShot X-style Unified Capture Studio Dashboard.
-/// Provides a fast visual launchpad, live recording status banner,
-/// and a recent captures gallery with in-place annotation, pinning, and copy.
+/// The Capture page (design-3.4.0 b.2 dashboard): the status header, the ten
+/// capture tools in rows that never go ragged (10 → one row or 5 × 2), the
+/// Screen Ruler's section, then the history gallery. The gallery is one
+/// keyboard target: arrows move the selection, Return edits, Space previews,
+/// ⌘C copies and Delete removes from history (b.4).
 struct CaptureStudioView: View {
     @ObservedObject private var history = CaptureHistory.shared
     @ObservedObject private var recordingService = ScreenRecordingService.shared
+    @ObservedObject private var textCapture = TextCaptureSettings.shared
     @State private var selectedFilter: CaptureFilter = .all
     @State private var hoveredEntryID: UUID?
+    @State private var selectedEntryID: UUID?
+    @State private var query = ""
+    @State private var galleryWidth: CGFloat = 0
     @State private var showingSettingsSheet = false
     @State private var showingClearConfirmation = false
+    @FocusState private var galleryFocused: Bool
     @StateObject private var toast = AOMToastModel()
 
     enum CaptureFilter: String, CaseIterable, Identifiable {
         case all = "All"
         case screenshots = "Screenshots"
         case recordings = "Recordings"
-        case pinned = "Pinned"
+        /// Kept in history: never removed by the count or age limits.
+        case kept = "Kept"
 
         var id: String { rawValue }
     }
 
+    private func matches(_ entry: CaptureHistoryEntry, _ filter: CaptureFilter) -> Bool {
+        switch filter {
+        case .all: return true
+        case .screenshots: return entry.kind != .videoRecording
+        case .recordings: return entry.kind == .videoRecording
+        case .kept: return entry.isPinned
+        }
+    }
+
     private var filteredEntries: [CaptureHistoryEntry] {
-        history.entries.filter { entry in
-            switch selectedFilter {
-            case .all: return true
-            case .screenshots: return entry.kind != .videoRecording
-            case .recordings: return entry.kind == .videoRecording
-            case .pinned: return entry.isPinned
-            }
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return history.entries.filter { entry in
+            guard matches(entry, selectedFilter) else { return false }
+            guard !needle.isEmpty else { return true }
+            return entry.displayName.localizedStandardContains(needle)
+                || entry.kind.displayName.localizedStandardContains(needle)
+                || (entry.fileURL?.lastPathComponent.localizedStandardContains(needle) ?? false)
         }
     }
 
     /// The header title already counts the captures and the chips count each
     /// filter, so the context line only says when the last one was taken.
     private var subtitle: String {
-        guard let latest = history.entries.first else { return "Screenshots, recordings, annotation and text recognition" }
+        guard let latest = history.entries.first else { return "Screenshots, recordings, measuring and text recognition" }
         return "Last capture \(AOMRelativeTime.string(latest.capturedAt).lowercased())"
     }
 
@@ -46,12 +63,7 @@ struct CaptureStudioView: View {
     private var gridMinimum: CGFloat { CaptureGalleryMetrics.columnMinimum[min(2, max(0, density))] }
 
     private func count(_ filter: CaptureFilter) -> Int {
-        switch filter {
-        case .all: return history.entries.count
-        case .screenshots: return history.entries.filter { $0.kind != .videoRecording }.count
-        case .recordings: return history.entries.filter { $0.kind == .videoRecording }.count
-        case .pinned: return history.entries.filter(\.isPinned).count
-        }
+        history.entries.filter { matches($0, filter) }.count
     }
 
     var body: some View {
@@ -65,15 +77,25 @@ struct CaptureStudioView: View {
             AOMSection(padding: AOMSpace.x2) {
                 captureLaunchpad
             }
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Capture tools")
+            // Screen Ruler (3.4): its own section, drawn by its module.
+            ScreenRulerSection()
             VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                 // Nothing to filter or size before the first capture.
-                if !history.entries.isEmpty { filterBar }
+                if !history.entries.isEmpty {
+                    AOMTipCard(id: "capture.gallery", symbol: "hand.draw",
+                               title: "Drag captures anywhere",
+                               message: "Drag a capture into any app or the Finder. Double-click to edit it, press Space to preview it, or right-click for more.")
+                        .padding(.bottom, AOMSpace.x2)
+                    filterBar
+                }
                 gallerySection
             }
         }
         .aomPage("Capture")
         .toolbar { toolbarContent }
+        .searchable(text: $query, placement: .toolbar, prompt: "Search captures")
         .sheet(isPresented: $showingSettingsSheet) {
             ModuleSettingsSheet("Capture Settings", done: { showingSettingsSheet = false }) {
                 CaptureSettingsView()
@@ -83,29 +105,32 @@ struct CaptureStudioView: View {
             Button("Cancel", role: .cancel) { }
             Button("Clear All", role: .destructive) {
                 history.removeAll()
-                showToast("Capture history cleared")
+                selectedEntryID = nil
+                toast.show("Capture history cleared")
             }
         } message: {
             Text("Recent captures are removed from history. Screenshot and video files saved in Finder are not deleted.")
         }
-        .aomToast(toast.message)
+        .aomToast(toast)
     }
 
     /// d.9: what Capture holds and when it last ran; recording is a status
-    /// (the pill and the strip below), not an error (e.6).
+    /// (the pill and the strip below), not an error (e.6). With additive copy
+    /// on, the pill says so, so the next Copy Text never surprises (b.16).
     private var header: some View {
         let count = history.entries.count
+        let status: AOMStatus? = recordingService.isRecording
+            ? AOMStatus(recordingService.isPaused ? "Paused" : "Rec",
+                        tone: recordingService.isPaused ? .neutral : .recording, symbol: "record.circle")
+            : (textCapture.additiveClipboard ? AOMStatus("Copy Text Adds", tone: .info, symbol: "text.append") : nil)
         return AOMPageHeader(recordingService.isRecording ? "Recording the screen"
                              : (count == 0 ? "No captures yet" : "\(count) capture\(count == 1 ? "" : "s") in history"),
                              module: .capture, subtitle: subtitle,
-                             status: recordingService.isRecording
-                                ? AOMStatus(recordingService.isPaused ? "Paused" : "Rec",
-                                            tone: recordingService.isPaused ? .neutral : .recording, symbol: "record.circle")
-                                : nil,
-                             help: "Capture takes screenshots, recordings and text from any app. Each capture opens in Quick Access to copy, save, annotate or drag, and stays in history until you remove it.")
+                             status: status,
+                             help: "Capture takes screenshots, recordings and text from any app and measures the screen. Each capture opens in Quick Access to copy, save, annotate or drag, and stays in history until you remove it.")
     }
 
-    // MARK: - Toolbar (capture tools; CleanShot keeps them one click away)
+    // MARK: - Toolbar (b.3: More, the one primary Capture action, search)
 
     private func keys(_ action: CaptureShortcutAction) -> String {
         CaptureShortcuts.shared.shortcut(for: action).map { "  \($0.displayString)" } ?? ""
@@ -114,21 +139,16 @@ struct CaptureStudioView: View {
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
             Button {
-                AnnotationEditorController.shared.chooseImageOrProject()
-            } label: {
-                Label("Open Image…", systemImage: "photo.badge.plus")
-            }
-            .help("Open an image or annotation project in the editor")
-            Button {
                 CaptureHistoryWindowController.shared.present()
             } label: {
                 Label("History Overlay", systemImage: "clock.arrow.circlepath")
             }
             .help("Open the floating capture history")
             Menu {
+                Button("Open Image…") { AnnotationEditorController.shared.chooseImageOrProject() }
                 Button("Toggle Desktop Icons") {
                     CaptureCoordinator.shared.toggleDesktopIcons()
-                    showToast("Toggled desktop icons")
+                    toast.show("Desktop icons toggled")
                 }
                 if CaptureCoordinator.shared.canRestoreQuickAccess {
                     Button("Restore Last Closed Overlay") { CaptureCoordinator.shared.restoreRecentlyClosedOverlay() }
@@ -142,7 +162,7 @@ struct CaptureStudioView: View {
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
-            .help("More capture options")
+            .help("Open an image, desktop icons, history and settings")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -152,19 +172,24 @@ struct CaptureStudioView: View {
                 Button("Window\(keys(.captureWindow))") { CaptureCoordinator.shared.captureWindowInteractive() }
                 Button("Full Screen\(keys(.captureFullscreen))") { CaptureCoordinator.shared.captureFullscreen() }
                 Button("Scrolling\(keys(.scrollingCapture))") { CaptureCoordinator.shared.captureScrolling() }
+                Button("Previous Area\(keys(.capturePreviousArea))") { CaptureCoordinator.shared.capturePreviousArea() }
+                Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
                 Divider()
                 Button("Record Screen\(keys(.recordScreen))") { recordingService.promptAndStartRecording() }
                 Divider()
                 Button("Text\(keys(.ocr))") { CaptureCoordinator.shared.captureText() }
-                Button("Previous Area\(keys(.capturePreviousArea))") { CaptureCoordinator.shared.capturePreviousArea() }
-                Button("Self-Timer") { CaptureCoordinator.shared.captureWithSelfTimer() }
                 Button("QR Code") { CaptureCoordinator.shared.captureQRCode() }
+                Toggle("Add Copied Text to Clipboard", isOn: Binding(
+                    get: { textCapture.additiveClipboard },
+                    set: { textCapture.additiveClipboard = $0 }))
+                Divider()
+                Button("Measure Screen\(keys(.measureScreen))") { ScreenRulerModule.measure() }
             } label: {
                 Label("Capture Area", systemImage: "viewfinder")
             } primaryAction: {
                 CaptureCoordinator.shared.captureArea()
             }
-            .help("Capture an area\(keys(.captureArea)) — open the menu for every capture tool")
+            .help("Capture an area\(keys(.captureArea)); open the menu for every capture tool")
         }
     }
 
@@ -172,40 +197,80 @@ struct CaptureStudioView: View {
         CaptureShortcuts.shared.shortcut(for: action)?.displayString
     }
 
-    /// Every capture mode one click away, in CleanShot's order, the way the
-    /// system screenshot toolbar lays them out: glyph, name, shortcut.
-    private var captureLaunchpad: some View {
-        // One row of equal tools, glyph over name over shortcut like the
-        // system screenshot toolbar (3.3.5 squeezed them to one 11 pt line).
-        HStack(spacing: AOMSpace.x1) {
-            AOMModeButton("All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne)) {
+    // MARK: - Tools
+
+    /// One capture tool in the strip.
+    private struct Tool: Identifiable {
+        let id: String
+        let title: String
+        let symbol: String
+        var tint: Color = AOMTheme.text
+        var shortcut: String?
+        var help: String?
+        var disabled = false
+        let action: () -> Void
+    }
+
+    /// Every capture mode one click away, in CleanShot's order, then Measure.
+    private var tools: [Tool] {
+        let text = textCapture.additiveClipboard
+            ? "Copy Text\(shortcut(.ocr).map { " (\($0))" } ?? ""): adds to the text already on the clipboard"
+            : nil
+        return [
+            Tool(id: "allInOne", title: "All-In-One", symbol: "rectangle.dashed.badge.record", shortcut: shortcut(.allInOne)) {
                 CaptureCoordinator.shared.captureAllInOne()
-            }
-            AOMModeButton("Area", symbol: "viewfinder", shortcut: shortcut(.captureArea)) {
+            },
+            Tool(id: "area", title: "Area", symbol: "viewfinder", shortcut: shortcut(.captureArea)) {
                 CaptureCoordinator.shared.captureArea()
-            }
-            AOMModeButton("Window", symbol: "macwindow", shortcut: shortcut(.captureWindow)) {
+            },
+            Tool(id: "window", title: "Window", symbol: "macwindow", shortcut: shortcut(.captureWindow)) {
                 CaptureCoordinator.shared.captureWindowInteractive()
-            }
-            AOMModeButton("Full Screen", symbol: "menubar.dock.rectangle", shortcut: shortcut(.captureFullscreen)) {
+            },
+            // The same glyph as the status menu's Full Screen item.
+            Tool(id: "fullScreen", title: "Full Screen", symbol: "display", shortcut: shortcut(.captureFullscreen)) {
                 CaptureCoordinator.shared.captureFullscreen()
-            }
-            AOMModeButton("Scrolling", symbol: "arrow.up.and.down.text.horizontal", shortcut: shortcut(.scrollingCapture)) {
+            },
+            Tool(id: "scrolling", title: "Scrolling", symbol: "arrow.up.and.down.text.horizontal", shortcut: shortcut(.scrollingCapture)) {
                 CaptureCoordinator.shared.captureScrolling()
-            }
-            AOMModeButton("Self-Timer", symbol: "timer") {
+            },
+            Tool(id: "timer", title: "Self-Timer", symbol: "timer") {
                 CaptureCoordinator.shared.captureWithSelfTimer()
-            }
-            AOMModeButton(recordingService.isRecording ? "Recording" : "Record Screen", symbol: "record.circle",
-                          tint: AOMTheme.danger, shortcut: shortcut(.recordScreen)) {
+            },
+            Tool(id: "record", title: recordingService.isRecording ? "Recording" : "Record Screen", symbol: "record.circle",
+                 tint: AOMTheme.danger, shortcut: shortcut(.recordScreen), disabled: recordingService.isRecording) {
                 recordingService.promptAndStartRecording()
-            }
-            .disabled(recordingService.isRecording)
-            AOMModeButton("Text", symbol: "text.viewfinder", shortcut: shortcut(.ocr)) {
+            },
+            Tool(id: "text", title: "Text", symbol: textCapture.additiveClipboard ? "text.append" : "text.viewfinder",
+                 shortcut: shortcut(.ocr), help: text) {
                 CaptureCoordinator.shared.captureText()
-            }
-            AOMModeButton("QR Code", symbol: "qrcode.viewfinder") {
+            },
+            Tool(id: "qr", title: "QR Code", symbol: "qrcode.viewfinder") {
                 CaptureCoordinator.shared.captureQRCode()
+            },
+            Tool(id: "measure", title: "Measure Screen", symbol: "ruler", shortcut: shortcut(.measureScreen),
+                 help: "Measure Screen\(shortcut(.measureScreen).map { " (\($0))" } ?? ""): distances and sizes on screen") {
+                ScreenRulerModule.measure()
+            },
+        ]
+    }
+
+    private func toolButton(_ tool: Tool) -> some View {
+        AOMModeButton(tool.title, symbol: tool.symbol, tint: tool.tint, shortcut: tool.shortcut, help: tool.help,
+                      action: tool.action)
+            .disabled(tool.disabled)
+    }
+
+    /// Ten tools: one row when each gets room for its name, otherwise two even
+    /// rows of five (b.2: column counts divide the item count).
+    private var captureLaunchpad: some View {
+        let all = tools
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: AOMSpace.x1) {
+                ForEach(all) { toolButton($0).frame(minWidth: CaptureGalleryMetrics.toolRowMinimum) }
+            }
+            Grid(horizontalSpacing: AOMSpace.x1, verticalSpacing: AOMSpace.x1) {
+                GridRow { ForEach(all.prefix(5)) { toolButton($0) } }
+                GridRow { ForEach(all.suffix(from: 5)) { toolButton($0) } }
             }
         }
     }
@@ -225,6 +290,7 @@ struct CaptureStudioView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .help("Thumbnail size")
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(minHeight: AOMSize.rowSingle)
@@ -247,6 +313,7 @@ struct CaptureStudioView: View {
             Text(formatElapsed(recordingService.elapsedSeconds))
                 .font(AOMFont.headline.monospacedDigit())
                 .foregroundStyle(AOMColor.text)
+                .contentTransition(.numericText())
                 .accessibilityLabel("\(recordingService.isPaused ? "Paused" : "Recording"), \(formatElapsed(recordingService.elapsedSeconds))")
             Spacer(minLength: AOMSpace.x3)
             Button {
@@ -257,12 +324,16 @@ struct CaptureStudioView: View {
             }
             Button("Cancel") {
                 recordingService.cancelRecording()
-                showToast("Recording cancelled")
+                toast.show("Recording cancelled", tone: .neutral)
             }
             Button {
                 Task {
-                    _ = try? await recordingService.stopRecording()
-                    showToast("Recording saved")
+                    do {
+                        _ = try await recordingService.stopRecording()
+                        toast.show("Recording saved")
+                    } catch {
+                        toast.show("Couldn't save the recording because \(error.localizedDescription)", tone: .danger)
+                    }
                 }
             } label: {
                 Label("Stop", systemImage: "stop.fill")
@@ -275,63 +346,163 @@ struct CaptureStudioView: View {
 
     // MARK: - Gallery Section
 
+    private var columnCount: Int {
+        guard galleryWidth > 0 else { return 1 }
+        return max(1, Int((galleryWidth + AOMSpace.tileGap) / (gridMinimum + AOMSpace.tileGap)))
+    }
+
+    @ViewBuilder
     private var gallerySection: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.s) {
-            if filteredEntries.isEmpty {
-                // An empty history says so whatever the filter; a filter with
-                // nothing in it names the filter.
-                AOMEmptyState(history.entries.isEmpty || selectedFilter == .all ? "No Captures Yet" : "Nothing in \(selectedFilter.rawValue)",
-                                     systemImage: "camera.badge.ellipsis",
-                                     message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
-                    Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
-                        .buttonStyle(.borderedProminent)
+        let entries = filteredEntries
+        if entries.isEmpty {
+            emptyGallery
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
+                                                   maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
+                                         spacing: AOMSpace.tileGap)],
+                      spacing: AOMSpace.tileGap) {
+                ForEach(entries) { entry in
+                    card(entry)
                 }
-                .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
+            }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { galleryWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in galleryWidth = width }
+                }
+            }
+            .focusable()
+            .focusEffectDisabled()
+            .focused($galleryFocused)
+            .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow, .return, .space, .delete, "c"],
+                        phases: .down) { press in
+                handleKey(press, entries: entries)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Captures")
+        }
+    }
+
+    @ViewBuilder
+    private var emptyGallery: some View {
+        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            AOMEmptyState("No Results", systemImage: "magnifyingglass",
+                          message: "No capture matches “\(query)”.") {
+                Button("Clear Search") { query = "" }
+            }
+            .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
+        } else if history.entries.isEmpty || selectedFilter == .all {
+            AOMEmptyState("No Captures Yet", systemImage: "camera.badge.ellipsis",
+                          message: "Screenshots and recordings you take appear here, ready to annotate, pin, copy or reopen.") {
+                Button("Capture Area") { CaptureCoordinator.shared.captureArea() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
+        } else {
+            AOMEmptyState("Nothing in \(selectedFilter.rawValue)", systemImage: "camera.badge.ellipsis",
+                          message: selectedFilter == .kept
+                            ? "Keep a capture from its menu and it stays here past the history limits."
+                            : "Captures of this kind appear here.") {
+                Button("Show All") { selectedFilter = .all }
+            }
+            .frame(minHeight: CaptureGalleryMetrics.emptyMinHeight)
+        }
+    }
+
+    private func card(_ entry: CaptureHistoryEntry) -> some View {
+        CaptureCard(
+            entry: entry,
+            isHovered: hoveredEntryID == entry.id,
+            isSelected: selectedEntryID == entry.id,
+            isFocused: galleryFocused,
+            onSelect: {
+                selectedEntryID = entry.id
+                galleryFocused = true
+            },
+            onEdit: { CapturePreviewActions.edit(entry) },
+            onPreview: { QuickAccessExpandedPreview.shared.open(entry: entry) },
+            onCopy: { copy(entry) },
+            onShowInFinder: entry.fileURL.map { url in { NSWorkspace.shared.activateFileViewerSelecting([url]) } },
+            onPin: {
+                PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL)
+                toast.show("Pinned to the screen")
+            },
+            onToggleKeep: {
+                let kept = !entry.isPinned
+                history.togglePin(entry)
+                toast.show(kept ? "Kept in history" : "No longer kept in history")
+            },
+            onRestoreOverlay: { CaptureCoordinator.shared.restoreToQuickAccess(entry) },
+            onDelete: { remove(entry) }
+        )
+        .onHover { isHovering in
+            if isHovering { hoveredEntryID = entry.id } else if hoveredEntryID == entry.id { hoveredEntryID = nil }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func copy(_ entry: CaptureHistoryEntry) {
+        CapturePreviewActions.copyReporting(entry) { failure in
+            if let failure {
+                toast.show("Couldn't copy “\(entry.displayName)”. \(failure)", tone: .danger)
             } else {
-                // Wide enough that the title and the time share one line.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: gridMinimum,
-                                                       maximum: gridMinimum * CaptureGalleryMetrics.columnStretch),
-                                             spacing: AOMSpace.tileGap)],
-                          spacing: AOMSpace.tileGap) {
-                    ForEach(filteredEntries) { entry in
-                        CaptureCard(
-                            entry: entry,
-                            isHovered: hoveredEntryID == entry.id,
-                            onAnnotate: {
-                                AnnotationEditorController.shared.open(capture: entry, url: entry.fileURL)
-                            },
-                            onCopy: {
-                                CaptureItemActions.copy(entry)
-                                showToast("Copied capture")
-                            },
-                            onShowInFinder: entry.fileURL.map { url in { NSWorkspace.shared.activateFileViewerSelecting([url]) } },
-                            onPin: {
-                                PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL)
-                                showToast("Pinned to screen")
-                            },
-                            onRestoreOverlay: { CaptureCoordinator.shared.restoreToQuickAccess(entry) },
-                            onDelete: {
-                                withAnimation(AOMDesign.animation()) { history.remove(entry) }
-                                showToast("Removed from history")
-                            }
-                        )
-                        .onHover { isHovering in
-                            if isHovering { hoveredEntryID = entry.id } else if hoveredEntryID == entry.id { hoveredEntryID = nil }
-                        }
-                    }
-                }
-                Text("Drag a capture into any app · double-click to edit · right-click for more")
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, AOMSpace.x2)
+                toast.show("Copied “\(entry.displayName)”")
             }
         }
     }
 
-    // MARK: - Helpers
+    /// Removing from history leaves the file in the Finder; the selection
+    /// moves to the neighbouring capture (#97).
+    private func remove(_ entry: CaptureHistoryEntry) {
+        let entries = filteredEntries
+        if selectedEntryID == entry.id, let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            let next = entries.indices.contains(index + 1) ? entries[index + 1] : (index > 0 ? entries[index - 1] : nil)
+            selectedEntryID = next?.id
+        }
+        withAnimation(AOMMotion.standard) { history.remove(entry) }
+        toast.show(entry.fileURL == nil ? "Removed “\(entry.displayName)” from history"
+                                        : "Removed from history; the file stays in the Finder")
+    }
 
-    private func showToast(_ message: String) { toast.show(message) }
+    private func handleKey(_ press: KeyPress, entries: [CaptureHistoryEntry]) -> KeyPress.Result {
+        let modifiers = press.modifiers.intersection([.command, .option, .control, .shift])
+        let index = entries.firstIndex { $0.id == selectedEntryID }
+        let selected = index.map { entries[$0] }
+        switch press.key {
+        case .leftArrow, .rightArrow, .upArrow, .downArrow:
+            guard modifiers.isEmpty else { return .ignored }
+            let step: Int
+            switch press.key {
+            case .leftArrow: step = -1
+            case .rightArrow: step = 1
+            case .upArrow: step = -columnCount
+            default: step = columnCount
+            }
+            let target = index.map { min(entries.count - 1, max(0, $0 + step)) } ?? 0
+            selectedEntryID = entries[target].id
+            return .handled
+        case .return:
+            guard modifiers.isEmpty, let selected else { return .ignored }
+            CapturePreviewActions.edit(selected)
+            return .handled
+        case .space:
+            guard modifiers.isEmpty, let selected else { return .ignored }
+            QuickAccessExpandedPreview.shared.open(entry: selected)
+            return .handled
+        case .delete:
+            guard modifiers.isEmpty || modifiers == .command, let selected else { return .ignored }
+            remove(selected)
+            return .handled
+        default:
+            guard press.characters == "c", modifiers == .command, let selected else { return .ignored }
+            copy(selected)
+            return .handled
+        }
+    }
+
+    // MARK: - Helpers
 
     private func formatElapsed(_ seconds: Int) -> String {
         let m = seconds / 60
@@ -345,12 +516,19 @@ struct CaptureStudioView: View {
 private struct CaptureCard: View {
     let entry: CaptureHistoryEntry
     let isHovered: Bool
-    let onAnnotate: () -> Void
+    let isSelected: Bool
+    let isFocused: Bool
+    let onSelect: () -> Void
+    let onEdit: () -> Void
+    let onPreview: () -> Void
     let onCopy: () -> Void
     var onShowInFinder: (() -> Void)?
     let onPin: () -> Void
+    let onToggleKeep: () -> Void
     let onRestoreOverlay: () -> Void
     let onDelete: () -> Void
+
+    private var isVideo: Bool { entry.kind == .videoRecording }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -366,16 +544,18 @@ private struct CaptureCard: View {
             .aspectRatio(16 / 10, contentMode: .fit)
             .overlay(alignment: .topLeading) {
                 HStack(spacing: AOMSpace.x1) {
-                    if entry.kind == .videoRecording { badge("Video", "play.fill", AOMColor.recording) }
-                    if entry.isPinned { badge("Pinned", "pin.fill", AOMColor.warning) }
+                    if isVideo { badge("Video", "play.fill", AOMColor.recording) }
+                    if entry.isPinned { badge("Kept in History", "bookmark.fill", AOMColor.warning) }
                 }
                 .padding(AOMSpace.x2)
             }
             .overlay(alignment: .bottom) {
+                // Accelerators only: every one of these is also in the ⋯ menu
+                // and the context menu (b.4, nothing exists only on hover).
                 if isHovered {
                     HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                         hoverButton("doc.on.doc", "Copy", action: onCopy)
-                        hoverButton("pencil", "Edit", action: onAnnotate)
+                        hoverButton(isVideo ? "scissors" : "pencil", isVideo ? "Edit Recording" : "Edit", action: onEdit)
                         if let onShowInFinder { hoverButton("folder", "Show in Finder", action: onShowInFinder) }
                         hoverButton("pin", "Pin to Screen", action: onPin)
                         Spacer(minLength: 0)
@@ -387,8 +567,6 @@ private struct CaptureCard: View {
             }
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: AOMRadius.card, topTrailingRadius: AOMRadius.card,
                                               style: .continuous))
-            .onTapGesture(count: 2, perform: onAnnotate)
-            .onDrag { CaptureItemActions.dragProvider(entry) }
 
             // One line under the picture: the name, the time and the menu.
             // The kind and pixel size are in the tooltip and the VoiceOver label.
@@ -400,44 +578,64 @@ private struct CaptureCard: View {
                     .truncationMode(.tail)
                 Spacer(minLength: AOMSpace.x1)
                 Text(AOMRelativeTime.string(entry.capturedAt))
-                    .font(AOMFont.caption)
-                    .monospacedDigit()
+                    .font(AOMFont.timestamp)
                     .foregroundStyle(AOMColor.textSecondary)
                     .lineLimit(1)
                     .fixedSize()
                 Menu {
-                    Button("Copy", action: onCopy)
-                    Button("Edit", action: onAnnotate)
-                    Button("Pin to Screen", action: onPin)
-                    Button("Reopen in Quick Access", action: onRestoreOverlay)
-                    if let onShowInFinder { Button("Show in Finder", action: onShowInFinder) }
-                    Divider()
-                    Button("Remove from History", role: .destructive, action: onDelete)
+                    menuItems
                 } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
                 .tint(AOMColor.textSecondary)
+                .help("Actions")
                 .accessibilityLabel("Actions for \(entry.displayName)")
             }
-            .padding(.horizontal, AOMSpace.x3)
+            .padding(.leading, AOMSpace.x3)
+            .padding(.trailing, AOMSpace.x1)
             .frame(height: AOMSize.rowSingle + AOMSpace.x1)
         }
         // Hover shifts the fill only; cards never lift or outline (c.6).
         .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, hovering: isHovered)
-        .aomAnimation(.quick, value: isHovered)
-        .help(details)
-        .contextMenu {
-            Button("Copy", action: onCopy)
-            Button("Edit", action: onAnnotate)
-            Button("Pin to Screen", action: onPin)
-            Button("Reopen in Quick Access", action: onRestoreOverlay)
-            if let url = entry.fileURL {
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+                    .strokeBorder(isFocused ? AOMColor.focusRing : AOMColor.textTertiary, lineWidth: 3)
+                    .padding(-2)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
-            Divider()
-            Button("Remove from History", role: .destructive, action: onDelete)
         }
+        .aomAnimation(.quick, value: isHovered)
+        .contentShape(RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
+        // One recogniser: the first click selects at once, the second edits.
+        .onTapGesture {
+            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 { onEdit() } else { onSelect() }
+        }
+        .onDrag { CaptureItemActions.dragProvider(entry) }
+        .help(details)
+        .contextMenu { menuItems }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(entry.displayName), \(entry.kind.displayName), \(pixelSizeText)")
+        .accessibilityLabel("\(entry.displayName), \(entry.kind.displayName), \(pixelSizeText)\(entry.isPinned ? ", kept in history" : "")")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityAction(named: "Copy", onCopy)
+        .accessibilityAction(named: isVideo ? "Edit Recording" : "Edit", onEdit)
+        .accessibilityAction(named: "Preview", onPreview)
+        .accessibilityAction(named: "Remove from History", onDelete)
+    }
+
+    /// Flat, no shortcuts, unavailable items hidden (b.4, #126–#128).
+    @ViewBuilder
+    private var menuItems: some View {
+        Button(isVideo ? "Edit Recording" : "Edit", action: onEdit)
+        Button("Copy", action: onCopy)
+        Button("Preview", action: onPreview)
+        Button("Pin to Screen", action: onPin)
+        Button("Reopen in Quick Access", action: onRestoreOverlay)
+        if let onShowInFinder { Button("Show in Finder", action: onShowInFinder) }
+        Divider()
+        Button(entry.isPinned ? "Don't Keep in History" : "Keep in History", action: onToggleKeep)
+        Button("Remove from History", role: .destructive, action: onDelete)
     }
 
     private var pixelSizeText: String { "\(Int(entry.pixelSize.width))×\(Int(entry.pixelSize.height))" }
@@ -446,7 +644,8 @@ private struct CaptureCard: View {
     /// say it, and the pixel size (the footer keeps to one line).
     private var details: String {
         let kind = entry.kind.displayName == entry.displayName ? nil : entry.kind.displayName
-        return [entry.displayName, kind, pixelSizeText].compactMap { $0 }.joined(separator: " · ")
+        return [entry.displayName, kind, pixelSizeText, entry.isPinned ? "Kept in history" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     private func badge(_ title: String, _ symbol: String, _ tint: Color) -> some View {
@@ -489,6 +688,9 @@ private enum CaptureGalleryMetrics {
     static let columnStretch: CGFloat = 1.6
     /// The empty gallery keeps the page from collapsing under the strip.
     static let emptyMinHeight: CGFloat = 320
+    /// A tool in the one-row strip needs this much for "Measure Screen" in
+    /// Caption; narrower columns use two rows of five.
+    static let toolRowMinimum: CGFloat = 92
 }
 
 // MARK: - Settings sheet
@@ -512,7 +714,7 @@ struct ModuleSettingsSheet<Content: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: AOMSpace.x2) {
                 Text(title)
-                    .font(AOMFont.body.weight(.medium))
+                    .font(AOMFont.headline)
                     .foregroundStyle(AOMColor.text)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
@@ -521,13 +723,14 @@ struct ModuleSettingsSheet<Content: View>: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, AOMSpace.x4)
-            .padding(.vertical, AOMSpace.x2)
+            .padding(.vertical, AOMSpace.x3)
             AOMDivider()
             content
         }
         .frame(minWidth: AOMSize.readableWidth, idealWidth: AOMSize.readableWidth, maxWidth: .infinity,
                minHeight: ModuleSettingsSheetMetrics.minHeight, idealHeight: ModuleSettingsSheetMetrics.idealHeight,
                maxHeight: .infinity)
+        .onExitCommand(perform: done)
     }
 }
 

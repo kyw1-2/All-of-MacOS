@@ -13,6 +13,9 @@ enum CaptureMenuCommand: String, CaseIterable {
     case toggleDesktopIcons
     case open, openFromClipboard, pinToScreen
     case captureHistory
+    /// Screen Ruler (3.4): measured from the Capture submenu right after the
+    /// CleanShot block, not inside it, so the CleanShot order stays as is.
+    case measureScreen
 
     static let layout: [CaptureMenuCommand?] = [
         .allInOne, .captureArea, .capturePreviousArea, .captureFullscreen, .captureWindow,
@@ -41,6 +44,7 @@ enum CaptureMenuCommand: String, CaseIterable {
         case .openFromClipboard: return "Open from Clipboard"
         case .pinToScreen: return "Pin to the Screen…"
         case .captureHistory: return "Capture History…"
+        case .measureScreen: return "Measure Screen"
         }
     }
 
@@ -60,6 +64,7 @@ enum CaptureMenuCommand: String, CaseIterable {
         case .openFromClipboard: return "doc.on.clipboard"
         case .pinToScreen: return "pin"
         case .captureHistory: return "clock.arrow.circlepath"
+        case .measureScreen: return "ruler"
         }
     }
 
@@ -75,6 +80,7 @@ enum CaptureMenuCommand: String, CaseIterable {
         case .captureText: return .ocr
         case .recordScreen: return .recordScreen
         case .captureHistory: return .history
+        case .measureScreen: return .measureScreen
         // Capture Window here is interactive; the shortcut captures the
         // active window and is labelled on "Capture Active Window" instead.
         case .captureWindow, .selfTimer, .toggleDesktopIcons, .open, .openFromClipboard, .pinToScreen:
@@ -121,6 +127,10 @@ enum CaptureMenu {
         }
 
         menu.addItem(.separator())
+        menu.addItem(action(CaptureMenuCommand.measureScreen.title(), CaptureMenuCommand.measureScreen.symbol,
+                            shortcut: shortcuts.shortcut(for: .measureScreen)) {
+            perform(.measureScreen)
+        })
         menu.addItem(moreCaptureModes(shortcuts))
         menu.addItem(quickAccessMenu())
         menu.addItem(lastCaptureMenu(shortcuts))
@@ -168,6 +178,7 @@ enum CaptureMenu {
         case .openFromClipboard: AnnotationEditorController.shared.openFromClipboard()
         case .pinToScreen: PinnedScreenshotController.shared.chooseAndPin()
         case .captureHistory: MediaHistoryOverlayController.shared.present()
+        case .measureScreen: ScreenRulerModule.measure()
         }
     }
 
@@ -206,6 +217,13 @@ enum CaptureMenu {
                             shortcut: textShortcuts.shortcut(for: .readQRCode)) {
             coordinator.captureQRCode()
         })
+        // Additive copy shows its state wherever Copy Text is offered
+        // (design-3.4.0 b.16), so the next copy never appends by surprise.
+        let additive = action("Add Copied Text to Clipboard", nil) {
+            TextCaptureSettings.shared.additiveClipboard.toggle()
+        }
+        additive.state = TextCaptureSettings.shared.additiveClipboard ? .on : .off
+        menu.addItem(additive)
         menu.addItem(.separator())
         menu.addItem(.sectionHeader(title: "Recording"))
         menu.addItem(action("Record Fullscreen", "rectangle.dashed.badge.record") {

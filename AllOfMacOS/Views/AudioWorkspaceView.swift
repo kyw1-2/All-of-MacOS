@@ -12,12 +12,17 @@ struct AudioWorkspaceView: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var searchText = ""
     @State private var expandedOutput = false
+    /// Confirmations for the page and its rows (design-3.4.0 b.5).
+    @StateObject private var toast = AOMToastModel()
 
     var body: some View {
         AOMPage {
             header
             notices
             devicesCard
+            // 3.4: the microphone mute section sits under the input device it
+            // mutes (drawn by its module).
+            MicMuteSection()
             // 3.3.3: output-wide effects follow the devices (and the output
             // equalizer inside them), before the per-app list.
             HeadphoneEQCard()
@@ -27,6 +32,8 @@ struct AudioWorkspaceView: View {
         .aomPage("Audio")
         .searchable(text: $searchText, placement: .toolbar, prompt: "Filter Apps")
         .toolbar { toolbarContent }
+        .environmentObject(toast)
+        .aomToast(toast)
         .onAppear { service.beginMetering(); service.refresh() }
         .onDisappear { service.endMetering() }
     }
@@ -73,7 +80,10 @@ struct AudioWorkspaceView: View {
                 Button("Add Application…", systemImage: "plus") { pickAndAddApplication() }
                 Toggle("Show All Running Apps", isOn: $service.showAllApps)
                 Divider()
-                Button("Reconnect Audio", systemImage: "arrow.clockwise") { service.reconnectAll() }
+                Button("Reconnect Audio", systemImage: "arrow.clockwise") {
+                    service.reconnectAll()
+                    toast.show("Reconnecting audio", tone: .info)
+                }
                 Button("Screen & System Audio Recording…", systemImage: "lock.shield") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                         NSWorkspace.shared.open(url)
@@ -136,20 +146,18 @@ struct AudioWorkspaceView: View {
             Button { pickAndAddApplication() } label: { Label("Add…", systemImage: "plus") }
                 .help("Choose an application to add to your favorites")
         }) {
+            // In-card empty states (design-3.4.0 b.6): one sentence, one action.
             if !service.isSupported {
-                emptyState("App controls need macOS 14.2", symbol: "exclamationmark.triangle",
-                           message: "The system devices above work on this Mac; per-app volume and effects need macOS 14.2 or newer.")
+                AOMInlineEmpty(symbol: "exclamationmark.triangle",
+                               message: "Per-app volume and effects need macOS 14.2 or newer. The system devices above work on this Mac.")
             } else if total == 0 {
                 if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    emptyState("No applications match “\(searchText)”", symbol: "magnifyingglass",
-                               message: "Try another app name or bundle identifier.") {
-                        Button("Clear Filter") { searchText = "" }
-                    }
+                    AOMInlineEmpty(symbol: "magnifyingglass", message: "No application matches “\(searchText)”.",
+                                   actionTitle: "Clear Filter") { searchText = "" }
                 } else {
-                    emptyState("No app is playing audio", symbol: "waveform",
-                               message: "Apps appear here while they play and for a minute afterwards. Add an app to keep it listed.") {
-                        Button("Show All Running Apps") { service.showAllApps = true }
-                    }
+                    AOMInlineEmpty(symbol: "waveform",
+                                   message: "No app is playing audio. Apps appear here while they play and for a minute afterwards.",
+                                   actionTitle: "Show All Running Apps") { service.showAllApps = true }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -180,12 +188,6 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    /// The card's empty states: one leading row inside the card (design-336 b.9).
-    private func emptyState<Actions: View>(_ title: String, symbol: String, message: String,
-                                           @ViewBuilder actions: () -> Actions = { EmptyView() }) -> some View {
-        AOMCardEmptyRow(title, detail: message, systemImage: symbol, action: actions)
-    }
-
     private func pickAndAddApplication() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType.application]
@@ -193,10 +195,15 @@ struct AudioWorkspaceView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        guard panel.runModal() == .OK, let url = panel.url,
-              let bundleID = Bundle(url: url)?.bundleIdentifier else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bundleID = Bundle(url: url)?.bundleIdentifier else {
+            toast.show("Couldn't add “\(url.deletingPathExtension().lastPathComponent)” because it has no bundle identifier",
+                       tone: .danger)
+            return
+        }
         service.addCustomApp(url: url)
         if !service.isFavorite(bundleID) { service.toggleFavorite(bundleID) }
+        toast.show("Added \(url.deletingPathExtension().lastPathComponent) to Favorites")
     }
 }
 
@@ -367,6 +374,18 @@ private struct OutputDeviceRow: View {
             DisclosureButton(expanded: $expanded, label: "Output effects")
         }
         .audioRowPadding()
+        .contentShape(Rectangle())
+        // b.4: every row has its actions in a context menu too.
+        .contextMenu {
+            Button(isMuted ? "Unmute Output" : "Mute Output") {
+                AudioOutputService.shared.toggleOutputMute { _ in refresh() }
+            }
+            Button(expanded ? "Hide Output Effects" : "Show Output Effects") {
+                withAnimation(AOMMotion.panel) { expanded.toggle() }
+            }
+            Divider()
+            Button("Sound Settings…") { AudioSystemSettings.openSound() }
+        }
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
     }
@@ -515,6 +534,16 @@ private struct InputDeviceRow: View {
             BoostColumnsPlaceholder()
         }
         .audioRowPadding()
+        .contentShape(Rectangle())
+        .contextMenu {
+            if canMute {
+                Button(isMuted ? "Unmute Microphone" : "Mute Microphone") {
+                    if let next = AudioOutputService.toggleInputMute() { isMuted = next }
+                }
+                Divider()
+            }
+            Button("Sound Settings…") { AudioSystemSettings.openSound() }
+        }
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
     }
@@ -547,14 +576,7 @@ private struct SoundEffectsRow: View {
             }
             .help("Alerts and notification sounds")
             Spacer(minLength: AOMSpace.x2)
-            MuteButton(symbol: isMuted ? "bell.slash.fill" : "bell.fill", muted: isMuted) {
-                if !isMuted, volume > 0 { previousVolume = volume }
-                let target = isMuted ? previousVolume : 0
-                if AudioOutputService.setSystemAlertVolume(percent: target) {
-                    volume = target
-                    isMuted = target == 0
-                }
-            }
+            MuteButton(symbol: isMuted ? "bell.slash.fill" : "bell.fill", muted: isMuted) { toggleMute() }
             .accessibilityLabel(isMuted ? "Unmute system alerts" : "Mute system alerts")
             .help(isMuted ? "Unmute system alerts" : "Mute system alerts")
             Slider(value: Binding(get: { volume }, set: { newValue in
@@ -570,10 +592,34 @@ private struct SoundEffectsRow: View {
             BoostColumnsPlaceholder()
         }
         .audioRowPadding()
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button(isMuted ? "Unmute System Alerts" : "Mute System Alerts") { toggleMute() }
+            Divider()
+            Button("Sound Settings…") { AudioSystemSettings.openSound() }
+        }
         .onAppear {
             volume = Double(AudioOutputService.currentSystemAlertVolume() ?? 0.65) * 100
             isMuted = volume == 0
             if volume > 0 { previousVolume = volume }
+        }
+    }
+
+    private func toggleMute() {
+        if !isMuted, volume > 0 { previousVolume = volume }
+        let target = isMuted ? previousVolume : 0
+        if AudioOutputService.setSystemAlertVolume(percent: target) {
+            volume = target
+            isMuted = target == 0
+        }
+    }
+}
+
+/// Opens System Settings › Sound (the context-menu way to the system pane).
+private enum AudioSystemSettings {
+    static func openSound() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+            NSWorkspace.shared.open(url)
         }
     }
 }
@@ -631,6 +677,8 @@ private struct DisclosureButton: View {
 
 private struct ApplicationAudioRow: View {
     @ObservedObject private var service = AppAudioMixerService.shared
+    @EnvironmentObject private var toast: AOMToastModel
+    @Environment(\.undoManager) private var undoManager
     let app: AppAudioState
     @State private var gain: Float
     @State private var balance: Float
@@ -739,7 +787,14 @@ private struct ApplicationAudioRow: View {
         Menu("Timed Mute") { timedMuteItems }
         Divider()
         Button("Reset Effects") { resetEffects() }
-        Button("Reconnect") { service.reconnect(pid: app.pid) }.disabled(app.pid <= 0 || !service.soundEnabled)
+        if app.pid > 0 && service.soundEnabled {
+            Button("Reconnect") { reconnect() }
+        }
+    }
+
+    private func reconnect() {
+        service.reconnect(pid: app.pid)
+        toast.show("Reconnecting \(app.name)", tone: .info)
     }
 
     @ViewBuilder private var timedMuteItems: some View {
@@ -837,7 +892,7 @@ private struct ApplicationAudioRow: View {
                         .font(AOMFont.caption)
                         .foregroundStyle(AOMColor.warningText)
                     Spacer(minLength: AOMSpace.x2)
-                    Button("Reconnect") { service.reconnect(pid: app.pid) }.controlSize(.small)
+                    Button("Reconnect") { reconnect() }.controlSize(.small)
                         .disabled(app.pid <= 0 || !service.soundEnabled)
                 }
             } else if service.soundEnabled {
@@ -851,13 +906,38 @@ private struct ApplicationAudioRow: View {
         .padding(.bottom, AOMSpace.x3)
     }
 
+    /// Reset is one undoable step (design-3.4.0 b.4): the toast offers Undo
+    /// and Edit › Undo Reset Effects brings every value back.
     private func resetEffects() {
+        let bundleID = app.bundleID
+        let before = (gain: gain, overdrive: app.overdrive, balance: balance, boost: app.magicBoost,
+                      eq: service.appEQEnabled(bundleID))
+        let service = service
+        let apply: @MainActor () -> Void = {
+            service.setGain(1, bundleID: bundleID)
+            service.setOverdrive(1, bundleID: bundleID)
+            service.setBalance(0, bundleID: bundleID)
+            if service.apps.first(where: { $0.bundleID == bundleID })?.magicBoost == true {
+                service.toggleMagicBoost(bundleID: bundleID)
+            }
+            service.setAppEQEnabled(false, bundleID: bundleID)
+        }
+        let revert: @MainActor () -> Void = {
+            service.setGain(before.gain, bundleID: bundleID)
+            service.setOverdrive(before.overdrive, bundleID: bundleID)
+            service.setBalance(before.balance, bundleID: bundleID)
+            if (service.apps.first(where: { $0.bundleID == bundleID })?.magicBoost ?? false) != before.boost {
+                service.toggleMagicBoost(bundleID: bundleID)
+            }
+            service.setAppEQEnabled(before.eq, bundleID: bundleID)
+        }
         gain = 1
-        service.setGain(1, bundleID: app.bundleID)
-        service.setOverdrive(1, bundleID: app.bundleID)
-        centerBalance()
-        if app.magicBoost { service.toggleMagicBoost(bundleID: app.bundleID) }
-        service.setAppEQEnabled(false, bundleID: app.bundleID)
+        balance = 0
+        let manager = undoManager
+        AOMUndo.perform("Reset Effects", undoManager: manager, perform: apply, revert: revert)
+        toast.show("Reset effects for \(app.name)", action: {
+            if manager?.canUndo == true { manager?.undo() } else { revert() }
+        })
     }
 
     private func centerBalance() {

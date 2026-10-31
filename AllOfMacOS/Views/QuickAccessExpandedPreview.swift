@@ -225,31 +225,38 @@ enum CapturePreviewActions {
     }
 
     static func copy(_ entry: CaptureHistoryEntry, completion: @escaping (Bool) -> Void = { _ in }) {
-        if entry.kind == .videoRecording {
-            do {
-                guard let url = entry.playableVideoURL,
-                      ScreenCaptureService.shared.copyFileToClipboard(url) else {
-                    throw CaptureError.captureFailed("The MP4 file could not be copied.")
-                }
-                GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied")
-                completion(true)
-            } catch {
-                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
-                completion(false)
+        copyReporting(entry) { error in
+            if let error {
+                GestureHUD.shared.show(title: "Copy Failed", detail: error)
+            } else {
+                GestureHUD.shared.show(title: "Copied", detail: entry.kind == .videoRecording ? "MP4 file copied" : "Image copied")
             }
+            completion(error == nil)
+        }
+    }
+
+    /// The copy without a HUD, for callers inside the main window that confirm
+    /// with a toast (design-3.4.0 b.5): `completion(nil)` on success, else the
+    /// reason. Runs exactly once.
+    static func copyReporting(_ entry: CaptureHistoryEntry, completion: @escaping (String?) -> Void) {
+        if entry.kind == .videoRecording {
+            guard let url = entry.playableVideoURL,
+                  ScreenCaptureService.shared.copyFileToClipboard(url) else {
+                completion("The MP4 file could not be copied.")
+                return
+            }
+            completion(nil)
             return
         }
-        // F-04B: encode off the main thread; the HUD still reports the final
+        // F-04B: encode off the main thread; the caller still hears the final
         // success/failure exactly once.
         let capture = result(entry)
         Task { @MainActor in
             do {
                 try await ScreenCaptureService.shared.copyToClipboardAsync(capture)
-                GestureHUD.shared.show(title: "Copied", detail: "Image copied")
-                completion(true)
+                completion(nil)
             } catch {
-                GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
-                completion(false)
+                completion(error.localizedDescription)
             }
         }
     }
