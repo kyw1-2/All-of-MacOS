@@ -31,6 +31,10 @@ struct SystemToolTile: View {
     let isFavorite: Bool
     let run: () -> Void
     let toggleFavorite: () -> Void
+    /// Tools that take a dropped app (Uninstall App…): the tile is a drop
+    /// target with the accent ring while an app hovers over it.
+    var dropApp: ((URL) -> Void)?
+    @State private var dropTargeted = false
 
     var body: some View {
         Button(action: run) {
@@ -61,12 +65,33 @@ struct SystemToolTile: View {
         .disabled(isRunning)
         .help(info.help)
         .contextMenu {
+            Button("Run") { run() }.disabled(isRunning)
             Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: toggleFavorite)
         }
+        .aomDropTarget(dropTargeted, radius: AOMRadius.well)
+        .modifier(SystemToolDropModifier(dropApp: dropApp, targeted: $dropTargeted))
         .accessibilityLabel(info.title)
         .accessibilityValue(isRunning ? "Running" : (state?.text ?? ""))
         .accessibilityHint(info.help)
         .accessibilityAction(named: isFavorite ? "Remove from Favorites" : "Add to Favorites", toggleFavorite)
+    }
+}
+
+/// Accepts one dropped app bundle when the tile takes one.
+private struct SystemToolDropModifier: ViewModifier {
+    let dropApp: ((URL) -> Void)?
+    @Binding var targeted: Bool
+
+    func body(content: Content) -> some View {
+        if let dropApp {
+            content.dropDestination(for: URL.self) { urls, _ in
+                guard let app = urls.first(where: { $0.pathExtension == "app" }) else { return false }
+                dropApp(app)
+                return true
+            } isTargeted: { targeted = $0 }
+        } else {
+            content
+        }
     }
 }
 
@@ -155,6 +180,7 @@ struct SystemToggleTile: View {
         .disabled(isRunning)
         .help(info.help)
         .contextMenu {
+            Button("Run") { run() }.disabled(isRunning)
             Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: toggleFavorite)
         }
         .accessibilityLabel(info.title)
@@ -192,6 +218,8 @@ struct SystemCapacityBar: View {
 /// Values show "…" until the first sample.
 struct SystemStatusPanel: View {
     @ObservedObject var monitor: SystemStatusMonitor
+    /// The opt-in Weather card, drawn after the facts while it is on.
+    var weather: WeatherCardModel?
 
     private struct Gauge: Identifiable {
         var id: String { title }
@@ -297,6 +325,9 @@ struct SystemStatusPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .aomCard(padding: AOMSpace.cardPadding)
+            if let weather {
+                WeatherCard(model: weather)
+            }
         }
     }
 }
@@ -322,6 +353,55 @@ struct CleanupReviewSheet: View {
         review.candidates.filter { selected.contains($0.id) }.reduce(0) { $0 + $1.size }
     }
 
+    /// Sections in first-seen order of their note (the uninstaller lists the
+    /// app, then Application Support, Caches, Preferences …).
+    private var sections: [(title: String, items: [CleanupCandidate])] {
+        var order: [String] = []
+        var grouped: [String: [CleanupCandidate]] = [:]
+        for item in review.candidates {
+            if grouped[item.note] == nil { order.append(item.note) }
+            grouped[item.note, default: []].append(item)
+        }
+        return order.map { ($0, grouped[$0] ?? []) }
+    }
+
+    @ViewBuilder
+    private func row(_ item: CleanupCandidate) -> some View {
+        HStack(spacing: AOMSpace.x2) {
+            if review.allowsTrash {
+                Toggle(item.url.lastPathComponent, isOn: Binding(get: { selected.contains(item.id) },
+                                                                 set: { if $0 { selected.insert(item.id) } else { selected.remove(item.id) } }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+            }
+            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+                .resizable().frame(width: AOMIcon.row - 4, height: AOMIcon.row - 4)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.url.lastPathComponent).font(AOMFont.body).lineLimit(1).truncationMode(.middle)
+                let second = review.hints[item.id] ?? (review.groupsByNote ? item.url.deletingLastPathComponent().path
+                    .replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~") : item.note)
+                Text(second)
+                    .font(AOMFont.caption)
+                    .foregroundStyle(review.hints[item.id] == nil ? AOMColor.textSecondary : AOMColor.warningText)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: AOMSpace.x2)
+            Text(SystemStatus.size(item.size)).font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
+            AOMIconButton("magnifyingglass", label: "Show \(item.url.lastPathComponent) in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([item.url])
+            }
+        }
+        .help(item.url.path)
+        .contextMenu {
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(item.url.path, forType: .string)
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             VStack(alignment: .leading, spacing: AOMSpace.x1) {
@@ -330,34 +410,17 @@ struct CleanupReviewSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             List {
-                ForEach(review.candidates) { item in
-                    HStack(spacing: AOMSpace.x2) {
-                        if review.allowsTrash {
-                            Toggle("", isOn: Binding(get: { selected.contains(item.id) },
-                                                     set: { if $0 { selected.insert(item.id) } else { selected.remove(item.id) } }))
-                                .toggleStyle(.checkbox)
-                                .labelsHidden()
+                if review.groupsByNote {
+                    ForEach(sections, id: \.title) { section in
+                        Section(section.title) {
+                            ForEach(section.items) { row($0) }
                         }
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
-                            .resizable().frame(width: 16, height: 16)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(item.url.lastPathComponent).font(AOMFont.body).lineLimit(1).truncationMode(.middle)
-                            Text(item.note).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1).truncationMode(.middle)
-                        }
-                        Spacer(minLength: AOMSpace.x2)
-                        Text(SystemStatus.size(item.size)).font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([item.url])
-                        } label: { Image(systemName: "magnifyingglass") }
-                            .buttonStyle(.borderless)
-                            .help("Show in Finder")
-                            .accessibilityLabel("Show \(item.url.lastPathComponent) in Finder")
                     }
-                    .help(item.url.path)
+                } else {
+                    ForEach(review.candidates) { row($0) }
                 }
             }
-            .listStyle(.bordered(alternatesRowBackgrounds: true))
+            .listStyle(.bordered(alternatesRowBackgrounds: !review.groupsByNote))
             .frame(minHeight: 240)
             HStack(spacing: AOMSpace.x2) {
                 if review.allowsTrash {
@@ -365,15 +428,19 @@ struct CleanupReviewSheet: View {
                     Button("Select None") { selected = [] }
                     Text("\(selected.count) of \(review.candidates.count) · \(SystemStatus.size(selectedSize))")
                         .font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
+                        .contentTransition(.numericText())
                     Spacer()
-                    Button("Cancel", role: .cancel, action: onCancel).keyboardShortcut(.cancelAction)
-                    Button("Move \(selected.count) to Trash") {
-                        var chosen = review
-                        chosen.selected = selected
-                        onTrash(chosen)
+                    if review.safeDefault {
+                        Button("Move \(selected.count) to Trash", role: .destructive) { trash() }
+                            .disabled(selected.isEmpty)
+                        Button("Cancel", role: .cancel, action: onCancel)
+                            .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Cancel", role: .cancel, action: onCancel).keyboardShortcut(.cancelAction)
+                        Button("Move \(selected.count) to Trash") { trash() }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(selected.isEmpty)
                     }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(selected.isEmpty)
                 } else {
                     Text("\(review.candidates.count) items").font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.textSecondary)
                     Spacer()
@@ -383,7 +450,14 @@ struct CleanupReviewSheet: View {
             .controlSize(.regular)
         }
         .padding(AOMSpace.x4)
-        .frame(width: 640, height: 480)
+        .frame(width: 640, height: review.groupsByNote ? 540 : 480)
+        .onExitCommand(perform: onCancel)
+    }
+
+    private func trash() {
+        var chosen = review
+        chosen.selected = selected
+        onTrash(chosen)
     }
 }
 

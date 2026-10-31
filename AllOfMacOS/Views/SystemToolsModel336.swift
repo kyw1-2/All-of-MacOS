@@ -64,12 +64,16 @@ extension SystemToolsModel {
                 slow[.backupNow] = status.running
                     ? .on(status.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? "Running") : .off("Idle")
             }
+            slow.merge(Self.slow340States()) { _, new in new }
             let result = slow
             await MainActor.run {
                 self.slowRefreshRunning = false
                 if result != self.slowStates { self.slowStates = result; self.refreshStates() }
             }
         }
+        // VPN and Tailscale tiles: the VPN model reads scutil (and, at most
+        // every 20 s, Tailscale) off the main thread and refreshes the pills.
+        VPNModel.shared.refreshForTiles()
     }
 
     static func isLibraryHidden() -> Bool {

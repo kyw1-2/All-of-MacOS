@@ -47,6 +47,13 @@ final class SystemToolsModel: ObservableObject {
         var selected: Set<String>
         /// False for read-only lists (Folder Sizes): no checkboxes, no Trash.
         var allowsTrash = true
+        /// Rows in sections by their note (the uninstaller's folders).
+        var groupsByNote = false
+        /// Return means Cancel, not Move to Trash (design-3.4.0 b.16).
+        var safeDefault = false
+        /// A second line for some rows (id → hint), shown instead of the note
+        /// when rows are grouped by it.
+        var hints: [String: String] = [:]
     }
 
     /// Processes that hold a port or a file, with Quit.
@@ -67,7 +74,16 @@ final class SystemToolsModel: ObservableObject {
     @Published private(set) var favorites: [SystemToolID]
     @Published private(set) var recent: [SystemToolID]
     @Published var lastResult: ToolResult?
-    @Published var toast: String?
+    /// The window's toasts (design-3.4.0 b.5): results in the success tone,
+    /// notes while something runs, failures in the danger tone with why.
+    let toasts = AOMToastModel()
+    /// A note while something runs ("Testing the connection (about 20 s)…").
+    var toast: String? {
+        get { toasts.message }
+        set {
+            if let newValue { toasts.show(newValue, tone: .info, seconds: 4) } else { toasts.dismiss() }
+        }
+    }
     @Published var cleanupReview: CleanupReview?
     @Published var processReview: ProcessReview?
     /// States read from helper processes (nvram, tmutil, osascript), filled
@@ -162,6 +178,7 @@ final class SystemToolsModel: ObservableObject {
         next[.shotformat] = .value((SystemTweak.screenshotFormat.currentString(in: preferences) ?? "png").uppercased())
         next[.shotfolder] = .value(URL(fileURLWithPath: SystemTweak.screenshotFolder.currentString(in: preferences) ?? "~/Desktop").lastPathComponent)
         refresh336States(into: &next)
+        refresh340States(into: &next)
         if next != states { states = next }
     }
 
@@ -178,19 +195,23 @@ final class SystemToolsModel: ObservableObject {
 
     func succeed(_ id: SystemToolID, _ message: String) {
         lastResult = ToolResult(tool: id, message: message, succeeded: true, date: Date())
-        toast = message
+        toasts.show(message, tone: .success)
         refreshSoon()
     }
 
-    /// Failures that need reading stay on screen until dismissed.
+    /// Failures are a danger toast that says why (design-3.4.0 b.5: errors
+    /// use alerts only when data would be lost), long enough to read, and
+    /// stay in the page header's last-result line.
     func fail(_ id: SystemToolID, _ title: String, _ message: String) {
         lastResult = ToolResult(tool: id, message: "\(title): \(message)", succeeded: false, date: Date())
         refreshSoon()
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = title
-        alert.informativeText = message
-        alert.runModal()
+        toasts.show("\(title): \(message)", tone: .danger, seconds: Self.failureSeconds(message))
+        GestureLog.shared.logFromAnyThread("System Tools — \(title): \(message)", level: .error)
+    }
+
+    /// 6 s, plus a second per 30 characters of reason, at most 12 s.
+    nonisolated static func failureSeconds(_ message: String) -> Double {
+        min(12, 6 + Double(message.count) / 30)
     }
 
     func fail(_ id: SystemToolID, _ error: Error) {
@@ -237,6 +258,7 @@ final class SystemToolsModel: ObservableObject {
     func run(_ id: SystemToolID) {
         guard !running.contains(id) else { return }
         noteUsed(id)
+        if Self.tools340.contains(id) { run340(id); return }
         switch id {
         // Quick Toggles
         case .darkMode:
@@ -409,6 +431,11 @@ final class SystemToolsModel: ObservableObject {
                 fail(id, "No IP Address", "No network interface has an IPv4 address right now."); return
             }
             copy(id, address.address, message: "Copied \(address.address) (\(address.interface))")
+        // 3.4.0 tools, dispatched by `run340` above.
+        case .brewOutdated, .brewUpgradeAll, .brewInstalled, .brewUpdate, .brewCleanup, .brewDoctor, .brewServices, .brewSearch,
+             .vpn, .tailscale, .openVPN, .pdfSplit, .pdfExtract, .pdfRemovePages, .pdfRotate, .pdfReorder, .imagesToPDF,
+             .pdfToImages, .pdfProtect, .pdfUnlock, .pdfPageNumbers, .metalHUD:
+            run340(id)
         }
     }
 
@@ -613,21 +640,6 @@ final class SystemToolsModel: ObservableObject {
         runInBackground(review.tool, { CleanupTools.moveToTrash(chosen) }) { outcome in
             if outcome.failures.isEmpty { self.succeed(review.tool, outcome.summary) }
             else { self.fail(review.tool, "Some Items Stayed", outcome.summary) }
-        }
-    }
-
-    private func uninstallApp() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.applicationBundle]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.prompt = "Review"
-        panel.message = "Choose an app. You'll see it with its leftovers before anything moves to the Trash."
-        guard panel.runModal() == .OK, let app = panel.url else { return }
-        let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
-        runInBackground(.uninstall, { try CleanupTools.uninstallPlan(for: app, library: library) }) { plan in
-            self.review(.uninstall, title: "Uninstall \(app.deletingPathExtension().lastPathComponent)",
-                        detail: "The app and the files it left in ~/Library. Uncheck anything you want to keep; everything goes to the Trash, so Put Back works.",
-                        items: plan, preselect: true, empty: "Nothing to remove")
         }
     }
 
