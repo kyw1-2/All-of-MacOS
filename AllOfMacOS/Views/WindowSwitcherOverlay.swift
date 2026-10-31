@@ -145,20 +145,16 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         let width = max(SwitcherMetrics.minimumWidth, gridWidth + SwitcherMetrics.padding * 2)
         let gridHeight = CGFloat(rows) * SwitcherMetrics.cardHeight + CGFloat(max(0, rows - 1)) * SwitcherMetrics.gap
         let height = min(visible.height * 0.85, SwitcherMetrics.chromeHeight + max(gridHeight, SwitcherMetrics.emptyHeight))
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                            styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView], backing: .buffered, defer: false)
+        let panel = SwitcherPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+                                  styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
+        panel.hasShadow = true
         panel.isMovable = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.worksWhenModal = true
         panel.hidesOnDeactivate = false
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.contentView = NSHostingView(rootView: WindowSwitcherView(controller: self))
         panel.setFrame(NSRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height),
                        display: false)
@@ -419,18 +415,18 @@ final class WindowSwitcherController: NSObject, ObservableObject {
     /// app icons, never the user's windows.
     func showPreviewSample() {
         guard PresetManager.isUIPreview, panel == nil else { return }
-        func icon(_ path: String) -> NSImage? {
-            FileManager.default.fileExists(atPath: path) ? NSWorkspace.shared.icon(forFile: path) : nil
+        func icon(_ bundleID: String) -> NSImage? {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map { NSWorkspace.shared.icon(forFile: $0.path) }
         }
         let samples: [(String, String, String, SwitcherWindowState, NSColor)] = [
-            ("Lecture notes — Week 9", "Notes", "/System/Applications/Notes.app", .normal, .systemYellow),
-            ("Swift Forums", "Safari", "/Applications/Safari.app", .normal, .systemBlue),
-            ("~/Projects — zsh", "Terminal", "/System/Applications/Utilities/Terminal.app", .normal, .darkGray),
-            ("Downloads", "Finder", "/System/Library/CoreServices/Finder.app", .normal, .systemTeal),
-            ("Assignment 3.pages", "Pages", "/Applications/Pages.app", .otherSpace, .systemOrange),
-            ("Calendar", "Calendar", "/System/Applications/Calendar.app", .minimized, .systemRed),
-            ("Music", "Music", "/System/Applications/Music.app", .hidden, .systemPink),
-            ("Photos", "Photos", "/System/Applications/Photos.app", .normal, .systemGreen),
+            ("Lecture notes — Week 9", "Notes", "com.apple.Notes", .normal, .systemYellow),
+            ("Swift Forums", "Safari", "com.apple.Safari", .normal, .systemBlue),
+            ("~/Projects — zsh", "Terminal", "com.apple.Terminal", .normal, .darkGray),
+            ("Downloads", "Finder", "com.apple.finder", .normal, .systemTeal),
+            ("Assignment 3.pages", "Pages", "com.apple.iWork.Pages", .otherSpace, .systemOrange),
+            ("Calendar", "Calendar", "com.apple.iCal", .minimized, .systemRed),
+            ("Music", "Music", "com.apple.Music", .hidden, .systemPink),
+            ("과제방", "KakaoTalk", "com.kakao.KakaoTalkMac", .normal, .systemYellow),
         ]
         previousApp = nil
         initialModifiers = []
@@ -465,6 +461,13 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         }
         return context.makeImage()
     }
+}
+
+/// A borderless panel that still takes the keyboard (the search field and
+/// the switcher's keys), without a title bar band above the grid.
+private final class SwitcherPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 /// The grid's measurements (thumbnail 176 × 112, AOMFeatureSize).
