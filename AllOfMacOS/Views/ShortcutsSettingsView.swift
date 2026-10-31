@@ -224,6 +224,11 @@ struct ShortcutsSettingsView: View {
         case .keepAwake: return "Keep the Mac awake, or let it sleep again"
         case .appAudioMixer: return "Per-app volume and mute panel (macOS 14.2+)"
         case .muteFrontAppAudio: return "Mute or unmute the front app's audio"
+        case .measureScreen: return "Measure distances and sizes on screen"
+        case .showDropShelf: return "Open the shelf that holds dragged files"
+        case .toggleFocusSession: return "Start a focus session, or end the current one"
+        case .toggleMicMute: return "Mute or unmute the microphone in every app"
+        case .showTextActions: return "Show the action bar for the selected text"
         }
     }
 }

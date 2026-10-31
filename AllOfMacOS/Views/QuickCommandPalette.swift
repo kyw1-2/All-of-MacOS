@@ -242,7 +242,7 @@ struct QuickCommandPalette: View {
         for tab in AOMMainTab.allCases {
             items.append(PaletteItem(id: "go.\(tab.rawValue)", title: tab.title, subtitle: "Show \(tab.title)",
                                      icon: tab.sidebarSymbol, section: .navigation,
-                                     shortcut: "⌘\(tab.shortcutKey.character)",
+                                     shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
                                      primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab }))
         }
         items.append(PaletteItem(id: "go.settings", title: "Settings", subtitle: "Open All of MacOS Settings",

@@ -21,6 +21,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
     case pinLast = "pinLast"
     case choosePinnedWindow, selectPinnedWindow, togglePinFrontWindow, togglePinWindowUnderCursor, unpinAllWindows
     case windowSwitcher, keepAwake, appAudioMixer, muteFrontAppAudio
+    // 3.4 productivity modules
+    case measureScreen, showDropShelf, toggleFocusSession, toggleMicMute, showTextActions
 
     var id: String { rawValue }
 
@@ -48,6 +50,11 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .keepAwake: return "Keep Awake"
         case .appAudioMixer: return "App Audio Mixer"
         case .muteFrontAppAudio: return "Mute Front App"
+        case .measureScreen: return "Measure Screen"
+        case .showDropShelf: return "Show Drop Shelf"
+        case .toggleFocusSession: return "Start or Stop Focus Session"
+        case .toggleMicMute: return "Mute or Unmute Microphone"
+        case .showTextActions: return "Show Text Actions"
         }
     }
 
@@ -61,6 +68,8 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
             return "System & Switching"
         case .ocr, .history, .toggleDesktopIcons, .pinLast, .openProject:
             return "Tools & Utilities"
+        case .measureScreen, .showDropShelf, .toggleFocusSession, .toggleMicMute, .showTextActions:
+            return "Productivity"
         }
     }
 
@@ -84,6 +93,11 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         case .keepAwake: return "flask"
         case .appAudioMixer: return "slider.horizontal.3"
         case .muteFrontAppAudio: return "speaker.minus"
+        case .measureScreen: return "ruler"
+        case .showDropShelf: return "tray.and.arrow.down"
+        case .toggleFocusSession: return "timer"
+        case .toggleMicMute: return "mic.slash"
+        case .showTextActions: return "character.cursor.ibeam"
         }
     }
 
@@ -93,8 +107,11 @@ enum CaptureShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .pauseRecording:
             return KeyboardShortcut(keyCode: 49, modifiers: [.command, .shift, .option])
-        case .allInOne, .openProject, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows, .windowSwitcher, .keepAwake, .appAudioMixer, .muteFrontAppAudio:
+        case .allInOne, .openProject, .choosePinnedWindow, .selectPinnedWindow, .togglePinFrontWindow, .togglePinWindowUnderCursor, .unpinAllWindows, .windowSwitcher, .keepAwake, .appAudioMixer, .muteFrontAppAudio,
+             .showDropShelf, .toggleFocusSession, .toggleMicMute, .showTextActions:
             return nil
+        case .measureScreen:
+            return KeyboardShortcut(keyCode: 26, modifiers: [.command, .shift]) // ⇧⌘7
         case .captureArea:
             return KeyboardShortcut(keyCode: 21, modifiers: [.command, .shift]) // ⇧⌘4
         case .captureFullscreen:
@@ -267,6 +284,11 @@ final class CaptureShortcuts: ObservableObject {
         case .keepAwake: MainActor.assumeIsolated { KeepAwakeService.shared.toggle(minutes: nil, keepDisplay: false) }
         case .appAudioMixer: MainActor.assumeIsolated { AppAudioMixerService.shared.showPanel() }
         case .muteFrontAppAudio: MainActor.assumeIsolated { AppAudioMixerService.shared.toggleMuteFront() }
+        case .measureScreen: MainActor.assumeIsolated { ScreenRulerModule.measure() }
+        case .showDropShelf: MainActor.assumeIsolated { FilesModule.showShelf() }
+        case .toggleFocusSession: MainActor.assumeIsolated { FocusModule.toggleSession() }
+        case .toggleMicMute: MainActor.assumeIsolated { MicMuteModule.toggleMute() }
+        case .showTextActions: MainActor.assumeIsolated { TextActionsModule.showForCurrentSelection() }
         }
     }
 }

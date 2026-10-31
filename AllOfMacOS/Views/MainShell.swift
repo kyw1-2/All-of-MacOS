@@ -123,6 +123,12 @@ struct AOMSidebar: View {
                 navigationItem(.audio)
                 navigationItem(.tools)
             }
+            Section("Productivity") {
+                navigationItem(.folderRules)
+                navigationItem(.textActions)
+                navigationItem(.files)
+                navigationItem(.focus)
+            }
             Section("Activity") {
                 navigationItem(.insights)
             }
@@ -160,7 +166,7 @@ struct AOMSidebar: View {
                              tab == appState.selectedMainTab && controlActiveState == .key)
         }
         .tag(tab)
-        .help("\(tab.title) — ⌘\(tab.shortcutKey.character)")
+        .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
     }
 }
 

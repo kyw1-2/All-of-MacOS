@@ -579,7 +579,7 @@ struct AllOfMacOSApp: App {
                         appState.selectedMainTab = tab
                         appDelegate.showMainWindow()
                     }
-                    .keyboardShortcut(tab.shortcutKey, modifiers: .command)
+                    .keyboardShortcut(tab.shortcutKey.map { SwiftUI.KeyboardShortcut($0, modifiers: .command) })
                 }
                 Divider()
                 let palette = AOMPaletteShortcut.keyEquivalent(AOMPaletteShortcut.current(appState.currentPreset))

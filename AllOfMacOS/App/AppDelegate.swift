@@ -170,6 +170,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let element = window.element else { return false }
                 return TitleBarWindowSnap.shared.beginChain(window: element, pid: window.pid, reason: "Dock gesture")
             }
+            // 3.4 modules (Folder Rules, Text Actions, Files, Focus, Screen
+            // Ruler, microphone mute): each starts only what its saved
+            // settings turn on.
+            if !PresetManager.isRunningTests { AOMProductivityModules.start() }
             if !PresetManager.isRunningTests {
                 InputRemapService.shared.apply()
                 // After the menu bar and audio settle, so an update never opens on a busy launch.
@@ -548,6 +552,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(entry("Center", "rectangle.center.inset.filled", #selector(menuCenter)))
         menu.addItem(entry("Window Switcher", "rectangle.stack", #selector(menuWindowSwitcher)))
         menu.addItem(.separator())
+
+        // Productivity (3.4): each module adds its own items, built per click.
+        let productivity = MainActor.assumeIsolated { AOMProductivityModules.statusMenuItems() }
+        if !productivity.isEmpty {
+            menu.addItem(.sectionHeader(title: "Productivity"))
+            for item in productivity { menu.addItem(item) }
+            menu.addItem(.separator())
+        }
 
         // Quick toggles people reach for often; everything else moved to More.
         // "Automation" is the engine's one name across the app (sidebar

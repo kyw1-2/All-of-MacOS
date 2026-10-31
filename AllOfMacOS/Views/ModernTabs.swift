@@ -11,6 +11,12 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     case audio = "Audio"
     case tools = "System Tools"
     case insights = "Statistics"
+    // 3.4 productivity pages (after Insights so ⌘1…⌘8 and the preview tab
+    // numbers of the earlier pages stay as they were).
+    case folderRules = "Folder Rules"
+    case textActions = "Text Actions"
+    case files = "Files"
+    case focus = "Focus"
 
     var id: String { rawValue }
 
@@ -24,6 +30,10 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .audio: return "Audio"
         case .tools: return "System Tools"
         case .insights: return "Insights"
+        case .folderRules: return "Folder Rules"
+        case .textActions: return "Text Actions"
+        case .files: return "Files"
+        case .focus: return "Focus"
         }
     }
 
@@ -37,6 +47,10 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .audio: return "Per-app volume, the equalizer & output devices"
         case .tools: return "Finder, network, PDF, media & cleanup utilities"
         case .insights: return "How often each input fires and what it runs"
+        case .folderRules: return "Rules that tidy Downloads, Desktop and other folders"
+        case .textActions: return "A bar of actions over the text you select"
+        case .files: return "Open and Save dialog shortcuts, a drop shelf and recent files"
+        case .focus: return "Focus sessions, hiding distractions and quitting idle apps"
         }
     }
 
@@ -50,6 +64,10 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .audio: return "waveform"
         case .tools: return "wrench.and.screwdriver.fill"
         case .insights: return "chart.xyaxis.line"
+        case .folderRules: return "folder.badge.gearshape"
+        case .textActions: return "character.cursor.ibeam"
+        case .files: return "folder.fill"
+        case .focus: return "timer"
         }
     }
 
@@ -64,6 +82,10 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .audio: return "waveform"
         case .tools: return "wrench.and.screwdriver"
         case .insights: return "chart.bar.xaxis"
+        case .folderRules: return "folder.badge.gearshape"
+        case .textActions: return "character.cursor.ibeam"
+        case .files: return "folder"
+        case .focus: return "timer"
         }
     }
 
@@ -78,12 +100,18 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         case .audio: return .pink
         case .tools: return .teal
         case .insights: return .green
+        case .folderRules: return .mint
+        case .textActions: return .orange
+        case .files: return .blue
+        case .focus: return .red
         }
     }
 
-    /// ⌘1…⌘8 in the View menu and sidebar, in sidebar order.
-    var shortcutKey: KeyEquivalent {
-        KeyEquivalent(Character(String((AOMMainTab.allCases.firstIndex(of: self) ?? 0) + 1)))
+    /// ⌘1…⌘9 in the View menu and sidebar for the first nine pages; later
+    /// pages have none (a two-digit key equivalent does not exist).
+    var shortcutKey: KeyEquivalent? {
+        guard let index = AOMMainTab.allCases.firstIndex(of: self), index < 9 else { return nil }
+        return KeyEquivalent(Character(String(index + 1)))
     }
 }
 

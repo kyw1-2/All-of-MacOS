@@ -64,6 +64,8 @@
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>All of MacOS sends Apple events to apps you choose, for example Finder, System Events, Safari and Chrome, to run your automations and tools.</string>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
@@ -72,6 +74,12 @@
 	<string>Run your configured automations when Bluetooth devices connect or disconnect.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AOM uses your camera only when Camera Overlay is enabled and you start a screen recording.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Folder Rules and Files read the Desktop when you choose it, to tidy or list files.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Folder Rules and Files read the Documents folder when you choose it, to tidy or list files.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Folder Rules, Files and System Tools read the Downloads folder to tidy and list your downloads.</string>
 	<key>NSMainStoryboardFile</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>

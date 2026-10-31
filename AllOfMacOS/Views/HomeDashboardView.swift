@@ -470,6 +470,10 @@ struct AOMHomeView: View {
                     .disabled(!audio.isSupported)
                     .help(audio.soundEnabled ? "Turn off per-app volume and effects" : "Turn on per-app volume and effects")
             }
+        case .folderRules, .textActions, .files, .focus:
+            if let status = AOMModuleStatusBoard.status(for: module) {
+                AOMModuleStatusTile(status: status, open: { appState.selectedMainTab = module.tab })
+            }
         case .systemTools:
             AOMModuleTile(.systemTools,
                           metric: "\(SystemToolsInventory.count)", unit: "tools",
@@ -773,6 +777,7 @@ struct AOMHomeView: View {
         if enabled && !clipboard.paused { count += 1 }
         if audio.soundEnabled { count += 1 }
         count += 1 // System Tools are always available.
+        count += AOMModuleStatusBoard.all.filter { $0.isOn == true }.count
         return count
     }
     fileprivate var automationsOnCount: Int { triggers.filter(\.isEnabled).count }
@@ -1729,6 +1734,31 @@ enum GestureVisual {
         case .drawings: return AOMModule.automation.hue
         case .otherTriggers: return AOMColor.textSecondary
         case .all: return AOMColor.accent
+        }
+    }
+}
+
+/// A 3.4 module's tile, drawn from the live `AOMModuleStatus` the module
+/// publishes: its count, one status line, and its switch when it has one.
+struct AOMModuleStatusTile: View {
+    @ObservedObject var status: AOMModuleStatus
+    let open: () -> Void
+
+    var body: some View {
+        let metric = status.count.map { $0.formatted() } ?? (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "…"))
+        AOMModuleTile(status.module,
+                      metric: metric,
+                      unit: status.count == nil ? nil : status.unit,
+                      status: status.attention ?? status.detail,
+                      statusTone: status.attention != nil ? .warning : (status.isOn == false ? .neutral : nil),
+                      active: status.isOn ?? true,
+                      open: open) {
+            if let isOn = status.isOn, let setOn = status.setOn {
+                Toggle(status.module.title, isOn: Binding(get: { isOn }, set: { setOn($0) }))
+                    .help(isOn ? "Turn off \(status.module.title)" : "Turn on \(status.module.title)")
+            } else {
+                WorkspaceTileChevron()
+            }
         }
     }
 }

@@ -28,6 +28,10 @@ struct MainWindow: View {
                 case .audio: AudioWorkspaceView()
                 case .tools: SystemToolsView()
                 case .insights: StatisticsView()
+                case .folderRules: FolderRulesPage()
+                case .textActions: TextActionsPage()
+                case .files: FilesPage()
+                case .focus: FocusPage()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

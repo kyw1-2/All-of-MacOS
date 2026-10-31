@@ -293,6 +293,8 @@ enum AOMTone: Equatable {
 /// or as status.
 enum AOMModule: String, CaseIterable, Identifiable {
     case automation, tiling, capture, clipboard, audio, systemTools
+    // 3.4 productivity modules
+    case folderRules, textActions, files, focus
 
     var id: String { rawValue }
 
@@ -304,6 +306,10 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .audio: return "Audio"
         case .systemTools: return "System Tools"
+        case .folderRules: return "Folder Rules"
+        case .textActions: return "Text Actions"
+        case .files: return "Files"
+        case .focus: return "Focus"
         }
     }
 
@@ -315,6 +321,10 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard.fill"
         case .audio: return "waveform"
         case .systemTools: return "wrench.and.screwdriver.fill"
+        case .folderRules: return "folder.badge.gearshape"
+        case .textActions: return "character.cursor.ibeam"
+        case .files: return "folder.fill"
+        case .focus: return "timer"
         }
     }
 
@@ -328,6 +338,12 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .clipboard: return Color(nsColor: .systemBrown)
         case .audio: return Color(nsColor: .systemPink)
         case .systemTools: return Color(nsColor: NSColor(srgbRed: 0.486, green: 0.486, blue: 0.510, alpha: 1))     // #7C7C82
+        case .folderRules: return Color.aomDynamic(light: NSColor(srgbRed: 0.118, green: 0.482, blue: 0.204, alpha: 1),    // #1E7B34
+                                                   dark: NSColor(srgbRed: 0.180, green: 0.588, blue: 0.290, alpha: 1))     // #2E964A
+        case .textActions: return Color.aomDynamic(light: NSColor(srgbRed: 0.769, green: 0.384, blue: 0, alpha: 1),        // #C46200
+                                                   dark: NSColor(srgbRed: 0.851, green: 0.467, blue: 0.024, alpha: 1))     // #D97706
+        case .files: return Color(nsColor: .systemBlue)
+        case .focus: return Color(nsColor: .systemRed)
         }
     }
 
@@ -339,6 +355,10 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .clipboard: return .clipboard
         case .audio: return .audio
         case .systemTools: return .tools
+        case .folderRules: return .folderRules
+        case .textActions: return .textActions
+        case .files: return .files
+        case .focus: return .focus
         }
     }
 

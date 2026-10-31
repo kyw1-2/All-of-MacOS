@@ -99,7 +99,7 @@ class AppState: ObservableObject {
         if preset.triggers.count > 0 {
             presetManager.save(preset)
         }
-        // Isolated UI previews can open on a given page (`--aom-preview-tab <1-8>`,
+        // Isolated UI previews can open on a given page (`--aom-preview-tab <1-12>`,
         // sidebar order), so screens are reviewed without driving the window with key events.
         if PresetManager.isUIPreview, let index = ProcessInfo.processInfo.arguments.firstIndex(of: "--aom-preview-tab"),
            ProcessInfo.processInfo.arguments.indices.contains(index + 1),
