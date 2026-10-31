@@ -129,6 +129,12 @@ enum FocusModule {
         environment.session.toggle(userInitiated: true)
     }
 
+    /// A focus or break is running or paused. `AOMModuleStatusBoard.focus.isOn`
+    /// is also on while idle-app rules are on, so views that mean "a session
+    /// is live" (the sidebar's On pill, the quick action's pulse) read this;
+    /// the status board changes at every transition, so observing it is enough.
+    static var isSessionActive: Bool { environment.session.timer.run != nil }
+
     /// This module's items in the status menu's Productivity section:
     /// "Start Focus · 25 min" or "Stop Focus · 18:22 left", and "Quit Idle
     /// Apps Now" while there are idle-app rules.

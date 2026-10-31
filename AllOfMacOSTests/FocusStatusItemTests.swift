@@ -54,9 +54,23 @@ final class FocusStatusItemTests: XCTestCase {
             return bitmap
         }
         XCTAssertGreaterThan(try render().pixelsWide, 0)
+        XCTAssertFalse(FocusModule.isSessionActive)
         env.session.start()
-        defer { env.session.stop() }
+        XCTAssertTrue(FocusModule.isSessionActive)
+        defer {
+            env.session.stop()
+            XCTAssertFalse(FocusModule.isSessionActive)
+        }
         XCTAssertGreaterThan(try render().pixelsHigh, 0, "a running session renders too")
         XCTAssertFalse(env.statusItem.isShowing)
+        XCTAssertEqual(AOMModuleStatusBoard.focus.isOn, true, "the Workspace tile is on while a session runs")
+    }
+
+    func testTheHUDContentSizesItself() {
+        let host = NSHostingView(rootView: FocusHUDView(symbol: "timer", title: "Focus: 18 min left", detail: "Messages is hidden"))
+        let size = host.fittingSize
+        XCTAssertGreaterThan(size.width, 150)
+        XCTAssertLessThanOrEqual(size.width, 320, "the HUD stays small")
+        XCTAssertGreaterThan(size.height, 60)
     }
 }
