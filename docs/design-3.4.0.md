@@ -487,9 +487,12 @@ Top to bottom, each part only when it has real content:
 1. Status header (3.3.6 hero): plain while all is well, a tinted notice with permission chips when not.
 2. Setup (first run), unchanged.
 3. Needs attention: permissions, suggestions, and each Productivity module's `attention` with Open.
-4. Tools: the six 3.3.6 tiles, 3 columns (2 below 696 pt), "n of 6 on".
+4. Tools: the six 3.3.6 tiles, 3 columns (2 below 696 pt), "n of 6 on". A tile now has the squircle with the
+   name over the status line on its first row (full width, so "Needs Screen Recording" never truncates at
+   1000 pt) and the count with the tile's one control (switch, button or chevron) at its trailing end.
 5. Productivity: Folder Rules, Text Actions, Files, Focus as `AOMModuleStatusTile`s reading
-   `AOMModuleStatusBoard`, 4 columns from 932 pt, 2 below, "n of 4 on".
+   `AOMModuleStatusBoard`, 4 columns from 932 pt, 2 below, "n of m on" where m counts the modules that publish
+   a switch (`isOn != nil`). A module that publishes no count shows "…" until it does.
 6. Quick actions: 10 by default in 5 columns (2 rows at both window sizes): Capture Area, Capture Window, Record
    Screen, Copy Text, Clipboard History, Measure Screen (`ScreenRulerModule.measure()`), Drop Shelf
    (`FilesModule.showShelf()`), Focus Session (`FocusModule.toggleSession()`), Mute Microphone
