@@ -223,7 +223,7 @@ struct ModernWindowSnappingView: View {
     // MARK: - Title-bar snap
 
     private var swipeHelp: String {
-        "Swipe two fingers on a title bar or toolbar: left or right for a half, up to maximize, down to \(trackpadSnapDownAction == SwishSnap.DownAction.center.rawValue ? "center" : "minimize"), diagonally for that quarter. A swipe up always maximizes, wherever the window is. Other swipes chain from where the window is: a half swiped down becomes its bottom quarter, a top quarter swiped down moves to the bottom, a diagonal swipe reaches any quarter from anywhere (a maximized window swiped ↙ goes to the bottom-left), and swiping sideways toward an edge grows the window along it; swipe down on a maximized or bottom-edge window to put it back. No swipe snaps to the top or bottom half. Lift to apply. To cancel, add a third finger or rest your fingers without moving (2 s by default)."
+        "Swipe two fingers on a title bar or toolbar: left or right for a half, up to maximize, down to \(trackpadSnapDownAction == SwishSnap.DownAction.center.rawValue ? "center" : "minimize"), diagonally for that quarter. A swipe up maximizes wherever the window is, except as the turn of an L in one touch: left then up takes the top-left quarter, right then up the top-right. Other swipes chain from where the window is: a half swiped down becomes its bottom quarter, a top quarter swiped down moves to the bottom, a diagonal swipe reaches any quarter from anywhere (a maximized window swiped ↙ goes to the bottom-left), and swiping sideways toward an edge grows the window along it; swipe down on a maximized or bottom-edge window to put it back. No swipe snaps to the top or bottom half. Lift to apply. To cancel, add a third finger or rest your fingers without moving (2 s by default)."
     }
 
     private var titleBarSection: some View {
@@ -356,7 +356,7 @@ struct ModernWindowSnappingView: View {
                     }
                     .pickerStyle(.menu)
                 }
-                .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped down takes its lower half. 3 × 3: a third swiped down becomes its bottom ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths. A swipe up always maximizes.")
+                .help("2 × 2: halves and quarters only, never a third. 3 × 2: a longer swipe or a swipe toward an edge reaches thirds and two thirds, and a third swiped down takes its lower half. 3 × 3: a third swiped down becomes its bottom ninth; swipe a ninth toward an edge it touches to grow it to two-ninths, then toward its other edge to four-ninths. A swipe up maximizes; left or right then up in one touch takes that top quarter.")
                 AOMSettingRow("Almost maximize") {
                     Toggle("Almost maximize", isOn: $trackpadSnapAlmost)
                 }

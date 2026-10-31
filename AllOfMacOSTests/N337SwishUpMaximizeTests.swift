@@ -6,6 +6,8 @@ import XCTest
 ///   every place (free, centred, a half, a quarter — bottom-right ↑ used to be
 ///   top-right —, a third, a sixth, a ninth, maximized), at any length, as the
 ///   first or a later motion of a touch, and right after another swipe.
+///   N338: except right after a plain sideways motion of the same touch,
+///   which it turns into an L (`N338LShapeTopCornerTests`).
 /// - R2: no title-bar gesture takes the top or bottom half (Swish's
 ///   "Double-swipe vertically to snap to the top or bottom half of the
 ///   screen" is left out on purpose); a swipe down that would have reached
@@ -101,13 +103,13 @@ final class N337SwishUpMaximizeTests: XCTestCase {
 
         private func show(_ stroke: SwishSnap.Stroke) {
             self.stroke = stroke
-            gestures[gestures.count - 1].append(Self.label(plan(stroke), stroke.direction))
+            gestures[gestures.count - 1].append(Self.label(plan(stroke), SwishSnap.tooltipDirection(for: stroke)))
         }
 
         private func commit() {
             guard let stroke else { return }
             let move = plan(stroke)
-            committed.append(Self.label(move, stroke.direction))
+            committed.append(Self.label(move, SwishSnap.tooltipDirection(for: stroke)))
             switch move {
             case .cell?, .place?: place = move?.destination
             case .restore?: place = nil
@@ -376,34 +378,40 @@ final class N337SwishUpMaximizeTests: XCTestCase {
         }
     }
 
-    /// Multi-motion chains at the user's 0.5 s pause: whatever came before
-    /// in the touch, the swipe up maximizes (3.3.6: left, rest, up was the
-    /// top-left quarter).
+    /// Multi-motion chains at the user's 0.5 s pause: an up after a vertical
+    /// motion or a quarter maximizes. N338 (the user's rule): an up right
+    /// after a plain sideways motion turns that corner instead, one L, the
+    /// top quarter of that side (3.3.7: the half, then Maximize).
     func testInOneTouchAnUpAfterOtherMotionsMaximizes() {
-        let chains: [([(Float, Float)], [String])] = [
-            ([left, up], ["← Left Half", "↑ Maximize"]),
-            ([right, up], ["→ Right Half", "↑ Maximize"]),
-            ([right, down, up], ["→ Right Half", "↓ Bottom Right", "↑ Maximize"]),
-            ([left, down, up], ["← Left Half", "↓ Bottom Left", "↑ Maximize"]),
-            ([up, up], ["↑ Maximize", "↑ Maximize"]),
-            ([up, down, up], ["↑ Maximize", "↓ Restore", "↑ Maximize"]),
-            ([down, up], ["↓ Center", "↑ Maximize"]),
+        let chains: [([(Float, Float)], [String], SwishSnap.Place)] = [
+            ([left, up], ["↑ Top Left"], at(.topLeft)),
+            ([right, up], ["↑ Top Right"], at(.topRight)),
+            ([right, down, up], ["→ Right Half", "↓ Bottom Right", "↑ Maximize"], at(.maximize)),
+            ([left, down, up], ["← Left Half", "↓ Bottom Left", "↑ Maximize"], at(.maximize)),
+            ([left, up, up], ["↑ Top Left", "↑ Maximize"], at(.maximize)),
+            ([up, up], ["↑ Maximize", "↑ Maximize"], at(.maximize)),
+            ([up, down, up], ["↑ Maximize", "↓ Restore", "↑ Maximize"], at(.maximize)),
+            ([down, up], ["↓ Center", "↑ Maximize"], at(.maximize)),
         ]
-        for (moves, expected) in chains {
+        for (moves, expected, place) in chains {
             let desk = Desk(options: user)
             touch(desk, moves)
             XCTAssertEqual(desk.committed, expected, "\(moves)")
             XCTAssertEqual(desk.readies, moves.count - 1, "each rest locked the motion (\(moves))")
-            XCTAssertEqual(desk.place, at(.maximize))
+            XCTAssertEqual(desk.place, place, "\(moves)")
         }
-        // From every 2 × 2 place: any motion, a rest, then up.
+        // From every 2 × 2 place: down, a rest, then up maximizes; left or
+        // right, a rest, then up is that top quarter (N338).
         for start in [nil] + SwishSnap.Grid.twoByTwo.cells.map({ SwishSnap.Place.grid($0) }) {
-            for first in [left, right, down] {
+            for (first, expected) in [(left, ["↑ Top Left"]), (right, ["↑ Top Right"])] {
                 let desk = Desk(options: user, place: start)
                 touch(desk, [first, up])
-                XCTAssertEqual(desk.committed.last, "↑ Maximize", "\(String(describing: start)) \(first)")
-                XCTAssertEqual(desk.committed.count, 2)
+                XCTAssertEqual(desk.committed, expected, "\(String(describing: start)) \(first)")
             }
+            let desk = Desk(options: user, place: start)
+            touch(desk, [down, up])
+            XCTAssertEqual(desk.committed.last, "↑ Maximize", "\(String(describing: start)) down")
+            XCTAssertEqual(desk.committed.count, 2)
         }
     }
 

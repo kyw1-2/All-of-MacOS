@@ -149,23 +149,42 @@ enum SwishSnap {
     /// adds the cross direction; once held it is released only below 60% of
     /// that. Back near the start, a clear swipe along the other axis re-picks
     /// the axis; anything less returns nil so the preview holds still.
+    ///
+    /// N338, the vertical leg of an L that began sideways: `turn` is the
+    /// vertical travel since the sideways leg stopped (the recognizer's
+    /// `turn(dy:)`, 0 for none and for a vertical stroke). Past `crossEngage`
+    /// it is the cross leg on its own, that way, however long the sideways
+    /// leg was and wherever it drifted (a long left then a short up was the
+    /// left half: the 45 % share is there for the arc of a straight swipe,
+    /// which never moves mostly vertically). While it lasts, the corner keeps
+    /// the side it turned from: an up leg drifting back over the start used
+    /// to re-pick the axis as a plain up and maximize.
     static func refine(dx: Float, dy: Float, axis: Axis, previous: Stroke?,
                        engage: Float, tier2: Float, ratio: Float,
-                       crossEngage: Float = 0.06, crossShare: Float = 0.45) -> Stroke? {
+                       crossEngage: Float = 0.06, crossShare: Float = 0.45, turn: Float = 0) -> Stroke? {
         let primary = axis == .horizontal ? dx : dy
         let other = axis == .horizontal ? dy : dx
-        if abs(primary) < engage * 0.5 {
-            guard let fresh = direction(dx: dx, dy: dy, engage: engage, ratio: ratio),
-                  fresh.axis != axis else { return nil }
-            return Stroke(fresh, tier: tier(dx: dx, dy: dy, tier2: tier2))
-        }
-        let direction: Direction = axis == .horizontal
-            ? (primary < 0 ? .left : .right)
-            : (primary > 0 ? .down : .up)
         let held = previous?.cross != nil && previous?.direction.axis == axis
-        let needed = max(crossEngage, abs(primary) * crossShare) * (held ? 0.6 : 1)
+        let turn = axis == .horizontal ? turn : 0
+        let direction: Direction
+        if held, turn != 0, let previous {
+            direction = previous.direction
+        } else {
+            if abs(primary) < engage * 0.5 {
+                guard let fresh = Self.direction(dx: dx, dy: dy, engage: engage, ratio: ratio),
+                      fresh.axis != axis else { return nil }
+                return Stroke(fresh, tier: tier(dx: dx, dy: dy, tier2: tier2))
+            }
+            direction = axis == .horizontal
+                ? (primary < 0 ? .left : .right)
+                : (primary > 0 ? .down : .up)
+        }
+        let share = held ? Float(0.6) : 1
+        let needed = max(crossEngage, abs(primary) * crossShare) * share
         var cross: Direction?
-        if abs(other) >= needed {
+        if abs(turn) >= crossEngage * share {
+            cross = turn > 0 ? .down : .up
+        } else if abs(other) >= needed {
             cross = axis == .horizontal ? (other > 0 ? .down : .up) : (other < 0 ? .left : .right)
         }
         return Stroke(direction, tier: abs(primary) >= tier2 ? 2 : 1, cross: cross)
@@ -491,6 +510,17 @@ enum SwishSnap {
         let free = current.map { $0 == .center || !usable($0, grid: grid, almost: almost) } ?? true
         if free, direction == .down, stroke.cross == nil { return .action(.minimize) }
         return step(from: free ? nil : current, stroke: stroke, grid: grid, almost: almost)
+    }
+
+    /// Pure (N338): whether a sideways swipe that rested may turn its corner
+    /// into an L in the same touch (`TitleBarSnapRecognizer.cornerTurns`):
+    /// not while ⌥ or ⌘ make it a Space or display move, which commits
+    /// before the next motion as before (⌥ left, rest, up: a Space, then a
+    /// plain up). ⇧ turns it like no modifier: the corner wins over almost
+    /// maximize, as in a continuous ⇧ L or diagonal.
+    static func cornerTurns(modifiers: Modifiers, options: GestureOptions) -> Bool {
+        guard options.modifierGestures else { return true }
+        return !modifiers.contains(.general) && !modifiers.contains(.screen)
     }
 
     /// What a finished pinch does, and whether it first waits for a second
@@ -874,6 +904,21 @@ final class TitleBarSnapRecognizer {
     /// fingers resting at the edge do not flicker in and out.
     var withdrawShare: Float = 0.5
 
+    /// N338: whether a sideways swipe that rested may turn its corner into
+    /// an L (`cornerTurn`). The service clears it while ⌥ or ⌘ make the
+    /// sideways swipe an action (a Space or display move), so those keep
+    /// committing before the next motion. Written on main as a gesture
+    /// begins and read here a pause later; a stale value for a frame is
+    /// harmless, as with `motionPause`.
+    var cornerTurns = true
+    /// N338: the step the centroid's path is cut into to find an L's vertical
+    /// leg (`trackTurn`), in pad units: well above resting jitter (0.003).
+    var turnStep: Float = 0.01
+    /// tan 35°: how far from vertical on the glass a step may lean and still
+    /// be the vertical leg of an L (the 10–20° drift of a hand going up), and
+    /// from horizontal and still be the sideways leg.
+    static let turnSlope: Float = 0.7
+
     /// How many motions the current touch has committed before the one in
     /// progress (0: its first gesture). Only a first gesture can be a tap.
     private(set) var motionIndex = 0
@@ -920,6 +965,13 @@ final class TitleBarSnapRecognizer {
     private var rearmPending = false
     /// N335: the engaged swipe was taken back to its start (`onWithdraw`).
     private var withdrawn = false
+    /// N338: where the current step of the path began, and the vertical
+    /// travel of the L's vertical leg so far (`trackTurn`).
+    private var turnAnchorX: Float = 0
+    private var turnAnchorY: Float = 0
+    private var turnTravel: Float = 0
+    /// The travel began straight off the sideways leg, not as a reversal.
+    private var turnFromSideways = true
 
     func feed(contacts: [TouchPoint], timestamp: Double, device: UInt64 = 0) {
         if let owner = self.device {
@@ -1006,6 +1058,7 @@ final class TitleBarSnapRecognizer {
             last = stroke
             lastActiveAt = timestamp
             restartPauseClock(cx, cy, spread, at: timestamp)
+            restartTurn(cx, cy)
             onBegin?(stroke)
         case .engaged:
             if count <= 1 {
@@ -1044,6 +1097,7 @@ final class TitleBarSnapRecognizer {
                 axis = stroke.direction.axis
                 last = stroke
                 restartPauseClock(cx, cy, spread, at: timestamp)
+                restartTurn(cx, cy)
                 onUpdate?(stroke)
                 return
             }
@@ -1054,10 +1108,13 @@ final class TitleBarSnapRecognizer {
                 onWithdraw?()
                 return
             }
+            trackTurn(cx, cy)
             guard var stroke = SwishSnap.refine(dx: dx, dy: dy, axis: axis, previous: last,
                                                 engage: engage, tier2: tier2, ratio: ratio,
-                                                crossEngage: crossEngage, crossShare: crossShare) else { return }
+                                                crossEngage: crossEngage, crossShare: crossShare,
+                                                turn: turn(dy: dy)) else { return }
             stroke.held = isHeld
+            if stroke.direction.axis != axis { restartTurn(cx, cy) }
             axis = stroke.direction.axis
             if stroke != last {
                 last = stroke
@@ -1146,6 +1203,17 @@ final class TitleBarSnapRecognizer {
             return
         }
         guard let stroke = engagedStroke(dx: dx, dy: dy) else { return }
+        if let corner = cornerTurn(from: last, into: stroke) {
+            // N338: the sideways swipe on show turns its corner instead of
+            // committing: one L, as if the fingers had never rested.
+            locked = false
+            last = corner
+            lastActiveAt = timestamp
+            restartPauseClock(cx, cy, spread, at: timestamp)
+            (turnAnchorX, turnAnchorY, turnTravel, turnFromSideways) = (cx, cy, dy, true)
+            onUpdate?(corner)
+            return
+        }
         commitLocked()
         phase = .engaged
         withdrawn = false
@@ -1156,7 +1224,62 @@ final class TitleBarSnapRecognizer {
         last = stroke
         lastActiveAt = timestamp
         restartPauseClock(cx, cy, spread, at: timestamp)
+        restartTurn(cx, cy)
         onBegin?(stroke)
+    }
+
+    /// N338 (the user's rule): within one touch, a plain sideways swipe that
+    /// rested `motionPause` and then goes up is an L, the top quarter of that
+    /// side, as the same turn made without resting is (3.3.7 committed the
+    /// half and maximized: an up starting a new motion maximizes). Only a
+    /// plain up after a plain sideways swipe (no cross leg, not held, no ⌥
+    /// or ⌘ while `cornerTurns`); every other next motion commits the one on
+    /// show and starts afresh. Down keeps that order (the half, then its
+    /// bottom quarter), so its results stay what they were.
+    private func cornerTurn(from locked: SwishSnap.Stroke?, into next: SwishSnap.Stroke) -> SwishSnap.Stroke? {
+        guard phase == .engaged, cornerTurns, let locked, locked.direction.axis == .horizontal,
+              locked.cross == nil, !locked.held, !next.held, next.direction == .up, next.cross == nil else { return nil }
+        return SwishSnap.Stroke(locked.direction, tier: locked.tier, cross: .up)
+    }
+
+    /// N338: the vertical leg of an L that began sideways. The centroid's
+    /// path is cut into steps of `turnStep`; a step within `turnSlope` of
+    /// vertical on the glass adds its vertical travel, and a step within it
+    /// of horizontal (the sideways leg going on, or the arc of a straight
+    /// swipe) clears it. Steps in between leave it as it is. A vertical step
+    /// the other way starts the travel again as a reversal (`turn(dy:)`).
+    private func trackTurn(_ cx: Float, _ cy: Float) {
+        guard axis == .horizontal else { turnTravel = 0; return }
+        let sx = cx - turnAnchorX, sy = cy - turnAnchorY
+        guard (sx * sx + sy * sy).squareRoot() >= turnStep else { return }
+        (turnAnchorX, turnAnchorY) = (cx, cy)
+        let glassX = abs(sx) * SwishSnap.padAspect, glassY = abs(sy)
+        if glassX <= glassY * Self.turnSlope {
+            if turnTravel == 0 {
+                turnTravel = sy
+                turnFromSideways = true
+            } else if (turnTravel < 0) == (sy < 0) {
+                turnTravel += sy
+            } else {
+                turnTravel = sy
+                turnFromSideways = false
+            }
+        } else if glassY <= glassX * Self.turnSlope {
+            turnTravel = 0
+        }
+    }
+
+    /// The L's vertical leg for `refine`: the travel straight off the
+    /// sideways leg, wherever the sideways leg drifted (left drifting down,
+    /// then up, is still the top quarter). A reversal (up, then back down)
+    /// only counts once it is past the start line (`dy` from the start) that
+    /// way, so coming back down after an up leg first releases the corner.
+    private func turn(dy: Float) -> Float {
+        turnFromSideways || (turnTravel < 0) == (dy < 0) ? turnTravel : 0
+    }
+
+    private func restartTurn(_ cx: Float, _ cy: Float) {
+        (turnAnchorX, turnAnchorY, turnTravel, turnFromSideways) = (cx, cy, 0, true)
     }
 
     /// Commits the locked gesture as its lift would have (N337: also when the
@@ -1199,6 +1322,7 @@ final class TitleBarSnapRecognizer {
         stillSince = timestamp
         lastActiveAt = timestamp
         restartPauseClock(startX, startY, startSpread, at: timestamp)
+        restartTurn(startX, startY)
     }
 
 
@@ -1320,6 +1444,7 @@ final class TitleBarSnapRecognizer {
 
     private func clear() {
         phase = .idle; device = nil; last = nil; axis = .horizontal; pinch = nil; locked = false; withdrawn = false
+        turnTravel = 0
     }
 
     /// The touch's fingers lifted: back to idle (callbacks follow).
@@ -2058,6 +2183,7 @@ final class TitleBarWindowSnap {
         heldRoles = roles ?? SwishSnap.heldRoles()
         modifiers = SwishSnap.Modifiers(held: heldRoles)
         let options = gestureOptionsNow()
+        recognizer.cornerTurns = SwishSnap.cornerTurns(modifiers: modifiers, options: options)
         let remembered = history.place(key: Self.key(capture.window), current: capture.frame)
         startPlace = remembered
             ?? SwishSnap.place(of: capture.frame, visible: area, margin: margin,
@@ -2246,7 +2372,7 @@ final class TitleBarWindowSnap {
         plan = next
         // The second ⌥ swipe down on the app quits it: the first one's close no longer waits.
         if next?.action == .quitApp, repeating == .close { cancelPending() }
-        tooltipDirection = stroke.direction
+        tooltipDirection = SwishSnap.tooltipDirection(for: stroke)
         present(next)
     }
 

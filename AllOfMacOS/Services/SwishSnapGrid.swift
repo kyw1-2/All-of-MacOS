@@ -959,6 +959,15 @@ extension SwishSnap {
         guard let direction else { return name }
         return "\(arrow(direction)) \(name)"
     }
+
+    /// Pure (N338): the arrow the tooltip shows for a stroke. A quarter (a
+    /// cross leg on the other axis: an L or a diagonal) shows its vertical
+    /// leg, so an L going up reads "↑ Top Left" (3.3.7: "← Top Left");
+    /// anything else its direction.
+    static func tooltipDirection(for stroke: Stroke) -> Direction {
+        guard let cross = stroke.cross, cross.axis != stroke.direction.axis else { return stroke.direction }
+        return stroke.direction.axis == .vertical ? stroke.direction : cross
+    }
 }
 
 // MARK: - Swish parity (N335)
