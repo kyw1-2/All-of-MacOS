@@ -111,11 +111,11 @@ final class Audio333Tests: XCTestCase {
         }
     }
 
-    /// A gap in the device's sample time (the HAL skipped AOM's cycle) is a
-    /// hole on the receiver. The bridge comes back from silence with a 5 ms
-    /// fade instead of resuming mid-waveform, and skips nothing: after the
-    /// fade its output is sample for sample the output of a bridge that saw
-    /// no gap.
+    /// 3.4.3: a 256-frame HAL hole advances the queued PCM playhead by
+    /// 256 frames. The stream is no longer equal to a no-gap reference at
+    /// the same timestamp: it is aligned to the source 256 frames *later*.
+    /// The old test checked exact equality without a skip and therefore
+    /// falsely rejected the correct new device-clock compensation.
     func testAHALGapFadesBackInAndTheStreamContinues() {
         let gapped = AirPlayPCMBridge(), reference = AirPlayPCMBridge()
         for bridge in [gapped, reference] {
@@ -129,7 +129,7 @@ final class Audio333Tests: XCTestCase {
             let now = Double(cycle) * 128 / 48000
             push(gapped, phase: &phaseA, frames: 128, at: now)
             push(reference, phase: &phaseB, frames: 128, at: now)
-            if cycle == gapCycle { timeA += 256 } // the HAL skipped two cycles
+            if cycle == gapCycle { timeA += 256 } // HAL skipped two callbacks
             outA += render(gapped, frames: 128, sampleTime: timeA, at: now + 0.0001)
             outB += render(reference, frames: 128, sampleTime: timeB, at: now + 0.0001)
             timeA += 128; timeB += 128
@@ -137,24 +137,41 @@ final class Audio333Tests: XCTestCase {
         let start = gapCycle * 128 * 2
         let fade = Int(48000 * AirPlayPCMBridge.gapFadeSeconds)
         XCTAssertEqual(Array(outA[..<start]), Array(outB[..<start]), "nothing changes before the gap")
-        XCTAssertEqual(Array(outA[(start + fade * 2)...]), Array(outB[(start + fade * 2)...]),
-                       "after the fade the stream is the same: nothing skipped or repeated")
-        XCTAssertGreaterThan(outB[start..<(start + fade * 2)].map { abs($0) }.max() ?? 0, 0.4, "the sine plays there")
-        XCTAssertLessThan(abs(outA[start]), 0.001, "back from silence, not mid-waveform")
-        var gain: Float = 0
-        for frame in 0..<fade {
-            let a = outA[start + frame * 2], b = outB[start + frame * 2]
-            XCTAssertLessThanOrEqual(abs(a), abs(b) + 1e-6)
-            guard abs(b) > 0.05 else { continue }
-            let now = a / b
-            XCTAssertGreaterThanOrEqual(now, gain - 1e-4, "the gain only rises")
-            gain = now
+        XCTAssertGreaterThan(outB[start..<(start + fade * 2)].map { abs($0) }.max() ?? 0, 0.4)
+        XCTAssertLessThan(abs(outA[start]), 0.001, "first frame after HAL hole fades in from silence")
+
+        // Compare only after the 240-frame crossfade has settled. The
+        // gapped signal should resemble a future slice of the reference,
+        // not its now-outdated same-timestamp slice. Allow a few frames of
+        // drift correction while retaining a strong phase-alignment gate.
+        let begin = start + 2 * (fade + 256)
+        let count = 1024
+        func meanSquaredError(shift: Int) -> Double {
+            (0..<count).reduce(0.0) { total, index in
+                let a = Double(outA[begin + index * 2])
+                let b = Double(outB[begin + (index + shift) * 2])
+                return total + (a - b) * (a - b)
+            } / Double(count)
         }
+        let unaligned = meanSquaredError(shift: 0)
+        let aligned = (-3...3).map { meanSquaredError(shift: 256 + $0) }.min()!
+        XCTAssertLessThan(aligned, unaligned * 0.5,
+                          "a missed HAL interval advances PCM content by the missing 256 frames")
+        XCTAssertLessThan(aligned, 0.02, "realignment must preserve the waveform after crossfade")
+
+        let mono = stride(from: start / 2, to: start / 2 + fade + 256, by: 1)
+            .map { outA[$0 * 2] }
+        let worstJump = zip(mono, mono.dropFirst()).map { abs($1 - $0) }.max() ?? 0
+        XCTAssertLessThan(worstJump, 0.10, "fade and held-tail crossfade must not create a click")
         let stats = gapped.statistics
         XCTAssertEqual(counter(stats, "deviceCycleGaps"), 1)
         XCTAssertEqual(counter(stats, "deviceGapFrames"), 256)
         XCTAssertEqual(counter(stats, "gapFadeIns"), 1)
+        XCTAssertEqual(counter(stats, "clockSkips"), 1)
+        XCTAssertEqual(counter(stats, "clockSkippedFrames"), 256)
+        XCTAssertEqual(counter(stats, "underruns"), 0)
         XCTAssertEqual(counter(reference.statistics, "gapFadeIns"), 0)
+        XCTAssertEqual(counter(reference.statistics, "clockSkips"), 0)
     }
 
     /// The HAL callback's work is bounded whatever happens: per 128-frame
