@@ -247,7 +247,7 @@ class PresetManager {
             "AOMFilesDialogHelper", "AOMFilesDialogFinderWindows", "AOMFilesDialogRecentFolders",
             "AOMFilesDialogNewestFiles", "AOMFilesDialogClipboardPath", "AOMFilesDialogShortcuts",
             "AOMFilesFavorites", "AOMFilesExcludedApps", "AOMFilesShelfShake", "AOMFilesShelfShift",
-            "AOMFilesShakeSensitivity",
+            "AOMFilesShakeSensitivity", "AOMDiskImageTrashOnSuccess",
             "AOMMicMuteShowHUD", "AOMMicMuteMenuBarIndicator", "AOMMicMutePushToTalk", "AOMMicMutePushToTalkKey",
             "AOMMicMuteAutoMute", "AOMMicMuteAutoMuteApps",
             "AOMSystemToolsFavorites", "AOMSystemToolsWeatherEnabled", "AOMSystemToolsWeatherPlace",
