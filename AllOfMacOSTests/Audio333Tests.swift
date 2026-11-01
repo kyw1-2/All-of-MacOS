@@ -366,6 +366,9 @@ final class Audio333Tests: XCTestCase {
         XCTAssertGreaterThan(out[(300 * 2)...].map { abs($0) }.max() ?? 0, 0.3, "and plays the stream")
         let state = transport.handoverState
         XCTAssertEqual(state.owner, b); XCTAssertEqual(state.takeovers, 1); XCTAssertEqual(state.completed, 0)
+        // Regression: pending=0 is "no pending handover", not an invitation
+        // for the former owner (consumer 0) to take over again after 50 ms.
+        usleep(UInt32(AppAudioTransport.handoverTimeout * 1_000_000) + 30_000)
         XCTAssertTrue(pull(transport, mixer, frames: 512, consumer: 0).allSatisfy { $0 == 0 }, "A, back late, is silent")
         XCTAssertEqual(pulled(transport), before + 480)
     }

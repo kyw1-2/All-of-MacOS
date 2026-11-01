@@ -5,7 +5,8 @@
 - Prevent reconnection storms with a per-HomePod 30-second minimum interval and no more than six reconnects in a rolling ten minutes; when suppressed, preserve native playback / existing fallback behavior. AOM does not force user settings off or turn system audio off.
 - Reduce AOM's locally buffered AirPlay PCM target from 150 ms to 120 ms (5,760 frames at 48 kHz) while keeping adaptive safety headroom and the 400 ms ceiling. This reduces local latency, **not** macOS's fixed 128-frame HAL callback or HomePod's network-side buffer; it is not a cure for an upstream overload.
 - Do not repeat a futile CoreAudio buffer-size property write after a HomePod has accepted a request but continued to use 128 frames, and never write a no-op 128-frame size. Preserve native HAL settings and other audio routes.
-- Update paired-event, cooldown, restart and 128-frame drift-loop regression tests. The growing count of Chrome exact-zero source runs is not proof of source underruns; Chrome's capture path is unchanged pending direct audio evidence. A physical HomePod listening test remains necessary.
+- Fix an independently reproduced output-handover defect in `AppAudioTransport`: a stale consumer ID 0 could be confused with the no-pending-handover sentinel 0 and reclaim the stream after the new owner had taken over. Only a *nonzero, explicitly pending* consumer may take over; test the old owner's delayed return after the timeout. The broader audio switch/reconnect path is thereby safer.
+- Update paired-event, cooldown, restart, output-handover and 128-frame drift-loop regression tests. The growing count of Chrome exact-zero source runs is not proof of source underruns; Chrome's capture path is unchanged pending direct audio evidence. A physical HomePod listening test remains necessary.
 
 ## 3.4.4 (2026-11-01)
 

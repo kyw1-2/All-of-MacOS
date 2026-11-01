@@ -268,7 +268,12 @@ final class AppAudioTransport {
         guard frames > 0, frames <= capacity else { return }
         // Neither the owner nor the consumer taking over (an old output
         // after a move): silence, without touching the lock.
-        if consumer != owner.load() && consumer != pending.load() { return }
+        // Zero means "no pending handover", not permission for a stale
+        // consumer zero to reclaim the stream after an output switch.
+        if consumer != owner.load() {
+            let requested = pending.load()
+            guard requested != 0, consumer == requested else { return }
+        }
         if allowWaiting { renderLock.lock() }
         else if !renderLock.tryLock() { renderContentions.add(); return }
         defer { renderLock.unlock() }
@@ -276,7 +281,7 @@ final class AppAudioTransport {
         if consumer != owner.load() {
             // Taking over happens when the owner hands the stream over at the
             // end of its fade-out, or here once it has stopped rendering.
-            guard consumer == pending.load() else { return }
+            guard consumer != 0, consumer == pending.load() else { return }
             let last = ownerRenderTick.load()
             guard last == 0 || Double(now &- last) * secondsPerTick > Self.handoverTimeout else { return }
             owner.store(consumer)
