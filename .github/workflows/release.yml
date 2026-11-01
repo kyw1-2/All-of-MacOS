@@ -58,14 +58,16 @@ jobs:
           xcodebuild -version
 
       # Hosted macOS runs without the interactive Vision OCR service. Keep the
-      # integration tests enabled for local Mac runs; CI excludes only those 15.
+      # Integration tests remain enabled locally. Headless CI excludes Vision
+      # integration tests (15 text capture tests and 2 clipboard OCR box tests).
       - name: Test application (headless CI)
         run: |
           brew list webp >/dev/null 2>&1 || brew install webp
           swift test -j 2 \
             --skip 'AOM121PerformanceTests/(testEnglishCaptureUsesSinglePass|testFastPathCanBeTurnedOff|testKoreanUnderEnglishFirstSystemStaysFast)' \
             --skip 'TextCaptureInstantTests/(testCaptureLatencyComparison|testEnglishCaptureUsesOneVisionPass|testKoreanCaptureUsesOnlyLiveTextAndPreservesSpacing)' \
-            --skip 'TextSniperParityTests/(testChineseRecognition|testDarkModeWhiteOnBlack|testEnglishRecognitionKeepsLines|testJapaneseRecognition|testJoinLinesModeReflowsParagraph|testKoreanRecognition|testLegacyAPIStillWorks|testMixedScriptRecognition|testTinyTextIsUpscaled)'
+            --skip 'TextSniperParityTests/(testChineseRecognition|testDarkModeWhiteOnBlack|testEnglishRecognitionKeepsLines|testJapaneseRecognition|testJoinLinesModeReflowsParagraph|testKoreanRecognition|testLegacyAPIStillWorks|testMixedScriptRecognition|testTinyTextIsUpscaled)' \
+            --skip 'Clipboard333Tests/(testImagesIndexedBeforeBoxesGetThemWhenPreviewed|testIndexingKeepsLineBoxesAndRegionsReadOnlyTheirText)'
 
       - name: Import AOM Dev signing identity into ephemeral keychain
         uses: apple-actions/import-codesign-certs@v7

@@ -284,9 +284,16 @@ final class AutomationGateTests: XCTestCase {
         var offenders: [String] = []
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
-            for (number, line) in text.components(separatedBy: "\n").enumerated()
+            let lines = text.components(separatedBy: "\n")
+            for (number, line) in lines.enumerated()
             where line.contains("forceTerminate(") && !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
-                offenders.append("\(file.lastPathComponent):\(number + 1)")
+                // The System Tools Force Quit command is explicit and user-confirmed.
+                // Require the confirmation guard immediately before the call; every
+                // other force-termination path must still fail this source guard.
+                let confirmed = file.lastPathComponent == "SystemToolsModel336.swift"
+                    && line.contains("guard app.forceTerminate()")
+                    && lines[max(0, number - 4)..<number].contains { $0.contains("guard self.confirm(\"Force Quit") }
+                if !confirmed { offenders.append("\(file.lastPathComponent):\(number + 1)") }
             }
         }
         XCTAssertEqual(offenders, [], "automatic force termination is not allowed")
