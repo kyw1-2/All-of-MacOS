@@ -19,6 +19,16 @@ final class QuickCommandPaletteTests: XCTestCase {
         QuickCommandPalette.PaletteSearch.results(for: items, query: query)
     }
 
+    func testHomebrewSearchFindsTheNativeManagerAndOpensIt() {
+        var opened = false
+        let manager = QuickCommandPalette.homebrewItem { opened = true }
+        for query in ["Homebrew", "brew", "outdated", "doctor", "홈브루"] {
+            XCTAssertEqual(results([manager], query: query).map(\.id), ["go.homebrew"])
+        }
+        manager.primary.run()
+        XCTAssertTrue(opened)
+    }
+
     // MARK: Grouping vs searching
 
     func testEmptyQueryGroupsBySectionOrder() {

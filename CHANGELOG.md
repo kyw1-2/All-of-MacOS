@@ -1,3 +1,9 @@
+## 3.4.1 (2026-11-01)
+
+- HomePod/AirPlay: smooth dropout boundaries across incoming audio callbacks using a 128-frame lookahead; process large capture blocks in bounded chunks without losing trailing samples; reset softener state when routes or sample rates change. This mitigates source discontinuities, not device or network IO overloads.
+- Homebrew: expose a visible System Tools toolbar entry, make the manager discoverable from Workspace search, and add a post-install recheck action.
+- Verified local debug build and 130 targeted tests (0 failures). Actual HomePod listening validation remains outstanding.
+
 ## 3.4.0 (2026-11-01)
 
 A UI overhaul on a spec with 159 new references (docs/design-3.4.0.md, #96–#254: HIG pages, WWDC23–26 sessions, 38 Mac apps and Apple's own apps), four new Productivity pages (Folder Rules, Text Actions, Files, Focus), Screen Ruler, Click Hints, a larger ⌘K palette with a window switcher and link rules, per-app input sources, 23 more System Tools, microphone mute, a SoundSource-style mixer, 25 defect fixes and HomePod dropout work. Eleven branches were merged into one release; nothing was tried on a real trackpad, in the user's other apps or by listening to the HomePod.

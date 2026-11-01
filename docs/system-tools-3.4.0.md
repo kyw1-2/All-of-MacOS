@@ -12,7 +12,7 @@ is installed. On this MacBook Air that is 125 tools in 15 groups (OpenVPN Connec
 
 Results show as a toast at the bottom of the window: green when something worked, orange for a note while
 something runs, red with the reason when it didn't. The header's second line keeps the last result (hover it for
-the whole text). The ⋯ button in the toolbar has Floating Menus & Widgets…, Homebrew…, VPN Connections… and
+the whole text). The toolbar has a visible Homebrew button; the ⋯ button has Floating Menus & Widgets…, VPN Connections… and
 Show Weather….
 
 ### Homebrew (Raycast's Brew extension)
@@ -134,3 +134,29 @@ Network: only Open-Meteo for the weather card (after you turn it on) and whateve
 click Update, Upgrade, Install or Check Now. Background cost: none while a feature is off. The push-to-talk key
 monitor, the auto-mute launch observer and the microphone listeners exist only while their setting is on. The VPN
 tiles read `scutil --nc list` (and Tailscale at most every 20 s) only while the System Tools page is on screen.
+
+### Post-release Homebrew discovery correction (1 Nov 2026)
+
+Homebrew was included in the final 3.4.0 merge, not lost: engines `5b2414c`,
+UI `82d7424`, tests `c525f1f`, and polish `af5833f` are ancestors of release
+`40bff9b`. The running installation has that same source revision. The manager
+was reachable through the Homebrew tool group or the toolbar's More menu;
+the main command palette had only the formula website quicklink.
+
+The System Tools toolbar now has a labeled **Homebrew** button, also present
+when brew is missing so the existing missing-installation explanation can
+be reached. A **Check Again** button retries discovery after installation.
+The command palette has a native **Homebrew** entry (search `Homebrew`,
+`brew`, `outdated`, `doctor` or `홈브루`) that navigates to System Tools and
+opens the existing manager. The formula website quicklink remains separate.
+Checking is user initiated; upgrade, installation and cleanup keep their
+existing review flow. No package change or installation runs just from
+opening System Tools.
+
+Verified in a separate preview bundle using the compiled patch: the toolbar
+button opens the manager; from Workspace, searching Homebrew and choosing
+the native entry navigates to System Tools and opens the manager. Both
+showed Homebrew 7.0.11 and 45 outdated packages (42 formulae, 3 casks), matching
+the direct `HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --json=v2` result. No
+upgrade, cleanup, install or service change was executed. Preview exited;
+the installed 3.4.0 executable was not replaced.

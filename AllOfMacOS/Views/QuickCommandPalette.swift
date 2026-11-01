@@ -470,10 +470,24 @@ struct QuickCommandPalette: View {
                         shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
                         primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab })
         }
+        items.append(Self.homebrewItem {
+            close()
+            appState.selectedMainTab = .tools
+            HomebrewModel.shared.present(.outdated, refresh: true)
+        })
         items.append(PaletteItem(id: "go.settings", title: "Settings", subtitle: "Open All of MacOS Settings",
                                  icon: "gearshape", section: .navigation, shortcut: "⌘,",
                                  primary: PaletteAction(title: "Open") { close(); openSettings() }))
         return items
+    }
+
+    /// A native manager entry, distinct from the brew formula web quicklink.
+    /// Always discoverable; the sheet explains when Homebrew is not installed.
+    static func homebrewItem(open: @escaping () -> Void) -> PaletteItem {
+        PaletteItem(id: "go.homebrew", title: "Homebrew",
+                    subtitle: "System Tools · brew outdated packages, updates, services, doctor · 홈브루",
+                    icon: "mug", section: .navigation,
+                    primary: PaletteAction(title: "Open Homebrew", run: open))
     }
 
     // BTT / Raycast launcher: installed apps.

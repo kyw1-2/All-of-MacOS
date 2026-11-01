@@ -387,6 +387,7 @@ struct HomebrewSheet: View {
             if model.brew == nil {
                 AOMEmptyState("Homebrew isn't installed", systemImage: "mug",
                               message: "AOM looks for brew at /opt/homebrew/bin/brew and /usr/local/bin/brew.") {
+                    Button("Check Again") { model.present(model.tab, refresh: true) }
                     Button("Open brew.sh") { if let url = URL(string: "https://brew.sh") { NSWorkspace.shared.open(url) } }
                 }
             } else {

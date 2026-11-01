@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.4.1
+
+HomePod audio dropout smoothing now spans capture block boundaries, covers large input buffers and resets correctly when output routes change. Homebrew tools are easier to discover in System Tools and Workspace search. 130 related tests passed; listening tests on a physical HomePod remain pending. See CHANGELOG.md.
+
 ## Version 3.4.0
 
 A redesigned main window with a Productivity section: Folder Rules tidies folders like Hazel, Text Actions puts a PopClip-style bar over selected text, Files adds an Open and Save dialog helper and a Drop Shelf, and Focus runs focus sessions and quits idle apps. Also new: Screen Ruler (⇧⌘7), Click Hints (⇧⌘Space), a larger ⌘K palette with a window switcher and link rules, input sources per app, 23 more System Tools (Homebrew, VPN, PDF pages), microphone mute, 25 fixes and softer HomePod dropouts. See CHANGELOG.md and the docs/*-3.4.0.md guides.

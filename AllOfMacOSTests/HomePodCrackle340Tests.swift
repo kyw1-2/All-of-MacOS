@@ -14,95 +14,143 @@ final class HomePodCrackle340Tests: XCTestCase {
         (0..<frames).map { amplitude * Float(sin(2 * Double.pi * 1000 * Double(start + $0) / rate)) }
     }
 
-    /// One block through the softener: the block as it would be queued, and
-    /// whether any gain was written.
-    private func shape(_ softener: inout AudioDropoutSoftener, _ block: [Float]) -> (out: [Float], shaped: Bool) {
-        let gains = UnsafeMutablePointer<Float>.allocate(capacity: block.count)
-        defer { gains.deallocate() }
-        gains.initialize(repeating: 7, count: block.count)
-        let shaped = softener.shape(frames: block.count, sampleRate: rate, gains: gains) { (block[$0], block[$0]) }
-        return (shaped ? block.indices.map { block[$0] * gains[$0] } : block, shaped)
+    /// Preserve streaming state across arbitrary capture packet boundaries,
+    /// then drain just the fixed lookahead. No real audio device is touched.
+    private func shape(_ input: [Float], packet: Int = 128, rate: Double = 48000) -> (out: [Float], count: UInt64) {
+        let softener = AudioDropoutSoftener()
+        let work = UnsafeMutablePointer<Float>.allocate(capacity: packet * 2)
+        defer { work.deallocate() }
+        let delay = Int(rate * AudioDropoutSoftener.fadeSeconds) + AudioDropoutSoftener.minimumRun
+        var output: [Float] = []
+        var offset = 0
+        while offset < input.count + delay {
+            let count = min(packet, input.count + delay - offset)
+            softener.process(frames: count, sampleRate: rate, output: work) { index in
+                let frame = offset + index
+                let value: Float = frame < input.count ? input[frame] : 0
+                return (value, value)
+            }
+            output += (0..<count).map { work[$0 * 2] }
+            offset += count
+        }
+        return (Array(output.dropFirst(delay)), softener.softened)
     }
 
     private func largestStep(_ samples: [Float]) -> Float {
         zip(samples.dropFirst(), samples).map { abs($0 - $1) }.max() ?? 0
     }
 
-    func testAHoleInsideABlockBecomesADip() {
-        var block = sine(1024)
-        // 128 frames (one HomePod IO cycle) of exact zeros from a crest of the sine.
-        for frame in 396..<524 { block[frame] = 0 }
-        XCTAssertGreaterThan(largestStep(block), 0.4, "unshaped, the hole's edge is a step of about the amplitude")
-        var softener = AudioDropoutSoftener()
-        let result = shape(&softener, block)
-        XCTAssertTrue(result.shaped)
-        XCTAssertEqual(softener.softened, 1)
-        // The sine's own largest step is 2π · 1000 / 48000 · 0.5 ≈ 0.065.
-        XCTAssertLessThan(largestStep(result.out), 0.08)
-        XCTAssertEqual(result.out[250], block[250], "audio before the 2 ms fade is untouched")
-        XCTAssertEqual(result.out[700], block[700], "audio after the 2 ms fade-in is untouched")
+    func testDropoutAtEveryCallbackOffsetHasTwoSoftEdges() {
+        // Previously an exact callback boundary, or fewer than 32 zeros at
+        // the end of a callback, left a full-scale falling step.
+        for offset in 0..<128 {
+            var input = [Float](repeating: 0.5, count: 2048)
+            let start = 512 + offset
+            for index in start..<(start + 128) { input[index] = 0 }
+            let result = shape(input)
+            XCTAssertEqual(result.count, 1, "offset \(offset)")
+            XCTAssertLessThan(largestStep(Array(result.out[256..<1536])), 0.01, "offset \(offset)")
+            XCTAssertEqual(result.out[start - 97], 0.5)
+            XCTAssertEqual(result.out[start + 128 + 96], 0.5)
+        }
     }
 
-    func testAudioWithoutAHoleIsLeftAlone() {
-        var softener = AudioDropoutSoftener()
-        XCTAssertFalse(shape(&softener, sine(1024, start: 12)).shaped)
-        var nearlyHole = sine(1024, start: 12)
-        for frame in 396..<404 { nearlyHole[frame] = 0 }
-        XCTAssertFalse(shape(&softener, nearlyHole).shaped, "fewer than 32 zeros are not a dropout")
-        XCTAssertEqual(softener.softened, 0)
+    func testPacketSizeDoesNotChangeAudio() {
+        var input = sine(8192, start: 12)
+        for hole in [127..<255, 1020..<1148, 1536..<1664, 1710..<1838, 4096..<4224] {
+            for frame in hole { input[frame] = 0 }
+        }
+        let reference = shape(input, packet: 8192)
+        XCTAssertLessThan(largestStep(reference.out), 0.08)
+        for packet in [1, 17, 64, 128, 240, 480, 1024] {
+            let result = shape(input, packet: packet)
+            XCTAssertEqual(result.out, reference.out, "packet \(packet)")
+            XCTAssertEqual(result.count, reference.count)
+        }
     }
 
-    func testQuietAudioRunningIntoZerosIsLeftAlone() {
-        var softener = AudioDropoutSoftener()
-        var block = sine(1024, amplitude: 0.0005)   // −66 dBFS, the end of a decoder's fade-out
-        for frame in 512..<640 { block[frame] = 0 }
-        XCTAssertFalse(shape(&softener, block).shaped)
+    func testAudioWithoutAHoleIsBitExactAfterTheFixedDelay() {
+        let input = sine(4096, start: 12)
+        let result = shape(input)
+        // The artificial end of the test is itself a pause: exclude its fade.
+        XCTAssertEqual(Array(result.out.dropLast(96)), Array(input.dropLast(96)))
+        XCTAssertEqual(result.count, 0)
     }
 
-    func testAPauseEndsSoftlyAndTheNextSoundStartsAsItIs() {
-        var softener = AudioDropoutSoftener()
-        var first = sine(1024)
-        for frame in 516..<1024 { first[frame] = 0 }
-        XCTAssertGreaterThan(largestStep(first), 0.4)
-        let stop = shape(&softener, first)
-        XCTAssertTrue(stop.shaped, "an abrupt stop is faded out")
-        XCTAssertLessThan(largestStep(stop.out), 0.08)
-        // 120 ms more of silence: a pause, not a dropout.
-        for _ in 0..<5 { XCTAssertFalse(shape(&softener, [Float](repeating: 0, count: 1152)).shaped) }
-        XCTAssertFalse(shape(&softener, sine(1024, start: 12)).shaped, "what follows a pause is not faded in")
-        XCTAssertEqual(softener.softened, 0)
+    func testShortZeroRunsAndQuietAudioAreNotMistakenForDropouts() {
+        var input = sine(2048, start: 12)
+        for frame in 396..<404 { input[frame] = 0 }
+        let short = shape(input)
+        XCTAssertEqual(Array(short.out.dropLast(96)), Array(input.dropLast(96)))
+        XCTAssertEqual(short.count, 0)
+        var quiet = sine(2048, amplitude: 0.0005)
+        for frame in 512..<640 { quiet[frame] = 0 }
+        XCTAssertEqual(shape(quiet).out, quiet)
     }
 
-    func testAHoleAcrossTwoBlocksFadesBackInTheNextOne() {
-        var softener = AudioDropoutSoftener()
-        var first = sine(1024)
-        for frame in 960..<1024 { first[frame] = 0 }
-        var second = sine(1024, start: 1024)
-        for frame in 0..<64 { second[frame] = 0 }
-        XCTAssertGreaterThan(largestStep(first + second), 0.4)
-        let a = shape(&softener, first)
-        let b = shape(&softener, second)
-        XCTAssertTrue(a.shaped, "the edge into the hole is faded out")
-        XCTAssertTrue(b.shaped, "the edge out of it is faded in")
-        XCTAssertEqual(softener.softened, 1)
-        XCTAssertLessThan(largestStep(a.out + b.out), 0.08)
+    func testLongPauseFadesOutButLeavesTheNextSoundAlone() {
+        let input = [Float](repeating: 0.5, count: 512)
+            + [Float](repeating: 0, count: 6000)
+            + [Float](repeating: 0.5, count: 512)
+        let result = shape(input)
+        XCTAssertLessThan(largestStep(Array(result.out[256..<1024])), 0.01)
+        XCTAssertEqual(result.out[6512], 0.5)
+        XCTAssertEqual(result.count, 0)
     }
 
-    func testTheTransportShapesADropoutBeforeItIsQueued() {
+    func testLookaheadScalesWithRateAndHandlesStereoIndependently() {
+        for rate in [8000.0, 44100, 48000, 96000, 192000, 384000] {
+            let softener = AudioDropoutSoftener()
+            let count = 4096
+            let output = UnsafeMutablePointer<Float>.allocate(capacity: count * 2)
+            defer { output.deallocate() }
+            softener.process(frames: count, sampleRate: rate, output: output) { frame in
+                (1024..<1152).contains(frame) ? (0, 0) : (0.5, -0.25)
+            }
+            let delay = Int(rate * 0.002) + 32
+            XCTAssertEqual(softener.delayFrames, delay)
+            XCTAssertEqual(softener.softened, 1)
+            for frame in 0..<count {
+                XCTAssertEqual(output[frame * 2 + 1], -output[frame * 2] / 2)
+                if frame < delay { XCTAssertEqual(output[frame * 2], 0) }
+            }
+            let edge = (delay + 1024 - Int(rate * 0.002) - 1)..<(delay + 1152 + Int(rate * 0.002) + 1)
+            XCTAssertLessThan(largestStep(edge.map { output[$0 * 2] }), 0.05)
+        }
+    }
+
+    func testResetAndRateChangeNeverReplayDelayedAudio() {
+        let softener = AudioDropoutSoftener()
+        let output = UnsafeMutablePointer<Float>.allocate(capacity: 2048)
+        defer { output.deallocate() }
+        softener.process(frames: 1024, sampleRate: rate, output: output) { _ in (0.5, 0.5) }
+        softener.reset()
+        softener.process(frames: 1024, sampleRate: rate, output: output) { _ in (0, 0) }
+        XCTAssertTrue((0..<2048).allSatisfy { output[$0] == 0 })
+        softener.process(frames: 1024, sampleRate: rate, output: output) { _ in (0.5, 0.5) }
+        softener.process(frames: 1024, sampleRate: 44100, output: output) { _ in (0, 0) }
+        XCTAssertTrue((0..<2048).allSatisfy { output[$0] == 0 })
+    }
+
+    func testTransportProcessesHolesBeyondItsScratchLimitAndResetsOnRouteChange() {
         let transport = AppAudioTransport(sampleRate: rate, bufferedForAirPlay: true)
-        let wave = sine(1024)
-        var interleaved = [Float](repeating: 0, count: 2048)
-        for frame in 0..<1024 where !(396..<524).contains(frame) {
-            interleaved[frame * 2] = wave[frame]
-            interleaved[frame * 2 + 1] = wave[frame]
+        var input = [Float](repeating: 0.5, count: 20000 * 2)
+        for frame in 17000..<17128 { input[frame * 2] = 0; input[frame * 2 + 1] = 0 }
+        func capture() {
+            input.withUnsafeMutableBytes { raw in
+                var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 2,
+                                           mDataByteSize: UInt32(raw.count), mData: raw.baseAddress))
+                transport.capture(&list)
+            }
         }
-        interleaved.withUnsafeMutableBytes { raw in
-            var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 2,
-                                       mDataByteSize: UInt32(raw.count), mData: raw.baseAddress))
-            transport.capture(&list)
-        }
+        capture()
         XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 1)
-        XCTAssertEqual(transport.statistics["capturedFrames"] as? UInt64, 1024, "every frame is still queued")
+        XCTAssertEqual(transport.statistics["capturedFrames"] as? UInt64, 20000)
+        XCTAssertEqual(transport.statistics["dropoutLookaheadFrames"] as? UInt64, 128)
+        transport.setBufferedForAirPlay(false)
+        capture()
+        XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 1)
+        XCTAssertEqual(transport.statistics["dropoutLookaheadFrames"] as? UInt64, 0)
     }
 
     func testAQueueKeepsItsBuffersResidentAndReleasesThem() {

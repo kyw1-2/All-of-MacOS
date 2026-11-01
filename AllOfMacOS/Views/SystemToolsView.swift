@@ -107,6 +107,13 @@ struct SystemToolsView: View {
         .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
         .toolbar {
             ToolbarItem(placement: .automatic) {
+                Button { homebrew.present(.outdated, refresh: true) } label: {
+                    Label("Homebrew", systemImage: "mug")
+                }
+                .labelStyle(.titleAndIcon)
+                .help("Check outdated packages, installed packages, services and Brew Doctor")
+            }
+            ToolbarItem(placement: .automatic) {
                 Button { showActionLibrary.toggle() } label: {
                     Label(showActionLibrary ? "Hide All Actions" : "All Actions", systemImage: "square.grid.3x3")
                 }
@@ -118,9 +125,6 @@ struct SystemToolsView: View {
                     // scope menu has "Edit Activation Groups…".
                     Button("Floating Menus & Widgets…") { FloatingMenuController.shared.edit() }
                     Divider()
-                    if SystemToolAvailability.shared.hasHomebrew {
-                        Button("Homebrew…") { model.run(.brewOutdated) }
-                    }
                     Button("VPN Connections…") { model.run(.vpn) }
                     if !weather.isOn {
                         Button("Show Weather…") { choosingWeather = true }
@@ -128,7 +132,7 @@ struct SystemToolsView: View {
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
-                .help("Floating menus, Homebrew, VPN and the weather card")
+                .help("Floating menus, VPN and the weather card")
             }
         }
         .sheet(item: $model.cleanupReview) { review in

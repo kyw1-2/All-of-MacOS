@@ -19,12 +19,15 @@ final class AppAudioTransport {
     private let scratch: UnsafeMutablePointer<Float>
     /// 3.4.0 (HomePod crackle): capture-thread state that turns a dropout in
     /// the app's own audio into a short dip (see `AudioDropoutSoftener`), its
-    /// gain scratch (wired) and how many it shaped.
-    private var softener = AudioDropoutSoftener()
+    /// stereo scratch (wired) and how many it shaped.
+    private let softener = AudioDropoutSoftener()
     private static let softenerFrames = 16384
-    private let softenerGains: UnsafeMutablePointer<Float>
-    private let softenerGainsWired: Bool
+    private let softenerScratch: UnsafeMutablePointer<Float>
+    private let softenerScratchWired: Bool
     private let softenedDropouts = AudioAtomicCounter()
+    private let captureGeneration = AudioAtomicCounter()
+    private var softenerGeneration: UInt64 = 0
+    private let softenerDelay = AudioAtomicCounter()
     private let rateBits: AudioAtomicCounter
     private let remote: AudioAtomicCounter
     private let largestPacket = AudioAtomicCounter()
@@ -93,25 +96,27 @@ final class AppAudioTransport {
         queue = StereoPCMQueue(capacity: 65536, events: events)
         scratch = .allocate(capacity: capacity * 2)
         scratch.initialize(repeating: 0, count: capacity * 2)
-        softenerGains = .allocate(capacity: Self.softenerFrames)
-        softenerGains.initialize(repeating: 1, count: Self.softenerFrames)
-        softenerGainsWired = AudioRealtimeMemory.wire(softenerGains, count: Self.softenerFrames)
+        softenerScratch = .allocate(capacity: Self.softenerFrames * 2)
+        softenerScratch.initialize(repeating: 0, count: Self.softenerFrames * 2)
+        softenerScratchWired = AudioRealtimeMemory.wire(softenerScratch, count: Self.softenerFrames * 2)
     }
     deinit {
         scratch.deallocate()
-        AudioRealtimeMemory.unwire(softenerGains, count: Self.softenerFrames, wired: softenerGainsWired)
-        softenerGains.deallocate()
+        AudioRealtimeMemory.unwire(softenerScratch, count: Self.softenerFrames * 2, wired: softenerScratchWired)
+        softenerScratch.deallocate()
     }
 
     func updateSampleRate(_ rate: Double) {
         guard rate.isFinite, (8000...384000).contains(rate), rate.bitPattern != rateBits.load() else { return }
         rateBits.store(rate.bitPattern)
+        captureGeneration.add()
         queue.requestClear()
     }
     func setBufferedForAirPlay(_ enabled: Bool) {
         let value: UInt64 = enabled ? 1 : 0
         guard value != remote.load() else { return }
         remote.store(value)
+        captureGeneration.add()
         queue.requestClear()
     }
     /// The level the queue steers to.
@@ -179,6 +184,7 @@ final class AppAudioTransport {
         result["handovers"] = handovers.load()
         result["handoverTakeovers"] = handoverTakeovers.load()
         result["softenedDropouts"] = softenedDropouts.load()
+        result["dropoutLookaheadFrames"] = softenerDelay.load()
         return result
     }
 
@@ -211,36 +217,47 @@ final class AppAudioTransport {
         // This is not capture activity: counting it would arm the output-stall
         // watchdog while the player is paused or replacing its audio stream.
         guard frames > 0 else { return }
+        let generation = captureGeneration.load()
         let rate = Double(bitPattern: rateBits.load())
-        let gapLimit = remote.load() == 1 ? max(1, Double(frames) / rate * 4) : 0.25
+        let airPlay = remote.load() == 1
+        if generation != softenerGeneration {
+            softener.reset()
+            softenerGeneration = generation
+        }
+        let gapLimit = airPlay ? max(1, Double(frames) / rate * 4) : 0.25
         let now = mach_absolute_time(), previous = captureTick.load()
         if previous > 0 && Double(now - previous) * secondsPerTick > gapLimit {
             queue.requestClear()
             softener.reset()
         }
         largestPacket.raise(to: UInt64(frames))
-        // A dropout in the app's own audio (its IO missed one of the
-        // HomePod's 128-frame cycles) arrives as exact zeros; on AirPlay
-        // routes its edges are shaped before it is queued (3.4.0).
-        let shapedFrames = min(frames, Self.softenerFrames)
         let softenedBefore = softener.softened
-        let gains = softenerGains
-        let shaped = remote.load() == 1 && softener.shape(frames: shapedFrames, sampleRate: rate, gains: gains) { frame in
-            (left[planar ? frame : frame * channels],
-             planar ? right[frame] : left[frame * channels + min(1, channels - 1)])
-        }
-        if softener.softened != softenedBefore { softenedDropouts.add(softener.softened - softenedBefore) }
         var peak: Float = 0
-        queue.write(frames: frames) { frame in
-            var l = left[planar ? frame : frame * channels]
-            var r = planar ? right[frame] : left[frame * channels + min(1, channels - 1)]
-            if shaped, frame < shapedFrames {
-                let gain = gains[frame]
-                l *= gain; r *= gain
+        // Slice arbitrarily large callbacks without skipping softener state.
+        // The bounded lookahead belongs to the producer, never to queue memory
+        // that the realtime consumer may already be reading.
+        var offset = 0
+        while offset < frames {
+            let count = min(frames - offset, Self.softenerFrames)
+            if airPlay {
+                softener.process(frames: count, sampleRate: rate, output: softenerScratch) { index in
+                    let frame = offset + index
+                    return (left[planar ? frame : frame * channels],
+                            planar ? right[frame] : left[frame * channels + min(1, channels - 1)])
+                }
             }
-            peak = max(peak, max(l.isFinite ? abs(l) : 0, r.isFinite ? abs(r) : 0))
-            return (l, r)
+            queue.write(frames: count) { index in
+                let frame = offset + index
+                let l = airPlay ? softenerScratch[index * 2] : left[planar ? frame : frame * channels]
+                let r = airPlay ? softenerScratch[index * 2 + 1]
+                    : (planar ? right[frame] : left[frame * channels + min(1, channels - 1)])
+                peak = max(peak, max(l.isFinite ? abs(l) : 0, r.isFinite ? abs(r) : 0))
+                return (l, r)
+            }
+            offset += count
         }
+        softenerDelay.store(airPlay ? UInt64(softener.delayFrames) : 0)
+        if softener.softened != softenedBefore { softenedDropouts.add(softener.softened - softenedBefore) }
         peakBits.store(UInt64(peak.bitPattern)); captureTick.store(now)
     }
     func render(frames: Int, output: UnsafeMutablePointer<AudioBufferList>, mixer: MixerBox, allowWaiting: Bool = false,
