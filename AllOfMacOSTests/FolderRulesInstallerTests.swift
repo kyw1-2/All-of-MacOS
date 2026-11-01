@@ -116,6 +116,7 @@ final class FolderRulesInstallerTests: XCTestCase {
         let applications = try kit.folder("Applications")
         try FileManager.default.createDirectory(at: applications.appendingPathComponent("Ice.app/Contents", isDirectory: true),
                                                 withIntermediateDirectories: true)
+        try writeBundleMetadata(for: applications.appendingPathComponent("Ice.app"))
         try Data("old".utf8).write(to: applications.appendingPathComponent("Ice.app/Contents/old.txt"))
         let image = try kit.writeSettled("Ice.dmg", Data(repeating: 0, count: 512))
         var asked: [String] = []
@@ -141,10 +142,29 @@ final class FolderRulesInstallerTests: XCTestCase {
         XCTAssertTrue(step.record.summary.contains("the old copy is in the Trash"))
     }
 
+    func testSameNameDifferentBundleIsNeverReplaced() throws {
+        let volume = try makeVolume(apps: ["Ice.app"])
+        let applications = try kit.folder("Applications")
+        let existing = applications.appendingPathComponent("Ice.app")
+        try writeBundleMetadata(for: existing, bundleID: "org.other.publisher")
+        let image = try kit.writeSettled("Ice.dmg", Data(repeating: 0, count: 512))
+        var asked = false
+        let environment = kit.environment(run: { self.answer($0, volume: volume) },
+            confirmReplace: { _ in asked = true; return .replace }, applications: applications)
+        let step = try FolderRulesDiskImageInstaller.install(image,
+            options: FolderRuleInstallOptions(trashDiskImage: true),
+            environment: environment, interactive: false)
+        XCTAssertEqual(step.record.result, .skipped)
+        XCTAssertFalse(asked)
+        XCTAssertEqual(Bundle(url: existing)?.bundleIdentifier, "org.other.publisher")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: image.path), "source DMG remains")
+    }
+
     func testARunningAppALicenseOrAFailedAttachStopsTheInstall() throws {
         let volume = try makeVolume(apps: ["Ice.app"])
         let applications = try kit.folder("Applications")
         try FileManager.default.createDirectory(at: applications.appendingPathComponent("Ice.app", isDirectory: true), withIntermediateDirectories: true)
+        try writeBundleMetadata(for: applications.appendingPathComponent("Ice.app"))
         let image = try kit.writeSettled("Ice.dmg", Data(repeating: 0, count: 512))
         var environment = kit.environment(run: { self.answer($0, volume: volume) }, confirmReplace: { _ in .replace }, applications: applications)
         environment.isAppRunning = { _ in true }
@@ -199,12 +219,21 @@ final class FolderRulesInstallerTests: XCTestCase {
         for app in apps {
             let contents = volume.appendingPathComponent("\(app)/Contents", isDirectory: true)
             try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-            try Data("<plist/>".utf8).write(to: contents.appendingPathComponent("Info.plist"))
+            try writeBundleMetadata(for: volume.appendingPathComponent(app))
         }
         try FileManager.default.createSymbolicLink(at: volume.appendingPathComponent("Applications"),
                                                    withDestinationURL: URL(fileURLWithPath: "/Applications"))
         if let package { try Data("xar!".utf8).write(to: volume.appendingPathComponent(package)) }
         return volume
+    }
+
+    private func writeBundleMetadata(for app: URL, bundleID: String? = nil) throws {
+        let contents = app.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let id = bundleID ?? "test.aom.\(app.deletingPathExtension().lastPathComponent.replacingOccurrences(of: " ", with: ""))"
+        let info = ["CFBundleIdentifier": id, "CFBundlePackageType": "APPL", "CFBundleExecutable": "test"]
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
     }
 
     /// Stands in for hdiutil (never run in tests) and copies for ditto.

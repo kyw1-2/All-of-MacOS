@@ -107,6 +107,23 @@ enum AppAudioPreferences {
     }
 }
 
+/// Counts only actual transport underflows/trim events, never exact-zero PCM
+/// samples: naturally quiet music must not trigger a mute/tap restart.
+struct AudioCrackleRecoveryPolicy {
+    private var previous: (underruns: UInt64, trims: UInt64, captureGaps: UInt64)?
+
+    mutating func observe(underruns: UInt64, trims: UInt64, captureGaps: UInt64,
+                          active: Bool) -> Bool {
+        defer { previous = (underruns, trims, captureGaps) }
+        guard active, let previous,
+              underruns >= previous.underruns, trims >= previous.trims,
+              captureGaps >= previous.captureGaps else { return false }
+        return underruns - previous.underruns >= 3 ||
+               trims - previous.trims >= 2 ||
+               captureGaps - previous.captureGaps >= 3
+    }
+}
+
 @available(macOS 14.2, *)
 final class AppAudioEngine {
     static let shared = AppAudioEngine()
@@ -137,6 +154,7 @@ final class AppAudioEngine {
         var eventSource: AudioEventLog.Source?
         let createdAt = ProcessInfo.processInfo.systemUptime
         var watchdog = AudioActivityWatchdog()
+        var cracklePolicy = AudioCrackleRecoveryPolicy()
 
         init(pid: pid_t, bundleID: String, tapID: AudioObjectID, aggregateID: AudioObjectID,
              procID: AudioDeviceIOProcID?, box: Unmanaged<MixerBox>, gain: Float, muted: Bool) {
@@ -195,6 +213,8 @@ final class AppAudioEngine {
     private static let airPlayRetryDelays: [TimeInterval] = [0.75, 3, 10]
     private var airPlayAutoRetries: [String: (count: Int, lastAttempt: TimeInterval)] = [:]
     private var recoveringAirPlayUIDs = Set<String>()
+    private var crackleRestarts: [TimeInterval] = []
+    private var crackleRestartPending = false
     var airPlayRecovering: Bool { !recoveringAirPlayUIDs.isEmpty }
     private var bypassedPIDs = Set<pid_t>()
     private var appIdentitySnapshot: [AppState] = []
@@ -344,6 +364,7 @@ final class AppAudioEngine {
         }
         // A stopped remote receiver cannot retain muting taps. Check before
         // any transient tap-format / process queries that might return early.
+        var crackleDetected = false
         for session in Array(sessions.values) {
             if let token = session.sourceToken,
                let message = MainActor.assumeIsolated({ SharedOutputRenderer.shared.airPlayFailure(token) }) {
@@ -358,6 +379,17 @@ final class AppAudioEngine {
                     Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
                 }
                 let activity = transport.activity
+                if session.sourceToken?.isAirPlay == true {
+                    let counters = transport.eventCounters
+                    if session.cracklePolicy.observe(
+                        underruns: counters["app.underruns"] ?? 0,
+                        trims: counters["app.trims"] ?? 0,
+                        captureGaps: counters["app.captureGaps"] ?? 0,
+                        active: playing && activity.recent && activity.rendering &&
+                                ProcessInfo.processInfo.systemUptime - session.createdAt > 2) {
+                        crackleDetected = true
+                    }
+                }
                 if let failure = session.watchdog.failure(playing: playing, capturing: activity.recent,
                     rendering: activity.rendering, now: ProcessInfo.processInfo.systemUptime) {
                     let message = failure == .capture
@@ -368,6 +400,7 @@ final class AppAudioEngine {
                 }
             }
         }
+        if crackleDetected && restartAppAudioAfterCrackle() { return }
         // Playback/process-object disappearance is not application termination.
         for pid in Array(sessions.keys) {
             if NSRunningApplication(processIdentifier: pid)?.isTerminated != false { stop(pid: pid) }
@@ -1039,6 +1072,32 @@ final class AppAudioEngine {
 
     /// All live sessions (for master-EQ fan-out).
     func sessionsAll() -> [Session] { Array(sessions.values) }
+
+    /// Immediate, bounded AppAudio OFF → ON for confirmed AirPlay transport
+    /// crackle. The UI state is restored; source volume/EQ preferences survive.
+    @discardableResult func restartAppAudioAfterCrackle() -> Bool {
+        guard isEnabled, !crackleRestartPending else { return false }
+        let now = ProcessInfo.processInfo.systemUptime
+        crackleRestarts.removeAll { now - $0 > 60 }
+        guard crackleRestarts.count < 4,
+              now - (crackleRestarts.last ?? -.infinity) >= 8 else { return false }
+        crackleRestarts.append(now)
+        crackleRestartPending = true
+        GestureLog.shared.logFromAnyThread("AirPlay crackle counters increased; cycling AppAudio OFF → ON", level: .error)
+        isEnabled = false
+        // Allow CoreAudio to tear down the muted taps and the sender before
+        // reattaching; do not spin a restart on the realtime callback.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            self.crackleRestartPending = false
+            self.errors.removeAll()
+            self.retryAfter.removeAll()
+            self.failedProcessIDs.removeAll()
+            self.airPlayCaptureFailures.removeAll()
+            self.isEnabled = true
+        }
+        return true
+    }
 
     func stopAll() {
         pendingAirPlayPIDs.removeAll()

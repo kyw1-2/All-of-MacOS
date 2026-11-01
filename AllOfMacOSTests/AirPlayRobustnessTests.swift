@@ -246,6 +246,16 @@ final class AirPlayRobustnessTests: XCTestCase {
         }
     }
 
+    func testFirstCorrelatedHALFaultRequestsImmediateAppAudioCycle() {
+        var evidence = AirPlayOverloadRecoveryEvidence()
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 20, startedAt: 0))
+        XCTAssertFalse(evidence.lastEpisodeObserved)
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256, now: 20.1, startedAt: 0))
+        XCTAssertTrue(evidence.lastEpisodeObserved, "single confirmed HAL dropout requests immediate AppAudio cycle")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256, now: 20.2, startedAt: 0))
+        XCTAssertFalse(evidence.lastEpisodeObserved, "same episode cannot restart twice")
+    }
+
     func testSustainedCorrelatedFailuresRecoverOnceAndConsumeEvidence() {
         var evidence = AirPlayOverloadRecoveryEvidence()
         XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256, now: 20, startedAt: 0))

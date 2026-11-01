@@ -6,6 +6,17 @@
 /// Constructed before IO starts; process/reset run only on the capture thread.
 /// No allocation or locks in either operation. The stereo delay is wired.
 final class AudioDropoutSoftener {
+    /// 3.4.8: the heuristic detector below treats any run of `minimumRun`
+    /// exact zeros that follows a sample above `discontinuityThreshold` as a
+    /// dropout. Live 3.4.7 diagnostics showed it firing about six times a
+    /// second on ordinary Chrome audio while the capture timeline reported
+    /// zero missing packets: real content produces such runs (gated speech,
+    /// quantised quiet passages, track boundaries) and every firing modulated
+    /// the waveform for 4 ms, which is the flutter the listener hears. Only a
+    /// timestamp-confirmed gap in `AppAudioTransport` may shape audio now.
+    /// The heuristic stays available for the synthetic tests that pin its
+    /// historical behaviour (`shapesUnverifiedHoles: true`).
+    static let shapesUnverifiedHolesByDefault = false
     static let minimumRun = 32
     static let maximumHoleSeconds = 0.085
     static let fadeSeconds = 0.002
@@ -30,7 +41,12 @@ final class AudioDropoutSoftener {
     private(set) var delayFrames = 128
     private(set) var softened: UInt64 = 0
 
-    init() {
+    /// Whether unverified exact-zero runs are shaped. Production is off
+    /// (3.4.8); see `shapesUnverifiedHolesByDefault`.
+    private let shapesUnverifiedHoles: Bool
+
+    init(shapesUnverifiedHoles: Bool = AudioDropoutSoftener.shapesUnverifiedHolesByDefault) {
+        self.shapesUnverifiedHoles = shapesUnverifiedHoles
         samples = .allocate(capacity: Self.capacity * 2)
         samples.initialize(repeating: 0, count: Self.capacity * 2)
         wired = AudioRealtimeMemory.wire(samples, count: Self.capacity * 2)
@@ -60,6 +76,8 @@ final class AudioDropoutSoftener {
             samples[slot * 2] *= gain
             samples[slot * 2 + 1] *= gain
         }
+        // A timestamp-confirmed hole is the only shaping production performs.
+        softened += 1
     }
 
     func fadeInNextAudio() { fadeInRemaining = fade }
@@ -85,10 +103,12 @@ final class AudioDropoutSoftener {
             let peak = max(abs(left), abs(right))
             var gain: Float = 1
             if left == 0 && right == 0 {
-                if run == 0 { runFollowsAudio = lastSamplePeak >= Self.discontinuityThreshold }
+                if shapesUnverifiedHoles, run == 0 {
+                    runFollowsAudio = lastSamplePeak >= Self.discontinuityThreshold
+                }
                 // Saturate: an indefinitely idle app must never overflow.
                 run = min(maximumHole + 1, run + 1)
-                if run == Self.minimumRun && runFollowsAudio {
+                if shapesUnverifiedHoles, run == Self.minimumRun, runFollowsAudio {
                     // All these frames are still in the delay, even if the
                     // detection crossed several callbacks. Never edit the queue.
                     for step in 0..<min(fade, max(0, primed - (Self.minimumRun - 1))) {
@@ -104,7 +124,8 @@ final class AudioDropoutSoftener {
                 if run >= Self.minimumRun { fadeInRemaining = 0 }
                 else if fadeInRemaining > 0 { fadeInRemaining -= 1 }
             } else {
-                if run >= Self.minimumRun && run <= maximumHole && runFollowsAudio && peak >= Self.discontinuityThreshold {
+                if shapesUnverifiedHoles, run >= Self.minimumRun, run <= maximumHole,
+                   runFollowsAudio, peak >= Self.discontinuityThreshold {
                     softened += 1
                     fadeInRemaining = fade
                 }

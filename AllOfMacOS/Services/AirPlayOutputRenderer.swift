@@ -39,9 +39,13 @@ struct AirPlayOverloadRecoveryEvidence {
     private var severeGapAt: TimeInterval = -.infinity
     private var episodes: [TimeInterval] = []
     private var lastObservation: TimeInterval = -.infinity
+    /// One correlated overload + missed HAL cycle, even when the stronger
+    /// sustained-episode threshold has not been reached.
+    private(set) var lastEpisodeObserved = false
 
     mutating func observe(overloads: UInt64, gaps: UInt64, gapFrames: UInt64,
                           now: TimeInterval, startedAt: TimeInterval) -> Bool {
+        lastEpisodeObserved = false
         guard now.isFinite, startedAt.isFinite else { return false }
         if now < lastObservation || overloads < seenOverloads || gaps < seenGaps || gapFrames < seenGapFrames {
             overloadAt = -.infinity
@@ -68,6 +72,7 @@ struct AirPlayOverloadRecoveryEvidence {
         overloadAt = -.infinity
         severeGapAt = -.infinity
         episodes.append(now)
+        lastEpisodeObserved = true
         guard episodes.count >= Self.requiredEpisodes else { return false }
         episodes.removeAll(keepingCapacity: true)
         return true
@@ -726,6 +731,17 @@ final class AirPlayOutputRenderer {
         let unstable = recoveryEvidence.observe(overloads: processorOverloads.load(),
             gaps: bridge.deviceCycleGaps, gapFrames: bridge.deviceGapFrames,
             now: uptime, startedAt: startedAt)
+        if recoveryEvidence.lastEpisodeObserved, case .ready = state, !bus.hasNoLiveSources {
+            // A single confirmed HAL deadline failure can leave crackling
+            // audible indefinitely. Restore the user's AppAudio OFF→ON path
+            // rather than waiting for three faults; the engine owns its rate
+            // limit and all real teardown runs on the main queue.
+            DispatchQueue.main.async {
+                if #available(macOS 14.2, *) {
+                    AppAudioEngine.shared.restartAppAudioAfterCrackle()
+                }
+            }
+        }
         if unstable {
             if case .ready = state, !bus.hasNoLiveSources, permitsAutomaticRecovery(now: uptime) {
                 AudioEventLog.shared.record(.outputAutoRecovery, source: eventName,

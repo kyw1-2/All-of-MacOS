@@ -265,7 +265,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 continue
             }
             if link.isFileURL {
-                Task { @MainActor in self.openLocalDocument(link) }
+                if link.pathExtension.lowercased() == "dmg" {
+                    Task { @MainActor in DMGQuickInstaller.open(link) }
+                } else {
+                    Task { @MainActor in self.openLocalDocument(link) }
+                }
                 continue
             }
             if let command = AOMAutomationLink.parse(link) {

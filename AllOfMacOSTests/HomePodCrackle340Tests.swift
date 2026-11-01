@@ -16,8 +16,9 @@ final class HomePodCrackle340Tests: XCTestCase {
 
     /// Preserve streaming state across arbitrary capture packet boundaries,
     /// then drain just the fixed lookahead. No real audio device is touched.
-    private func shape(_ input: [Float], packet: Int = 128, rate: Double = 48000) -> (out: [Float], count: UInt64) {
-        let softener = AudioDropoutSoftener()
+    private func shape(_ input: [Float], packet: Int = 128, rate: Double = 48000,
+                       shapesUnverifiedHoles: Bool = true) -> (out: [Float], count: UInt64) {
+        let softener = AudioDropoutSoftener(shapesUnverifiedHoles: shapesUnverifiedHoles)
         let work = UnsafeMutablePointer<Float>.allocate(capacity: packet * 2)
         defer { work.deallocate() }
         let delay = Int(rate * AudioDropoutSoftener.fadeSeconds) + AudioDropoutSoftener.minimumRun
@@ -122,7 +123,7 @@ final class HomePodCrackle340Tests: XCTestCase {
 
     func testLookaheadScalesWithRateAndHandlesStereoIndependently() {
         for rate in [8000.0, 44100, 48000, 96000, 192000, 384000] {
-            let softener = AudioDropoutSoftener()
+            let softener = AudioDropoutSoftener(shapesUnverifiedHoles: true)
             let count = 4096
             let output = UnsafeMutablePointer<Float>.allocate(capacity: count * 2)
             defer { output.deallocate() }
@@ -166,13 +167,68 @@ final class HomePodCrackle340Tests: XCTestCase {
             }
         }
         capture()
-        XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 1)
+        // 3.4.8: the transport runs the default (production) softener, which
+        // shapes only timestamp-confirmed gaps. An exact-zero run inside a
+        // contiguous callback is content, so nothing is shaped and nothing is
+        // counted; the large-callback accounting below is what this pins.
+        XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 0)
         XCTAssertEqual(transport.statistics["capturedFrames"] as? UInt64, 20000)
         XCTAssertEqual(transport.statistics["dropoutLookaheadFrames"] as? UInt64, 128)
         transport.setBufferedForAirPlay(false)
         capture()
-        XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 1)
+        XCTAssertEqual(transport.statistics["softenedDropouts"] as? UInt64, 0)
         XCTAssertEqual(transport.statistics["dropoutLookaheadFrames"] as? UInt64, 0)
+    }
+
+    func testProductionSoftenerNeverShapesUnverifiedZeroRuns() {
+        // 3.4.8: live 3.4.7 evidence showed 7,065 shappings in 19 minutes
+        // (~6.1 Hz) while the capture timeline reported zero missing packets.
+        // A hard 0.5 -> 0 step inside contiguous source audio is therefore not
+        // proof of a missed IO cycle, and the production configuration must
+        // leave it bit-exact behind the fixed lookahead delay.
+        var hardStep = [Float](repeating: 0.5, count: 4096)
+        for frame in 1024..<1152 { hardStep[frame] = 0 }
+        let stepResult = shape(hardStep, shapesUnverifiedHoles: false)
+        XCTAssertEqual(stepResult.count, 0)
+        XCTAssertEqual(stepResult.out, hardStep)
+
+        // Natural pauses, quiet passages and long rests likewise pass through.
+        var quiet = sine(4096, amplitude: 0.0005)
+        for frame in 512..<900 { quiet[frame] = 0 }
+        XCTAssertEqual(shape(quiet, shapesUnverifiedHoles: false).out, quiet)
+
+        var rest = [Float](repeating: 0.4, count: 1024)
+            + [Float](repeating: 0, count: 3000)
+            + [Float](repeating: 0.4, count: 1024)
+        XCTAssertEqual(shape(rest, shapesUnverifiedHoles: false).out, rest)
+
+        // Packet segmentation does not change that decision.
+        for packet in [1, 17, 128, 1024] {
+            XCTAssertEqual(shape(hardStep, packet: packet, shapesUnverifiedHoles: false).out, hardStep,
+                           "packet \(packet)")
+        }
+    }
+
+    func testProductionSoftenerStillShapesTimestampConfirmedGaps() {
+        // The verified path (AppAudioTransport, capture timeline) keeps both
+        // edges soft and counts one shaping per confirmed hole.
+        let softener = AudioDropoutSoftener()
+        let buffer = UnsafeMutablePointer<Float>.allocate(capacity: 8192)
+        defer { buffer.deallocate() }
+        var heard: [Float] = []
+        func process(_ count: Int, _ value: Float) {
+            softener.process(frames: count, sampleRate: rate, output: buffer) { _ in (value, value) }
+            heard += (0..<count).map { buffer[$0 * 2] }
+        }
+        process(2048, 0.5)
+        softener.fadeOutPendingAudio()
+        process(128, 0)
+        softener.fadeInNextAudio()
+        process(2048, -0.5)
+        XCTAssertEqual(softener.softened, 1)
+        let jumps = zip(heard.dropFirst(1024), heard.dropFirst(1025)).map { abs($1 - $0) }
+        XCTAssertLessThan(jumps.max() ?? 0, 0.02)
+        XCTAssertEqual(heard.last, -0.5)
     }
 
     func testAQueueKeepsItsBuffersResidentAndReleasesThem() {
@@ -187,5 +243,32 @@ final class HomePodCrackle340Tests: XCTestCase {
         }
         queue = nil
         XCTAssertEqual(AudioRealtimeMemory.wiredBytes, wiredBefore, "a released queue unwires what it wired")
+    }
+}
+
+/// Transport telemetry is sampled off the realtime audio callback.
+final class AppAudioCrackleRecoveryTests: XCTestCase {
+    func testNaturalSilenceAndIsolatedTransportGlitchesDoNotRestart() {
+        var policy = AudioCrackleRecoveryPolicy()
+        XCTAssertFalse(policy.observe(underruns: 0, trims: 0, captureGaps: 0, active: true))
+        XCTAssertFalse(policy.observe(underruns: 1, trims: 0, captureGaps: 0, active: true))
+        XCTAssertFalse(policy.observe(underruns: 1, trims: 0, captureGaps: 1, active: true))
+        XCTAssertFalse(policy.observe(underruns: 4, trims: 0, captureGaps: 1, active: false))
+        XCTAssertFalse(policy.observe(underruns: 4, trims: 0, captureGaps: 1, active: true))
+    }
+
+    func testRepeatedUnderrunsTriggerImmediateRecovery() {
+        var policy = AudioCrackleRecoveryPolicy()
+        XCTAssertFalse(policy.observe(underruns: 20, trims: 10, captureGaps: 0, active: true))
+        XCTAssertTrue(policy.observe(underruns: 23, trims: 10, captureGaps: 0, active: true))
+        XCTAssertFalse(policy.observe(underruns: 23, trims: 10, captureGaps: 0, active: true))
+    }
+
+    func testRepeatedTrimsAndConfirmedCaptureGapsTriggerRecovery() {
+        var policy = AudioCrackleRecoveryPolicy()
+        XCTAssertFalse(policy.observe(underruns: 0, trims: 0, captureGaps: 0, active: true))
+        XCTAssertTrue(policy.observe(underruns: 0, trims: 2, captureGaps: 0, active: true))
+        XCTAssertTrue(policy.observe(underruns: 0, trims: 2, captureGaps: 3, active: true))
+        XCTAssertFalse(policy.observe(underruns: 0, trims: 0, captureGaps: 0, active: true))
     }
 }

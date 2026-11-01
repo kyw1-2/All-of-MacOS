@@ -1,3 +1,16 @@
+## 3.4.9 (2026-11-01)
+
+- Register `com.apple.disk-image` as an alternate file type so Finder's **Open With → All of MacOS** forwards a `.dmg` directly to the native application delegate and begins installation without manual mounting or browsing. This reuses the existing Folder Rules installer, including license/password checks, multiple-app selection, confirmations, rollback, and optional Trash after a successful install (default: keep source DMG). A `Choose DMG…` entry and cleanup preference also appear on the Files page.
+- Restore automatic **AppAudio OFF → ON** recovery when active AirPlay transport telemetry identifies repeated PCM underruns, trims, or confirmed capture gaps; do not misinterpret ordinary silent audio as an error. Restore the session after 150 ms. Bound restarts to at most one every eight seconds and four per minute, and leave an explicit manual recovery path for unmeasurable external HAL distortion.
+- Include the pending 3.4.8 softener correction, preventing false-positive waveform shaping that was previously reported as crackle. Add deterministic counter-policy regression tests. Both changes stay isolated from the existing live `release/340` working copy.
+
+## 3.4.8 (2026-11-01)
+
+- Stop shaping audio that no measurement identified as a dropout. The installed 3.4.7 build (`b821187`) reported **7,065** `softenedDropouts` in 1,162 s of Chrome playback (≈6.1 Hz) while the same snapshot showed `captureGaps 0`, `captureClockResets 0`, `underruns 0`, `trims 0` and `droppedFrames 0`: the zero-run heuristic was still modulating ordinary content for 4 ms at a time, roughly six times a second, which is the flutter left in the listener's report. The 3.4.7 step-discontinuity guard only halved the rate (12.7 Hz → 6.1 Hz), it did not stop it.
+- `AudioDropoutSoftener` now shapes **only** timestamp-confirmed capture gaps (`AppAudioTransport`/`AudioCaptureTimeline`) and keeps the heuristic behind `shapesUnverifiedHoles: true`, which production never passes. `softened` counts confirmed holes, so the counter matches `captureGaps` instead of drifting into content. Unverified holes stay bit-exact behind the fixed lookahead delay.
+- Capture-side `dropoutLookaheadFrames` stays 128 at 48 kHz on AirPlay and 0 on local output; no change to the delay, the HAL gap path or the −1 dBTP network limiter.
+- Tests: `testProductionSoftenerNeverShapesUnverifiedZeroRuns` (hard step, quiet passage, long rest, four packet sizes) and `testProductionSoftenerStillShapesTimestampConfirmedGaps` added; heuristic assertions now opt in explicitly and the transport test pins `softenedDropouts 0` for an unverified hole. See docs/homepod-crackle-3.4.8.md.
+
 ## 3.4.7 (2026-11-01)
 
 - Fix excessive false-positive dropout shaping in `AudioDropoutSoftener`: require a real step discontinuity (`discontinuityThreshold = 0.02`, ~ -34 dBFS) before triggering zero-run crossfades. In the live 3.4.6 session, 32-sample exact-zero detection without discontinuity checks falsely treated natural speech pauses and musical decays as dropouts (8,086 false triggers in 10 minutes, ~12.7 Hz), causing audible fluttering and crackling distortion.

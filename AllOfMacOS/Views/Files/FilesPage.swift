@@ -1,6 +1,7 @@
 import AppKit
 import QuickLook
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Files (3.4): the Open and Save dialog helper, the Drop Shelf and recent
 /// downloads and screenshots. Dashboard template (design-3.4.0 b.2).
@@ -9,6 +10,7 @@ struct FilesPage: View {
     @ObservedObject private var shelf = FilesShelfStore.shared
     @ObservedObject private var recent = FilesRecentModel.shared
     @StateObject private var toast = AOMToastModel()
+    @AppStorage("AOMDiskImageTrashOnSuccess") private var trashInstalledDMG = false
     @State private var accessibilityTrusted = AXIsProcessTrusted()
     @State private var finderPermission: FilesFinder.Permission?
     @State private var quickLookURL: URL?
@@ -47,6 +49,7 @@ struct FilesPage: View {
             FilesShelfSection(settings: settings, shelf: shelf, toast: toast, openShortcutSettings: openShortcutSettings,
                               quickLook: quickLook)
             FilesRecentSection(recent: recent, toast: toast, quickLook: quickLook)
+            diskImageSection
         }
         .aomPage("Files")
         .aomToast(toast)
@@ -99,6 +102,28 @@ struct FilesPage: View {
             return
         }
         finderPermission = await Task.detached(priority: .utility) { FilesFinder.permission(ask: false) }.value
+    }
+
+    // MARK: Disk images
+
+    private var diskImageSection: some View {
+        AOMSection("Install from DMG",
+                   help: "Right-click a .dmg in Finder, choose Open With, then All of MacOS. AOM mounts the image in the background, finds the app and copies it into Applications. Existing apps ask before replacement.") {
+            AOMSettingRow("Install a Mac app", detail: "Use Open With in Finder or choose a disk image here") {
+                Button("Choose DMG…") {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [UTType(filenameExtension: "dmg") ?? .data]
+                    panel.canChooseDirectories = false
+                    panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let url = panel.url {
+                        DMGQuickInstaller.open(url)
+                    }
+                }
+            }
+            AOMToggleRow("Move source DMG to Trash after installation",
+                         detail: "Off by default. The DMG is kept if installation fails.",
+                         symbol: "trash", isOn: $trashInstalledDMG)
+        }
     }
 
     // MARK: Open and Save dialogs

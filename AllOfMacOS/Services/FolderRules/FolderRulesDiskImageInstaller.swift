@@ -149,6 +149,13 @@ enum FolderRulesDiskImageInstaller {
         let appName = app.deletingPathExtension().lastPathComponent
         var replaced: URL?
         if let existing {
+            // Open With installs are unattended until a necessary prompt.
+            // Never overwrite an unrelated bundle simply because its filename matches.
+            let incomingIdentifier = Bundle(url: app)?.bundleIdentifier
+            let installedIdentifier = Bundle(url: existing)?.bundleIdentifier
+            guard incomingIdentifier != nil && incomingIdentifier == installedIdentifier else {
+                return step(.skipped, "Kept existing app: ‘\(existing.lastPathComponent)’ has a different bundle identifier.", next: image)
+            }
             if environment.isAppRunning(existing) {
                 throw FolderRuleFailure("“\(appName)” is open. Quit it, then install again.")
             }
