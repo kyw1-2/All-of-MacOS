@@ -54,7 +54,7 @@ enum AudioEventKind: UInt64, CaseIterable {
          defaultOutputChanged, deviceListChanged, tapAttached, tapDetached, tapRewrite, outputMoved,
          handover, mixLate, countersReset, effectChanged,
          // 3.3.4 (N334): a network bus's leveler took more than 1 dB, and let go.
-         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed
+         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed, clockSkip
 
     var name: String { String(describing: self) }
 

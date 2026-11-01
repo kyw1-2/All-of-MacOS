@@ -1,3 +1,10 @@
+## 3.4.3 (2026-11-01)
+
+- Align AirPlay PCM playback to HAL sample-time discontinuities: a 448-frame missed IO interval no longer leaves those samples queued to play late. A bounded source-clock skip advances the SPSC queue consumer cursor; its preallocated 5 ms held tail crossfades into newer samples without a hard splice. The PI filter baseline is re-primed after a discontinuity. The queue preserves a half-target safety reserve.
+- Stop all live HAL buffer-size re-requests after the output starts, including the periodic 30/60 second retry and post-start retry. An AirPlay driver retaining 128 frames is no longer repeatedly asked for 1024 while streaming; requests are limited to configuration while the unit is stopped.
+- Treat the first correlated HAL overload plus substantial device gap as recoverable in place. Only a second independent correlated episode within 30 s triggers the bounded 3.4.2 native-playback fallback/reconnect path. Existing long-stall and device-loss safeguards remain.
+- Add per-output counters clockSkips / clockSkippedFrames and synthetic PCM-clock / click-continuity regression tests. This cannot alter macOS AirPlay HAL deadlines, receiver/network, or guarantee no OS-level overload. HomePod real-device validation remains necessary.
+
 ## 3.4.2 (2026-11-01)
 
 - HomePod self-recovery after an AirPlay HAL overload **paired** with a significant missing device cycle (256+ frames within 2 seconds). The 2026-11-01 diagnostic trace captured an overload and a 448-frame gap at 12:04:58, followed by a successful user-initiated off/on restart. Source PCM underruns, output underruns and excessive render CPU were not present.

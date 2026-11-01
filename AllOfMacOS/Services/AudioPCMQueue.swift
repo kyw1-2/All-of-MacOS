@@ -257,6 +257,9 @@ final class StereoPCMQueue {
     private let clears = AudioAtomicCounter()
     private let rendered = AudioAtomicCounter()
     private let trims = AudioAtomicCounter()
+    /// Source-clock frames advanced after a missing device IO cycle.
+    private let clockSkips = AudioAtomicCounter()
+    private let clockSkippedFrames = AudioAtomicCounter()
     /// Frames the kernel computed (output frames, tails and trim crossfades
     /// included): the consumer's work, for the constant-time check (3.3.3).
     private let resampled = AudioAtomicCounter()
@@ -334,7 +337,9 @@ final class StereoPCMQueue {
                 "queuedFrames": w >= r ? w - r : 0,
                 "droppedFrames": dropped.load(), "underruns": underruns.load(),
                 "discardedFrames": discarded.load(), "clears": clears.load(),
-                "trims": trims.load(), "adaptiveTargetFrames": targetValue.load(),
+                "trims": trims.load(), "clockSkips": clockSkips.load(),
+                "clockSkippedFrames": clockSkippedFrames.load(),
+                "adaptiveTargetFrames": targetValue.load(),
                 "resampledFrames": resampled.load()]
     }
     var queuedFrames: Int {
@@ -405,7 +410,7 @@ final class StereoPCMQueue {
     func render(into output: UnsafeMutablePointer<Float>, frames: Int, ratio: Double,
                 targetFrames: Int, driftLimit: Double = 0.002, fadeFrames: Int = 240,
                 outputRate: Double = 48000, trimFloorFrames: Int = 0, startFrames: Int? = nil,
-                levelBias: Double = 0) -> Int {
+                levelBias: Double = 0, clockSkipFrames: Int = 0) -> Int {
         guard frames > 0, ratio.isFinite, ratio > 0 else { return 0 }
         memset(output, 0, frames * 8)
         guard frames <= Self.maximumFrames else { return 0 }
@@ -458,6 +463,29 @@ final class StereoPCMQueue {
             fadeInIndex = 0; fadeInLength = fade
             controller.restart()
         }
+        // HAL sample time moved forward: the device deadline was missed and
+        // those output frames can no longer be played. Advance the *input*
+        // playhead by the corresponding source-clock duration. Keep enough
+        // history and a conservative half-target reserve for the sinc wing and
+        // subsequent callbacks; an unavailable skip must never induce a
+        // second underrun. The existing held-back tail is crossfaded to the
+        // new playhead so no hard waveform splice reaches the receiver.
+        // This is consumer-owned and performs no allocation or HAL calls.
+        if streaming && clockSkipFrames > 0 {
+            let reserve = max(target / 2, needed(wanted + tailCount) + history)
+            let possible = max(0, available - reserve)
+            let advance = min(clockSkipFrames, possible)
+            if advance > 0 {
+                position += UInt64(advance)
+                discarded.add(UInt64(advance))
+                clockSkips.add()
+                clockSkippedFrames.add(UInt64(advance))
+                events?.push(.clockSkip, value: UInt64(advance))
+                controller.restart()
+                crossfadeHeldTail(written: w, step: step, span: span, scale: scale, exact: exact)
+                available = Int(w - position)
+            }
+        }
         if streaming {
             let trimAbove = min(capacity - 1 - history,
                                 max(target * 3, Int((Double(frames) * ratio).rounded(.up)) * 2, trimFloorFrames))
@@ -470,17 +498,8 @@ final class StereoPCMQueue {
                 events?.push(.trim, value: next - position)
                 position = next
                 controller.restart()
-                if fade > 0 && tailCount > 0 {
-                    fadeInIndex = fadeInLength
-                    let made = produce(into: blend, count: tailCount, written: w, step: step, span: span,
-                                       scale: scale, exact: exact)
-                    for frame in 0..<tailCount {
-                        let g = Self.smooth(Float(frame + 1) / Float(tailCount + 1))
-                        let incoming0 = frame < made ? blend[frame * 2] : 0
-                        let incoming1 = frame < made ? blend[frame * 2 + 1] : 0
-                        tail[frame * 2] += (incoming0 - tail[frame * 2]) * g
-                        tail[frame * 2 + 1] += (incoming1 - tail[frame * 2 + 1]) * g
-                    }
+                if fade > 0 {
+                    crossfadeHeldTail(written: w, step: step, span: span, scale: scale, exact: exact)
                 }
                 available = Int(w - position)
             }
@@ -517,6 +536,25 @@ final class StereoPCMQueue {
         if floor > released.load() { released.store(floor) }
         rendered.add(UInt64(emit))
         return emit
+    }
+
+    /// One bounded crossfade shared by the ordinary backlog trim and the
+    /// HAL-clock skip. The held tail has not yet been emitted, so blending
+    /// it with samples from the new playhead is click-free without rewinding
+    /// an already-played frame. The preallocated blend storage is sufficient.
+    private func crossfadeHeldTail(written w: UInt64, step: Double, span: Int,
+                                   scale: Float, exact: Bool) {
+        guard tailCount > 0 else { return }
+        fadeInIndex = fadeInLength
+        let made = produce(into: blend, count: tailCount, written: w, step: step,
+                           span: span, scale: scale, exact: exact)
+        for frame in 0..<tailCount {
+            let g = Self.smooth(Float(frame + 1) / Float(tailCount + 1))
+            let left = frame < made ? blend[frame * 2] : 0
+            let right = frame < made ? blend[frame * 2 + 1] : 0
+            tail[frame * 2] += (left - tail[frame * 2]) * g
+            tail[frame * 2 + 1] += (right - tail[frame * 2 + 1]) * g
+        }
     }
 
     /// In place: 1 → 0 over `frames`, ending at exact silence.

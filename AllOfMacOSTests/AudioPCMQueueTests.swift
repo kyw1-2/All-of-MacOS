@@ -116,4 +116,68 @@ final class AudioPCMQueueTests: XCTestCase {
         XCTAssertEqual(queue.statistics["droppedFrames"], 0)
         XCTAssertEqual(queue.statistics["underruns"], 0)
     }
+
+    func testHALMissing448FramesAdvancesPCMClockWithoutUnderrun() {
+        let queue = StereoPCMQueue(capacity: 32768)
+        // A synthetic 440 Hz stereo stream, with enough headroom to cover a
+        // 448-frame IO hole without starving the next 128-frame callback.
+        queue.write(frames: 17000) { i in
+            let sample = Float(0.3 * sin(2 * Double.pi * 440 * Double(i) / 48000))
+            return (sample, sample)
+        }
+        let output = UnsafeMutablePointer<Float>.allocate(capacity: 256)
+        defer { output.deallocate() }
+        XCTAssertEqual(queue.render(into: output, frames: 128, ratio: 1,
+            targetFrames: 7200, driftLimit: 0, fadeFrames: 240), 128)
+        let earlier = queue.statistics["discardedFrames"] ?? 0
+        var heard = (0..<128).map { output[$0 * 2] }
+        XCTAssertEqual(queue.render(into: output, frames: 128, ratio: 1,
+            targetFrames: 7200, driftLimit: 0, fadeFrames: 240,
+            clockSkipFrames: 448), 128)
+        heard += (0..<128).map { output[$0 * 2] }
+        for _ in 0..<5 {
+            XCTAssertEqual(queue.render(into: output, frames: 128, ratio: 1,
+                targetFrames: 7200, driftLimit: 0, fadeFrames: 240), 128)
+            heard += (0..<128).map { output[$0 * 2] }
+        }
+        XCTAssertEqual(queue.statistics["clockSkips"], 1)
+        XCTAssertEqual(queue.statistics["clockSkippedFrames"], 448)
+        XCTAssertEqual((queue.statistics["discardedFrames"] ?? 0) - earlier, 448)
+        XCTAssertEqual(queue.statistics["underruns"], 0)
+        XCTAssertEqual(queue.statistics["trims"], 0)
+        XCTAssertTrue(heard.allSatisfy { $0.isFinite && abs($0) <= 0.31 })
+        let jumps = zip(heard, heard.dropFirst()).map { abs($1 - $0) }
+        XCTAssertLessThan(jumps.max() ?? 0, 0.1,
+                          "held-tail crossfade prevents a click at the clock discontinuity")
+    }
+
+    func testHALClockSkipNeverConsumesTheSafetyReserveOrRepeats() {
+        let queue = StereoPCMQueue(capacity: 16384)
+        queue.write(frames: 7500) { _ in (0.1, -0.1) }
+        let out = UnsafeMutablePointer<Float>.allocate(capacity: 256)
+        defer { out.deallocate() }
+        XCTAssertEqual(queue.render(into: out, frames: 128, ratio: 1,
+            targetFrames: 7200, driftLimit: 0, fadeFrames: 240), 128)
+        XCTAssertEqual(queue.render(into: out, frames: 128, ratio: 1,
+            targetFrames: 7200, driftLimit: 0, fadeFrames: 240,
+            clockSkipFrames: 5000), 128)
+        XCTAssertLessThan(queue.statistics["clockSkippedFrames"] ?? 0, 5000)
+        XCTAssertEqual(queue.statistics["underruns"], 0)
+        XCTAssertEqual(queue.statistics["droppedFrames"], 0)
+    }
+
+    func testHALCleanClockDoesNotSkipPCMOrMoveTheTimeAxis() {
+        let queue = StereoPCMQueue(capacity: 8192)
+        queue.write(frames: 3000) { i in (Float(i), -Float(i)) }
+        let output = UnsafeMutablePointer<Float>.allocate(capacity: 256)
+        defer { output.deallocate() }
+        for _ in 0..<4 {
+            XCTAssertEqual(queue.render(into: output, frames: 128, ratio: 1,
+                targetFrames: 1024, driftLimit: 0, fadeFrames: 0), 128)
+        }
+        XCTAssertEqual(queue.statistics["clockSkippedFrames"], 0)
+        XCTAssertEqual(queue.statistics["clockSkips"], 0)
+        XCTAssertEqual(queue.statistics["discardedFrames"], 0)
+    }
+
 }

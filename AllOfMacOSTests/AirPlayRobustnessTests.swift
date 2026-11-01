@@ -239,10 +239,13 @@ final class AirPlayRobustnessTests: XCTestCase {
         let start = 100.0
         XCTAssertFalse(evidence.observe(overloads: 0, gaps: 0, gapFrames: 0, now: 109, startedAt: start))
         XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 390, startedAt: start))
-        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.25, startedAt: start),
-                      "2026-11-01 HomePod trace: one overload and 448 missing frames")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.25, startedAt: start),
+                      "first overload + 448-frame gap heals in-place rather than rebooting audio")
         XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.5, startedAt: start),
                        "the same bad cycle must not cause repeated restarts")
+        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 1, gapFrames: 448, now: 391, startedAt: start))
+        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 391.25, startedAt: start),
+                      "second independent correlated failure in 30s is a last-resort reconnect")
     }
 
     func testHomePodRecoveryIgnoresIsolatedAndTinyDiscontinuities() {
@@ -262,8 +265,10 @@ final class AirPlayRobustnessTests: XCTestCase {
         XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 5.2, startedAt: 0),
                        "never automatically restart an unsettled output")
         XCTAssertFalse(evidence.observe(overloads: 1, gaps: 2, gapFrames: 896, now: 40, startedAt: 0))
-        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 40.3, startedAt: 0),
-                      "overload notifications can arrive after the actual skipped cycle")
+        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 40.3, startedAt: 0),
+                      "late overload notifications can complete the first recovered episode")
+        XCTAssertFalse(evidence.observe(overloads: 3, gaps: 3, gapFrames: 1344, now: 72, startedAt: 0),
+                      "a later independent episode outside the 30-second window starts fresh")
     }
 
     func testHomePodRecoveryBudgetSurvivesOutputReplacement() {

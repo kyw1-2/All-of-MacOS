@@ -1,3 +1,7 @@
+### HomePod audio continuity (3.4.3)
+
+AOM now reconciles missing AirPlay HAL sample-time intervals in the buffered PCM playback cursor, using a bounded skip and preallocated held-tail crossfade. It avoids live re-requests of a HomePod fixed-size IO buffer. Isolated recoverable skips no longer reconnect; repeated correlated failures can still invoke bounded recovery. The HAL realtime deadline and external network conditions remain managed by macOS.
+
 # All of MacOS
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
