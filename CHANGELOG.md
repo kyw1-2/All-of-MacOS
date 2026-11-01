@@ -1,3 +1,10 @@
+## 3.4.4 (2026-11-01)
+
+- Fix missed HomePod self-recovery after intermittent but recurring HAL faults. Live 3.4.3 diagnostics showed 7 matched overload/device gaps and 7 exact PCM clock corrections with no mix lateness, output underruns or queue trims; the 14:59:58 (256-frame) and 15:02:21 (384-frame) episodes were separated by 143 seconds, beyond the former 30-second reconnect threshold.
+- Count two independent, correlated HAL overload + 256-or-more-frame gap episodes within 5 minutes as a candidate for a bounded output/tap reconnect. Keep the first gap's in-place clock skip and crossfade, 8-second startup grace, 2-second per-event correlation, 120-second per-device cooldown and maximum 3 recoveries per 10 minutes. No automatic restart on an isolated overload, one small gap or source silence alone.
+- Add synthetic tests for the exact 143-second recurrence, stale episode expiration and duplicate-event suppression. This avoids prolonged unhealthy sessions when repeated failures occur minutes apart; it cannot prevent a HomePod HAL or network overload, and no extended physical listening test has been performed.
+- Chrome's captured exact-zero dropout softening remains unchanged: its counter is not evidence of an input underrun (which was zero in the same log).
+
 ## 3.4.3 (2026-11-01)
 
 - Align AirPlay PCM playback to HAL sample-time discontinuities: a 448-frame missed IO interval no longer leaves those samples queued to play late. A bounded source-clock skip advances the SPSC queue consumer cursor; its preallocated 5 ms held tail crossfades into newer samples without a hard splice. The PI filter baseline is re-primed after a discontinuity. The queue preserves a half-target safety reserve.

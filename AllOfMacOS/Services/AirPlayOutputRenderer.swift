@@ -22,15 +22,17 @@ enum AirPlayDeviceQueues {
     }
 }
 
-/// Device-queue-only detector. An isolated skipped cycle is common on AirPlay
-/// and is already faded by the bridge; restart only when HAL explicitly reports
-/// an overload AND the device missed a significant block in the same episode.
+/// Device-queue-only detector. One missing AirPlay cycle is realigned in-place;
+/// a second independent HAL overload paired with a significant device-clock gap
+/// within five minutes indicates recurring receiver trouble and permits a
+/// bounded rebuild. The 3.4.3 30-second window missed the observed 143-second
+/// recurrence at 14:59:58 and 15:02:21 on 2026-11-01.
 /// No system audio is sampled or inspected.
 struct AirPlayOverloadRecoveryEvidence {
     static let minimumGapFrames: UInt64 = 256
     static let correlationSeconds: TimeInterval = 2
     static let startupGraceSeconds: TimeInterval = 8
-    static let repeatedEpisodeWindowSeconds: TimeInterval = 30
+    static let repeatedEpisodeWindowSeconds: TimeInterval = 300
 
     private var previousEpisodeAt: TimeInterval = -.infinity
     private var seenOverloads: UInt64 = 0
@@ -59,10 +61,10 @@ struct AirPlayOverloadRecoveryEvidence {
         severeGapAt = -.infinity
         let repeated = now - previousEpisodeAt <= Self.repeatedEpisodeWindowSeconds
         previousEpisodeAt = repeated ? -.infinity : now
-        // The first 448-frame loss is realigned in-place; disconnecting
-        // immediately would turn a short click into seconds of silence.
-        // Only recurring correlated failures imply the bridge is not
-        // recovering and justify the expensive output/tap rebuild.
+        // The first device-clock gap is realigned in-place. Rebuild only
+        // after another independently correlated HAL failure inside a
+        // five-minute episode window. The per-UID 120-second / 3-in-10-minute
+        // budget separately bounds any output and tap reconnection.
         return repeated
     }
 }
@@ -765,7 +767,7 @@ final class AirPlayOutputRenderer {
         if unstable {
             if case .ready = state, !bus.hasNoLiveSources, permitsAutomaticRecovery(now: uptime) {
                 AudioEventLog.shared.record(.outputAutoRecovery, source: eventName,
-                    detail: "HAL overload plus 256+ missing frames; rebuilding AirPlay output and process taps")
+                    detail: "Repeated HAL overload + 256+ frame gaps within 5 minutes; rebuilding AirPlay output and process taps")
                 fail("HomePod HAL overload with missed audio cycles. Native playback restored; AOM will reconnect.")
                 return
             }
