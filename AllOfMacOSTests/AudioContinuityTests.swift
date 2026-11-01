@@ -145,7 +145,7 @@ final class AudioContinuityTests: XCTestCase {
 
     // MARK: - Drift
 
-    /// The real AirPlay bridge loop (48 kHz, 150 ms target, 1024-frame device
+    /// The real AirPlay bridge loop (48 kHz, 120 ms target, 1024-frame device
     /// callbacks), modelled at the level: ±300 ppm settles without the
     /// correction saturating and with the level back at the target.
     func testTheDriftControllerConvergesAtPlusMinus300ppm() {
@@ -350,7 +350,7 @@ final class AudioContinuityTests: XCTestCase {
     // MARK: - AirPlay bridge and renderer policy
 
     func testTheBridgeTargetGrowsWithMixLatenessAndIsCapped() {
-        XCTAssertEqual(AirPlayPCMBridge.target(outputRate: 48000, deviceFrames: 1024), 7200)
+        XCTAssertEqual(AirPlayPCMBridge.target(outputRate: 48000, deviceFrames: 1024), 5760)
         XCTAssertEqual(AirPlayPCMBridge.adaptiveTarget(base: 7200, latenessFrames: 0, deviceFrames: 1024, outputRate: 48000), 7200)
         // A demoted mix thread waking 100 ms late: 2 × 4800 + two blocks + the slice.
         XCTAssertEqual(AirPlayPCMBridge.adaptiveTarget(base: 7200, latenessFrames: 4800, deviceFrames: 1024, outputRate: 48000),

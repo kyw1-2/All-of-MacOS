@@ -62,7 +62,7 @@ final class Audio333Tests: XCTestCase {
     /// mix clock still pushes 480-frame blocks every 10 ms (with up to 1 ms
     /// of jitter). At the drift measured live (−418 ppm, audio-health.json of
     /// the installed 3.3.2) and at +300 ppm the bridge neither trims nor runs
-    /// dry, holds its 150 ms target, and the drift loop settles on the drift
+    /// dry, holds its 120 ms target, and the drift loop settles on the drift
     /// without wobbling at the 128-frame rhythm.
     func testTheBridgeHoldsItsTargetAt128FrameCyclesWithDrift() {
         // (drift, push jitter, allowed spread of the correction over the last 10 s)
@@ -98,7 +98,7 @@ final class Audio333Tests: XCTestCase {
             XCTAssertEqual(counter(stats, "trims"), 0, "\(ppm) ppm: never trimmed")
             XCTAssertEqual(counter(stats, "deviceCycleGaps"), 0)
             let queued = Double(counter(stats, "queuedFrames"))
-            XCTAssertEqual(queued, 7200, accuracy: 900, "\(ppm) ppm: the level sits at the 150 ms target")
+            XCTAssertEqual(queued, 5760, accuracy: 900, "\(ppm) ppm: the level sits at the 120 ms target")
             let mean = late.reduce(0, +) / Double(max(1, late.count))
             let spread = (late.max() ?? 0) - (late.min() ?? 0)
             XCTAssertEqual(mean, ppm, accuracy: 40, "the loop follows the drift")

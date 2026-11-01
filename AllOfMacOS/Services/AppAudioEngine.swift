@@ -192,7 +192,7 @@ final class AppAudioEngine {
     private var airPlayCaptureFailures: [String: String] = [:]
     /// Bounded automatic recovery after a remote output fails: 3 s, 10 s and
     /// 30 s, then the explicit Reconnect. The budget refills after 5 minutes.
-    private static let airPlayRetryDelays: [TimeInterval] = [3, 10, 30]
+    private static let airPlayRetryDelays: [TimeInterval] = [0.75, 3, 10]
     private var airPlayAutoRetries: [String: (count: Int, lastAttempt: TimeInterval)] = [:]
     private var recoveringAirPlayUIDs = Set<String>()
     var airPlayRecovering: Bool { !recoveringAirPlayUIDs.isEmpty }
@@ -1326,7 +1326,7 @@ final class AppAudioEngine {
         entry.lastAttempt = now
         airPlayAutoRetries[uid] = entry
         recoveringAirPlayUIDs.insert(uid)
-        GestureLog.shared.logFromAnyThread("AirPlay output will reconnect in \(Int(delay)) s", level: .noMatch)
+        GestureLog.shared.logFromAnyThread(String(format: "AirPlay output will reconnect in %.2f s", delay), level: .noMatch)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.recoveringAirPlayUIDs.remove(uid)

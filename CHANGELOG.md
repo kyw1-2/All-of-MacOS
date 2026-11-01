@@ -1,3 +1,12 @@
+## 3.4.5 (2026-11-01)
+
+- Correct the persistent HomePod crackle response seen on the live 3.4.4 receiver. At 15:40:45 a full auto-reconnect took about 3.4 seconds, but at 15:53:25 (516 missing frames) and 15:54:20 (188 missing frames) two further CoreAudio `kAudioDeviceProcessorOverload` events were merely time-axis corrected while the user reported prolonged distortion. Local output PCM underruns, trims and mixer late wakes were zero; the 128-frame HAL remained outside AOM control. These observations identify missed HAL cycles, not a proven underlying cause in Wi-Fi, firmware or CoreAudio.
+- Treat the **first** processor overload correlated with a missing 128-or-more-frame HAL cycle as a recovery event. Retain two-second event correlation and the eight-second startup grace; check health at 100 ms intervals and 20 ms after an overload notification. Fail safely back to native playback before resetting the affected output and process taps. Reduce the initial automatic reconnection delay from 3 seconds to 0.75 seconds; later retries use 3 and 10 seconds.
+- Prevent reconnection storms with a per-HomePod 30-second minimum interval and no more than six reconnects in a rolling ten minutes; when suppressed, preserve native playback / existing fallback behavior. AOM does not force user settings off or turn system audio off.
+- Reduce AOM's locally buffered AirPlay PCM target from 150 ms to 120 ms (5,760 frames at 48 kHz) while keeping adaptive safety headroom and the 400 ms ceiling. This reduces local latency, **not** macOS's fixed 128-frame HAL callback or HomePod's network-side buffer; it is not a cure for an upstream overload.
+- Do not repeat a futile CoreAudio buffer-size property write after a HomePod has accepted a request but continued to use 128 frames, and never write a no-op 128-frame size. Preserve native HAL settings and other audio routes.
+- Update paired-event, cooldown, restart and 128-frame drift-loop regression tests. The growing count of Chrome exact-zero source runs is not proof of source underruns; Chrome's capture path is unchanged pending direct audio evidence. A physical HomePod listening test remains necessary.
+
 ## 3.4.4 (2026-11-01)
 
 - Fix missed HomePod self-recovery after intermittent but recurring HAL faults. Live 3.4.3 diagnostics showed 7 matched overload/device gaps and 7 exact PCM clock corrections with no mix lateness, output underruns or queue trims; the 14:59:58 (256-frame) and 15:02:21 (384-frame) episodes were separated by 143 seconds, beyond the former 30-second reconnect threshold.

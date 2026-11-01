@@ -1,3 +1,7 @@
+### HomePod immediate HAL recovery (3.4.5)
+
+When macOS reports an AirPlay HAL processor overload paired with an actual 128+-frame missing output cycle, AOM restores native playback, recreates the affected HomePod output and process taps, and retries the first reconnect after 0.75 seconds instead of waiting for a second event minutes later. A strict per-device budget prevents repeated restart loops. AOM's own PCM target is reduced from 150 to 120 ms and redundant HAL buffer-size writes are suppressed; neither change can alter the HomePod's driver-controlled 128-frame IO or cure underlying AirPlay/network overloads. Physical listening validation remains necessary.
+
 ### HomePod recurring HAL recovery (3.4.4)
 
 AOM 3.4.4 recognizes repeated HomePod processor overloads and substantial missing device cycles even when they are minutes apart (five-minute correlation window). It keeps 3.4.3's in-place clock-skipping and crossfades on the first event and retains bounded per-device auto-reconnect for repeated events. Source-silence softening is unchanged. Physical HomePod listening and network stability still require real-world validation.
