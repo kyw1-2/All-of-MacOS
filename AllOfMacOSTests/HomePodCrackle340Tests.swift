@@ -88,6 +88,28 @@ final class HomePodCrackle340Tests: XCTestCase {
         XCTAssertEqual(shape(quiet).out, quiet)
     }
 
+    func testNaturalSpeechPauseAndMusicalDecayAreNotMistakenForDropouts() {
+        // Natural speech pauses or decaying instruments taper smoothly to zero
+        // and rise smoothly from zero. They lack the step discontinuity of a
+        // hard IO dropout and must not trigger false fade shaping.
+        var input: [Float] = []
+        // Fade out smoothly over 128 frames below discontinuityThreshold (0.02)
+        for i in 0..<128 {
+            let gain = Float(127 - i) / 127.0 * 0.015
+            input.append(gain)
+        }
+        // Silence for 256 frames (exceeding minimumRun of 32)
+        input += [Float](repeating: 0, count: 256)
+        // Fade in smoothly over 128 frames below discontinuityThreshold (0.02)
+        for i in 0..<128 {
+            let gain = Float(i) / 127.0 * 0.015
+            input.append(gain)
+        }
+        input += [Float](repeating: 0.1, count: 512)
+        let result = shape(input)
+        XCTAssertEqual(result.count, 0, "smoothly tapered silence must never count as a dropout")
+    }
+
     func testLongPauseFadesOutButLeavesTheNextSoundAlone() {
         let input = [Float](repeating: 0.5, count: 512)
             + [Float](repeating: 0, count: 6000)

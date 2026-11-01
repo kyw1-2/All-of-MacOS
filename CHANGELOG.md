@@ -1,3 +1,8 @@
+## 3.4.7 (2026-11-01)
+
+- Fix excessive false-positive dropout shaping in `AudioDropoutSoftener`: require a real step discontinuity (`discontinuityThreshold = 0.02`, ~ -34 dBFS) before triggering zero-run crossfades. In the live 3.4.6 session, 32-sample exact-zero detection without discontinuity checks falsely treated natural speech pauses and musical decays as dropouts (8,086 false triggers in 10 minutes, ~12.7 Hz), causing audible fluttering and crackling distortion.
+- Add regression test `testNaturalSpeechPauseAndMusicalDecayAreNotMistakenForDropouts` to verify smoothly tapered silences are bit-exact and never shaped.
+
 ## 3.4.6 (2026-11-01)
 
 - Fix a reproduced HomePod clock-skip accounting defect: the fade path consumed another tail after skipping, so a 448-frame gap discarded 688 source frames at 48 kHz while reporting only 448. Preserve exact source-clock advancement and shape both sides without a second pull.

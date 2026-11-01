@@ -10,6 +10,10 @@ final class AudioDropoutSoftener {
     static let maximumHoleSeconds = 0.085
     static let fadeSeconds = 0.002
     static let audible: Float = 0.001
+    /// Audible step discontinuity threshold that causes clicks (~ -34 dBFS).
+    /// Natural speech pauses, musical decays, and silence padding taper smoothly
+    /// below this level and must not trigger destructive false-dropout shaping.
+    static let discontinuityThreshold: Float = 0.02
     // 384 kHz: 768 fade frames + 32 detection frames, plus the current frame.
     private static let capacity = 1024
     private let samples: UnsafeMutablePointer<Float>
@@ -18,7 +22,7 @@ final class AudioDropoutSoftener {
     private var primed = 0
     private var run = 0
     private var runFollowsAudio = false
-    private var lastAudible = false
+    private var lastSamplePeak: Float = 0
     private var fadeInRemaining = 0
     private var rate = 0.0
     private var fade = 96
@@ -41,7 +45,7 @@ final class AudioDropoutSoftener {
     /// The lifetime counter stays monotonic for diagnostics.
     func reset() {
         cursor = 0; primed = 0; run = 0
-        runFollowsAudio = false; lastAudible = false; fadeInRemaining = 0
+        runFollowsAudio = false; lastSamplePeak = 0; fadeInRemaining = 0
     }
 
     /// A timestamp-confirmed missing packet can be shorter than minimumRun.
@@ -78,10 +82,10 @@ final class AudioDropoutSoftener {
             let raw = sample(index)
             let left = raw.0.isFinite ? raw.0 : 0
             let right = raw.1.isFinite ? raw.1 : 0
-            let audible = abs(left) > Self.audible || abs(right) > Self.audible
+            let peak = max(abs(left), abs(right))
             var gain: Float = 1
             if left == 0 && right == 0 {
-                if run == 0 { runFollowsAudio = lastAudible }
+                if run == 0 { runFollowsAudio = lastSamplePeak >= Self.discontinuityThreshold }
                 // Saturate: an indefinitely idle app must never overflow.
                 run = min(maximumHole + 1, run + 1)
                 if run == Self.minimumRun && runFollowsAudio {
@@ -100,7 +104,7 @@ final class AudioDropoutSoftener {
                 if run >= Self.minimumRun { fadeInRemaining = 0 }
                 else if fadeInRemaining > 0 { fadeInRemaining -= 1 }
             } else {
-                if run >= Self.minimumRun && run <= maximumHole && runFollowsAudio && audible {
+                if run >= Self.minimumRun && run <= maximumHole && runFollowsAudio && peak >= Self.discontinuityThreshold {
                     softened += 1
                     fadeInRemaining = fade
                 }
@@ -118,7 +122,7 @@ final class AudioDropoutSoftener {
             output[index * 2 + 1] = primed >= delayFrames ? samples[read * 2 + 1] : 0
             cursor = (cursor + 1) % Self.capacity
             primed = min(delayFrames, primed + 1)
-            lastAudible = audible
+            lastSamplePeak = peak
         }
     }
 }
