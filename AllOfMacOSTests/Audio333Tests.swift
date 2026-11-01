@@ -359,7 +359,10 @@ final class Audio333Tests: XCTestCase {
         XCTAssertTrue(pull(transport, mixer, frames: 480, consumer: b).allSatisfy { $0 == 0 }, "A may still fade out")
         XCTAssertEqual(pulled(transport), before)
         usleep(UInt32(AppAudioTransport.handoverTimeout * 1_000_000) + 30_000)
-        capture(transport, phase: &phase, frames: 512)
+        // Tests run far faster than the capture clock. Ensure that the
+        // 25 ms queue target is primed when the halted output hands over;
+        // a transition to silence with no available PCM is not an owner bug.
+        for _ in 0..<3 { capture(transport, phase: &phase, frames: 512) }
         let out = pull(transport, mixer, frames: 480, consumer: b)
         XCTAssertEqual(pulled(transport), before + 480, "B took over")
         XCTAssertLessThan(abs(out[0]), 0.001, "from silence")
