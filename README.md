@@ -2,6 +2,10 @@
 
 All of MacOS (AOM) is a native macOS productivity application for gestures, keyboard shortcuts, window management, clipboard history, screen capture, recording, and local automation.
 
+## Version 3.4.2
+
+When HomePod reports an audio processor overload together with a substantial missed audio cycle, AOM now attempts a bounded automatic recovery of the AirPlay output and affected capture taps (native playback fallback first). A single small skip does not restart anything. HomePod listening validation remains outstanding.
+
 ## Version 3.4.1
 
 HomePod audio dropout smoothing now spans capture block boundaries, covers large input buffers and resets correctly when output routes change. Homebrew tools are easier to discover in System Tools and Workspace search. 130 related tests passed; listening tests on a physical HomePod remain pending. See CHANGELOG.md.

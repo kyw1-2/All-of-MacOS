@@ -1,3 +1,9 @@
+## 3.4.2 (2026-11-01)
+
+- HomePod self-recovery after an AirPlay HAL overload **paired** with a significant missing device cycle (256+ frames within 2 seconds). The 2026-11-01 diagnostic trace captured an overload and a 448-frame gap at 12:04:58, followed by a successful user-initiated off/on restart. Source PCM underruns, output underruns and excessive render CPU were not present.
+- Instead of leaving a possibly damaged audio path active, a correlated severe event triggers the existing safe fallback (unmute native playback) and bounded reconnection of the affected HomePod output and per-app taps. Single ordinary gaps, uncorrelated overloads and the first 8 seconds of session startup do not trigger recovery. Per-device cooldown allows at most three recoveries within 10 minutes, at least 120 seconds apart.
+- Diagnostics now distinguish automatic recovery from suppressed recovery. Tested with synthetic HAL events; actual listening and recurrence validation on HomePod remain outstanding. The physical AirPlay receiver and network cannot be fixed by AOM.
+
 ## 3.4.1 (2026-11-01)
 
 - HomePod/AirPlay: smooth dropout boundaries across incoming audio callbacks using a 128-frame lookahead; process large capture blocks in bounded chunks without losing trailing samples; reset softener state when routes or sample rates change. This mitigates source discontinuities, not device or network IO overloads.

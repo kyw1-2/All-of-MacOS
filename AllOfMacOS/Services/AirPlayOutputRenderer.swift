@@ -22,6 +22,64 @@ enum AirPlayDeviceQueues {
     }
 }
 
+/// Device-queue-only detector. An isolated skipped cycle is common on AirPlay
+/// and is already faded by the bridge; restart only when HAL explicitly reports
+/// an overload AND the device missed a significant block in the same episode.
+/// No system audio is sampled or inspected.
+struct AirPlayOverloadRecoveryEvidence {
+    static let minimumGapFrames: UInt64 = 256
+    static let correlationSeconds: TimeInterval = 2
+    static let startupGraceSeconds: TimeInterval = 8
+
+    private var seenOverloads: UInt64 = 0
+    private var seenGaps: UInt64 = 0
+    private var seenGapFrames: UInt64 = 0
+    private var overloadAt: TimeInterval = -.infinity
+    private var severeGapAt: TimeInterval = -.infinity
+
+    mutating func observe(overloads: UInt64, gaps: UInt64, gapFrames: UInt64,
+                          now: TimeInterval, startedAt: TimeInterval) -> Bool {
+        // Accept counter resets without underflow. All reads are snapshots;
+        // an overload callback may be delivered after the matching HAL gap.
+        if overloads > seenOverloads { overloadAt = now }
+        if gaps > seenGaps && gapFrames >= seenGapFrames &&
+            gapFrames - seenGapFrames >= Self.minimumGapFrames {
+            severeGapAt = now
+        }
+        seenOverloads = overloads
+        seenGaps = gaps
+        seenGapFrames = gapFrames
+        guard now - startedAt >= Self.startupGraceSeconds,
+              now - overloadAt <= Self.correlationSeconds,
+              now - severeGapAt <= Self.correlationSeconds else { return false }
+        // Consume this episode even if the global throttle denies a restart.
+        overloadAt = -.infinity
+        severeGapAt = -.infinity
+        return true
+    }
+}
+
+/// Bounded across output replacements, so a troubled HomePod cannot trigger
+/// a rapid stop/reattach loop. The engine's existing retry policy separately
+/// limits automatic tap reattachment.
+struct AirPlayOverloadRecoveryBudget {
+    static let minimumInterval: TimeInterval = 120
+    static let windowSeconds: TimeInterval = 600
+    static let maximumAttempts = 3
+    private var attempts: [TimeInterval] = []
+    private var latestSeenAt: TimeInterval = -.infinity
+
+    mutating func allow(now: TimeInterval) -> Bool {
+        guard now.isFinite, now >= latestSeenAt else { return false }
+        latestSeenAt = now
+        attempts.removeAll { now - $0 > Self.windowSeconds }
+        guard attempts.count < Self.maximumAttempts,
+              attempts.last.map({ now - $0 >= Self.minimumInterval }) ?? true else { return false }
+        attempts.append(now)
+        return true
+    }
+}
+
 /// One output-only HAL client per connected AirPlay device. The local 48 kHz
 /// DSP clock is independent of the HAL callback and of the main/UI run loop.
 /// macOS owns discovery, pairing, network transport and HomePod remote control.
@@ -75,6 +133,18 @@ final class AirPlayOutputRenderer {
     /// Periodic IO re-request bookkeeping (device queue).
     private var lastIORequestAt: TimeInterval = 0
     private var cycleGapsAtLastRequest: UInt64 = 0
+    private var recoveryEvidence = AirPlayOverloadRecoveryEvidence()
+    private static let recoveryLock = NSLock()
+    private static var recoveryBudgets: [String: AirPlayOverloadRecoveryBudget] = [:]
+    private func permitsAutomaticRecovery(now: TimeInterval) -> Bool {
+        Self.recoveryLock.lock()
+        defer { Self.recoveryLock.unlock() }
+        var budget = Self.recoveryBudgets[uid] ?? AirPlayOverloadRecoveryBudget()
+        let permitted = budget.allow(now: now)
+        Self.recoveryBudgets[uid] = budget
+        return permitted
+    }
+
     private var stopped = false
     private var failureDelivered = false
     private let changed: () -> Void
@@ -705,6 +775,25 @@ final class AirPlayOutputRenderer {
         let health = bridge.health
         let uptime = ProcessInfo.processInfo.systemUptime
         rerequestIOBufferIfNeeded(now: uptime)
+        // A HAL overload paired with a large missing device cycle matches
+        // the 2026-11-01 HomePod report (448 frames, no PCM underruns). The
+        // callback itself is very cheap: restarting the mixing thread alone
+        // would preserve the unhealthy HAL/tap state. Route through the
+        // existing output failure -> native unmute -> bounded reconnect path,
+        // which replaces the output and the affected app taps together.
+        let unstable = recoveryEvidence.observe(overloads: processorOverloads.load(),
+            gaps: bridge.deviceCycleGaps, gapFrames: bridge.deviceGapFrames,
+            now: uptime, startedAt: startedAt)
+        if unstable {
+            if case .ready = state, !bus.hasNoLiveSources, permitsAutomaticRecovery(now: uptime) {
+                AudioEventLog.shared.record(.outputAutoRecovery, source: eventName,
+                    detail: "HAL overload plus 256+ missing frames; rebuilding AirPlay output and process taps")
+                fail("HomePod HAL overload with missed audio cycles. Native playback restored; AOM will reconnect.")
+                return
+            }
+            AudioEventLog.shared.record(.outputAutoRecoverySuppressed, source: eventName,
+                detail: "overload recovery suppressed (startup, idle output, or cooldown)")
+        }
         if health.invalidFormat {
             fail("AirPlay supplied an unsupported render buffer. Native playback restored.")
         } else if health.lastCallback > 0 && uptime - health.lastCallback > Self.stallLimit {
@@ -842,6 +931,7 @@ final class AirPlayPCMBridge {
     private var lastCallbackFrames = 0
     /// Cycles the HAL skipped so far (any thread).
     var deviceCycleGaps: UInt64 { cycleGaps.load() }
+    var deviceGapFrames: UInt64 { gapFrames.load() }
 
     /// 3.3.3 (A01): after a gap the device has just played a hole (the HAL
     /// skipped AOM's cycle; on the HomePod tested, coreaudiod reports these as

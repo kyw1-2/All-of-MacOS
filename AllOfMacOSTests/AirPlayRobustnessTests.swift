@@ -230,4 +230,51 @@ final class AirPlayRobustnessTests: XCTestCase {
         mixer.usesNetworkDynamics = false
         XCTAssertFalse(mixer.usesNetworkDynamics)
     }
+
+
+    // MARK: - 3.4.2 HomePod overload recovery
+
+    func testHomePodOverloadPlus448MissingFramesTriggersOneRecovery() {
+        var evidence = AirPlayOverloadRecoveryEvidence()
+        let start = 100.0
+        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 0, gapFrames: 0, now: 109, startedAt: start))
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 390, startedAt: start))
+        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.25, startedAt: start),
+                      "2026-11-01 HomePod trace: one overload and 448 missing frames")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.5, startedAt: start),
+                       "the same bad cycle must not cause repeated restarts")
+    }
+
+    func testHomePodRecoveryIgnoresIsolatedAndTinyDiscontinuities() {
+        var evidence = AirPlayOverloadRecoveryEvidence()
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 20, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 128, now: 20.25, startedAt: 0),
+                       "a one-cycle 128-frame gap should be faded in place")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 2, gapFrames: 384, now: 23.5, startedAt: 0),
+                       "an old overload and a new gap are not a correlated episode")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 3, gapFrames: 832, now: 24, startedAt: 0),
+                       "a big gap without another overload is not sufficient")
+    }
+
+    func testHomePodRecoveryAcceptsNotificationAfterDeviceGapAndHonorsStartupGrace() {
+        var evidence = AirPlayOverloadRecoveryEvidence()
+        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 1, gapFrames: 448, now: 5, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 5.2, startedAt: 0),
+                       "never automatically restart an unsettled output")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 2, gapFrames: 896, now: 40, startedAt: 0))
+        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 40.3, startedAt: 0),
+                      "overload notifications can arrive after the actual skipped cycle")
+    }
+
+    func testHomePodRecoveryBudgetSurvivesOutputReplacement() {
+        var budget = AirPlayOverloadRecoveryBudget()
+        XCTAssertTrue(budget.allow(now: 100))
+        XCTAssertFalse(budget.allow(now: 101))
+        XCTAssertFalse(budget.allow(now: 219.9))
+        XCTAssertTrue(budget.allow(now: 220))
+        XCTAssertTrue(budget.allow(now: 340))
+        XCTAssertFalse(budget.allow(now: 460), "no more than three automatic restarts in ten minutes")
+        XCTAssertTrue(budget.allow(now: 701), "old attempts expire and recovery is available again")
+        XCTAssertFalse(budget.allow(now: 700), "a timebase rollback cannot bypass cooldown")
+    }
 }
