@@ -468,8 +468,8 @@ final class StereoPCMQueue {
         // playhead by the corresponding source-clock duration. Keep enough
         // history and a conservative half-target reserve for the sinc wing and
         // subsequent callbacks; an unavailable skip must never induce a
-        // second underrun. The existing held-back tail is crossfaded to the
-        // new playhead so no hard waveform splice reaches the receiver.
+        // second underrun. Fade across the held tail and the new playhead
+        // without consuming replacement-tail samples a second time.
         // This is consumer-owned and performs no allocation or HAL calls.
         if streaming && clockSkipFrames > 0 {
             let reserve = max(target / 2, needed(wanted + tailCount) + history)
@@ -482,7 +482,13 @@ final class StereoPCMQueue {
                 clockSkippedFrames.add(UInt64(advance))
                 events?.push(.clockSkip, value: UInt64(advance))
                 controller.restart()
-                crossfadeHeldTail(written: w, step: step, span: span, scale: scale, exact: exact)
+                // The tail already consumed source frames. Rendering another
+                // tail here advanced by `advance + tailCount * step`, silently
+                // discarding an extra 5 ms on every device gap. Fade the held
+                // tail out, then fade the new timeline in without a second pull.
+                fadeOut(tail, frames: tailCount)
+                fadeInIndex = 0
+                fadeInLength = fade
                 available = Int(w - position)
             }
         }
@@ -538,8 +544,8 @@ final class StereoPCMQueue {
         return emit
     }
 
-    /// One bounded crossfade shared by the ordinary backlog trim and the
-    /// HAL-clock skip. The held tail has not yet been emitted, so blending
+    /// Bounded crossfade for a backlog trim (not an exact HAL-clock skip).
+    /// The held tail has not yet been emitted, so blending
     /// it with samples from the new playhead is click-free without rewinding
     /// an already-played frame. The preallocated blend storage is sufficient.
     private func crossfadeHeldTail(written w: UInt64, step: Double, span: Int,

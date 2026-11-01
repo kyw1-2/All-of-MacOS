@@ -180,4 +180,30 @@ final class AudioPCMQueueTests: XCTestCase {
         XCTAssertEqual(queue.statistics["discardedFrames"], 0)
     }
 
+    func testClockSkipConsumesExactlyMissingFramesIncludingHeldFade() {
+        for gap in [1, 64, 128, 256, 448, 960] {
+            for ratio in [1.0, 48000.0 / 44100.0, 0.5] {
+                let clean = StereoPCMQueue(capacity: 32768)
+                let skipped = StereoPCMQueue(capacity: 32768)
+                for queue in [clean, skipped] {
+                    queue.write(frames: 14000) { i in (Float(i) / 20000, -Float(i) / 20000) }
+                }
+                var output = [Float](repeating: 0, count: 256)
+                output.withUnsafeMutableBufferPointer { buffer in
+                    for block in 0..<12 {
+                        for queue in [clean, skipped] {
+                            _ = queue.render(into: buffer.baseAddress!, frames: 128, ratio: ratio,
+                                targetFrames: 6000, driftLimit: 0, fadeFrames: 240,
+                                clockSkipFrames: queue === skipped && block == 3 ? gap : 0)
+                        }
+                    }
+                }
+                XCTAssertEqual(clean.queuedFrames - skipped.queuedFrames, gap,
+                    "gap \(gap), ratio \(ratio): crossfade must not consume another held tail")
+                XCTAssertEqual(skipped.statistics["clockSkippedFrames"], UInt64(gap))
+                XCTAssertEqual(skipped.statistics["underruns"], 0)
+            }
+        }
+    }
+
 }

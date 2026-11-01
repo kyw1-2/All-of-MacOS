@@ -22,42 +22,54 @@ enum AirPlayDeviceQueues {
     }
 }
 
-/// Device-queue-only detector. A HAL processor overload accompanied by a
-/// missing device cycle is sufficient to rebuild the affected HomePod session.
-/// The callback has already missed its deadline, so in-place PCM skipping may
-/// hide one click but cannot repair a persistently unhealthy AirPlay sender.
-/// No audio samples are inspected. A separate per-UID budget prevents loops.
+/// Device-queue-only detector for sustained failures, not isolated HAL gaps.
+/// A short device-wide miss is already handled by the PCM bridge. Recreating
+/// all taps after each miss added seconds of interruption and did not prevent
+/// the next shared HomePod/Chrome HAL fault in the observed 3.4.5 session.
 struct AirPlayOverloadRecoveryEvidence {
     static let minimumGapFrames: UInt64 = 128
     static let correlationSeconds: TimeInterval = 2
     static let startupGraceSeconds: TimeInterval = 8
+    static let sustainedWindowSeconds: TimeInterval = 10
+    static let requiredEpisodes = 3
     private var seenOverloads: UInt64 = 0
     private var seenGaps: UInt64 = 0
     private var seenGapFrames: UInt64 = 0
     private var overloadAt: TimeInterval = -.infinity
     private var severeGapAt: TimeInterval = -.infinity
+    private var episodes: [TimeInterval] = []
+    private var lastObservation: TimeInterval = -.infinity
 
     mutating func observe(overloads: UInt64, gaps: UInt64, gapFrames: UInt64,
                           now: TimeInterval, startedAt: TimeInterval) -> Bool {
-        // Accept counter resets without underflow. All reads are snapshots;
-        // an overload callback may be delivered after the matching HAL gap.
+        guard now.isFinite, startedAt.isFinite else { return false }
+        if now < lastObservation || overloads < seenOverloads || gaps < seenGaps || gapFrames < seenGapFrames {
+            overloadAt = -.infinity
+            severeGapAt = -.infinity
+            episodes.removeAll(keepingCapacity: true)
+        }
+        lastObservation = now
         if overloads > seenOverloads { overloadAt = now }
         if gaps > seenGaps && gapFrames >= seenGapFrames &&
-            gapFrames - seenGapFrames >= Self.minimumGapFrames {
-            severeGapAt = now
-        }
+            gapFrames - seenGapFrames >= Self.minimumGapFrames { severeGapAt = now }
         seenOverloads = overloads
         seenGaps = gaps
         seenGapFrames = gapFrames
-        guard now - startedAt >= Self.startupGraceSeconds,
-              now - overloadAt <= Self.correlationSeconds,
+        guard now - startedAt >= Self.startupGraceSeconds else {
+            overloadAt = -.infinity
+            severeGapAt = -.infinity
+            episodes.removeAll(keepingCapacity: true)
+            return false
+        }
+        episodes.removeAll { now - $0 > Self.sustainedWindowSeconds }
+        guard now - overloadAt <= Self.correlationSeconds,
               now - severeGapAt <= Self.correlationSeconds else { return false }
-        // Consume this episode even if the global throttle denies a restart.
+        // Both sides of an episode are consumed, regardless of restart budget.
         overloadAt = -.infinity
         severeGapAt = -.infinity
-        // An independently correlated episode can recover immediately. An
-        // identical HAL notification or the same gap cannot trigger twice.
-        // The separate per-device reconnect budget bounds repeated failures.
+        episodes.append(now)
+        guard episodes.count >= Self.requiredEpisodes else { return false }
+        episodes.removeAll(keepingCapacity: true)
         return true
     }
 }
@@ -131,24 +143,7 @@ final class AirPlayOutputRenderer {
     /// Keeps App Nap and timer coalescing away from the mix clock while this
     /// output exists (start() … tearDown(), device queue only).
     private let napGuard = AirPlayNapGuard(reason: "AirPlay output mixing (realtime audio)")
-    /// The IO size AOM asks for, clamped to the device's range (device queue).
-    private var ioTargetFrames: UInt32 = AirPlayOutputRenderer.preferredIOFrames
     private var recoveryEvidence = AirPlayOverloadRecoveryEvidence()
-    /// A HomePod may accept a 1024-frame buffer property write then silently
-    /// revert to 128 frames on AUHAL startup. Repeating that live-device
-    /// write on every recovery adds a needless HAL reconfiguration hazard.
-    private static let ignoredIORequestLock = NSLock()
-    private static var ignoredIORequestUIDs = Set<String>()
-    private var ioRequestKey: String { uid.isEmpty ? String(deviceID) : uid }
-    private func skipUnheededIORequest() -> Bool {
-        Self.ignoredIORequestLock.lock(); defer { Self.ignoredIORequestLock.unlock() }
-        return Self.ignoredIORequestUIDs.contains(ioRequestKey)
-    }
-    private func recordUnheededIORequest() {
-        Self.ignoredIORequestLock.lock()
-        Self.ignoredIORequestUIDs.insert(ioRequestKey)
-        Self.ignoredIORequestLock.unlock()
-    }
     private static let recoveryLock = NSLock()
     private static var recoveryBudgets: [String: AirPlayOverloadRecoveryBudget] = [:]
     private func permitsAutomaticRecovery(now: TimeInterval) -> Bool {
@@ -223,48 +218,9 @@ final class AirPlayOutputRenderer {
         return true
     }
 
-    /// Frames per IO cycle AOM asks for on the AirPlay device. The buffer
-    /// size is a per-process HAL setting, so this changes only AOM's own IO.
-    /// 3.3.2 audit: the device's default client buffer is 128 frames
-    /// (2.7 ms) with no safety offset; coreaudiod logged "Overload possibly
-    /// due to safety violation" and AOM "skipping cycle due to overload"
-    /// several times an hour, each one a click. AirPlay already buffers
-    /// about 2 s, so 21 ms more cycle time is inaudible.
+    /// Diagnostic reference only. HomePod does not retain this buffer size;
+    /// the renderer never writes the physical device's IO size.
     static let preferredIOFrames: UInt32 = 1024
-
-    /// Asks for `preferredIOFrames` within the device's range; nil if the
-    /// device refuses (the default then stays in use). A refusal is logged
-    /// at .error once per device with the range the device allows; it used
-    /// to be a .noMatch line, so a HomePod left at 128 frames went unseen.
-    @discardableResult
-    private func requestIOBufferFrames() -> UInt32? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSizeRange,
-            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        var range = AudioValueRange()
-        var size = UInt32(MemoryLayout<AudioValueRange>.size)
-        var preferred = Self.preferredIOFrames
-        let rangeKnown = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &range) == noErr
-            && range.mMinimum.isFinite && range.mMaximum.isFinite && range.mMinimum >= 1 && range.mMaximum >= range.mMinimum
-        if rangeKnown {
-            preferred = UInt32(min(range.mMaximum, max(range.mMinimum, Double(preferred))))
-        }
-        ioTargetFrames = preferred
-        // Do not set a no-op 128-frame value on a receiver that offers no
-        // larger range; avoid writes after earlier requests proved ineffective.
-        if preferred <= 128 || skipUnheededIORequest() { return nil }
-        address.mSelector = kAudioDevicePropertyBufferFrameSize
-        var settable: DarwinBoolean = false
-        let settableStatus = AudioObjectIsPropertySettable(deviceID, &address, &settable)
-        let setStatus = settableStatus == noErr && settable.boolValue
-            ? AudioObjectSetPropertyData(deviceID, &address, 0, nil, 4, &preferred) : kAudioHardwareIllegalOperationError
-        guard setStatus == noErr else {
-            let allowed = rangeKnown ? "\(Int(range.mMinimum))–\(Int(range.mMaximum)) frames" : "range unknown"
-            logIOBufferProblemOnce("AirPlay device refused AOM's \(preferred)-frame IO buffer (status \(setStatus), "
-                + "settable \(settable.boolValue), allowed \(allowed)); the default size may overload and click")
-            return nil
-        }
-        return preferred
-    }
 
     /// One .error line per device and launch for IO-size problems (device
     /// queue; the set is shared by the renderers that replace each other).
@@ -362,8 +318,8 @@ final class AirPlayOutputRenderer {
                     kAudioUnitScope_Input, 0, &format, UInt32(MemoryLayout.size(ofValue: format))), "set format"),
               check(AudioUnitSetProperty(instance, kAudioUnitProperty_MaximumFramesPerSlice,
                     kAudioUnitScope_Global, 0, &maximum, 4), "set buffer limit") else { return }
-        // A refusal is logged once at .error inside the request.
-        let attemptedIOFrames = requestIOBufferFrames()
+        // Read only. The receiver accepts a 1024-frame write but runs at
+        // 128; even setup writes can perturb another active HAL client.
         var frameAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var deviceFrames: UInt32 = 0
@@ -395,9 +351,7 @@ final class AirPlayOutputRenderer {
         bridge.prime()
         startedAt = ProcessInfo.processInfo.systemUptime
         guard check(AudioOutputUnitStart(instance), "start") else { return }
-        // Initializing and starting the unit can put AOM's IO buffer back to
-        // the device default (128 frames on AirPlay, the size coreaudiod
-        // reported overloads at); ask once more and follow what it took.
+        // Read the actual post-start size without writing the shared device.
         size = 4
         if AudioObjectGetPropertyData(deviceID, &frameAddress, 0, nil, &size, &deviceFrames) == noErr,
            deviceFrames > 0, deviceFrames <= maximum,
@@ -411,10 +365,7 @@ final class AirPlayOutputRenderer {
         // 128. Do not reapply a HAL device property periodically while audio
         // is running: on this receiver even a same-value set disrupts IO.
         // Read the device size for diagnostics and adapt the bridge instead.
-        if let attemptedIOFrames, configuredFrames < attemptedIOFrames {
-            recordUnheededIORequest()
-        }
-        if configuredFrames < ioTargetFrames {
+        if configuredFrames < Self.preferredIOFrames {
             logIOBufferProblemOnce("AirPlay HAL retains \(configuredFrames)-frame IO; " +
                 "AOM will avoid further live IO-size writes and use its buffered realtime bridge")
         }
@@ -520,7 +471,9 @@ final class AirPlayOutputRenderer {
     static func classify(alive: UInt32?, frames: UInt32?, nominalRate: Double?, deviceRate: Double?,
                          channels: UInt32?, baseline: ConfigurationBaseline,
                          configuredFrames: UInt32) -> ConfigurationChange {
-        guard let alive, alive != 0 else { return .lost }
+        // A failed property read is not evidence that the device died.
+        // The callback watchdog still detects an actual disconnected/stalled IO.
+        if let alive, alive == 0 { return .lost }
         if let nominalRate, nominalRate != baseline.nominalRate { return .format }
         if let deviceRate, deviceRate != baseline.deviceRate { return .format }
         if let channels, channels != baseline.channels { return .format }
@@ -556,10 +509,8 @@ final class AirPlayOutputRenderer {
         guard !stopped else { return }
         processorOverloads.add()
         AudioEventLog.shared.record(.overload, source: eventName, detail: "kAudioDeviceProcessorOverload")
-        // CoreAudio may notify before the paired render timestamp gap is
-        // published. Check after one short device cycle, not at the next
-        // quarter-second health poll; never tear down in the listener itself.
-        queue.asyncAfter(deadline: .now() + .milliseconds(20)) { [weak self] in self?.checkHealth() }
+        // Health polling correlates sustained faults; one notification must
+        // not schedule an immediate output/tap teardown.
     }
     static let maximumBufferRequests = 4
 
@@ -600,8 +551,7 @@ final class AirPlayOutputRenderer {
             configuredFrames = size
             bridge.updateDeviceFrames(Int(size))
             AudioEventLog.shared.record(.bufferSize, source: eventName, value: Int64(size), detail: "IO buffer size changed")
-            // Back to a small buffer (another client, a route change): ask
-            // for the large one again, a bounded number of times.
+            // A smaller buffer is diagnostic; preserve the running stream.
             if size < Self.preferredIOFrames {
                 logIOBufferProblemOnce("AirPlay HAL changed IO size to \(size) while running; " +
                     "AOM will preserve the stream rather than write the live device property")
@@ -683,7 +633,6 @@ final class AirPlayOutputRenderer {
             mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
         guard AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
                                    &format, UInt32(MemoryLayout.size(ofValue: format))) == noErr else { return false }
-        requestIOBufferFrames()
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyBufferFrameSize,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var frames: UInt32 = 0
@@ -771,26 +720,21 @@ final class AirPlayOutputRenderer {
         logSchedulingChange()
         let health = bridge.health
         let uptime = ProcessInfo.processInfo.systemUptime
-        // Never set the live HomePod IO size from the health timer. The HAL
-        // can restart its 128-frame IO even when the requested size is ignored.
-        // A HAL overload paired with a large missing device cycle matches
-        // the 2026-11-01 HomePod report (448 frames, no PCM underruns). The
-        // callback itself is very cheap: restarting the mixing thread alone
-        // would preserve the unhealthy HAL/tap state. Route through the
-        // existing output failure -> native unmute -> bounded reconnect path,
-        // which replaces the output and the affected app taps together.
+        // Rebuild only for a sustained burst of independently correlated
+        // faults. Isolated, already-repaired gaps do not justify destroying
+        // a running output and every capture tap.
         let unstable = recoveryEvidence.observe(overloads: processorOverloads.load(),
             gaps: bridge.deviceCycleGaps, gapFrames: bridge.deviceGapFrames,
             now: uptime, startedAt: startedAt)
         if unstable {
             if case .ready = state, !bus.hasNoLiveSources, permitsAutomaticRecovery(now: uptime) {
                 AudioEventLog.shared.record(.outputAutoRecovery, source: eventName,
-                    detail: "HAL overload + 128+ missing device frames; immediately rebuilding affected HomePod output and taps")
-                fail("HomePod HAL overload with missed audio cycles. Native playback restored; AOM will reconnect.")
+                    detail: "Sustained HAL faults: 3 correlated overload/gap episodes within 10 seconds; rebuilding output and taps")
+                fail("HomePod sustained HAL failures. Native playback restored; AOM will reconnect.")
                 return
             }
             AudioEventLog.shared.record(.outputAutoRecoverySuppressed, source: eventName,
-                detail: "immediate HAL recovery suppressed (not ready, idle output, or reconnect budget)")
+                detail: "sustained HAL recovery suppressed (not ready, idle output, or reconnect budget)")
         }
         if health.invalidFormat {
             fail("AirPlay supplied an unsupported render buffer. Native playback restored.")
@@ -942,7 +886,7 @@ final class AirPlayPCMBridge {
     /// The edge into the hole happened before AOM could know of it. The way
     /// out is shaped: the next output fades in from silence while the PCM
     /// queue advances its playhead for the missing device-clock interval,
-    /// crossfading the held tail to the new timeline. Large discontinuities
+    /// fading the held tail out and the new timeline in without a second pull. Large discontinuities
     /// are still handled by the bounded output recovery policy.
     static let gapFadeSeconds = 0.005
     // HAL-callback-owned.

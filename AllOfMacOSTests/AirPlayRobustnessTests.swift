@@ -234,86 +234,69 @@ final class AirPlayRobustnessTests: XCTestCase {
 
     // MARK: - 3.4.2 HomePod overload recovery
 
-    func testHomePodOverloadPlus448MissingFramesTriggersOneRecovery() {
+    func testObservedIsolatedHomePodFaultsDoNotDestroyHealthyStreams() {
         var evidence = AirPlayOverloadRecoveryEvidence()
-        let start = 100.0
-        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 0, gapFrames: 0, now: 109, startedAt: start))
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 390, startedAt: start))
-        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.25, startedAt: start),
-                      "first overload + 448-frame gap immediately rebuilds the output")
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 390.5, startedAt: start),
-                       "the same bad cycle must not cause repeated restarts")
-        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 1, gapFrames: 448, now: 391, startedAt: start))
-        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 391.25, startedAt: start),
-                      "a new independent correlated failure is also detected, subject to reconnect budget")
+        // Actual 3.4.5 intervals: tiny shared-device gaps led to four full
+        // output/tap rebuilds although all PCM queues and the mixer were healthy.
+        var total: UInt64 = 0
+        for (index, entry) in [(233.0, 284), (337.0, 256), (1108.0, 268), (1660.0, 256)].enumerated() {
+            total += UInt64(entry.1)
+            XCTAssertFalse(evidence.observe(overloads: UInt64(index + 1), gaps: UInt64(index + 1),
+                gapFrames: total, now: entry.0, startedAt: 0))
+        }
     }
 
-    func testHomePodRecoveryIgnoresIsolatedAndTinyDiscontinuities() {
+    func testSustainedCorrelatedFailuresRecoverOnceAndConsumeEvidence() {
         var evidence = AirPlayOverloadRecoveryEvidence()
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0, now: 20, startedAt: 0))
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 64, now: 20.25, startedAt: 0),
-                       "a sub-cycle 64-frame jump alone is too small for full recovery")
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 2, gapFrames: 320, now: 23.5, startedAt: 0),
-                       "an old overload and a new gap are not a correlated episode")
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 3, gapFrames: 768, now: 24, startedAt: 0),
-                       "a big gap without another overload is not sufficient")
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256, now: 20, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 2, gapFrames: 512, now: 23, startedAt: 0))
+        XCTAssertTrue(evidence.observe(overloads: 3, gaps: 3, gapFrames: 768, now: 26, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 3, gaps: 3, gapFrames: 768, now: 26.1, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 4, gaps: 4, gapFrames: 1024, now: 27, startedAt: 0))
     }
 
-    func testHomePodRecoveryAcceptsNotificationAfterDeviceGapAndHonorsStartupGrace() {
+    func testOverloadNotificationCanArriveBeforeOrAfterGap() {
         var evidence = AirPlayOverloadRecoveryEvidence()
-        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 1, gapFrames: 448, now: 5, startedAt: 0))
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448, now: 5.2, startedAt: 0),
-                       "never automatically restart an unsettled output")
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 2, gapFrames: 896, now: 40, startedAt: 0))
-        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896, now: 40.3, startedAt: 0),
-                      "late overload notification completes an immediately recoverable episode")
-        XCTAssertTrue(evidence.observe(overloads: 3, gaps: 3, gapFrames: 1344, now: 72, startedAt: 0),
-                      "independent later episode is detected without a 5-minute wait")
+        for n in 1...3 {
+            let time = 20 + Double(n)
+            if n % 2 == 0 {
+                XCTAssertFalse(evidence.observe(overloads: UInt64(n), gaps: UInt64(n - 1),
+                    gapFrames: UInt64((n - 1) * 256), now: time, startedAt: 0))
+            } else {
+                XCTAssertFalse(evidence.observe(overloads: UInt64(n - 1), gaps: UInt64(n),
+                    gapFrames: UInt64(n * 256), now: time, startedAt: 0))
+            }
+            XCTAssertEqual(evidence.observe(overloads: UInt64(n), gaps: UInt64(n),
+                gapFrames: UInt64(n * 256), now: time + 0.1, startedAt: 0), n == 3)
+        }
     }
 
-    func testHomePodRecoveryCorrelatesTwoRealWorldGaps143SecondsApart() {
+    func testStartupStaleTinyAndResetEvidenceCannotAccumulateIntoRecovery() {
         var evidence = AirPlayOverloadRecoveryEvidence()
-        let started = 500_000.0
-        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 0, gapFrames: 0,
-                                        now: started + 9, startedAt: started))
-        // 14:59:58: overload, 256 missing device frames. Reconnect now rather
-        // than waiting for a second failure while the sender crackles.
-        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256,
-                                       now: started + 100, startedAt: started))
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256,
-                                        now: started + 150, startedAt: started))
-        // 15:02:21: another independent overload, 384 missing frames. It can
-        // qualify immediately if the per-device reconnect budget allows.
-        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 640,
-                                       now: started + 243, startedAt: started))
-        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 2, gapFrames: 640,
-                                        now: started + 243.5, startedAt: started),
-                       "one bad episode cannot repeatedly restart the receiver")
+        for n in 1...3 {
+            XCTAssertFalse(evidence.observe(overloads: UInt64(n), gaps: UInt64(n),
+                gapFrames: UInt64(n * 256), now: Double(n), startedAt: 0))
+        }
+        XCTAssertFalse(evidence.observe(overloads: 4, gaps: 4, gapFrames: 1024, now: 20, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 5, gaps: 5, gapFrames: 1280, now: 25, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 6, gaps: 6, gapFrames: 1536, now: 40, startedAt: 0),
+                       "older episodes expire")
+        XCTAssertFalse(evidence.observe(overloads: 7, gaps: 7, gapFrames: 1600, now: 41, startedAt: 0),
+                       "64-frame gap is not a severe episode")
+        XCTAssertFalse(evidence.observe(overloads: 0, gaps: 0, gapFrames: 0, now: 42, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 256, now: 43, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 1, gapFrames: 256, now: 44, startedAt: 0))
+        XCTAssertFalse(evidence.observe(overloads: 2, gaps: 2, gapFrames: 512, now: 47, startedAt: 0),
+                       "notification correlation expires")
     }
 
-    func testHomePodRecoveryDetectsIndependentEpisodesAcrossFiveMinutes() {
-        var evidence = AirPlayOverloadRecoveryEvidence()
-        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 448,
-                                       now: 100, startedAt: 0))
-        XCTAssertTrue(evidence.observe(overloads: 2, gaps: 2, gapFrames: 896,
-                                       now: 401, startedAt: 0),
-                      "a new independent overload is detected even after 300 seconds")
-        XCTAssertTrue(evidence.observe(overloads: 3, gaps: 3, gapFrames: 1344,
-                                       now: 550, startedAt: 0),
-                      "third episode independently qualifies without accumulated evidence")
-        XCTAssertFalse(evidence.observe(overloads: 3, gaps: 3, gapFrames: 1344,
-                                        now: 550.25, startedAt: 0))
-    }
-
-    func testHomePodSingle128FrameGapWithOverloadImmediatelyTriggersRecovery() {
-        var evidence = AirPlayOverloadRecoveryEvidence()
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 0, gapFrames: 0,
-                                        now: 20, startedAt: 0), "notification can precede HAL timestamp")
-        XCTAssertTrue(evidence.observe(overloads: 1, gaps: 1, gapFrames: 128,
-                                       now: 20.03, startedAt: 0),
-                      "one missed 2.67 ms HAL cycle plus overload warrants immediate rebuild")
-        XCTAssertFalse(evidence.observe(overloads: 1, gaps: 1, gapFrames: 128,
-                                        now: 20.04, startedAt: 0), "same gap is never reused")
+    func testFailedDevicePropertyReadDoesNotTearDownPlayingOutput() {
+        XCTAssertEqual(AirPlayOutputRenderer.classify(alive: nil, frames: nil, nominalRate: nil,
+            deviceRate: nil, channels: nil, configuredRate: 48000, configuredFrames: 128,
+            configuredChannels: 2), .none)
+        XCTAssertEqual(AirPlayOutputRenderer.classify(alive: 0, frames: nil, nominalRate: nil,
+            deviceRate: nil, channels: nil, configuredRate: 48000, configuredFrames: 128,
+            configuredChannels: 2), .lost)
     }
 
     func testHomePodRecoveryBudgetSurvivesOutputReplacement() {

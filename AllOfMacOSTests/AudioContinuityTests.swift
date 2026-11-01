@@ -388,7 +388,7 @@ final class AudioContinuityTests: XCTestCase {
         XCTAssertEqual(classify(device: 44100), .format)
         XCTAssertEqual(classify(channels: 6), .format)
         XCTAssertEqual(classify(alive: 0), .lost)
-        XCTAssertEqual(classify(alive: nil), .lost)
+        XCTAssertEqual(classify(alive: nil), .none, "an unsuccessful liveness read is not a confirmed disconnect")
         XCTAssertEqual(classify(frames: nil, nominal: nil, device: nil, channels: nil), .none,
                        "a failed read on a live device is transient")
         XCTAssertEqual(AirPlayOutputRenderer.preferredIOFrames, 1024, "not the device's 128-frame default")

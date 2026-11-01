@@ -1174,8 +1174,9 @@ final class AppAudioEngine {
             return nil
         }
         var procID: AudioDeviceIOProcID?
-        let procStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, input, _, _, _ in
-            transport.capture(input)
+        let procStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, input, inputTime, _, _ in
+            let stamp = inputTime.pointee
+            transport.capture(input, sampleTime: stamp.mFlags.contains(.sampleTimeValid) ? stamp.mSampleTime : -1)
         }
         guard procStatus == noErr, let procID else {
             errors[pid] = "Audio capture could not start (\(procStatus)). Check Screen & System Audio Recording permission."
@@ -1202,7 +1203,7 @@ final class AppAudioEngine {
         session.transport = transport
         session.sourceToken = source
         let eventName = "app:" + (bundleID.isEmpty ? "pid-\(pid)" : bundleID)
-        session.eventSource = AudioEventLog.shared.register(name: eventName, rings: [transport.events]) { [weak transport] in
+        session.eventSource = AudioEventLog.shared.register(name: eventName, rings: [transport.events, transport.captureEvents]) { [weak transport] in
             transport?.eventCounters ?? [:]
         }
         AudioEventLog.shared.record(.tapAttached, source: eventName, value: Int64(processObjIDs.count),

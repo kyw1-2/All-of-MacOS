@@ -44,6 +44,22 @@ final class AudioDropoutSoftener {
         runFollowsAudio = false; lastAudible = false; fadeInRemaining = 0
     }
 
+    /// A timestamp-confirmed missing packet can be shorter than minimumRun.
+    /// Its falling edge is still inside the private lookahead, never queue memory.
+    func fadeOutPendingAudio() {
+        let count = min(fade, primed)
+        guard count > 0 else { return }
+        for step in 0..<count {
+            let slot = (cursor - 1 - step + Self.capacity) % Self.capacity
+            let x = Float(step) / Float(count)
+            let gain = x * x * (3 - 2 * x)
+            samples[slot * 2] *= gain
+            samples[slot * 2 + 1] *= gain
+        }
+    }
+
+    func fadeInNextAudio() { fadeInRemaining = fade }
+
     /// Writes exactly `frames` stereo frames, delayed by `delayFrames`.
     /// Initial output is silence; every subsequent input frame is retained,
     /// including callbacks larger than the transport's work buffer.

@@ -1,3 +1,11 @@
+## 3.4.6 (2026-11-01)
+
+- Fix a reproduced HomePod clock-skip accounting defect: the fade path consumed another tail after skipping, so a 448-frame gap discarded 688 source frames at 48 kHz while reporting only 448. Preserve exact source-clock advancement and shape both sides without a second pull.
+- Use capture sample timestamps to preserve bounded missing input intervals instead of joining unrelated waveforms. Add source gap/reset counters on a separate capture event ring; preserve local output behavior and reset timestamp history on rate/route changes.
+- Preserve working output/taps across isolated shared HAL faults. Require three independent correlated episodes within ten seconds for automatic rebuild; retain startup grace, bounded retries, device-loss and long-stall fallback.
+- Do not interpret a failed DeviceIsAlive property read as an explicit disconnection. Remove ineffective physical HomePod buffer-size writes, including setup/reconfiguration writes.
+- Live 3.4.5 evidence showed four shared device gaps/restarts with zero PCM underruns; standalone aggregate/AudioQueue probes did not increase physical IO beyond 128 frames. These changes repair AOM continuity defects; they do not establish a cure for the shared macOS/HomePod HAL fault. See docs/homepod-continuity-3.4.6.md.
+
 ## 3.4.5 (2026-11-01)
 
 - Correct the persistent HomePod crackle response seen on the live 3.4.4 receiver. At 15:40:45 a full auto-reconnect took about 3.4 seconds, but at 15:53:25 (516 missing frames) and 15:54:20 (188 missing frames) two further CoreAudio `kAudioDeviceProcessorOverload` events were merely time-axis corrected while the user reported prolonged distortion. Local output PCM underruns, trims and mixer late wakes were zero; the 128-frame HAL remained outside AOM control. These observations identify missed HAL cycles, not a proven underlying cause in Wi-Fi, firmware or CoreAudio.

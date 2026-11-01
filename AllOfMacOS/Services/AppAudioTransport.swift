@@ -21,6 +21,12 @@ final class AppAudioTransport {
     /// the app's own audio into a short dip (see `AudioDropoutSoftener`), its
     /// stereo scratch (wired) and how many it shaped.
     private let softener = AudioDropoutSoftener()
+    private var captureTimeline = AudioCaptureTimeline()
+    // A separate SPSC ring: the capture and output callbacks run concurrently.
+    let captureEvents = AudioEventRing(capacity: 64)
+    private let captureGaps = AudioAtomicCounter()
+    private let captureGapFrames = AudioAtomicCounter()
+    private let captureClockResets = AudioAtomicCounter()
     private static let softenerFrames = 16384
     private let softenerScratch: UnsafeMutablePointer<Float>
     private let softenerScratchWired: Bool
@@ -185,6 +191,9 @@ final class AppAudioTransport {
         result["handoverTakeovers"] = handoverTakeovers.load()
         result["softenedDropouts"] = softenedDropouts.load()
         result["dropoutLookaheadFrames"] = softenerDelay.load()
+        result["captureGaps"] = captureGaps.load()
+        result["captureGapFrames"] = captureGapFrames.load()
+        result["captureClockResets"] = captureClockResets.load()
         return result
     }
 
@@ -199,9 +208,12 @@ final class AppAudioTransport {
         result["app.handovers"] = handovers.load()
         result["app.handoverTakeovers"] = handoverTakeovers.load()
         result["app.softenedDropouts"] = softenedDropouts.load()
+        result["app.captureGaps"] = captureGaps.load()
+        result["app.captureGapFrames"] = captureGapFrames.load()
+        result["app.captureClockResets"] = captureClockResets.load()
         return result
     }
-    func capture(_ input: UnsafePointer<AudioBufferList>) {
+    func capture(_ input: UnsafePointer<AudioBufferList>, sampleTime: Double = -1) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         guard let first = buffers.first, first.mNumberChannels > 0,
               let left = first.mData?.assumingMemoryBound(to: Float.self) else { return }
@@ -222,6 +234,7 @@ final class AppAudioTransport {
         let airPlay = remote.load() == 1
         if generation != softenerGeneration {
             softener.reset()
+            captureTimeline.reset()
             softenerGeneration = generation
         }
         let gapLimit = airPlay ? max(1, Double(frames) / rate * 4) : 0.25
@@ -229,9 +242,40 @@ final class AppAudioTransport {
         if previous > 0 && Double(now - previous) * secondsPerTick > gapLimit {
             queue.requestClear()
             softener.reset()
+            captureTimeline.reset()
+        }
+        let softenedBefore = softener.softened
+        if airPlay {
+            switch captureTimeline.observe(sampleTime: sampleTime, frames: frames, sampleRate: rate) {
+            case .continuous:
+                break
+            case .gap(let missing):
+                captureGaps.add()
+                captureGapFrames.add(UInt64(missing))
+                captureEvents.push(.captureGap, value: UInt64(missing), host: now)
+                // Missing callbacks used to concatenate unrelated waveforms:
+                // no zeros reached the softener and no underrun was counted.
+                // Keep the short missing interval on the source timeline, with
+                // both boundaries shaped before publishing to the SPSC queue.
+                softener.fadeOutPendingAudio()
+                var remaining = missing
+                while remaining > 0 {
+                    let count = min(remaining, Self.softenerFrames)
+                    softener.process(frames: count, sampleRate: rate, output: softenerScratch) { _ in (0, 0) }
+                    queue.write(frames: count) { (softenerScratch[$0 * 2], softenerScratch[$0 * 2 + 1]) }
+                    remaining -= count
+                }
+                softener.fadeInNextAudio()
+            case .reset:
+                captureClockResets.add()
+                captureEvents.push(.captureClockReset, host: now)
+                queue.requestClear()
+                softener.reset()
+            }
+        } else {
+            captureTimeline.reset()
         }
         largestPacket.raise(to: UInt64(frames))
-        let softenedBefore = softener.softened
         var peak: Float = 0
         // Slice arbitrarily large callbacks without skipping softener state.
         // The bounded lookahead belongs to the producer, never to queue memory
