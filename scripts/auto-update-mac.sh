@@ -54,8 +54,12 @@ d=json.load(open(sys.argv[1]))
 tag=d.get("tag_name","")
 match=re.fullmatch(r"aom(?:-dev)?-v([0-9]+(?:\.[0-9]+){1,3})-b([0-9]+)-[A-Za-z0-9]+",tag)
 if not match: raise SystemExit("Rejected unrecognized release tag")
-assets=[a for a in d.get("assets",[]) if a.get("name","").endswith(".dmg")]
-if len(assets)!=1: raise SystemExit("Expected exactly one DMG asset")
+all_dmgs=[a for a in d.get("assets",[]) if a.get("name","").endswith(".dmg")]
+# A release may contain both a locally uploaded test DMG and the CI-signed
+# canonical DMG. Never choose an arbitrary first asset when two are present.
+canonical=[a for a in all_dmgs if a["name"].endswith("-AOM-Dev.dmg")]
+assets=canonical if len(canonical)==1 else all_dmgs
+if len(assets)!=1: raise SystemExit("Could not identify one canonical CI-signed DMG asset")
 name=assets[0]["name"]; digest=assets[0].get("digest","")
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.dmg",name) or ".." in name:
  raise SystemExit("Rejected asset name")
