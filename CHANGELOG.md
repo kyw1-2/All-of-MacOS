@@ -1,3 +1,7 @@
+## 3.4.10 (2026-11-02)
+
+- Keep Control-Tab's AltTab-style window switcher independent of AOM's main window: its existing `nonactivatingPanel` now takes key focus without calling `NSApp.activate`, preventing the SwiftUI main window from being resurrected or flashed on each invocation. Keep the existing keyboard cycling, search, modifier-release confirmation, and explicit Open AOM action intact; remove the race-prone async cleanup that previously hid newly opened windows only after they had appeared.
+
 ## 3.4.9 (2026-11-01)
 
 - Register `com.apple.disk-image` as an alternate file type so Finder's **Open With → All of MacOS** forwards a `.dmg` directly to the native application delegate and begins installation without manual mounting or browsing. This reuses the existing Folder Rules installer, including license/password checks, multiple-app selection, confirmations, rollback, and optional Trash after a successful install (default: keep source DMG). A `Choose DMG…` entry and cleanup preference also appear on the Files page.

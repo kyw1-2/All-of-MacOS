@@ -159,21 +159,13 @@ final class WindowSwitcherController: NSObject, ObservableObject {
         panel.setFrame(NSRect(x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height),
                        display: false)
         self.panel = panel
-        // The overlay must own the keyboard: without activating the app, key
-        // events keep flowing to the previously active app and the local
-        // monitor never sees the cycling keys. Activation must not resurrect
-        // AOM's own closed windows (the main window popping up on every
-        // switch): anything newly visible is ordered straight back out.
-        let visibleBefore = Set(NSApp.windows.filter { $0.isVisible && $0 !== panel })
-        NSApp.activate(ignoringOtherApps: true)
+        // A nonactivating panel can become key without activating AOM. Do not
+        // call NSApp.activate here: SwiftUI's WindowGroup may resurrect the
+        // closed main window on app activation, causing a visible flash every
+        // time the global Control-Tab shortcut opens this switcher. The panel
+        // still receives keyDown/flagsChanged through its key-window status;
+        // KeyboardMonitor's global event tap also handles cycling keys.
         panel.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isShowing else { return }
-            for window in NSApp.windows where window.isVisible && window !== self.panel
-                && !visibleBefore.contains(window) {
-                window.orderOut(nil)
-            }
-        }
         installMonitors()
     }
 
