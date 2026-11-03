@@ -1002,70 +1002,35 @@ class TrackpadMonitor {
     // MARK: - NSEvent monitors for scroll/pinch/rotate
 
     private func setupNSEventMonitors() {
-        let scrollHandler: (NSEvent) -> Void = { [weak self] e in self?.handleScroll(e) }
-        let magnifyHandler: (NSEvent) -> Void = { [weak self] e in self?.handleMagnify(e) }
-        let rotateHandler: (NSEvent) -> Void = { [weak self] e in self?.handleRotate(e) }
-        let dragHandler: (NSEvent) -> Void = { [weak self] e in self?.handleDrag(e) }
-        // Left-click press: used for gesture logic (circle, position click)
-        // Visual press state is handled in the multitouch callback via NSEvent.pressedMouseButtons
-        let leftPressHandler: (NSEvent) -> Void = { [weak self] event in self?.handleMousePress(event) }
-        let leftReleaseHandler: (NSEvent) -> Void = { [weak self] event in self?.handleMouseRelease(event) }
+        let mask: NSEvent.EventTypeMask = [
+            .scrollWheel, .magnify, .rotate,
+            .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+            .rightMouseDown, .rightMouseUp, .rightMouseDragged
+        ]
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            self?.receiveMonitoredEvent(event)
+        }) {
+            monitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+            self?.receiveMonitoredEvent(event)
+            return event
+        }) {
+            monitors.append(monitor)
+        }
+    }
 
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: scrollHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { e in scrollHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .magnify, handler: magnifyHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .magnify, handler: { e in magnifyHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .rotate, handler: rotateHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .rotate, handler: { e in rotateHandler(e); return e }) {
-            monitors.append(m)
-        }
-        // Left mouse — gesture logic + visual
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: leftPressHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { e in leftPressHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: leftReleaseHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp, handler: { e in leftReleaseHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged, handler: dragHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged, handler: { e in dragHandler(e); return e }) {
-            monitors.append(m)
-        }
-        // Right mouse — 2-finger click on trackpad is a right-click by default
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseDown, handler: leftPressHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown, handler: { e in leftPressHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseUp, handler: leftReleaseHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .rightMouseUp, handler: { e in leftReleaseHandler(e); return e }) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: .rightMouseDragged, handler: dragHandler) {
-            monitors.append(m)
-        }
-        if let m = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDragged, handler: { e in dragHandler(e); return e }) {
-            monitors.append(m)
+    /// Global and local scopes are disjoint. Route each event exactly once;
+    /// local events still pass through unchanged to AppKit.
+    func receiveMonitoredEvent(_ event: NSEvent) {
+        switch event.type {
+        case .scrollWheel: handleScroll(event)
+        case .magnify: handleMagnify(event)
+        case .rotate: handleRotate(event)
+        case .leftMouseDown, .rightMouseDown: handleMousePress(event)
+        case .leftMouseUp, .rightMouseUp: handleMouseRelease(event)
+        case .leftMouseDragged, .rightMouseDragged: handleDrag(event)
+        default: break
         }
     }
 

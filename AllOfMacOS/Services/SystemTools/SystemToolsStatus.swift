@@ -237,17 +237,32 @@ enum SystemStatus {
 /// Samples the strip every couple of seconds while the page is on screen.
 @MainActor
 final class SystemStatusMonitor: ObservableObject {
-    @Published private(set) var cpuPercent: Double?
-    @Published private(set) var memory: SystemStatus.Memory?
-    @Published private(set) var disk: SystemStatus.Disk?
-    @Published private(set) var battery: SystemStatus.Battery?
-    @Published private(set) var hasBattery = true
-    @Published private(set) var uptime: TimeInterval = 0
-    @Published private(set) var thermal: ProcessInfo.ThermalState = .nominal
-    @Published private(set) var address: SystemStatus.InterfaceAddress?
-    /// Mounted volumes for the storage bars; refreshed every fifth sample
-    /// (10 s), since mounting is rarer than CPU changes.
-    @Published private(set) var volumes: [DiskTools.Volume] = []
+    struct Snapshot: Equatable {
+        var cpuPercent: Double?
+        var memory: SystemStatus.Memory?
+        var disk: SystemStatus.Disk?
+        var battery: SystemStatus.Battery?
+        var hasBattery = true
+        var uptime: TimeInterval = 0
+        var thermal: ProcessInfo.ThermalState = .nominal
+        var address: SystemStatus.InterfaceAddress?
+        var volumes: [DiskTools.Volume] = []
+    }
+
+    @Published private(set) var snapshot = Snapshot()
+    var cpuPercent: Double? { snapshot.cpuPercent }
+    var memory: SystemStatus.Memory? { snapshot.memory }
+    var disk: SystemStatus.Disk? { snapshot.disk }
+    var battery: SystemStatus.Battery? { snapshot.battery }
+    var hasBattery: Bool { snapshot.hasBattery }
+    var uptime: TimeInterval { snapshot.uptime }
+    var thermal: ProcessInfo.ThermalState { snapshot.thermal }
+    var address: SystemStatus.InterfaceAddress? { snapshot.address }
+    var volumes: [DiskTools.Volume] { snapshot.volumes }
+
+    func publish(_ next: Snapshot) {
+        if next != snapshot { snapshot = next }
+    }
 
     private var lastTicks: SystemStatus.CPUTicks?
     private var sampleCount = 0
@@ -257,28 +272,42 @@ final class SystemStatusMonitor: ObservableObject {
         guard timer == nil else { return }
         sample()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sample() }
+            MainActor.assumeIsolated {
+                guard let self, self.timer != nil else { return }
+                self.sample()
+            }
         }
+        timer?.tolerance = 0.2
     }
+
+    deinit { timer?.invalidate() }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        lastTicks = nil
+        sampleCount = 0
     }
 
     func sample() {
+        var next = snapshot
         if let ticks = SystemStatus.cpuTicks() {
-            if let lastTicks { cpuPercent = SystemStatus.cpuUsage(from: lastTicks, to: ticks) ?? cpuPercent }
+            if let lastTicks { next.cpuPercent = SystemStatus.cpuUsage(from: lastTicks, to: ticks) ?? next.cpuPercent }
             lastTicks = ticks
         }
-        memory = SystemStatus.memory()
-        disk = SystemStatus.startupDisk()
-        battery = SystemStatus.battery()
-        hasBattery = battery != nil
-        uptime = SystemStatus.secondsSinceBoot() ?? ProcessInfo.processInfo.systemUptime
-        thermal = ProcessInfo.processInfo.thermalState
-        address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
-        if sampleCount % 5 == 0 { volumes = DiskTools.volumes() }
-        sampleCount += 1
+        next.memory = SystemStatus.memory()
+        next.uptime = SystemStatus.secondsSinceBoot() ?? ProcessInfo.processInfo.systemUptime
+        next.thermal = ProcessInfo.processInfo.thermalState
+        // Storage, power and network inventory change much less often than
+        // CPU load. Refresh them together every 10 s and on each reopening.
+        if sampleCount == 0 {
+            next.disk = SystemStatus.startupDisk()
+            next.battery = SystemStatus.battery()
+            next.hasBattery = next.battery != nil
+            next.address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
+            next.volumes = DiskTools.volumes()
+        }
+        sampleCount = (sampleCount + 1) % 5
+        publish(next)
     }
 }

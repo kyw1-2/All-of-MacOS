@@ -23,6 +23,32 @@ final class PermissionWatchdog {
     var onRecovered: (() -> Void)?
 
     private var timer: Timer?
+    private var activationObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    private let trustCheck: () -> Bool
+    private let requestPrompt: () -> Void
+    private let notifications: NotificationCenter
+    private let workspaceNotifications: NotificationCenter
+    var pollingInterval: TimeInterval? { timer?.timeInterval }
+
+    init(trustCheck: @escaping () -> Bool = { AXIsProcessTrusted() },
+         requestPrompt: @escaping () -> Void = {
+             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+             _ = AXIsProcessTrustedWithOptions(options)
+         },
+         notifications: NotificationCenter = .default,
+         workspaceNotifications: NotificationCenter? = nil) {
+        self.trustCheck = trustCheck
+        self.requestPrompt = requestPrompt
+        self.notifications = notifications
+        self.workspaceNotifications = workspaceNotifications ?? NSWorkspace.shared.notificationCenter
+    }
+
+    deinit {
+        timer?.invalidate()
+        if let activationObserver { notifications.removeObserver(activationObserver) }
+        if let wakeObserver { workspaceNotifications.removeObserver(wakeObserver) }
+    }
     private var granted = true
     private var promptedForCurrentLoss = false
     private var consecutiveFailures = 0
@@ -31,10 +57,16 @@ final class PermissionWatchdog {
 
     func start() {
         guard timer == nil else { return }
-        granted = AXIsProcessTrusted()
+        granted = trustCheck()
         promptedForCurrentLoss = !granted
         consecutiveFailures = granted ? 0 : 1
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        schedule()
+        activationObserver = notifications.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        wakeObserver = workspaceNotifications.addObserver(forName: NSWorkspace.didWakeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
         NSLog("[AOM] PermissionWatchdog started (accessibility: %@)", granted ? "granted" : "missing")
@@ -43,17 +75,33 @@ final class PermissionWatchdog {
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let activationObserver { notifications.removeObserver(activationObserver) }
+        if let wakeObserver { workspaceNotifications.removeObserver(wakeObserver) }
+        activationObserver = nil
+        wakeObserver = nil
     }
 
-    private func check() {
-        let trusted = AXIsProcessTrusted()
+    private func schedule() {
+        let interval: TimeInterval = granted && consecutiveFailures == 0 ? 10 : 2
+        guard timer?.timeInterval != interval else { return }
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        timer?.tolerance = interval == 10 ? 2 : 0.2
+    }
+
+    func check() {
+        guard timer != nil else { return }
+        defer { if timer != nil { schedule() } }
+        let trusted = trustCheck()
         if trusted {
             consecutiveFailures = 0
             if !granted {
                 granted = true
                 promptedForCurrentLoss = false
                 NSLog("[AOM] PermissionWatchdog: Accessibility recovered — re-registering monitors")
-                NotificationCenter.default.post(name: Self.accessibilityRecovered, object: nil)
+                notifications.post(name: Self.accessibilityRecovered, object: nil)
                 onRecovered?()
             }
             return
@@ -66,7 +114,7 @@ final class PermissionWatchdog {
         if granted {
             granted = false
             NSLog("[AOM] PermissionWatchdog: Accessibility lost — prompting to re-grant")
-            NotificationCenter.default.post(name: Self.accessibilityLost, object: nil)
+            notifications.post(name: Self.accessibilityLost, object: nil)
             promptIfNeeded()
         } else if !promptedForCurrentLoss {
             promptIfNeeded()
@@ -84,7 +132,6 @@ final class PermissionWatchdog {
     }
 
     private func prompt() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        requestPrompt()
     }
 }

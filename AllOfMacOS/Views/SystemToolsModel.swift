@@ -90,6 +90,9 @@ final class SystemToolsModel: ObservableObject {
     /// in off the main thread and merged into `states`.
     var slowStates: [SystemToolID: SystemToolState] = [:]
     var slowRefreshRunning = false
+    var slowRefreshThrottle = RefreshThrottle(interval: 30)
+    var slowRefreshGeneration = 0
+    private(set) var isVisible = false
 
     let service = MacMagicSystemToolService.shared
     let preferences: SystemPreferenceStore = CFPreferenceStore()
@@ -120,17 +123,28 @@ final class SystemToolsModel: ObservableObject {
     // MARK: - Lifecycle
 
     func appear() {
-        refreshStates()
-        refreshSlowStates()
         guard refreshTimer == nil else { return }
+        isVisible = true
+        refreshStates()
+        refreshSlowStates(force: true)
         // Other apps and System Settings change these too; a slow poll keeps
         // the pills honest without observers on every domain.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshStates(); self?.refreshSlowStates() }
+            MainActor.assumeIsolated {
+                guard let self, self.isVisible else { return }
+                self.refreshStates()
+                self.refreshSlowStates()
+            }
         }
+        refreshTimer?.tolerance = 0.5
     }
 
+    deinit { refreshTimer?.invalidate() }
+
     func disappear() {
+        isVisible = false
+        slowRefreshGeneration += 1
+        slowRefreshThrottle.invalidate()
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
@@ -185,6 +199,9 @@ final class SystemToolsModel: ObservableObject {
     /// System changes land a moment after the command returns (Finder
     /// relaunching, System Events applying the appearance).
     func refreshSoon() {
+        slowRefreshGeneration += 1
+        slowRefreshThrottle.invalidate()
+        if isVisible { refreshSlowStates(force: true) }
         refreshStates()
         for delay in [0.6, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refreshStates() }

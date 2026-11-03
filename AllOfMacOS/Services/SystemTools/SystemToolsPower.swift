@@ -1,6 +1,7 @@
 import AppKit
 import IOKit
 import IOKit.pwr_mgt
+import Darwin
 
 /// Battery details (coconutBattery style), power assertions ("what keeps the
 /// Mac awake", like `pmset -g assertions`), Low Power Mode, a sleep timer and
@@ -69,6 +70,46 @@ enum PowerTools {
             result.append(Assertion(pid: pid, process: process, type: String(rest[typeIndex]), name: name))
         }
         return result
+    }
+
+    /// Public IOKit query: no helper process, privilege prompt or text parsing.
+    /// A read failure is reported, never presented as an empty assertion list.
+    static func activeAssertions() throws -> [Assertion] {
+        var unmanaged: Unmanaged<CFDictionary>?
+        let status = IOPMCopyAssertionsByProcess(&unmanaged)
+        guard status == kIOReturnSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status),
+                          userInfo: [NSLocalizedDescriptionKey: "macOS could not read the power assertions (\(status))."])
+        }
+        guard let dictionary = unmanaged?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSPropertyListReadCorruptError,
+                          userInfo: [NSLocalizedDescriptionKey: "macOS returned an unreadable power-assertion list."])
+        }
+        return parseNativeAssertions(dictionary) { pid in
+            var name = [CChar](repeating: 0, count: 256)
+            let count = name.withUnsafeMutableBytes { proc_name(pid, $0.baseAddress, UInt32($0.count)) }
+            return count > 0 ? String(cString: name) : "PID \(pid)"
+        }
+    }
+
+    static func parseNativeAssertions(_ byPID: [NSNumber: [[String: Any]]],
+                                      processName: (pid_t) -> String) -> [Assertion] {
+        var result: [Assertion] = []
+        var seen = Set<String>()
+        for (number, properties) in byPID {
+            guard let pid = pid_t(exactly: number.int64Value), pid > 0 else { continue }
+            var resolvedName: String?
+            for property in properties {
+                guard let type = property[kIOPMAssertionTypeKey as String] as? String,
+                      sleepPreventingTypes.contains(type),
+                      (property[kIOPMAssertionLevelKey as String] as? NSNumber)?.intValue == kIOPMAssertionLevelOn else { continue }
+                if resolvedName == nil { resolvedName = processName(pid) }
+                let assertion = Assertion(pid: pid, process: resolvedName ?? "PID \(pid)", type: type,
+                                          name: property[kIOPMAssertionNameKey as String] as? String ?? "")
+                if seen.insert(assertion.id).inserted { result.append(assertion) }
+            }
+        }
+        return result.sorted { $0.id < $1.id }
     }
 
     static func assertionKind(_ type: String) -> String {

@@ -48,9 +48,11 @@ extension SystemToolsModel {
 
     /// States that need a helper process: alert volume, startup chime and
     /// Time Machine. One refresh at a time, off the main thread.
-    func refreshSlowStates() {
-        guard !slowRefreshRunning else { return }
+    func refreshSlowStates(force: Bool = false) {
+        guard isVisible, !slowRefreshRunning,
+              slowRefreshThrottle.shouldStart(at: ProcessInfo.processInfo.systemUptime, force: force) else { return }
         slowRefreshRunning = true
+        let generation = slowRefreshGeneration
         Task.detached(priority: .utility) {
             var slow: [SystemToolID: SystemToolState] = [:]
             if let output = try? SystemToolsCommand.run("/usr/bin/osascript", ["-e", "alert volume of (get volume settings)"]),
@@ -68,6 +70,11 @@ extension SystemToolsModel {
             let result = slow
             await MainActor.run {
                 self.slowRefreshRunning = false
+                guard self.isVisible else { return }
+                guard generation == self.slowRefreshGeneration else {
+                    self.refreshSlowStates(force: true)
+                    return
+                }
                 if result != self.slowStates { self.slowStates = result; self.refreshStates() }
             }
         }
@@ -386,8 +393,7 @@ extension SystemToolsModel {
     }
 
     func showAwakeReasons() {
-        runInBackground(.awakeReasons, { try SystemToolsCommand.runChecked("/usr/bin/pmset", ["-g", "assertions"]).stdout }) { text in
-            let assertions = PowerTools.parseAssertions(text)
+        runInBackground(.awakeReasons, { try PowerTools.activeAssertions() }) { assertions in
             guard !assertions.isEmpty else { self.succeed(.awakeReasons, "Nothing is keeping the Mac awake"); return }
             self.processReview = ProcessReview(tool: .awakeReasons, title: "Keeping the Mac Awake", rows: assertions.map {
                 .init(id: $0.id, pid: $0.pid, command: $0.process,
