@@ -545,38 +545,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         menu.addItem(.separator())
 
-        // Clipboard
+        // Clipboard: keep the shelf one click away. Stack/pause controls live
+        // under More; showing them on every menu opening added three rows.
         menu.addItem(.sectionHeader(title: "Clipboard"))
         menu.addItem(entry("Clipboard Shelf", "rectangle.bottomthird.inset.filled", #selector(showClipboard)))
-        menu.addItem(entry("Paste Stack", "square.stack.3d.down.right", #selector(showClipboardStack)))
-        let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
-        menu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
-                           paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
         menu.addItem(.separator())
 
-        // Windows — the four everyday snaps plus the switcher, so the window
-        // manager has a one-click home in the menu bar (3.2).
-        menu.addItem(.sectionHeader(title: "Windows"))
-        menu.addItem(entry("Left Half", "rectangle.lefthalf.filled", #selector(menuSnapLeft)))
-        menu.addItem(entry("Right Half", "rectangle.righthalf.filled", #selector(menuSnapRight)))
-        menu.addItem(entry("Maximize", "arrow.up.left.and.arrow.down.right", #selector(menuMaximize)))
-        menu.addItem(entry("Center", "rectangle.center.inset.filled", #selector(menuCenter)))
-        menu.addItem(entry("Window Switcher", "rectangle.stack", #selector(menuWindowSwitcher)))
-        menu.addItem(.separator())
-
-        // Productivity (3.4): each module adds its own items, built per click.
-        let productivity = MainActor.assumeIsolated { AOMProductivityModules.statusMenuItems() }
-        if !productivity.isEmpty {
-            menu.addItem(.sectionHeader(title: "Productivity"))
-            for item in productivity { menu.addItem(item) }
-            menu.addItem(.separator())
+        // Situational productivity controls: show only an existing focus
+        // session or a muted microphone. Idle/unconfigured modules no longer
+        // take over the menu, but remain available under More.
+        let urgent = MainActor.assumeIsolated { () -> [NSMenuItem] in
+            var items: [NSMenuItem] = []
+            let visible = AOMMenuBarPriority.visibleTools(
+                focusRunning: FocusModule.isSessionActive,
+                microphoneMuted: MicMuteController.shared.isMuted)
+            for tool in visible {
+                switch tool {
+                case .focusSession:
+                    if let focus = FocusModule.statusMenuItems().first { items.append(focus) }
+                case .mutedMicrophone:
+                    if let mic = MicMuteModule.statusMenuItems().first { items.append(mic) }
+                }
+            }
+            return items
         }
+        for item in urgent { menu.addItem(item) }
+        if !urgent.isEmpty { menu.addItem(.separator()) }
 
         // Quick toggles people reach for often; everything else moved to More.
         // "Automation" is the engine's one name across the app (sidebar
         // footer, Workspace notice, Settings).
         let awakeMenuItem = MainActor.assumeIsolated { keepAwakeMenu() }
         menu.addItem(awakeMenuItem)
+        // Frequently useful for the HomePod/AppAudio route: direct access,
+        // with a checkmark instead of having to open More on every recovery.
+        if #available(macOS 14.2, *) {
+            let audio = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
+            audio.state = AppAudioEngine.shared.isEnabled ? .on : .off
+            menu.addItem(audio)
+        }
         let enabled = MainActor.assumeIsolated { appState?.globalEnabled ?? true }
         let engine = entry("Automation", "bolt", #selector(toggleEnabled))
         engine.state = enabled ? .on : .off
@@ -593,11 +600,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
         more.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
         let moreMenu = NSMenu(title: "More")
-        if #available(macOS 14.2, *) {
-            let soundItem = entry("App Audio Engine", "speaker.wave.2", #selector(toggleAppAudio))
-            soundItem.state = AppAudioEngine.shared.isEnabled ? .on : .off
-            moreMenu.addItem(soundItem)
-        }
+        // 3.4.13: secondary commands stay accessible, but never occupy the
+        // main status menu. The productivity submenu is populated lazily when
+        // opened, avoiding seven module queries on every menu-bar click.
+        let clipboardTools = NSMenuItem(title: "Clipboard Tools", action: nil, keyEquivalent: "")
+        clipboardTools.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: nil)
+        let clipboardMenu = NSMenu(title: "Clipboard Tools")
+        clipboardMenu.addItem(entry("Paste Stack", "square.stack.3d.down.right", #selector(showClipboardStack)))
+        let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
+        clipboardMenu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
+                                    paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
+        clipboardTools.submenu = clipboardMenu
+        moreMenu.addItem(clipboardTools)
+        let productivityTools = NSMenuItem(title: "Productivity Tools", action: nil, keyEquivalent: "")
+        productivityTools.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+        let productivityMenu = NSMenu(title: "Productivity Tools")
+        productivityMenu.delegate = MainActor.assumeIsolated { AOMProductivityMenuDelegate.shared }
+        productivityMenu.addItem(NSMenuItem(title: "Open to Load Tools", action: nil, keyEquivalent: ""))
+        productivityTools.submenu = productivityMenu
+        moreMenu.addItem(productivityTools)
+        moreMenu.addItem(.separator())
         let snapping = MainActor.assumeIsolated { appState?.currentPreset.snappingEnabled ?? false }
         let snapItem = entry("Drag to Snap", "rectangle.split.2x2", #selector(toggleSnapping))
         snapItem.state = snapping ? .on : .off
@@ -651,14 +673,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AppAudioEngine.shared.isEnabled.toggle()
         }
     }
-
-    // MARK: - Menu-bar window snaps
-
-    @objc private func menuSnapLeft() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.leftHalf) } }
-    @objc private func menuSnapRight() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.rightHalf) } }
-    @objc private func menuMaximize() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.maximize) } }
-    @objc private func menuCenter() { MainActor.assumeIsolated { AOMTilingGeometry.apply(.center) } }
-    @objc private func menuWindowSwitcher() { MainActor.assumeIsolated { WindowSwitcherController.shared.show() } }
 
     @objc private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)

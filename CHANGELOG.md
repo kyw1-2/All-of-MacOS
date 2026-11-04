@@ -1,3 +1,10 @@
+## 3.4.13 (2026-11-04)
+
+- Simplify the macOS menu bar extra: remove the permanently visible Windows block (Left/Right Half, Maximize, Center, Window Switcher), while keeping window snapping and switching available through gestures, keyboard shortcuts and the main app. Keep Capture and Clipboard Shelf as the primary commands, with App Audio Engine, Keep Awake and Automation as direct stateful controls.
+- Only show a productivity shortcut at the root when attention is needed: an active Focus session or an already-muted microphone. Move the other seven productivity modules to More › Productivity Tools; generate the submenu only on open so ordinary menu clicks no longer query every module or microphone hardware.
+- Consolidate occasional Paste Stack and Clipboard History pause/resume actions under More › Clipboard Tools. Keep all actions available, including Display, Window Pinning, Folder Rules, Files, Text Actions, Click Hints, Screen Ruler and Mic Mute; no saved preferences or shortcuts are removed.
+- Remove orphaned menu-only window selectors; add regression tests for compact menu layout, lazy submenu population, preserved actions and conditional productivity visibility.
+
 ## 3.4.12 (2026-11-04)
 
 - Make two-finger title-bar gestures work on windows belonging to background applications, without needing to focus the app first. Match the WindowServer window under the pointer to the actual Accessibility window, with bounded fallbacks for background app hit-testing; avoid capturing AOM's or protected system windows.

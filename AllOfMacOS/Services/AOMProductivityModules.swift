@@ -34,6 +34,41 @@ enum AOMProductivityModules {
     }
 }
 
+/// A fixed, testable priority policy: only an *active* session or an
+/// already-muted microphone merits a top-level productivity shortcut. Other
+/// tools remain available through More, never hidden or disabled.
+enum AOMMenuBarPriority {
+    enum ActiveTool: Equatable { case focusSession, mutedMicrophone }
+
+    static func visibleTools(focusRunning: Bool, microphoneMuted: Bool) -> [ActiveTool] {
+        var tools: [ActiveTool] = []
+        if focusRunning { tools.append(.focusSession) }
+        if microphoneMuted { tools.append(.mutedMicrophone) }
+        return tools
+    }
+}
+
+/// Menu-bar utilities populate only when the user opens More › Productivity
+/// Tools. The delegate is retained by its singleton; NSMenu.delegate is weak.
+/// This keeps the everyday menu click independent of Folder Rules, Files,
+/// Text Actions, Click Hints, screen ruler and microphone hardware queries.
+@MainActor
+final class AOMProductivityMenuDelegate: NSObject, NSMenuDelegate {
+    static let shared = AOMProductivityMenuDelegate()
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let items = AOMProductivityModules.statusMenuItems()
+        if items.isEmpty {
+            let empty = NSMenuItem(title: "No Productivity Tools", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+        for item in items { menu.addItem(item) }
+    }
+}
+
 /// A module's live summary for its Workspace tile and sidebar badge. The
 /// module writes it; views only read it. Every value is real state.
 @MainActor
