@@ -1065,14 +1065,20 @@ final class TitleBarSnapTests: XCTestCase {
 
     func testPinchAndDoubleTapDecisions() {
         func pinch(_ kind: SwishSnap.Pinch, second: Bool = false, held: Bool = false,
-                   _ modifiers: SwishSnap.Modifiers = [], displays: Int = 1) -> String {
-            let decision = SwishSnap.pinchAction(kind, second: second, held: held, modifiers: modifiers, displays: displays)
+                   _ modifiers: SwishSnap.Modifiers = [], displays: Int = 1,
+                   mayForceQuit: Bool = true) -> String {
+            let decision = SwishSnap.pinchAction(kind, second: second, held: held, modifiers: modifiers,
+                                                 displays: displays, mayForceQuit: mayForceQuit)
             return "\(decision.action)\(decision.waits ? " waits" : "")"
         }
-        // Pinch in closes after waiting for a second pinch, which quits.
+        // Pinch in closes after waiting for a second pinch; 3.4.12: the second
+        // quick pinch in force quits, unless the window may not be force quit
+        // from (found by its frame alone, a protected app, a paused app).
         XCTAssertEqual(pinch(.in), "close waits")
-        XCTAssertEqual(pinch(.in, second: true), "quitApp")
+        XCTAssertEqual(pinch(.in, second: true), "forceQuitApp")
+        XCTAssertEqual(pinch(.in, second: true, mayForceQuit: false), "quitApp")
         XCTAssertEqual(pinch(.in, held: true), "quitApp", "tap, hold and pinch in once")
+        XCTAssertEqual(pinch(.in, held: true, mayForceQuit: false), "quitApp")
         // Pinch out: full screen; with two displays, twice (or ⌘, or held) on the other one.
         XCTAssertEqual(pinch(.out), "toggleFullscreen")
         XCTAssertEqual(pinch(.out, .screen), "toggleFullscreen", "one display: ⌘ changes nothing")
@@ -1162,6 +1168,7 @@ final class TitleBarSnapTests: XCTestCase {
         XCTAssertEqual(SwishSnap.title(for: .close, appName: "Safari"), "Close Window")
         XCTAssertEqual(SwishSnap.title(for: .quitApp, appName: "Safari"), "Quit Safari")
         XCTAssertEqual(SwishSnap.title(for: .quitApp, appName: nil), "Quit App")
+        XCTAssertEqual(SwishSnap.title(for: .forceQuitApp, appName: "Safari"), "Force Quit Safari")
         XCTAssertEqual(SwishSnap.title(for: .hideApp, appName: "Mail"), "Hide Mail")
         XCTAssertEqual(SwishSnap.title(for: .toggleFullscreen, appName: nil), "Full Screen")
         XCTAssertEqual(SwishSnap.title(for: .toggleFullscreen, appName: nil, fullscreen: true), "Exit Full Screen")

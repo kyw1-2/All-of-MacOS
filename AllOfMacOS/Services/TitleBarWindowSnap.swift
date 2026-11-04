@@ -102,6 +102,12 @@ final class TitleBarWindowSnap {
     /// gesture or a double tap must follow the first.
     static let holdTime: Double = 0.45
     static let repeatWindow: Double = 0.35
+    /// How long the first half of a "twice" gesture waits for the second — a
+    /// second pinch in, a second ⌥ swipe down (3.4.12). 0.35 s was shorter
+    /// than two deliberate pinches take: the first one closed the window
+    /// before the second arrived, so "pinch in twice" read as two closes.
+    /// 0.6 s fits the pair, and a double tap keeps the shorter `repeatWindow`.
+    static let twiceWindow: Double = 0.6
     /// How far (points) the pointer may move between the taps of a double tap.
     static let doubleTapDistance: CGFloat = 8
 
@@ -368,6 +374,11 @@ final class TitleBarWindowSnap {
         let at: TimeInterval
         /// The tab under the pointer, on a tab bar AOM can act on (F02).
         var tab: AXUIElement? = nil
+        /// 3.4.12: the Accessibility hit-test named this very window (its
+        /// frame is the window server's record), so the pointer's part of the
+        /// title bar is known. A window found only by its frame is not, and
+        /// nothing that cannot be taken back (a force quit) runs on it.
+        var verified = true
     }
 
     /// Read on the multitouch thread, written on main. A stale bool for one
@@ -437,6 +448,11 @@ final class TitleBarWindowSnap {
     @MainActor private var queuedSpaceMove: (action: SwishSnap.WindowAction, target: WindowManager.Target, start: CGRect)?
     /// The tab under the pointer for the gesture on show (F02).
     @MainActor private var targetTab: AXUIElement?
+    /// The gesture's window was named by the Accessibility hit-test, rather
+    /// than found by its frame alone (3.4.12): only a confirmed window may
+    /// force quit, so a background window whose hit-test was refused gets the
+    /// polite quit instead.
+    @MainActor private var captureVerified = false
     /// The latest tab detach (N333-05). A detach in flight goes on only while
     /// it is still the latest; the snap stopping, sleep and wake move it on.
     @MainActor private var detachRequest = 0
@@ -686,7 +702,10 @@ final class TitleBarWindowSnap {
             endChain("its window is gone or its app is paused")
             return nil
         }
-        return Capture(mouse: NSEvent.mouseLocation, window: target, frame: frame, at: now)
+        // 3.4.12: a handed-over window (the Dock, a detached tab) was never
+        // hit-tested where the pointer is, so it is no window to force quit
+        // from; every other gesture acts on it as before.
+        return Capture(mouse: NSEvent.mouseLocation, window: target, frame: frame, at: now, verified: false)
     }
 
     /// The swipe that engaged while a commit was landing.
@@ -747,7 +766,12 @@ final class TitleBarWindowSnap {
                                grid: options.grid, almost: options.almostMaximize, overflowing: false)
         // Bounded (3.3.2 review): this runs on main as the swipe engages.
         fullscreen = Self.boundedIsFullscreen(capture.window)
-        repeating = pending.flatMap { $0.target.pid == capture.window.pid ? $0.action : nil }
+        // 3.4.12: the waiting close or full-screen toggle of this app, which
+        // this gesture completes as the second half of a "twice" gesture.
+        repeating = pending.flatMap {
+            SwishSnap.repeatingAction(pending: $0.action, pendingPid: $0.target.pid, capturePid: capture.window.pid)
+        }
+        captureVerified = capture.verified
         shownAction = nil
         targetTab = capture.tab
         return true
@@ -789,7 +813,7 @@ final class TitleBarWindowSnap {
         // give it time to show what it is before the first half runs.
         if let waiting = pending, !waiting.extended, prefetched?.window.pid == waiting.target.pid {
             pending?.extended = true
-            armPending(after: Self.repeatWindow + 0.15)
+            armPending(after: Self.twiceWindow + 0.15)
         }
     }
 
@@ -798,6 +822,18 @@ final class TitleBarWindowSnap {
     /// the PID the window server reports for it, never to the system-wide
     /// element; each request is bounded to 0.25 s and the walk to 0.3 s, and
     /// the frame read to 0.25 s, since this runs on main as two fingers land.
+    ///
+    /// 3.4.12, a window of an app that is not in front: such an app answers
+    /// its own hit-test late, not at all, or with the window it last had in
+    /// front, which is why gestures over a background title bar did nothing
+    /// (or acted on the wrong window). The window server's record of the
+    /// window under the pointer is the truth here, fetched once and cheaply:
+    /// a hit-tested window is used only when its frame is that record
+    /// (`SwishSnap.sameWindow`), and otherwise the app's own windows are
+    /// matched to it by frame (one list request, no walk). The shallow probe
+    /// that follows still says whether the pointer is over a tab, so a pinch
+    /// on a background tab closes the tab. Nothing here activates the app or
+    /// writes to it, so the front window stays in front.
     @MainActor
     private func captureTitleBar(at mouse: CGPoint) -> Capture? {
         let pointerTopLeft = CGPoint(x: mouse.x, y: primaryTop - mouse.y)
@@ -806,24 +842,68 @@ final class TitleBarWindowSnap {
         let anywhere = Self.superAnywhereOn()
             && SwishSnap.ModifierRoles.load(.standard).held(NSEvent.modifierFlags).contains(.superKey)
         // Window-server pre-filter: an ordinary (layer 0) window of another
-        // app, with the pointer in its top band (title bar, toolbar, tab bar).
+        // app AOM must not touch, with the pointer in its top band (title bar,
+        // toolbar, tab bar).
         let number = NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0)
         guard number > 0, !NSApp.windows.contains(where: { $0.windowNumber == number }),
               let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]])?.first,
               (info[kCGWindowLayer as String] as? Int ?? 0) == 0,
               let owner = info[kCGWindowOwnerPID as String] as? pid_t,
               owner > 0, owner != ProcessInfo.processInfo.processIdentifier,
+              !Self.protectedApp(owner),
               let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
               let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
               SwishSnap.inPreFilterBand(pointerY: pointerTopLeft.y, windowTop: bounds.minY, anywhere: anywhere) else { return nil }
-        guard let hit = WindowManager.shared.titleBarHit(atMousePoint: mouse, pid: owner, anywhere: anywhere),
-              hit.target.pid != ProcessInfo.processInfo.processIdentifier,
-              let frame = Self.boundedFrame(of: hit.target),
-              SwishSnap.isStartArea(onTitleBar: hit.onTitleBar, onTabBar: hit.onTabBar,
-                                    inTitleBand: SwishSnap.titleBarHit(pointerTopLeft: pointerTopLeft, windowFrame: frame),
+        let at = ProcessInfo.processInfo.systemUptime
+        if let hit = WindowManager.shared.titleBarHit(atMousePoint: mouse, pid: owner, anywhere: anywhere),
+           let frame = Self.boundedFrame(of: hit.target),
+           SwishSnap.sameWindow(accessibilityFrame: frame, windowServerBounds: bounds),
+           SwishSnap.isStartArea(onTitleBar: hit.onTitleBar, onTabBar: hit.onTabBar,
+                                 inTitleBand: SwishSnap.titleBarHit(pointerTopLeft: pointerTopLeft, windowFrame: frame),
+                                 anywhere: anywhere) {
+            let tab = Self.tabGesturesOn() ? hit.tab : nil
+            return Capture(mouse: mouse, window: hit.target, frame: frame, at: at, tab: tab)
+        }
+        // The hit-test was refused, ran out of its budget, or named a window
+        // that is not the one under the pointer: the window server's record,
+        // matched by frame, decides. The title band is checked here instead of
+        // the hit-test's toolbar and tab bar, so a pointer below the band (a
+        // document, a list) never starts a gesture.
+        guard let match = WindowManager.shared.window(matching: bounds, pid: owner),
+              SwishSnap.isStartArea(onTitleBar: false, onTabBar: false,
+                                    inTitleBand: SwishSnap.titleBarHit(pointerTopLeft: pointerTopLeft, windowFrame: match.frame),
                                     anywhere: anywhere) else { return nil }
-        let tab = Self.tabGesturesOn() ? hit.tab : nil
-        return Capture(mouse: mouse, window: hit.target, frame: frame, at: ProcessInfo.processInfo.systemUptime, tab: tab)
+        // Shallow (four levels, 0.12 s): a tab button or a toolbar is within
+        // them, so a pinch on a background tab closes the tab, not the window,
+        // and the walk cannot turn into the cost this path exists to avoid.
+        let probe = WindowManager.shared.titleBarHit(atMousePoint: mouse, pid: owner, timeout: 0.12,
+                                                     budget: 0.12, depth: 4)
+        let tab = probe.flatMap { CFEqual($0.target.window, match.target.window) ? $0.tab : nil }
+        return Capture(mouse: mouse, window: match.target, frame: match.frame, at: at,
+                       tab: Self.tabGesturesOn() ? tab : nil, verified: false)
+    }
+
+    /// 3.4.12: whether a window server owner PID belongs to an app a title-bar
+    /// gesture must leave alone (AOM itself, the Dock and Stage Manager, the
+    /// menu bar's hosts, the login window). Asked from the running app, never
+    /// from Accessibility, so it costs nothing.
+    @MainActor
+    private static func protectedApp(_ pid: pid_t) -> Bool {
+        guard pid > 0, pid != ProcessInfo.processInfo.processIdentifier else { return true }
+        return SwishSnap.isProtectedGestureApp(bundleID: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
+    }
+
+    /// 3.4.12: whether a force quit may name this window's app at all: a named
+    /// app (a process without a bundle ID is not), not AOM or a protected
+    /// system process, and not an app AOM is paused for. The pause is asked
+    /// again here, as `perform` asks it for every action.
+    @MainActor
+    private static func mayForceQuit(_ target: WindowManager.Target) -> Bool {
+        let pid = target.pid
+        guard pid > 0, pid != ProcessInfo.processInfo.processIdentifier, !appPaused(pid),
+              let bundleID = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+              !bundleID.isEmpty else { return false }
+        return !SwishSnap.isProtectedGestureApp(bundleID: bundleID)
     }
 
     @MainActor
@@ -1204,8 +1284,11 @@ final class TitleBarWindowSnap {
     @MainActor
     private func resumeChain(_ queued: SwishChainQueue.Pending, target: WindowManager.Target, frame: CGRect) {
         guard active, allowedNow else { return }
+        // 3.4.12: the window is known but the pointer's part of its title bar
+        // is not (the commit it waited behind moved it), so this gesture never
+        // force quits; everything else acts as before.
         let capture = Capture(mouse: NSEvent.mouseLocation, window: target, frame: frame,
-                              at: ProcessInfo.processInfo.systemUptime)
+                              at: ProcessInfo.processInfo.systemUptime, verified: false)
         guard adopt(capture) else { reset(); return }
         GestureLog.shared.logFromAnyThread("Title-bar snap: chained swipe applied after the last snap landed", level: .detect)
         scheduleTimeout()
@@ -1306,6 +1389,7 @@ final class TitleBarWindowSnap {
     private func reset() {
         target = nil; targetVisible = nil; startFrame = nil; startPlace = nil; startPlaceForUp = nil; plan = nil; targetTab = nil
         modifiers = []; fullscreen = false; pinching = false; repeating = nil; shownAction = nil; heldRoles = []
+        captureVerified = false
         tooltipDirection = nil
         hideTooltip()
     }
@@ -1367,9 +1451,17 @@ final class TitleBarWindowSnap {
         }
         let options = Self.gestureOptions()
         let second = (kind == .in && repeating == .close) || (kind == .out && repeating == .toggleFullscreen)
+        // 3.4.12: two quick pinches in are the user's explicit force quit. It
+        // only ever names a window the hit-test confirmed — a window found by
+        // its frame alone could be the wrong one, and there is no taking a
+        // force quit back — and never AOM, a system process or a paused app;
+        // those take the polite quit on the same double pinch.
+        var mayForceQuit = false
+        if second, kind == .in, captureVerified, let target { mayForceQuit = Self.mayForceQuit(target) }
         let decision = SwishSnap.pinchAction(kind, second: second, held: recognizer.isHeld && options.holdGestures,
                                              modifiers: options.modifierGestures ? modifiers : [],
-                                             displays: WindowManager.shared.screens().count)
+                                             displays: WindowManager.shared.screens().count,
+                                             mayForceQuit: mayForceQuit)
         // The second pinch completes the first: its action no longer waits.
         if second { cancelPending() }
         let next = Plan(place: nil, rect: .null, action: decision.action, waits: decision.waits)
@@ -1576,7 +1668,7 @@ final class TitleBarWindowSnap {
             firePending()
         }
         pending = waiting
-        armPending(after: Self.repeatWindow)
+        armPending(after: Self.twiceWindow)
     }
 
     @MainActor
@@ -1633,6 +1725,19 @@ final class TitleBarWindowSnap {
             // Never AOM itself, and never forced (the app may ask to save).
             guard let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { report(false); return }
             TrackpadUtilityGestures.politeQuit(app)
+        case .forceQuitApp:
+            // 3.4.12, the user's rule: two quick pinches in terminate the app,
+            // even if it is asking to save. Never AOM, a system process or an
+            // app AOM is paused for (`mayForceQuit`): those fall back to the
+            // polite quit, so nothing is terminated by surprise.
+            guard let app, Self.mayForceQuit(target) else {
+                if let app, !Self.protectedApp(target.pid) { TrackpadUtilityGestures.politeQuit(app) }
+                report(false)
+                return
+            }
+            let worked = app.forceTerminate()
+            GestureLog.shared.logFromAnyThread("Title-bar force quit\(worked ? "" : " refused"): \(title)", level: .action)
+            report(worked)
         case .toggleFullscreen:
             WindowManager.shared.execute(.toggleFullscreenWindow, target: target, completion: report)
         case .hideApp:

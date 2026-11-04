@@ -365,8 +365,13 @@ final class WindowManager: ObservableObject {
     /// walk costs no more requests than before. `anywhere` (the Super
     /// modifier's whole-window gestures) asks the hit element for its window
     /// first, since content can sit deeper than the walk goes.
+    /// `depth` (3.4.12) bounds the walk up from the element under the pointer.
+    /// The snap's full walk is 24 levels; a capture of a window found by its
+    /// frame asks for a shallow one (a tab button or a toolbar sits within
+    /// four levels), since the deep walk is the expensive part on an app that
+    /// is not in front.
     func titleBarHit(atMousePoint point: CGPoint, pid owner: pid_t, timeout: Float = 0.25,
-                     budget: TimeInterval = 0.3, anywhere: Bool = false) -> TitleBarHit? {
+                     budget: TimeInterval = 0.3, anywhere: Bool = false, depth: Int = 24) -> TitleBarHit? {
         guard owner > 0 else { return nil }
         let limit = AXDeadline(perRequest: min(timeout, 0.25), budget: budget)
         let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -418,19 +423,19 @@ final class WindowManager: ObservableObject {
         }
         var current = hit
         var onTitleBar = false
-        for depth in 0..<24 {
+        for level in 0..<max(1, depth) {
             guard !limit.isSpent else { return nil }
             var pid: pid_t = 0
             guard AXUIElementGetPid(current, &pid) == .success, pid > 0 else { return nil }
             let entry = roles(current)
             if entry.role == kAXWindowRole as String {
                 // The window itself was hit: its title bar has no element of its own.
-                return found(current, pid, onTitleBar || depth == 0)
+                return found(current, pid, onTitleBar || level == 0)
             }
             chain.append(entry)
             elements.append(current)
             if entry.role == kAXToolbarRole as String { onTitleBar = true }
-            if depth == 0, let subrole = entry.subrole, buttonSubroles.contains(subrole) { onTitleBar = true }
+            if level == 0, let subrole = entry.subrole, buttonSubroles.contains(subrole) { onTitleBar = true }
             guard let parent = element(current, kAXParentAttribute) else {
                 // No parent chain: fall back to the element's window attribute.
                 guard let window = element(current, kAXWindowAttribute) else { return nil }
@@ -439,6 +444,53 @@ final class WindowManager: ObservableObject {
             current = parent
         }
         return nil
+    }
+
+    /// The app's own window whose frame is the window server's record of the
+    /// window under the pointer (3.4.12), or nil when none matches
+    /// (`SwishSnap.sameWindow`, `tolerance` points).
+    ///
+    /// This is the capture path for a background window whose Accessibility
+    /// hit-test is refused, slow, or answers with another window: one request
+    /// for the app's windows and, per window, one for its position and size
+    /// together, all inside `budget` and every request bound. The window it
+    /// hands back keeps the default timeout. Nothing here activates the app,
+    /// writes to it, or asks the window server anything.
+    func window(matching bounds: CGRect, pid owner: pid_t, tolerance: CGFloat = 1,
+                budget: TimeInterval = 0.2) -> (target: Target, frame: CGRect)? {
+        guard owner > 0, owner != ProcessInfo.processInfo.processIdentifier,
+              bounds.width > 0, bounds.height > 0 else { return nil }
+        let limit = AXDeadline(perRequest: 0.25, budget: budget)
+        let app = AXUIElementCreateApplication(owner)
+        guard limit.allow(app) else { return nil }
+        var list: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &list) == .success,
+              let windows = list as? [AXUIElement] else { return nil }
+        let attributes = [kAXPositionAttribute, kAXSizeAttribute] as CFArray
+        func axFrame(_ window: AXUIElement) -> CGRect? {
+            guard limit.allow(window) else { return nil }
+            var values: CFArray?
+            guard AXUIElementCopyMultipleAttributeValues(window, attributes, [], &values) == .success,
+                  let pair = values as? [AnyObject], pair.count == 2,
+                  let position = Self.axValue(pair[0]), let size = Self.axValue(pair[1]) else { return nil }
+            var origin = CGPoint.zero; var extent = CGSize.zero
+            guard AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(size, .cgSize, &extent) else { return nil }
+            return CGRect(origin: origin, size: extent)
+        }
+        for window in windows.prefix(64) {
+            guard !limit.isSpent else { return nil }
+            guard let candidate = axFrame(window),
+                  SwishSnap.sameWindow(accessibilityFrame: candidate, windowServerBounds: bounds,
+                                       tolerance: tolerance) else { continue }
+            // The snap's own size and position writes must not be cut short.
+            AXUIElementSetMessagingTimeout(window, 0)
+            return (Target(window: window, pid: owner), candidate)
+        }
+        return nil
+    }
+
+    private static func axValue(_ value: AnyObject) -> AXValue? {
+        CFGetTypeID(value) == AXValueGetTypeID() ? (value as! AXValue) : nil
     }
 
     /// Continuous gesture path (window drag layer): writes position and

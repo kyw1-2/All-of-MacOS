@@ -187,6 +187,43 @@ enum SwishSnap {
         onTitleBar || onTabBar || inTitleBand || anywhere
     }
 
+    /// Pure (3.4.12): whether an Accessibility frame is the window the window
+    /// server reported under the pointer. Both are top-left coordinates; the
+    /// window server rounds its bounds to whole points, so `tolerance` covers
+    /// that rounding and nothing else. A background app can answer its own
+    /// hit-test with the window it last had in front, and a close or a quit
+    /// must never land on a window the pointer is not on, so nothing is done
+    /// to a window whose frame is not this one.
+    static func sameWindow(accessibilityFrame: CGRect, windowServerBounds: CGRect,
+                           tolerance: CGFloat = 1) -> Bool {
+        guard accessibilityFrame.width > 0, accessibilityFrame.height > 0,
+              windowServerBounds.width > 0, windowServerBounds.height > 0 else { return false }
+        return abs(accessibilityFrame.minX - windowServerBounds.minX) <= tolerance
+            && abs(accessibilityFrame.minY - windowServerBounds.minY) <= tolerance
+            && abs(accessibilityFrame.width - windowServerBounds.width) <= tolerance
+            && abs(accessibilityFrame.height - windowServerBounds.height) <= tolerance
+    }
+
+    /// The apps a title-bar gesture never acts on (3.4.12), whatever the
+    /// window under the pointer looks like: the Dock and Stage Manager (their
+    /// "windows" are icons and thumbnails, which have gestures of their own
+    /// and are handed to the snap by `beginChain`, never captured here), the
+    /// menu bar's hosts, and the login window. AOM's own bundle IDs count as
+    /// protected too, so no gesture can move, close or quit AOM itself.
+    static let protectedGestureBundleIDs: Set<String> = [
+        "com.apple.dock", "com.apple.WindowManager", "com.apple.controlcenter",
+        "com.apple.systemuiserver", "com.apple.notificationcenterui", "com.apple.loginwindow",
+    ]
+
+    /// Pure: whether the app with `bundleID` is one no title-bar gesture may
+    /// act on. A nil bundle ID (a process with no bundle) is not protected
+    /// here; `forceQuit` asks for the bundle separately, since force
+    /// termination is only ever allowed for an app AOM can name.
+    static func isProtectedGestureApp(bundleID: String?, own: Set<String> = FocusIdlePolicy.aomBundleIDs) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        return own.contains(bundleID) || protectedGestureBundleIDs.contains(bundleID)
+    }
+
     /// Whether a top-left pointer sits in a window's title-bar band.
     static func titleBarHit(pointerTopLeft: CGPoint, windowFrame: CGRect, band: CGFloat = 30) -> Bool {
         guard windowFrame.width > 0, windowFrame.height > 0 else { return false }
@@ -358,6 +395,11 @@ enum SwishSnap {
     /// What a title-bar gesture does to the window instead of moving it to a cell.
     enum WindowAction: Equatable {
         case minimize, close, quitApp, toggleFullscreen, hideApp, hideOthers
+        /// 3.4.12: two quick pinches in terminate the app outright (the user's
+        /// explicit rule), where `quitApp` stays the polite Quit of a
+        /// tap-and-hold pinch. Only a window the Accessibility hit-test
+        /// confirmed, of an app AOM may quit, ever reaches this.
+        case forceQuitApp
         case spaceLeft, spaceRight
         /// To the display in that direction, keeping the window's cell.
         case screen(Direction)
@@ -382,7 +424,8 @@ enum SwishSnap {
         switch action {
         case .spaceLeft, .spaceRight, .closeTab: return true
         case .close, .toggleFullscreen: return waits
-        case .minimize, .quitApp, .hideApp, .hideOthers, .screen, .fullscreenOnOtherScreen, .detachTab: return false
+        case .minimize, .quitApp, .forceQuitApp, .hideApp, .hideOthers, .screen, .fullscreenOnOtherScreen,
+             .detachTab: return false
         }
     }
 
@@ -495,22 +538,41 @@ enum SwishSnap {
 
     /// What a finished pinch does, and whether it first waits for a second
     /// pinch of the same kind. `second`: it follows such a pinch on the same
-    /// app within the repeat window.
+    /// app within the twice window.
     /// - In closes the window, after waiting: a second pinch in quits the app
     ///   instead ("Pinch in twice to quit an application"), as does a
     ///   tap-and-hold pinch in ("tap, hold and pinch in once").
+    ///   3.4.12 (the user's rule): the second quick pinch in *force* quits,
+    ///   and only when `mayForceQuit` — the capture was confirmed by the
+    ///   Accessibility hit-test and the app may be quit at all. Otherwise the
+    ///   same double pinch is the polite `quitApp`, so a window found by its
+    ///   frame alone, or a protected app, is never terminated by surprise.
     /// - Out toggles full screen. With two or more displays it waits: a second
     ///   pinch out, ⌘, or a tap-and-hold pinch out moves the window to the
     ///   other display and enters full screen there.
     static func pinchAction(_ pinch: Pinch, second: Bool, held: Bool, modifiers: Modifiers,
-                            displays: Int) -> (action: WindowAction, waits: Bool) {
+                            displays: Int, mayForceQuit: Bool = true) -> (action: WindowAction, waits: Bool) {
         switch pinch {
         case .in:
-            return held || second ? (.quitApp, false) : (.close, true)
+            guard held || second else { return (.close, true) }
+            return second && mayForceQuit ? (.forceQuitApp, false) : (.quitApp, false)
         case .out:
             guard displays >= 2 else { return (.toggleFullscreen, false) }
             if held || second || modifiers.contains(.screen) { return (.fullscreenOnOtherScreen, false) }
             return (.toggleFullscreen, true)
+        }
+    }
+
+    /// Pure (3.4.12): the action a gesture starting on `capturePid` completes as
+    /// the second half of a "twice" gesture — the close or full-screen toggle
+    /// still waiting on that app. Nil when nothing waits, when the gesture
+    /// starts on another app, or when the waiting action is not one that waits
+    /// (only those have a second half).
+    static func repeatingAction(pending: WindowAction, pendingPid: pid_t, capturePid: pid_t) -> WindowAction? {
+        guard pendingPid > 0, pendingPid == capturePid else { return nil }
+        switch pending {
+        case .close, .toggleFullscreen: return pending
+        default: return nil
         }
     }
 
@@ -577,6 +639,7 @@ enum SwishSnap {
         case .minimize: return "Minimize"
         case .close: return "Close Window"
         case .quitApp: return "Quit \(app)"
+        case .forceQuitApp: return "Force Quit \(app)"
         case .toggleFullscreen: return fullscreen ? "Exit Full Screen" : "Full Screen"
         case .hideApp: return "Hide \(app)"
         case .hideOthers: return "Hide Others"

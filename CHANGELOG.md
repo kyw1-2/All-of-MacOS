@@ -1,3 +1,10 @@
+## 3.4.12 (2026-11-04)
+
+- Make two-finger title-bar gestures work on windows belonging to background applications, without needing to focus the app first. Match the WindowServer window under the pointer to the actual Accessibility window, with bounded fallbacks for background app hit-testing; avoid capturing AOM's or protected system windows.
+- Pinching inward once closes the targeted window after a short double-gesture grace period. Two quick inward pinches force-quit the application, subject to app/window identity and protection checks; when identity cannot be verified, fall back to ordinary quit. Keep tab-pinches, tap-and-hold quit and pinch-out full screen separate.
+- Reduce idle file-watcher polling while retaining event-driven changes; bound image, app icon, color and recording-background caches and cap bookmark file reads at 32 MiB (resource-efficiency patch).
+- Restore Safari bookmark permission-denial detection for bounded `FileHandle` reads on macOS, including Cocoa error 513 (`fileWriteNoPermission`). Add regression tests for inactive-window selection, pinch actions and guard conditions.
+
 ## 3.4.10 (2026-11-02)
 
 - Keep Control-Tab's AltTab-style window switcher independent of AOM's main window: its existing `nonactivatingPanel` now takes key focus without calling `NSApp.activate`, preventing the SwiftUI main window from being resurrected or flashed on each invocation. Keep the existing keyboard cycling, search, modifier-release confirmation, and explicit Open AOM action intact; remove the race-prone async cleanup that previously hid newly opened windows only after they had appeared.

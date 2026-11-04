@@ -251,7 +251,10 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
             data = try BoundedFileData.read(from: file, maximumBytes: Self.maximumFileSize)
         } catch BoundedFileData.Failure.tooLarge {
             return []
-        } catch let error as CocoaError where error.code == .fileReadNoPermission {
+        } catch let error as CocoaError where error.code == .fileReadNoPermission || error.code == .fileWriteNoPermission {
+            // FileHandle(forReadingFrom:) on macOS reports a denied open as
+            // Cocoa error 513 (fileWriteNoPermission), unlike Data(contentsOf:)
+            // which reports 257 (fileReadNoPermission). Treat both as denied.
             throw PaletteBookmarkError.permissionDenied
         } catch let error as NSError where error.domain == NSPOSIXErrorDomain &&
             (error.code == Int(EACCES) || error.code == Int(EPERM)) {
