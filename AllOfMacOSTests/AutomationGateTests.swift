@@ -272,10 +272,11 @@ final class AutomationGateTests: XCTestCase {
         XCTAssertEqual(app.forceTerminateRequests, 0)
     }
 
-    /// Source guard for F01: the only force quit AOM has is the explicit,
-    /// confirmed Force Quit Application action (SIGKILL after a dialog).
-    /// No code path may call `forceTerminate()` on its own.
-    func testNoCodePathForceTerminatesAnApplication() throws {
+    /// Source guard for F01: forced termination is only permitted for the
+    /// explicitly confirmed System Tools action or the user's deliberate
+    /// double-pinch-in title-bar gesture. Ordinary Dock/trackpad quits must
+    /// never become forced termination; every other call site is forbidden.
+    func testOnlyExplicitActionsCanForceTerminateAnApplication() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("AllOfMacOS")
         let files = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
@@ -293,7 +294,16 @@ final class AutomationGateTests: XCTestCase {
                 let confirmed = file.lastPathComponent == "SystemToolsModel336.swift"
                     && line.contains("guard app.forceTerminate()")
                     && lines[max(0, number - 4)..<number].contains { $0.contains("guard self.confirm(\"Force Quit") }
-                if !confirmed { offenders.append("\(file.lastPathComponent):\(number + 1)") }
+                // 3.4.12: the deliberate two-pinch-in case is a user action,
+                // not an automatic retry of a polite quit. Keep this exception
+                // specific to the named action, with the window/app safety
+                // checks immediately before the one permitted forceTerminate.
+                let prior = lines[max(0, number - 15)..<number]
+                let doublePinch = file.lastPathComponent == "TitleBarWindowSnap.swift"
+                    && line.contains("let worked = app.forceTerminate()")
+                    && prior.contains { $0.contains("case .forceQuitApp:") }
+                    && prior.contains { $0.contains("guard let app, Self.mayForceQuit(target)") }
+                if !confirmed && !doublePinch { offenders.append("\(file.lastPathComponent):\(number + 1)") }
             }
         }
         XCTAssertEqual(offenders, [], "automatic force termination is not allowed")
