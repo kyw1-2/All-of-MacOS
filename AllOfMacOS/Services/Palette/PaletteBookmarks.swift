@@ -253,7 +253,11 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
             return []
         } catch let error as CocoaError where error.code == .fileReadNoPermission {
             throw PaletteBookmarkError.permissionDenied
-        } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(EPERM) {
+        } catch let error as NSError where error.domain == NSPOSIXErrorDomain &&
+            (error.code == Int(EACCES) || error.code == Int(EPERM)) {
+            // FileHandle(forReadingFrom:) reports POSIX EACCES for chmod(0)
+            // and certain Safari privacy denials; Data(contentsOf:) formerly
+            // normalized these to Cocoa's fileReadNoPermission.
             throw PaletteBookmarkError.permissionDenied
         }
         let bookmarks = try parse(data)
