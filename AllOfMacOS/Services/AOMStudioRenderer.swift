@@ -648,27 +648,47 @@ struct AOMStudioProject: Codable {
 enum AOMStudioBackgroundImages {
     static let maximumPixels = 4096
     private static let lock = NSLock()
-    private static var cache: [String: CIImage] = [:]
-    private static var unreadable: Set<String> = []
+    // Keep recent backgrounds without flushing every image at capacity.
+    // This bounds retained decoded pixels, not the renderer's GPU allocations.
+    static let maximumCachedBytes = 96 * 1024 * 1024
+    private static var cache = BoundedLRUCache<String, CIImage>(countLimit: 4, costLimit: maximumCachedBytes)
+    private static var unreadable = BoundedLRUCache<String, Bool>(countLimit: 64)
 
     static func image(atPath path: String) -> CIImage? {
         guard path.hasPrefix("/"), path.utf8.count <= 4096 else { return nil }
         lock.lock(); defer { lock.unlock() }
         if let image = cache[path] { return image }
-        if unreadable.contains(path) { return nil }
-        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                        kCGImageSourceCreateThumbnailWithTransform: true,
-                                        kCGImageSourceThumbnailMaxPixelSize: maximumPixels]
-        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let picture = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              picture.width > 0, picture.height > 0 else {
-            if unreadable.count > 64 { unreadable.removeAll() }
-            unreadable.insert(path)
+        if unreadable[path] != nil { return nil }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL,
+                                                       [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            unreadable[path] = true
+            return nil
+        }
+        var maximumSide = maximumPixels
+        var picture: CGImage?
+        // High-bit-depth images can exceed the budget even at 4096 px.
+        // Reduce those before caching, so exports do not decode the same
+        // uncacheable image again for every video frame.
+        for _ in 0..<4 {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumSide
+            ]
+            guard let candidate = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  candidate.width > 0, candidate.height > 0 else { break }
+            if candidate.bytesPerRow <= maximumCachedBytes / candidate.height {
+                picture = candidate
+                break
+            }
+            maximumSide = max(1, maximumSide / 2)
+        }
+        guard let picture else {
+            unreadable[path] = true
             return nil
         }
         let image = CIImage(cgImage: picture)
-        if cache.count >= 4 { cache.removeAll() }
-        cache[path] = image
+        cache.insert(image, forKey: path, cost: picture.bytesPerRow * picture.height)
         return image
     }
 
@@ -677,7 +697,7 @@ enum AOMStudioBackgroundImages {
         guard let path else { return }
         lock.lock(); defer { lock.unlock() }
         cache.removeValue(forKey: path)
-        unreadable.remove(path)
+        unreadable.removeValue(forKey: path)
     }
 }
 

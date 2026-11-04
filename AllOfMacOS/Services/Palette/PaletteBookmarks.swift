@@ -199,7 +199,7 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
             guard let directory = browser.dataDirectory else { continue }
             let root = support.appendingPathComponent(directory, isDirectory: true)
             let folders = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
-            let localState = try? Data(contentsOf: root.appendingPathComponent("Local State"))
+            let localState = try? BoundedFileData.read(from: root.appendingPathComponent("Local State"), maximumBytes: Self.maximumFileSize)
             let profiles = PaletteBookmarkParser.chromeProfiles(localState: localState, folders: folders)
             for profile in profiles {
                 let folder = root.appendingPathComponent(profile.directory, isDirectory: true)
@@ -248,7 +248,9 @@ final class PaletteBookmarkLoader: @unchecked Sendable {
         if let size, size > Self.maximumFileSize { return [] }
         let data: Data
         do {
-            data = try Data(contentsOf: file)
+            data = try BoundedFileData.read(from: file, maximumBytes: Self.maximumFileSize)
+        } catch BoundedFileData.Failure.tooLarge {
+            return []
         } catch let error as CocoaError where error.code == .fileReadNoPermission {
             throw PaletteBookmarkError.permissionDenied
         } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(EPERM) {

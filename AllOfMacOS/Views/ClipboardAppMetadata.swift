@@ -7,16 +7,15 @@ import SwiftUI
 @MainActor
 final class AppMetadataCache {
     static let shared = AppMetadataCache()
-    private var iconCache: [String: NSImage] = [:]
+    private var iconCache = BoundedLRUCache<String, NSImage>(countLimit: 128)
     /// Uninstalled source apps: LaunchServices lookups are not free, so a
     /// miss is remembered instead of repeated for every card render.
-    private var missingIcons = Set<String>()
-    private var fileIconCache: [String: NSImage] = [:]
+    private var missingIcons = BoundedLRUCache<String, Bool>(countLimit: 128)
+    private var fileIconCache = BoundedLRUCache<String, NSImage>(countLimit: 300)
 
     func fileIcon(for url: URL) -> NSImage {
         if let cached = fileIconCache[url.path] { return cached }
         let icon = NSWorkspace.shared.icon(forFile: url.path)
-        if fileIconCache.count > 300 { fileIconCache.removeAll() }
         fileIconCache[url.path] = icon
         return icon
     }
@@ -24,7 +23,7 @@ final class AppMetadataCache {
     func icon(for bundleID: String?) -> NSImage? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
         if let cached = iconCache[bundleID] { return cached }
-        if missingIcons.contains(bundleID) { return nil }
+        if missingIcons[bundleID] != nil { return nil }
 
         var image: NSImage?
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
@@ -37,11 +36,11 @@ final class AppMetadataCache {
             iconCache[bundleID] = image
             return image
         }
-        missingIcons.insert(bundleID)
+        missingIcons[bundleID] = true
         return nil
     }
 
-    private var colorCache: [String: Color] = [:]
+    private var colorCache = BoundedLRUCache<String, Color>(countLimit: 512)
 
     /// Paste paints the card header with the source app's icon colour.
     /// The dominant saturated hue of the real icon is used, darkened enough
@@ -54,7 +53,7 @@ final class AppMetadataCache {
         return color
     }
 
-    private var darkTextCache: [String: Bool] = [:]
+    private var darkTextCache = BoundedLRUCache<String, Bool>(countLimit: 512)
 
     /// Whether a banner is light enough that white text would drop under
     /// 3:1 (WCAG relative luminance), so the header uses dark text.

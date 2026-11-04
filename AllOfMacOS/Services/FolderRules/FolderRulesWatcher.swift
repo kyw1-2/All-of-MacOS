@@ -2,7 +2,7 @@ import CoreServices
 import Foundation
 
 /// Watches the folders that have active rules with one FSEvents stream.
-/// ResilientFileWatcher watches a single file and polls once a second, so it
+/// ResilientFileWatcher watches a single file with a recovery poll, so it
 /// doesn't fit: FSEvents reports changes anywhere below a folder, costs
 /// nothing between events, and survives renames of the folder's contents.
 /// Events are coalesced (1 s latency) and reported on the main queue as the
