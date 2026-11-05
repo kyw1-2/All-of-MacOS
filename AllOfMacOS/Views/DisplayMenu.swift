@@ -30,6 +30,14 @@ enum DisplayMenu {
             submenu.addItem(displayHeader(display))
             if let mainDisplay = setMainDisplayItem(display) { submenu.addItem(mainDisplay) }
             submenu.addItem(brightnessItem(display))
+            if let volume = MonitorControls.shared.level(display.displayID, .volume) {
+                let item = NSMenuItem()
+                item.view = BrightnessControlView(title: "Monitor Volume", hardware: true, value: Double(volume),
+                                                  symbol: "speaker.wave.2.fill") { value in
+                    DisplayMediaKeys.shared.setVolume(display, Float(value), feedback: false)
+                }
+                submenu.addItem(item)
+            }
             if let resolution = resolutionItem(display) { submenu.addItem(resolution) }
             if let toggle = hiDPIToggleItem(display) { submenu.addItem(toggle) }
             if let refresh = refreshRateItem(display) { submenu.addItem(refresh) }
@@ -37,6 +45,16 @@ enum DisplayMenu {
             submenu.addItem(modeStatusItem(display))
         }
 
+        if displays.contains(where: { !$0.isBuiltIn }) {
+            submenu.addItem(.separator())
+            let keys = NSMenuItem(title: "Use Media Keys for External Displays",
+                                  action: #selector(DisplayMediaKeys.setEnabled(_:)), keyEquivalent: "")
+            keys.representedObject = !DisplayMediaKeys.shared.enabled
+            keys.target = DisplayMediaKeys.shared
+            keys.state = DisplayMediaKeys.shared.enabled ? .on : .off
+            keys.toolTip = "Brightness follows the pointer. Volume follows the HDMI or DisplayPort output. Requires Accessibility."
+            submenu.addItem(keys)
+        }
         section.submenu = submenu
         section.image = NSImage(systemSymbolName: "display", accessibilityDescription: nil)
         return section
@@ -92,9 +110,9 @@ enum DisplayMenu {
     /// keeps its value while the menu stays open.
     private static func brightnessItem(_ display: DisplayTarget) -> NSMenuItem {
         let hardware = DisplayControlService.supportsHardwareBrightness(display.displayID)
-        let current = DisplayControlService.brightness(display.displayID) ?? 0.5
+        let current = DisplayControlService.brightness(display.displayID) ?? 1
         let control = BrightnessControlView(
-            title: hardware ? "Brightness" : "Brightness (software)",
+            title: "Brightness",
             hardware: hardware,
             value: Double(current),
             onChange: { value in
@@ -400,10 +418,10 @@ final class BrightnessControlView: NSView {
     private let slider = NSSlider()
     private let onChange: (Double) -> Void
 
-    init(title: String, hardware: Bool, value: Double, onChange: @escaping (Double) -> Void) {
+    init(title: String, hardware: Bool, value: Double, symbol: String? = nil, onChange: @escaping (Double) -> Void) {
         self.onChange = onChange
         super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 48))
-        build(title: title, hardware: hardware, value: value)
+        build(title: title, hardware: hardware, value: value, symbol: symbol)
     }
 
     required init?(coder: NSCoder) {
@@ -411,13 +429,14 @@ final class BrightnessControlView: NSView {
         super.init(coder: coder)
     }
 
-    private func build(title: String, hardware: Bool, value: Double) {
-        let clamped = min(1, max(0, value))
+    private func build(title: String, hardware: Bool, value: Double, symbol: String?) {
+        let minimum = hardware ? 0.0 : 0.1
+        let clamped = min(1, max(minimum, value))
 
         // 1. Icon
         let iconView = NSImageView()
         iconView.image = NSImage(
-            systemSymbolName: hardware ? "sun.max.fill" : "sun.min.fill",
+            systemSymbolName: symbol ?? (hardware ? "sun.max.fill" : "sun.min.fill"),
             accessibilityDescription: title
         )
         iconView.contentTintColor = hardware ? .controlAccentColor : .systemOrange
@@ -425,7 +444,7 @@ final class BrightnessControlView: NSView {
         addSubview(iconView)
 
         // 2. Title Label (Crisp primary label)
-        titleLabel.stringValue = "Brightness"
+        titleLabel.stringValue = title
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .labelColor
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -453,9 +472,10 @@ final class BrightnessControlView: NSView {
         addSubview(readoutLabel)
 
         // 5. Slider
-        slider.minValue = 0
+        slider.minValue = minimum
         slider.maxValue = 1
         slider.doubleValue = clamped
+        slider.setAccessibilityLabel(title)
         slider.isContinuous = true
         slider.controlSize = .small
         slider.target = self
@@ -490,7 +510,7 @@ final class BrightnessControlView: NSView {
         ])
 
         toolTip = hardware
-            ? "Adjusts the panel backlight directly (DDC/CI)."
+            ? "Adjusts the monitor’s hardware setting."
             : "This display has no backlight control; brightness is applied via software gamma."
     }
 

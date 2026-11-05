@@ -78,6 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AppDelegate.current = self
         AOMScrollChromePolicy.shared.start()
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
+            DisplayMediaKeys.shared.start()
             startMissionControlOverlay()
             AppAudioMixerService.shared.start()
             AudioOutputRestore.guardStartupOutputFlip()
@@ -393,6 +394,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             GestureStatistics.shared.flushPendingWrites()
             appState?.flushPendingWrites()
         }
+        DisplayMediaKeys.shared.stop()
         DisplayControlService.clearAllSoftwareDims()
     }
 

@@ -54,7 +54,7 @@ enum AudioEventKind: UInt64, CaseIterable {
          defaultOutputChanged, deviceListChanged, tapAttached, tapDetached, tapRewrite, outputMoved,
          handover, mixLate, countersReset, effectChanged,
          // 3.3.4 (N334): a network bus's leveler took more than 1 dB, and let go.
-         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed, clockSkip, captureGap, captureClockReset
+         levelerEngaged, levelerReleased, outputAutoRecovery, outputAutoRecoverySuppressed, clockSkip, captureGap, captureClockReset, displayVolume
 
     var name: String { String(describing: self) }
 
@@ -239,6 +239,7 @@ final class AudioEventLog {
                     result[kind == .limiterEngaged || kind == .limiterReleased ? "levelerDB" : "limiterDB"] = reading.otherReductionDB
                 }
                 if kind == .limiterReleased || kind == .levelerReleased { result["durationMS"] = reading.durationMS }
+            case .displayVolume: result["percent"] = value
             case .mixLate: result["lateMS"] = Double(value) / 1000
             default: if value != 0 { result["value"] = value }
             }

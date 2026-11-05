@@ -80,7 +80,7 @@ final class AudioOutputService {
     static func steppedVolume(_ current: Float32, percentagePoints: Double) -> Float32 {
         min(1, max(0, current + Float32(percentagePoints / 100)))
     }
-    private static func volumeProperty(_ device: AudioDeviceID) -> AudioObjectPropertyAddress? {
+    static func volumeProperty(_ device: AudioDeviceID) -> AudioObjectPropertyAddress? {
         for selector in [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyVolumeScalar] {
             var property = address(selector, scope: kAudioDevicePropertyScopeOutput)
             var writable: DarwinBoolean = false
@@ -140,7 +140,7 @@ final class AudioOutputService {
     }
     static func canAdjustOutputVolume() -> Bool {
         guard let device = currentDeviceID() else { return false }
-        if volumeProperty(device) != nil { return true }
+        if volumeProperty(device) != nil || MonitorControls.shared.outputLevel(device: device) != nil { return true }
         return supportsSoftwareVolume(device)
     }
     static func canAdjustBalance() -> Bool {
@@ -156,6 +156,7 @@ final class AudioOutputService {
     static func currentVolume() -> Float32? {
         guard let device = currentDeviceID() else { return nil }
         guard var property = volumeProperty(device) else {
+            if let level = MonitorControls.shared.outputLevel(device: device) { return level }
             if supportsSoftwareVolume(device) { return softwareGain(uid: string(device, kAudioDevicePropertyDeviceUID)) }
             return nil
         }
@@ -202,6 +203,15 @@ final class AudioOutputService {
         guard let device = Self.currentDeviceID() else { done(false, "No output device is connected"); return }
         guard device == request.device else { done(false, "Output changed during volume adjustment"); return }
         guard var property = Self.volumeProperty(device) else {
+            if let level = MonitorControls.shared.outputLevel(device: device) {
+                let target = request.absolute ? Float(request.value / 100) : Self.steppedVolume(level, percentagePoints: request.value)
+                DispatchQueue.main.async {
+                    DisplayMediaKeys.shared.setOutputVolume(device: device, level: target) { ok in
+                        done(ok, ok ? "Monitor volume: \(Int((target * 100).rounded()))%" : "Monitor volume change did not complete")
+                    }
+                }
+                return
+            }
             guard Self.supportsSoftwareVolume(device) else {
                 done(false, "This output has no writable volume control. Use its native volume control.")
                 return

@@ -50,14 +50,8 @@ struct DisplayModeOption: Identifiable, Equatable {
     }
 }
 
-/// Native display control. No external helper is used: brightness comes from
-/// DisplayServices when the panel exposes it, otherwise from a gamma-based
-/// software dim that works on any display including HDMI TVs; resolution and
-/// refresh rate come from CoreGraphics.
-///
-/// DDC/CI over IOAVService is deliberately absent. On this hardware the
-/// external DCPAVServiceProxy rejects I2C reads with kIOReturnUnsupported, so a
-/// DDC path could only ever fail; the software dim covers that case instead.
+/// DisplayServices takes precedence for Apple panels. External monitors can
+/// expose brightness and speaker volume independently over DDC/CI.
 enum DisplayControlService {
 
     // MARK: - Enumeration
@@ -67,7 +61,7 @@ enum DisplayControlService {
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
-        return ids.compactMap { id in
+        return ids.prefix(Int(count)).compactMap { id in
             guard let uuid = displayUUID(id) else { return nil }
             return DisplayTarget(id: uuid,
                                  displayID: id,
@@ -142,50 +136,81 @@ enum DisplayControlService {
                 unsafeBitCast(canSym, to: CanChangeFn.self))
     }()
 
-    /// True when the panel exposes a hardware brightness control. External HDMI
-    /// displays generally report false and use the software dim instead.
     static func supportsHardwareBrightness(_ id: CGDirectDisplayID) -> Bool {
-        guard let ds = displayServices else { return false }
-        return ds.canChange(id)
+        displayServices?.canChange(id) == true || MonitorControls.shared.level(id, .brightness) != nil
+    }
+
+    static func hasNativeBrightness(_ id: CGDirectDisplayID) -> Bool {
+        displayServices?.canChange(id) == true
     }
 
     static func brightness(_ id: CGDirectDisplayID) -> Float? {
-        guard let ds = displayServices, ds.canChange(id) else { return softwareDim(id) }
-        var value: Float = 0
-        guard ds.get(id, &value) == 0 else { return softwareDim(id) }
-        return value
+        if let ds = displayServices, ds.canChange(id) {
+            var value: Float = 0
+            if ds.get(id, &value) == 0 { return value }
+        }
+        return MonitorControls.shared.level(id, .brightness) ?? softwareDim(id)
     }
 
+    /// DDC requests are asynchronous. Callers that display feedback use the
+    /// completion to distinguish an accepted request from an applied level.
     @discardableResult
-    static func setBrightness(_ id: CGDirectDisplayID, _ value: Float) -> Bool {
+    static func setBrightness(_ id: CGDirectDisplayID, _ value: Float,
+                              completion: ((Bool) -> Void)? = nil) -> Bool {
+        guard value.isFinite else { return false }
         let clamped = min(1, max(0, value))
         if let ds = displayServices, ds.canChange(id) {
-            return ds.set(id, clamped) == 0
+            let ok = ds.set(id, clamped) == 0
+            completion?(ok)
+            return ok
         }
-        return setSoftwareDim(id, clamped)
+        let previousDim = softwareDim(id)
+        if MonitorControls.shared.request(id, .brightness, clamped, completion: { result in
+            switch result {
+            case .applied:
+                if softwareDim(id) == previousDim { _ = clearSoftwareDim(id) }
+                completion?(true)
+            case .failed:
+                let applied = setSoftwareDim(id, max(0.1, clamped))
+                completion?(applied)
+            case .cancelled:
+                completion?(false)
+            }
+        }) { return true }
+        let ok = setSoftwareDim(id, max(0.1, clamped))
+        completion?(ok)
+        return ok
     }
 
-    // MARK: - Software dim (gamma)
+    // Preserve the calibrated table, including nonlinear color profiles.
+    private struct Gamma {
+        var red: [Float]
+        var green: [Float]
+        var blue: [Float]
 
-    /// Remembers the untouched gamma curve per display so a dim can be applied
-    /// repeatedly without compounding, and so it can be fully reverted.
-    private static var originalGamma: [CGDirectDisplayID: [Float]] = [:]
+        init?(_ id: CGDirectDisplayID) {
+            let capacity = CGDisplayGammaTableCapacity(id)
+            guard capacity > 0, capacity <= 65_536 else { return nil }
+            var r = [Float](repeating: 0, count: Int(capacity))
+            var g = r, b = r
+            var count: UInt32 = 0
+            guard CGGetDisplayTransferByTable(id, capacity, &r, &g, &b, &count) == .success,
+                  count > 0, count <= capacity else { return nil }
+            red = Array(r.prefix(Int(count)))
+            green = Array(g.prefix(Int(count)))
+            blue = Array(b.prefix(Int(count)))
+        }
+
+        func apply(to id: CGDirectDisplayID, gain: Float) -> Bool {
+            CGSetDisplayTransferByTable(id, UInt32(red.count), red.map { $0 * gain },
+                                        green.map { $0 * gain }, blue.map { $0 * gain }) == .success
+        }
+    }
+
+    private static var originalGamma: [CGDirectDisplayID: Gamma] = [:]
     private static var currentDim: [CGDirectDisplayID: Float] = [:]
     private static let gammaLock = NSLock()
 
-    private static func readGamma(_ id: CGDirectDisplayID) -> [Float]? {
-        var minR: Float = 0, maxR: Float = 0, gamR: Float = 0
-        var minG: Float = 0, maxG: Float = 0, gamG: Float = 0
-        var minB: Float = 0, maxB: Float = 0, gamB: Float = 0
-        let error = CGGetDisplayTransferByFormula(id, &minR, &maxR, &gamR,
-                                                      &minG, &maxG, &gamG,
-                                                      &minB, &maxB, &gamB)
-        guard error == .success else { return nil }
-        return [minR, maxR, gamR, minG, maxG, gamG, minB, maxB, gamB]
-    }
-
-    /// The dim level a display is currently at, derived from its max channel.
-    /// Returns nil when the display has no stored software dim.
     static func softwareDim(_ id: CGDirectDisplayID) -> Float? {
         gammaLock.lock(); defer { gammaLock.unlock() }
         return currentDim[id]
@@ -193,30 +218,28 @@ enum DisplayControlService {
 
     @discardableResult
     static func setSoftwareDim(_ id: CGDirectDisplayID, _ level: Float) -> Bool {
-        let clamped = min(1, max(0, level))
+        let gain = min(1, max(0, level))
         gammaLock.lock(); defer { gammaLock.unlock() }
-        guard let base = originalGamma[id] ?? readGamma(id) else { return false }
-        if originalGamma[id] == nil { originalGamma[id] = base }
-        // Scale only the max channel; min stays so black level is untouched.
-        let error = CGSetDisplayTransferByFormula(id,
-            base[0], base[1] * clamped, base[2],
-            base[3], base[4] * clamped, base[5],
-            base[6], base[7] * clamped, base[8])
-        guard error == .success else { return false }
-        currentDim[id] = clamped
+        guard let base = originalGamma[id] ?? Gamma(id), base.apply(to: id, gain: gain) else { return false }
+        originalGamma[id] = base
+        currentDim[id] = gain
         return true
     }
 
-    /// Restores the untouched gamma curve. Safe to call when no dim is active.
+    static func discardSoftwareDim(_ id: CGDirectDisplayID) {
+        gammaLock.lock(); defer { gammaLock.unlock() }
+        originalGamma.removeValue(forKey: id)
+        currentDim.removeValue(forKey: id)
+    }
+
     @discardableResult
     static func clearSoftwareDim(_ id: CGDirectDisplayID) -> Bool {
         gammaLock.lock(); defer { gammaLock.unlock() }
-        guard let base = originalGamma[id] else { currentDim[id] = nil; return true }
-        let error = CGSetDisplayTransferByFormula(id,
-            base[0], base[1], base[2], base[3], base[4], base[5], base[6], base[7], base[8])
+        guard let base = originalGamma[id] else { return true }
+        guard base.apply(to: id, gain: 1) else { return false }
         originalGamma[id] = nil
         currentDim[id] = nil
-        return error == .success
+        return true
     }
 
     /// Clears every software dim. Used when the app terminates so a crash or
