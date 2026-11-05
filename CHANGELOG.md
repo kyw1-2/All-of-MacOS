@@ -1,3 +1,9 @@
+## 3.4.14 (2026-11-05)
+
+- Add Apple Silicon external monitor control with per-display DDC/CI capability probing for hardware brightness and monitor speaker volume; fall back to software dimming when hardware brightness is unsupported or a command fails.
+- Add optional media-key routing for pointer-targeted external display brightness and current HDMI/DisplayPort output volume; integrate on-screen display feedback and additional dimming below the monitor's hardware minimum.
+- Keep unsupported and ambiguous display buses from receiving DDC/CI writes; add Monitor VCP and control regression coverage. Real-monitor DDC/OSD behavior remains hardware-dependent.
+
 ## 3.4.13 (2026-11-04)
 
 - Simplify the macOS menu bar extra: remove the permanently visible Windows block (Left/Right Half, Maximize, Center, Window Switcher), while keeping window snapping and switching available through gestures, keyboard shortcuts and the main app. Keep Capture and Clipboard Shelf as the primary commands, with App Audio Engine, Keep Awake and Automation as direct stateful controls.
