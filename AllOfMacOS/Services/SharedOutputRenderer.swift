@@ -51,6 +51,12 @@ final class SharedOutputRenderer {
         for output in airPlayOutputs.values { output.bus.setBoostLevel(masterBoostLevel) }
     }
 
+    /// Changes the AirPlay gain stage in place, without recreating a HAL
+    /// device, process tap or mix thread. Local outputs keep their boost.
+    func setAirPlayStableDynamics(_ enabled: Bool) {
+        for output in airPlayOutputs.values { output.bus.setNetworkSafeDynamics(enabled) }
+    }
+
     /// 3.3.3 (S06): the output Magic Boost preset (index into `AudioBoostPreset.all`).
     private var masterBoostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: nil))
 
@@ -363,8 +369,24 @@ final class AppAudioRenderBus {
     /// leveler (`AudioLookaheadLeveler`: 10 ms lookahead, 0.5–1.5 s release),
     /// then the −1 dBTP limiter, which the leveler leaves to guard the
     /// ceiling. Local outputs keep `init()`'s chain: Magic Boost and the limiter.
+    static let stableDynamicsKey = "AOMAudioAirPlayStableDynamics"
+    static func stableDynamicsEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: stableDynamicsKey) as? Bool ?? true
+    }
+
     static func network() -> AppAudioRenderBus {
-        AppAudioRenderBus(ceiling: networkCeiling, truePeak: true, releaseSeconds: networkRelease, leveling: true)
+        let bus = AppAudioRenderBus(ceiling: networkCeiling, truePeak: true,
+                                   releaseSeconds: networkRelease, leveling: true)
+        bus.setNetworkSafeDynamics(stableDynamicsEnabled())
+        return bus
+    }
+
+    /// Master Magic Boost on AirPlay has a large sustained gain range
+    /// (Movie: 40×) and caused repeated 1–6 dB leveler reductions while the
+    /// capture and resampler were healthy. Stable mode preserves EQ and limiter
+    /// but avoids the additional output-wide compression stage on AirPlay.
+    static func shouldApplyOutputBoost(requested: Bool, network: Bool, stable: Bool) -> Bool {
+        requested && !(network && stable)
     }
     /// The leveler holds true peaks 0.1 dB under where the limiter starts,
     /// so the limiter's own reduction stays at 0 unless the leveler misses.
@@ -395,6 +417,11 @@ final class AppAudioRenderBus {
     private let leveler: AudioLookaheadLeveler?
     private let boost = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
     private let boostLevel = AudioAtomicCounter()
+    private let networkStableDynamics = AudioAtomicCounter()
+    func setNetworkSafeDynamics(_ enabled: Bool) {
+        guard leveler != nil else { return }
+        networkStableDynamics.store(enabled ? 1 : 0)
+    }
     /// 3.3.3 (A03): the render thread's ring (limiter engagement; on an
     /// AirPlay bus also the mix clock's late wake-ups and, 3.3.4, the
     /// leveler's episodes) and the engagements so far.
@@ -902,7 +929,10 @@ final class AppAudioRenderBus {
             }
         }
         // Snapshot once per buffer; a settings change never takes the render lock.
-        let boostEnabled = boostLevel.load() != 0
+        let boostEnabled = Self.shouldApplyOutputBoost(
+            requested: boostLevel.load() != 0,
+            network: leveler != nil,
+            stable: networkStableDynamics.load() == 1)
         let releaseBits = limiterReleaseBits.load()
         if releaseBits != 0 && releaseBits != appliedReleaseBits {
             appliedReleaseBits = releaseBits

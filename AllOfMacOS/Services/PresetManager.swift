@@ -206,7 +206,7 @@ class PresetManager {
             "AOMMissionControlButtons", "AOMMissionControlHotkeys",
             "AOMWindowPinningOptionsV1", "AOMFloatingMenusV1", "AOMWorkflowVariables", "AOMActionFavorites.v1",
             // Audio output choices.
-            "AOMAudioAirPlayProcessingEnabled", "AOMAudioFavorites",
+            "AOMAudioAirPlayProcessingEnabled", "AOMAudioAirPlayStableDynamics", "AOMAudioFavorites",
             "aom.audio.protectMediaPlayback", "aom.audio.restoreOutputOnExit",
             // 3.3.3 audio: the output's Magic Boost preset (each app's is the
             // AOMAudioMagicBoostPreset_ family below), the user's EQ curves and

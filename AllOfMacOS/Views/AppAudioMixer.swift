@@ -22,6 +22,14 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             refresh()
         }
     }
+    @Published var stableAirPlayDynamics: Bool {
+        didSet {
+            guard stableAirPlayDynamics != oldValue else { return }
+            UserDefaults.standard.set(stableAirPlayDynamics, forKey: AppAudioRenderBus.stableDynamicsKey)
+            SharedOutputRenderer.shared.setAirPlayStableDynamics(stableAirPlayDynamics)
+            refresh()
+        }
+    }
     let meters = AppAudioMeters()
     private var meterClients = 0
     private var reloadScheduled = false
@@ -91,6 +99,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         }())
         _airPlayProcessingEnabled = Published(initialValue:
             UserDefaults.standard.object(forKey: "AOMAudioAirPlayProcessingEnabled") as? Bool ?? true)
+        _stableAirPlayDynamics = Published(initialValue: AppAudioRenderBus.stableDynamicsEnabled())
         _allAppsBoostEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: "AOMAudioMasterBoostEnabled"))
         _eqEnabled = Published(initialValue: UserDefaults.standard.object(forKey: "AOMAudioEQEnabled") as? Bool ?? false)
         let preset = UserDefaults.standard.string(forKey: "AOMAudioEQPreset")
@@ -1226,12 +1235,15 @@ struct AirPlayProcessingControls: View {
                     toggle.labelsHidden()
                     Spacer(minLength: 0)
                 }
+                stableDynamicsToggle
+                    .padding(.leading, labelWidth + AOMSpace.x3)
                 status
                     .padding(.leading, labelWidth + AOMSpace.x3)
             }
         } else {
             VStack(alignment: .leading, spacing: AOMSpace.x1) {
                 toggle
+                stableDynamicsToggle
                 status
             }
         }
@@ -1243,6 +1255,12 @@ struct AirPlayProcessingControls: View {
             .disabled(!service.soundEnabled)
     }
 
+    private var stableDynamicsToggle: some View {
+        Toggle("Stable AirPlay dynamics (reduce crackling)", isOn: $service.stableAirPlayDynamics)
+            .toggleStyle(.switch).controlSize(.small)
+            .disabled(!service.soundEnabled || !service.airPlayProcessingEnabled)
+    }
+
     private var status: some View {
         Group {
             if !service.soundEnabled {
@@ -1250,7 +1268,9 @@ struct AirPlayProcessingControls: View {
             } else if service.airPlayPreparing {
                 Label("Connecting — current audio continues", systemImage: "airplay.audio")
             } else if service.airPlayProcessingActive {
-                Label("App volume, EQ and boost → HomePod", systemImage: "airplay.audio")
+                Label(service.stableAirPlayDynamics
+                      ? "App volume and EQ → HomePod; output-wide Magic Boost bypassed for stability"
+                      : "App volume, EQ and boost → HomePod", systemImage: "airplay.audio")
             } else {
                 Text(service.airPlayProcessingEnabled
                      ? "Apply app volume, EQ and boost to Mac audio sent to HomePod. Buffered playback adds latency."

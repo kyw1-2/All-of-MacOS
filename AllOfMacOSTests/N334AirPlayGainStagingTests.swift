@@ -511,10 +511,47 @@ final class N334AirPlayGainStagingTests: XCTestCase {
     /// sample for sample (two apps, output Magic Boost on); a local output's
     /// bus is still the 3.3.3 chain (Magic Boost → −0.2 dBFS limiter), with
     /// its latency unchanged.
+    func testStableAirPlayDynamicsBypassesOnlyOutputWideBoost() {
+        XCTAssertTrue(AppAudioRenderBus.shouldApplyOutputBoost(
+            requested: true, network: false, stable: true),
+            "local output must honor the user's saved boost")
+        XCTAssertFalse(AppAudioRenderBus.shouldApplyOutputBoost(
+            requested: true, network: true, stable: true),
+            "AirPlay should not repeatedly push Movie Boost into the network leveler")
+        XCTAssertTrue(AppAudioRenderBus.shouldApplyOutputBoost(
+            requested: true, network: true, stable: false),
+            "explicitly disabling stable dynamics restores the old boost chain")
+        XCTAssertFalse(AppAudioRenderBus.shouldApplyOutputBoost(
+            requested: false, network: true, stable: false))
+    }
+
+    func testStableAirPlayDynamicsDefaultsToEnabledAndCanOptOut() {
+        let suite = "com.kyw.aom.test.stable-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(AppAudioRenderBus.stableDynamicsEnabled(defaults: defaults))
+        defaults.set(false, forKey: AppAudioRenderBus.stableDynamicsKey)
+        XCTAssertFalse(AppAudioRenderBus.stableDynamicsEnabled(defaults: defaults))
+        defaults.set(true, forKey: AppAudioRenderBus.stableDynamicsKey)
+        XCTAssertTrue(AppAudioRenderBus.stableDynamicsEnabled(defaults: defaults))
+    }
+
+    func testStableNetworkBusDoesNotAmplifyModeratePeaksIntoCompression() {
+        let signals = [Self.sparseHits(seconds: 4, bed: -30, hit: -3)]
+        let expected = Self.play("stable", .levelled, apps: signals, boost: false, warmUp: 0)
+        let bus = AppAudioRenderBus.network()
+        bus.setNetworkSafeDynamics(true)
+        bus.setBoostLevel(1) // The user's local-output boost remains enabled.
+        let actual = render(bus, apps: signals)
+        XCTAssertEqual(actual.output.count, expected.output.count)
+        XCTAssertLessThanOrEqual(Self.largestDifference(actual.output, expected.output), 1e-6)
+    }
+
     func testTheNetworkBusIsTheLevelledChainTheseTestsMeasure() {
         let signals = [Self.sparseHits(seconds: 6, bed: -30, hit: -3), Self.normalize(Self.pink(seconds: 6), peakDB: -30)]
         let expected = Self.play("bus", .levelled, apps: signals, warmUp: 0)
         let bus = AppAudioRenderBus.network()
+        bus.setNetworkSafeDynamics(false) // Exercise the original boosted reference chain.
         XCTAssertTrue(bus.levels)
         XCTAssertEqual(bus.limiterCeiling, AppAudioRenderBus.networkCeiling)
         XCTAssertEqual(bus.dynamicsLatencyFrames, AudioMagicBoost.lookaheadFrames + expected.latency)
@@ -787,6 +824,7 @@ final class N334AirPlayGainStagingTests: XCTestCase {
         // A network bus with output Magic Boost: boosted transients over a
         // quiet bed engage the leveler; the limiter stays out of it.
         let network = AppAudioRenderBus.network()
+        network.setNetworkSafeDynamics(false) // This log test measures the old boosted chain.
         network.setBoostLevel(1)
         let networkLog = AudioEventLog(polls: false)
         networkLog.register(name: "output:homepod", rings: [network.events]) {

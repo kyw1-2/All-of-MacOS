@@ -364,7 +364,7 @@ final class AppAudioEngine {
         }
         // A stopped remote receiver cannot retain muting taps. Check before
         // any transient tap-format / process queries that might return early.
-        var crackleDetected = false
+        var cracklingAirPlayUIDs = Set<String>()
         for session in Array(sessions.values) {
             if let token = session.sourceToken,
                let message = MainActor.assumeIsolated({ SharedOutputRenderer.shared.airPlayFailure(token) }) {
@@ -387,7 +387,7 @@ final class AppAudioEngine {
                         captureGaps: counters["app.captureGaps"] ?? 0,
                         active: playing && activity.recent && activity.rendering &&
                                 ProcessInfo.processInfo.systemUptime - session.createdAt > 2) {
-                        crackleDetected = true
+                        if !session.outputUID.isEmpty { cracklingAirPlayUIDs.insert(session.outputUID) }
                     }
                 }
                 if let failure = session.watchdog.failure(playing: playing, capturing: activity.recent,
@@ -400,7 +400,8 @@ final class AppAudioEngine {
                 }
             }
         }
-        if crackleDetected && restartAppAudioAfterCrackle() { return }
+        if let affectedUID = cracklingAirPlayUIDs.sorted().first,
+           restartAppAudioAfterCrackle(uid: affectedUID) { return }
         // Playback/process-object disappearance is not application termination.
         for pid in Array(sessions.keys) {
             if NSRunningApplication(processIdentifier: pid)?.isTerminated != false { stop(pid: pid) }
@@ -595,7 +596,7 @@ final class AppAudioEngine {
             Self.targetOutputUID(for: $0.bundleID) == uid
         }.map(\.pid))
         affected.formUnion(sessions.values.filter { $0.outputUID == uid }.map(\.pid))
-        affected.insert(requestedPID)
+        if requestedPID > 0 { affected.insert(requestedPID) }
         for pid in affected {
             stop(pid: pid)
             errors.removeValue(forKey: pid)
@@ -606,7 +607,10 @@ final class AppAudioEngine {
         MainActor.assumeIsolated {
             SharedOutputRenderer.shared.resetAirPlayFailures(uid: uid)
         }
-        syncActiveProcesses()
+        // An automatic recovery can be requested during sync itself. A direct
+        // recursive call would be ignored by the syncing guard, leaving
+        // capture stopped until an unrelated event finally wakes it.
+        if syncing { scheduleSync() } else { syncActiveProcesses() }
     }
 
     func retryAll() {
@@ -1073,28 +1077,27 @@ final class AppAudioEngine {
     /// All live sessions (for master-EQ fan-out).
     func sessionsAll() -> [Session] { Array(sessions.values) }
 
-    /// Immediate, bounded AppAudio OFF → ON for confirmed AirPlay transport
-    /// crackle. The UI state is restored; source volume/EQ preferences survive.
-    @discardableResult func restartAppAudioAfterCrackle() -> Bool {
-        guard isEnabled, !crackleRestartPending else { return false }
+    /// Bounded recovery of just the affected AirPlay receiver. Never flip the
+    /// persistent master toggle (or revive it after the user turned it off),
+    /// and do not disrupt unrelated local and remote audio outputs.
+    @discardableResult func restartAppAudioAfterCrackle(uid: String) -> Bool {
+        guard isEnabled, Self.airPlayProcessingEnabled, !uid.isEmpty,
+              !crackleRestartPending else { return false }
         let now = ProcessInfo.processInfo.systemUptime
         crackleRestarts.removeAll { now - $0 > 60 }
         guard crackleRestarts.count < 4,
               now - (crackleRestarts.last ?? -.infinity) >= 8 else { return false }
         crackleRestarts.append(now)
         crackleRestartPending = true
-        GestureLog.shared.logFromAnyThread("AirPlay crackle counters increased; cycling AppAudio OFF → ON", level: .error)
-        isEnabled = false
-        // Allow CoreAudio to tear down the muted taps and the sender before
-        // reattaching; do not spin a restart on the realtime callback.
+        GestureLog.shared.logFromAnyThread(
+            "Confirmed AirPlay transport faults; reconnecting only the affected output", level: .error)
+        // The audio control path runs on the main queue, never the HAL callback.
+        // A bounded delay coalesces bursts and avoids rapid tap teardown.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self else { return }
             self.crackleRestartPending = false
-            self.errors.removeAll()
-            self.retryAfter.removeAll()
-            self.failedProcessIDs.removeAll()
-            self.airPlayCaptureFailures.removeAll()
-            self.isEnabled = true
+            guard self.isEnabled, Self.airPlayProcessingEnabled else { return }
+            self.retryAirPlay(uid: uid, requestedPID: 0)
         }
         return true
     }

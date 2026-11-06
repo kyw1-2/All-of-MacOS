@@ -1,3 +1,10 @@
+## 3.4.16 (2026-11-06)
+
+- Prevent an isolated AirPlay HAL cycle miss from cycling the entire AppAudio engine. Preserve the PCM bridge's short clock-gap fade; sustained correlated overloads still trigger bounded receiver recovery.
+- Scope confirmed app transport recovery to the affected AirPlay output instead of disabling all app audio or silently re-enabling the master toggle after a user turns it off.
+- Add Stable AirPlay dynamics (on by default): bypass output-wide Magic Boost on AirPlay, retaining per-app volume, EQ and the network true-peak limiter to reduce repeated gain pumping. The saved boost preset still applies on local output; the AirPlay preference can be switched live without recreating devices.
+- Include the new audio stability preference in settings backups, and extend synthetic regression coverage.
+
 ## 3.4.15 (2026-11-06)
 
 - Add optional external-mouse independent wheel direction, acceleration disable, and configurable wheel smoothing. Preserve trackpad and recover owned settings on exit.

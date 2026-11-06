@@ -87,7 +87,8 @@ final class BackupScopeTests: XCTestCase {
     func testTheSettingsThePagePromisesAreBackedUp() {
         for key in ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",
                     "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold", "AOMKeyRemaps",
-                    "AOMHyperKeyEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMHUDEnabled", "AOMAudioOverdrive_com.example.app",
+                    "AOMHyperKeyEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel",
+                    AppAudioRenderBus.stableDynamicsKey, "AOMHUDEnabled", "AOMAudioOverdrive_com.example.app",
                     "AOMMissionControlButtons", "AOMMissionControlHotkeys", TextCaptureSettings.Key.languages,
                     TextCaptureShortcutAction.readQRCode.userDefaultsKey] {
             XCTAssertTrue(PresetManager.isBackedUpSetting(key), key)

@@ -731,17 +731,10 @@ final class AirPlayOutputRenderer {
         let unstable = recoveryEvidence.observe(overloads: processorOverloads.load(),
             gaps: bridge.deviceCycleGaps, gapFrames: bridge.deviceGapFrames,
             now: uptime, startedAt: startedAt)
-        if recoveryEvidence.lastEpisodeObserved, case .ready = state, !bus.hasNoLiveSources {
-            // A single confirmed HAL deadline failure can leave crackling
-            // audible indefinitely. Restore the user's AppAudio OFF→ON path
-            // rather than waiting for three faults; the engine owns its rate
-            // limit and all real teardown runs on the main queue.
-            DispatchQueue.main.async {
-                if #available(macOS 14.2, *) {
-                    AppAudioEngine.shared.restartAppAudioAfterCrackle()
-                }
-            }
-        }
+        // Isolated overload/cycle-gap episodes are already repaired by the
+        // bridge's clock-skip and fade-in. Resetting every capture tap on the
+        // first recovered gap injects a much longer interruption than the HAL
+        // miss itself. Only the sustained threshold below may rebuild output.
         if unstable {
             if case .ready = state, !bus.hasNoLiveSources, permitsAutomaticRecovery(now: uptime) {
                 AudioEventLog.shared.record(.outputAutoRecovery, source: eventName,
