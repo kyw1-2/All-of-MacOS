@@ -30,6 +30,9 @@ enum DisplayMenu {
             submenu.addItem(displayHeader(display))
             if let mainDisplay = setMainDisplayItem(display) { submenu.addItem(mainDisplay) }
             submenu.addItem(brightnessItem(display))
+            if let contrast = contrastItem(display) { submenu.addItem(contrast) }
+            if let mute = muteItem(display) { submenu.addItem(mute) }
+            if let input = inputSourceItem(display) { submenu.addItem(input) }
             if let volume = MonitorControls.shared.level(display.displayID, .volume) {
                 let item = NSMenuItem()
                 item.view = BrightnessControlView(title: "Monitor Volume", hardware: true, value: Double(volume),
@@ -110,17 +113,60 @@ enum DisplayMenu {
     /// keeps its value while the menu stays open.
     private static func brightnessItem(_ display: DisplayTarget) -> NSMenuItem {
         let hardware = DisplayControlService.supportsHardwareBrightness(display.displayID)
-        let current = DisplayControlService.brightness(display.displayID) ?? 1
+        let hybrid = !display.isBuiltIn && MonitorControls.shared.level(display.displayID, .brightness) != nil
+        let current = DisplayControlService.combinedBrightness(display.displayID) ?? 1
         let control = BrightnessControlView(
-            title: "Brightness",
+            title: hybrid ? "Brightness · HW + Dim" : "Brightness",
             hardware: hardware,
             value: Double(current),
             onChange: { value in
-                _ = DisplayControlService.setBrightness(display.displayID, Float(value))
+                _ = DisplayControlService.setCombinedBrightness(display.displayID, Float(value))
             }
         )
         let item = NSMenuItem()
         item.view = control
+        return item
+    }
+
+    private static func contrastItem(_ display: DisplayTarget) -> NSMenuItem? {
+        guard !display.isBuiltIn,
+              let value = MonitorControls.shared.level(display.displayID, .contrast) else { return nil }
+        let item = NSMenuItem()
+        item.view = BrightnessControlView(title: "Contrast · DDC", hardware: true,
+                                           value: Double(value), symbol: "circle.lefthalf.filled") { level in
+            _ = MonitorControls.shared.request(display.displayID, .contrast, Float(level))
+        }
+        return item
+    }
+
+    private static func muteItem(_ display: DisplayTarget) -> NSMenuItem? {
+        guard !display.isBuiltIn,
+              let raw = MonitorControls.shared.rawValue(display.displayID, .mute) else { return nil }
+        let item = NSMenuItem(title: "Mute Monitor Speakers", action: #selector(DisplayMenuAction.toggleMute(_:)),
+                              keyEquivalent: "")
+        item.target = DisplayMenuAction.shared
+        item.representedObject = display.displayID
+        item.state = raw == 1 ? .on : .off
+        return item
+    }
+
+    private static func inputSourceItem(_ display: DisplayTarget) -> NSMenuItem? {
+        guard !display.isBuiltIn,
+              MonitorControls.shared.supports(display.displayID, .inputSource) else { return nil }
+        let current = MonitorControls.shared.rawValue(display.displayID, .inputSource)
+        let item = NSMenuItem(title: "Monitor Input Source · DDC", action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for source in MonitorVCP.inputSources {
+            let option = NSMenuItem(title: source.title,
+                                    action: #selector(DisplayMenuAction.setInputSource(_:)), keyEquivalent: "")
+            option.target = DisplayMenuAction.shared
+            option.representedObject = DisplayInputRequest(displayID: display.displayID, code: source.code)
+            option.state = current == source.code ? .on : .off
+            menu.addItem(option)
+        }
+        item.submenu = menu
+        item.toolTip = "Switches the monitor input, possibly disconnecting this Mac. Some DDC monitors accept writes without reporting their current input."
         return item
     }
 
@@ -319,10 +365,30 @@ final class DisplayMenuAction: NSObject {
         guard let displayID = sender.representedObject as? CGDirectDisplayID else { return }
         _ = DisplayControlService.setMainDisplay(displayID)
     }
+
+    @objc func toggleMute(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? CGDirectDisplayID,
+              let current = MonitorControls.shared.rawValue(id, .mute) else { return }
+        _ = MonitorControls.shared.requestRaw(id, .mute, current == 1 ? 2 : 1)
+    }
+
+    @objc func setInputSource(_ sender: NSMenuItem) {
+        guard let request = sender.representedObject as? DisplayInputRequest else { return }
+        _ = MonitorControls.shared.requestRaw(request.displayID, .inputSource, request.code)
+    }
 }
 
 /// Menu items are recreated on every open, so these are plain value carriers
 /// rather than retained state.
+final class DisplayInputRequest: NSObject {
+    let displayID: CGDirectDisplayID
+    let code: UInt16
+    init(displayID: CGDirectDisplayID, code: UInt16) {
+        self.displayID = displayID
+        self.code = code
+    }
+}
+
 final class ResolutionRequest: NSObject {
     let displayID: CGDirectDisplayID
     let option: DisplayModeOption
