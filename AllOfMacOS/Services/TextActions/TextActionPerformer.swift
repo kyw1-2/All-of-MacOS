@@ -17,6 +17,18 @@ enum TextActionPerformer {
     static let chatGPTBundleIDs = ["com.openai.chat", "com.openai.codex"]
     static let pinboardName = "Text Actions"
 
+    /// Mirrors PopClip's configurable action payload without running scripts
+    /// or sending selected text automatically to an external service.
+    /// The user deliberately invokes the action and pastes after review.
+    static func preparedChatGPTPrompt(template: String, selection: String) -> String {
+        let prompt = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return selection }
+        if prompt.contains("{text}") {
+            return prompt.replacingOccurrences(of: "{text}", with: selection)
+        }
+        return prompt + "\n\n" + selection
+    }
+
     private static var chatGPTCache: (url: URL?, checked: TimeInterval)?
 
     static func chatGPTApplicationURL() -> URL? {
@@ -105,7 +117,8 @@ enum TextActionPerformer {
                 completion(.failed(title: "ChatGPT Is Not Installed", detail: "Install the ChatGPT app to use Ask ChatGPT."))
                 return
             }
-            guard TextActionPasteboard.copy(text) else {
+            let payload = preparedChatGPTPrompt(template: settings.customChatGPTPrompt, selection: text)
+            guard TextActionPasteboard.copy(payload) else {
                 completion(.failed(title: "Could Not Copy", detail: "The clipboard did not accept the text."))
                 return
             }
@@ -116,7 +129,7 @@ enum TextActionPerformer {
                         if let reason {
                             completion(.failed(title: "Could Not Open ChatGPT", detail: reason))
                         } else {
-                            GestureHUD.shared.show(title: "Copied for ChatGPT", detail: "Press ⌘V in ChatGPT to paste the text.")
+                            GestureHUD.shared.show(title: "AI Prompt Ready", detail: "Review and press ⌘V in ChatGPT. Nothing was sent automatically.")
                             completion(.done)
                         }
                     }

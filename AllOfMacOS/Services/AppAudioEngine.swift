@@ -251,9 +251,39 @@ final class AppAudioEngine {
     private var errors: [pid_t: String] = [:]
     private var retryAfter: [pid_t: TimeInterval] = [:]
     private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    /// A muted process tap must never survive across system sleep with its
+    /// aggregate IOProc no longer serviced. Keep the user's saved preferences.
+    private var systemSleeping = false
+    private var sleepObservers: [NSObjectProtocol] = []
 
     private init() {
         AppAudioPreferences.migrateToSoundSourceModel()
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        sleepObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.systemSleeping = true
+                self.stopAll()
+                AudioEventLog.shared.record(.outputStopped, source: "system",
+                                            detail: "Sleep: process taps and output graphs released before HAL suspension")
+        })
+        sleepObservers.append(workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                self.systemSleeping = false
+                // The output topology and tap process objects settle after wake.
+                // A delayed sync prevents immediately muting an app against a
+                // still-disconnected HomePod or Bluetooth endpoint.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, !self.systemSleeping, self.isEnabled else { return }
+                    self.errors.removeAll()
+                    self.retryAfter.removeAll()
+                    self.failedProcessIDs.removeAll()
+                    self.airPlayCaptureFailures.removeAll()
+                    AudioOutputService.invalidateDeviceCache()
+                    self.scheduleSync()
+                }
+        })
         // Process objects can exist before playback starts; the process-list
         // notification alone does not tell us when those streams become usable.
         for selector in [kAudioHardwarePropertyProcessObjectList,
@@ -349,7 +379,7 @@ final class AppAudioEngine {
         airPlayBypassed = Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled
         pendingAirPlayPIDs.removeAll(keepingCapacity: true)
         bypassedPIDs.removeAll(keepingCapacity: true)
-        guard isEnabled else {
+        guard isEnabled, !systemSleeping else {
             if !sessions.isEmpty { stopAll() }
             return
         }

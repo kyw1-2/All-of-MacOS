@@ -243,7 +243,7 @@ class PresetManager {
         // main-actor types are spelled out.
         keys += ScreenRulerSettings.backedUpKeys + ClickHintsSettings.backedUpKeys
         keys += [
-            TextActionsSettings.defaultsKey, "AOMFocusSettings.v1",
+            TextActionsSettings.defaultsKey, "AOMMenuShelfPinnedItems", "AOMMenuShelfNotchHover", "AOMFocusSettings.v1",
             "AOMFilesDialogHelper", "AOMFilesDialogFinderWindows", "AOMFilesDialogRecentFolders",
             "AOMFilesDialogNewestFiles", "AOMFilesDialogClipboardPath", "AOMFilesDialogShortcuts",
             "AOMFilesFavorites", "AOMFilesExcludedApps", "AOMFilesShelfShake", "AOMFilesShelfShift",

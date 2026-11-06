@@ -115,6 +115,10 @@ final class SharedOutputRenderer {
         for bus in allBuses where bus.effect !== edited { bus.setEffect(makeMasterEffect()) }
     }
 
+    /// The last source removal may keep AVAudioEngine alive in silence and
+    /// block AirPods auto-switch / macOS idle sleep indefinitely. The graph
+    /// is retired after a grace interval only if no new live source exists.
+    nonisolated static let idleGraphReleaseDelay: TimeInterval = 15
     private var graphs: [String: DeviceGraph] = [:]
     private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
     var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
@@ -277,8 +281,16 @@ final class SharedOutputRenderer {
         }
         guard let graph = graphs[token.uid] else { return }
         graph.bus.remove(id: token.id)
-        // Keep an idle graph running for subsequent app playback. Explicit
-        // shutdown and physical device removal release the hardware.
+        // Do not tear down an active output when a process briefly changes
+        // gain/route. Retire an empty graph only after the fade and a quiet
+        // grace interval. Never stop a graph carrying a live muted process tap.
+        let uid = token.uid
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.idleGraphReleaseDelay) { [weak self, weak graph] in
+            guard let self, let graph, self.graphs[uid] === graph,
+                  graph.bus.hasNoLiveSources else { return }
+            graph.engine.stop()
+            self.graphs.removeValue(forKey: uid)
+        }
     }
 
     /// When each AirPlay output's device was first missing from the device

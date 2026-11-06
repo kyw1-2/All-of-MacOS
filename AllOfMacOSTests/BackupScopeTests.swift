@@ -88,7 +88,7 @@ final class BackupScopeTests: XCTestCase {
         for key in ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",
                     "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold", "AOMKeyRemaps",
                     "AOMHyperKeyEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel",
-                    AppAudioRenderBus.stableDynamicsKey, "AOMHUDEnabled", "AOMAudioOverdrive_com.example.app",
+                    AppAudioRenderBus.stableDynamicsKey, "AOMMenuShelfPinnedItems", "AOMMenuShelfNotchHover", "AOMHUDEnabled", "AOMAudioOverdrive_com.example.app",
                     "AOMMissionControlButtons", "AOMMissionControlHotkeys", TextCaptureSettings.Key.languages,
                     TextCaptureShortcutAction.readQRCode.userDefaultsKey] {
             XCTAssertTrue(PresetManager.isBackedUpSetting(key), key)

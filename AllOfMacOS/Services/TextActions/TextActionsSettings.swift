@@ -216,6 +216,9 @@ struct TextActionsSettings: Codable, Equatable {
     var searchEngine: TextSearchEngine = .google
     /// Used when `searchEngine` is `.custom`; holds `{query}`.
     var customSearchURL = ""
+    /// Optional instruction for Ask ChatGPT. {text} is replaced when clicked,
+    /// never sent automatically; the user reviews and pastes the clipboard.
+    var customChatGPTPrompt = ""
     var translator: TextTranslator = Self.defaultTranslator()
     /// "auto" or a `TextTranslateLanguage` code.
     var translateFrom = "auto"
@@ -322,6 +325,7 @@ struct TextActionsSettings: Codable, Equatable {
         if translateFrom != "auto", !TextTranslateLanguage.isSupported(translateFrom) { result.translateFrom = "auto" }
         if !TextTranslateLanguage.isSupported(translateTo) { result.translateTo = "en" }
         result.customSearchURL = customSearchURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.customChatGPTPrompt = String(customChatGPTPrompt.prefix(1000))
         return result
     }
 
@@ -339,7 +343,7 @@ struct TextActionsSettings: Codable, Equatable {
     // MARK: Coding
 
     private enum CodingKeys: String, CodingKey {
-        case isOn, actions, searchEngine, customSearchURL, translator, translateFrom, translateTo, excludedApps
+        case isOn, actions, searchEngine, customSearchURL, customChatGPTPrompt, translator, translateFrom, translateTo, excludedApps
         case showsOnDrag, showsOnDoubleClick, showsOnKeyboardSelection, readsWithCopy
         case showDelay, position, hideDelay, showsNames, pinboardID
     }
@@ -369,6 +373,7 @@ struct TextActionsSettings: Codable, Equatable {
         actions = Self.normalized(stored?.compactMap(\.action) ?? defaults.actions)
         searchEngine = value(.searchEngine, defaults.searchEngine)
         customSearchURL = value(.customSearchURL, defaults.customSearchURL)
+        customChatGPTPrompt = value(.customChatGPTPrompt, defaults.customChatGPTPrompt)
         translator = value(.translator, defaults.translator)
         translateFrom = value(.translateFrom, defaults.translateFrom)
         translateTo = value(.translateTo, defaults.translateTo)
@@ -390,6 +395,7 @@ struct TextActionsSettings: Codable, Equatable {
         try c.encode(actions, forKey: .actions)
         try c.encode(searchEngine, forKey: .searchEngine)
         try c.encode(customSearchURL, forKey: .customSearchURL)
+        try c.encode(customChatGPTPrompt, forKey: .customChatGPTPrompt)
         try c.encode(translator, forKey: .translator)
         try c.encode(translateFrom, forKey: .translateFrom)
         try c.encode(translateTo, forKey: .translateTo)

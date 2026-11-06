@@ -212,7 +212,8 @@ final class TextActionsController {
         guard let app = NSWorkspace.shared.frontmostApplication,
               TextActionsGate.check(environment(for: app), settings: settings, automatic: true) == nil else { return }
         let anchor = TextSelectionMonitor.comparesWithMouseDown(gesture.kind) ? anchorBox : nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + settings.showDelay) { [weak self] in
+        let delay = TextSelectionMonitor.settledDelay(kind: gesture.kind, userDelay: settings.showDelay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.generation == token else { return }
                 self.read(app: app, pointer: gesture.pointer, automatic: true, anchor: anchor, token: token)

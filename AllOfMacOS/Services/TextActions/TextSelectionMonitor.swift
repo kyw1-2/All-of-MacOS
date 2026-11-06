@@ -25,6 +25,16 @@ final class TextSelectionMonitor {
 
     /// A mouse moving this far between down and up dragged.
     static let dragThreshold: CGFloat = 4
+
+    /// Distinguish a completed double-click from the beginning of a
+    /// triple-click selection. The double-click may still get a third click, so wait
+    /// for a short quiet interval after the second release before probing AX.
+    static func settledDelay(kind: Gesture.Kind, userDelay: TimeInterval) -> TimeInterval {
+        switch kind {
+        case .doubleClick: return max(userDelay, 0.42)
+        default: return userDelay
+        }
+    }
     /// Arrows, Home, End, Page Up and Page Down.
     static let selectionKeys: Set<UInt16> = [123, 124, 125, 126, 115, 119, 116, 121]
 

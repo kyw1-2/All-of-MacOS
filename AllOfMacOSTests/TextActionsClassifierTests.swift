@@ -4,6 +4,13 @@ import XCTest
 /// Text Actions: what the selected text is (links, domains, addresses,
 /// numbers, sums, JSON, line breaks, Korean and other CJK text).
 final class TextActionsClassifierTests: XCTestCase {
+    func testMultiClickWaitPreventsPrematureFloatingBar() {
+        XCTAssertEqual(TextSelectionMonitor.settledDelay(kind: .doubleClick, userDelay: 0.2), 0.42)
+        XCTAssertEqual(TextSelectionMonitor.settledDelay(kind: .tripleClick, userDelay: 0.2), 0.2)
+        XCTAssertEqual(TextSelectionMonitor.settledDelay(kind: .drag, userDelay: 0.5), 0.5)
+        XCTAssertEqual(TextSelectionMonitor.settledDelay(kind: .doubleClick, userDelay: 0.8), 0.8)
+    }
+
     private func traits(_ text: String) -> TextSelectionTraits { TextSelectionClassifier.classify(text) }
 
     // MARK: Links

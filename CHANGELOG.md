@@ -1,3 +1,11 @@
+## 3.4.18 (2026-11-06)
+
+- PopClip parity: stabilize the Text Actions bar during double/triple-click selection and add an opt-in custom AI prompt template with placeholder substitution. Never automatically transmit selected text to a third party.
+- Bartender/Ice-inspired Menu Bar Shelf: AX-derived menu extra search/launch, favorites, a notch-area floating secondary bar and optional hover activation. On macOS 27, third-party item manipulation is unreliable; never forcibly move, hide or capture another app's menu bar windows.
+- Audio lifecycle: release active process taps and local output graphs before system sleep, schedule reattachment after the hardware output settles on wake, and stop empty local output graphs after 15 seconds of stable idleness to avoid persistent audio and sleep assertions.
+- Preserve all existing 3.4.17 Ulanzi bridge, mouse button trigger, and HomePod fallback changes.
+- Back up the Menu Bar Shelf user preferences and add regression tests.
+
 ## 3.4.17 (2026-11-06)
 
 - Safety-first HomePod playback: when two independently correlated CoreAudio HAL overload/gap episodes occur within five minutes, switch back to native AirPlay instead of repeatedly reattaching muted process taps. Expose why effects were disabled and allow an explicit re-enable.

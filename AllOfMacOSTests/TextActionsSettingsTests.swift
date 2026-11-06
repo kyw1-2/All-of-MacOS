@@ -29,6 +29,25 @@ final class TextActionsSettingsTests: XCTestCase {
         XCTAssertEqual(settings.position, .above)
     }
 
+    func testCustomPromptIsOptInAndSurvivesSettingsMigration() throws {
+        let defaults = suite()
+        var settings = TextActionsSettings()
+        XCTAssertEqual(settings.customChatGPTPrompt, "")
+        settings.customChatGPTPrompt = "Explain in Korean: {text}"
+        settings.save(to: defaults)
+        XCTAssertEqual(TextActionsSettings.load(from: defaults).customChatGPTPrompt, "Explain in Korean: {text}")
+        XCTAssertEqual(TextActionPerformer.preparedChatGPTPrompt(
+            template: settings.customChatGPTPrompt, selection: "Hello"), "Explain in Korean: Hello")
+        XCTAssertEqual(TextActionPerformer.preparedChatGPTPrompt(
+            template: "Summarize", selection: "Hello"), "Summarize\n\nHello")
+        XCTAssertEqual(TextActionPerformer.preparedChatGPTPrompt(
+            template: "", selection: "Hello"), "Hello")
+        settings.customChatGPTPrompt = String(repeating: "x", count: 1100)
+        XCTAssertEqual(settings.bounded.customChatGPTPrompt.count, 1000)
+        let old = try JSONDecoder().decode(TextActionsSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(old.customChatGPTPrompt, "")
+    }
+
     func testDefaultsForPeopleWhoReadKorean() {
         XCTAssertEqual(TextActionsSettings.defaultTranslator(preferred: ["en-KR", "ko-KR", "ko"]), .papago)
         XCTAssertEqual(TextActionsSettings.defaultTargetLanguage(preferred: ["en-KR", "ko-KR", "ko"]), "ko")

@@ -251,10 +251,16 @@ struct TextActionDetail: View {
                 }
             }
         case .askChatGPT:
-            AOMSection("ChatGPT") {
+            AOMSection("ChatGPT", footer: "The selected text is never uploaded automatically. Click Ask ChatGPT, review the clipboard, then paste. Leave the instruction empty to copy the original selection.") {
                 AOMSettingRow("ChatGPT app", detail: TextActionPerformer.chatGPTApplicationURL() == nil
                               ? "Not installed: the action appears once it is" : "Installed") {
                     EmptyView()
+                }
+                AOMSettingRow("Custom AI instruction", detail: "Use {text} where the selection should appear. Without it, text is appended.") {
+                    TextField("e.g. Explain in Korean: {text}", text: $settings.customChatGPTPrompt, axis: .vertical)
+                        .lineLimit(2...4)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: AOMRowControlMetrics.fieldWidth)
                 }
             }
         case .calculate:

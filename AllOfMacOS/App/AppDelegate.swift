@@ -491,6 +491,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        // Optional Ice-style notch reveal installs a mouse-move listener
+        // only when enabled; normal startup keeps its old event budget.
+        MainActor.assumeIsolated { AOMMenuShelfController.shared.installHoverIfEnabled() }
     }
 
     private func removeMenuBarIcon() {
@@ -639,6 +642,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         moreMenu.addItem(.separator())
         moreMenu.addItem(entry("Floating Menus & Widgets…", "square.grid.2x2", #selector(editFloatingMenus)))
+        moreMenu.addItem(entry("Menu Bar Shelf…", "rectangle.topthird.inset.filled", #selector(toggleMenuBarShelf)))
         moreMenu.addItem(entry("Show Cheat Sheet", "list.bullet.rectangle", #selector(showCheatSheet)))
         let hudItem = entry("Gesture HUD", "rectangle.on.rectangle", #selector(toggleHUD))
         hudItem.state = (UserDefaults.standard.object(forKey: "AOMHUDEnabled") as? Bool ?? true) ? .on : .off
@@ -675,6 +679,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if #available(macOS 14.2, *) {
             AppAudioEngine.shared.isEnabled.toggle()
         }
+    }
+
+    @objc private func toggleMenuBarShelf() {
+        MainActor.assumeIsolated { AOMMenuShelfController.shared.toggle() }
     }
 
     @objc private func openSettings() {
