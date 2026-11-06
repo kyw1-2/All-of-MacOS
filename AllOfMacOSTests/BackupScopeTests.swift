@@ -93,7 +93,8 @@ final class BackupScopeTests: XCTestCase {
                     TextCaptureShortcutAction.readQRCode.userDefaultsKey] {
             XCTAssertTrue(PresetManager.isBackedUpSetting(key), key)
         }
-        for key in ["AOMKeyRemapOwnedPairs", "AOMMCPEnabled", "AOMIntelligentClipboardReadsScreen", "AOMMaxBackups"] {
+        for key in ["AOMKeyRemapOwnedPairs", "AOMMCPEnabled", "AOMIntelligentClipboardReadsScreen",
+                    AppAudioEngine.airPlaySafetyReasonKey, "AOMMaxBackups"] {
             XCTAssertFalse(PresetManager.isBackedUpSetting(key), key)
         }
     }

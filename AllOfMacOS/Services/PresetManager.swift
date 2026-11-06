@@ -295,6 +295,7 @@ class PresetManager {
             "AOMIntelligentClipboardEnabled": "reads clipboard content: turned on on purpose, never by a restore",
             "AOMIntelligentClipboardReadsScreen": "reads the screen: turned on on purpose, never by a restore",
             "AOMAudioDiagnostics": "diagnostics opt-in",
+            AppAudioEngine.airPlaySafetyReasonKey: "local AirPlay safety fuse diagnostic; must not reactivate or overwrite another Mac safety state on restore",
             AudioDiagnostics.resetRequestKey: "a one-off request to reset the diagnostics counters, not a setting",
             "AOMKeyRemapOwnedPairs": "runtime state of the remapper",
             "AOMParkedWindowRecoveryV1": "runtime recovery journal",
