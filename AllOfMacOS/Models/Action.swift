@@ -312,6 +312,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case switchInputSource = "Switch Keyboard Input Source"
     case setSoundInput = "Set Sound Input"
     case toggleDisplayMirroring = "Toggle Display Mirroring"
+    case setDisplayInputSource = "Switch Display Input Source (DDC)"
+    case toggleXDRBrightness = "Toggle XDR Extra Brightness"
     case ejectAllDisks = "Eject All Disks"
     case toggleDockAutoHide = "Toggle Dock Auto-Hide"
     case bluetoothDevice = "Connect / Disconnect Bluetooth Device"
@@ -403,7 +405,7 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .activatePreviousApp, .quitAppUnderCursor, .hideAppUnderCursor: return .applicationControl
         case .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide:
             return .windowManagement
-        case .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .ejectAllDisks, .toggleDockAutoHide,
+        case .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
              .bluetoothDevice, .setWiFiPower, .showEmojiPicker:
             return .systemActions
         case .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification:
@@ -609,6 +611,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .switchInputSource: return "globe"
         case .setSoundInput: return "mic.badge.plus"
         case .toggleDisplayMirroring: return "rectangle.on.rectangle"
+        case .setDisplayInputSource: return "display.2"
+        case .toggleXDRBrightness: return "sun.max.trianglebadge.exclamationmark"
         case .ejectAllDisks: return "eject"
         case .toggleDockAutoHide: return "dock.rectangle"
         case .bluetoothDevice: return "antenna.radiowaves.left.and.right"
@@ -693,6 +697,8 @@ struct TriggerAction: Identifiable, Codable, Hashable {
 }
 
 struct ActionParameters: Codable, Hashable {
+    /// MCCS VCP 0x60 display input code (0x11=HDMI 1, 0x0F=DisplayPort).
+    var displayInputCode: Int?
     var windowLayoutName: String?
     var namedTriggerName: String?
     var hudText: String?

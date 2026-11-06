@@ -182,6 +182,35 @@ enum DisplayControlService {
         return ok
     }
 
+    /// The first 10% of the combined brightness slider extends below
+    /// the monitor's actual backlight minimum; higher levels use hardware DDC.
+    /// Built-in Apple panels preserve their native brightness behavior.
+    static func combinedBrightness(_ id: CGDirectDisplayID) -> Float? {
+        guard CGDisplayIsBuiltin(id) == 0,
+              let hardware = MonitorControls.shared.level(id, .brightness) else { return brightness(id) }
+        return MonitorCombinedBrightness.slider(hardware: hardware, gain: softwareDim(id) ?? 1)
+    }
+
+    @discardableResult
+    static func setCombinedBrightness(_ id: CGDirectDisplayID, _ value: Float,
+                                      completion: ((Bool) -> Void)? = nil) -> Bool {
+        guard value.isFinite else { completion?(false); return false }
+        guard CGDisplayIsBuiltin(id) == 0,
+              MonitorControls.shared.level(id, .brightness) != nil else {
+            return setBrightness(id, value, completion: completion)
+        }
+        let target = MonitorCombinedBrightness.target(slider: value)
+        let accepted = MonitorControls.shared.request(id, .brightness, target.hardware) { result in
+            guard result == .applied else { completion?(false); return }
+            let success = target.gain < 1
+                ? setSoftwareDim(id, target.gain)
+                : clearSoftwareDim(id)
+            completion?(success)
+        }
+        if !accepted { completion?(false) }
+        return accepted
+    }
+
     // Preserve the calibrated table, including nonlinear color profiles.
     private struct Gamma {
         var red: [Float]

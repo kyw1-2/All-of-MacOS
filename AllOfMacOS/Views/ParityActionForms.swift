@@ -90,6 +90,15 @@ struct ParityActionForm: View {
             }
         case .toggleDisplayMirroring:
             note("Mirrors every display to the main display, or turns mirroring off. Needs two or more displays.")
+        case .setDisplayInputSource:
+            Picker("Monitor input (DDC/CI)", selection: int(\.displayInputCode, default: 0x11)) {
+                ForEach(MonitorVCP.inputSources, id: \.code) { source in
+                    Text(source.title).tag(Int(source.code))
+                }
+            }
+            note("Targets the external display under the pointer (or the only external display). Switching inputs can disconnect this Mac. Requires monitor DDC/CI VCP 0x60.")
+        case .toggleXDRBrightness:
+            note("Unavailable until a validated Liquid Retina XDR hardware controller is implemented. EDR overlays cannot unlock panel hardware brightness. Does nothing on MacBook Air.")
         case .ejectAllDisks:
             note("Ejects external drives, disk images and network volumes. A disk with an open file stays mounted and the step fails.")
         case .toggleDockAutoHide:

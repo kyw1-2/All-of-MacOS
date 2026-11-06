@@ -8,6 +8,7 @@ final class MonitorControlsTests: XCTestCase {
         let port = NSObject()
         var writes: [[UInt8]] = []
         var succeeds = true
+        var readableInput = true
         var writeGate: DispatchSemaphore?
 
         func ports(for ids: [UInt32]) -> [UInt32: CFTypeRef] {
@@ -15,7 +16,13 @@ final class MonitorControlsTests: XCTestCase {
         }
 
         func probe(_ feature: MonitorVCP, on port: CFTypeRef) -> MonitorVCP.Reading? {
-            feature == .volume ? .init(current: 40, maximum: 200) : nil
+            switch feature {
+            case .volume: return .init(current: 40, maximum: 200)
+            case .inputSource: return readableInput ? .init(current: 0x11, maximum: 0) : nil
+            case .mute: return .init(current: 2, maximum: 0)
+            case .contrast: return .init(current: 50, maximum: 100)
+            case .brightness: return nil
+            }
         }
 
         func send(_ packet: [UInt8], to port: CFTypeRef) -> Bool {
@@ -38,6 +45,41 @@ final class MonitorControlsTests: XCTestCase {
         XCTAssertNil(controls.level(1, .brightness))
         XCTAssertEqual(controls.level(1, .volume), 0.2)
         XCTAssertFalse(controls.request(1, .brightness, 0))
+    }
+
+    func testWriteOnlyInputSwitchWorksWithoutGetVCP() {
+        let bus = Bus()
+        bus.readableInput = false
+        let controls = MonitorControls(bus: bus)
+        discover(controls)
+        XCTAssertTrue(controls.supports(1, .inputSource))
+        XCTAssertNil(controls.rawValue(1, .inputSource))
+        let done = expectation(description: "write-only input switch")
+        XCTAssertTrue(controls.requestRaw(1, .inputSource, 0x0f) { result in
+            XCTAssertEqual(result, .applied)
+            done.fulfill()
+        })
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(bus.writes, [MonitorVCP.inputSource.request(value: 0x0f)])
+        XCTAssertNil(controls.rawValue(1, .inputSource), "Last write must not be reported as verified current source")
+    }
+
+    func testRawSourceAndMuteWritesAreValidated() {
+        let bus = Bus()
+        let controls = MonitorControls(bus: bus)
+        discover(controls)
+        XCTAssertEqual(controls.rawValue(1, .inputSource), 0x11)
+        XCTAssertFalse(controls.requestRaw(1, .inputSource, 0x13))
+        XCTAssertFalse(controls.requestRaw(1, .mute, 0))
+        XCTAssertFalse(controls.request(1, .inputSource, 0.5))
+        let switched = expectation(description: "input switch")
+        XCTAssertTrue(controls.requestRaw(1, .inputSource, 0x12) { result in
+            XCTAssertEqual(result, .applied)
+            switched.fulfill()
+        })
+        wait(for: [switched], timeout: 2)
+        XCTAssertEqual(bus.writes, [MonitorVCP.inputSource.request(value: 0x12)])
+        XCTAssertEqual(controls.rawValue(1, .inputSource), 0x12)
     }
 
     func testDragWritesLatestValueAndUpdatesCache() {

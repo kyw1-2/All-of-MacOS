@@ -44,6 +44,7 @@ final class MonitorControls {
         let port: CFTypeRef
         let queue: DispatchQueue
         var reading: MonitorVCP.Reading
+        let readable: Bool
         var pending: Pending?
         var inFlight: Pending?
     }
@@ -87,10 +88,15 @@ final class MonitorControls {
                 queue.async {
                     for feature in MonitorVCP.allCases {
                         guard self.isCurrent(revision) else { return }
-                        guard let value = bus.probe(feature, on: port) else { continue }
+                        let probed = bus.probe(feature, on: port)
+                        // Certain monitors support Set VCP 0x60 but not Get VCP.
+                        // Write-only input control is explicit, never inferred as readable.
+                        guard let value = probed ?? (feature == .inputSource
+                            ? MonitorVCP.Reading(current: 0, maximum: 0) : nil) else { continue }
                         self.lock.lock()
                         if self.generation == revision {
-                            self.controls[Key(id: id, feature: feature)] = Control(port: port, queue: queue, reading: value)
+                            self.controls[Key(id: id, feature: feature)] = Control(
+                                port: port, queue: queue, reading: value, readable: probed != nil)
                         }
                         self.lock.unlock()
                     }
@@ -112,17 +118,48 @@ final class MonitorControls {
 
     private func cachedLevel(_ id: CGDirectDisplayID, _ feature: MonitorVCP) -> Float? {
         guard let control = controls[Key(id: id, feature: feature)] else { return nil }
+        guard control.reading.maximum > 0 else { return nil }
         return Float(control.pending?.target ?? control.reading.current) / Float(control.reading.maximum)
+    }
+
+    func rawValue(_ id: CGDirectDisplayID, _ feature: MonitorVCP) -> UInt16? {
+        lock.lock(); defer { lock.unlock() }
+        guard let control = controls[Key(id: id, feature: feature)], control.readable else { return nil }
+        return control.reading.current
+    }
+
+    func supports(_ id: CGDirectDisplayID, _ feature: MonitorVCP) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return controls[Key(id: id, feature: feature)] != nil
+    }
+
+    /// Enum VCP values must be passed as raw hardware codes, not percentages.
+    @discardableResult
+    func requestRaw(_ id: CGDirectDisplayID, _ feature: MonitorVCP, _ raw: UInt16,
+                    completion: ((WriteResult) -> Void)? = nil) -> Bool {
+        guard (feature == .inputSource && MonitorVCP.validInputSource(raw))
+            || (feature == .mute && (raw == 1 || raw == 2)) else { return false }
+        return requestTarget(id, feature, raw, completion: completion)
     }
 
     /// Every accepted request completes on main, including superseded writes.
     @discardableResult
     func request(_ id: CGDirectDisplayID, _ feature: MonitorVCP, _ level: Float,
                  completion: ((WriteResult) -> Void)? = nil) -> Bool {
+        guard level.isFinite, feature != .inputSource, feature != .mute else { return false }
+        lock.lock()
+        let target = controls[Key(id: id, feature: feature)]?.reading.scaled(level)
+        lock.unlock()
+        guard let target else { return false }
+        return requestTarget(id, feature, target, completion: completion)
+    }
+
+    @discardableResult
+    private func requestTarget(_ id: CGDirectDisplayID, _ feature: MonitorVCP, _ target: UInt16,
+                               completion: ((WriteResult) -> Void)?) -> Bool {
         let key = Key(id: id, feature: feature)
         lock.lock(); defer { lock.unlock() }
-        guard level.isFinite, var control = controls[key] else { return false }
-        let target = control.reading.scaled(level)
+        guard var control = controls[key] else { return false }
         let schedule = control.pending == nil
         control.pending?.cancel()
         control.pending = Pending(target: target, completion: completion)
@@ -132,7 +169,7 @@ final class MonitorControls {
     }
 
     private func enqueue(_ key: Key, _ revision: Int, _ queue: DispatchQueue) {
-        queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.flush(key, revision) }
+        queue.asyncAfter(deadline: .now() + .milliseconds(45)) { self.flush(key, revision) }
     }
 
     private func flush(_ key: Key, _ revision: Int) {

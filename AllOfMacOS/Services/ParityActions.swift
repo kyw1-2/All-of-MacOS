@@ -720,7 +720,7 @@ enum ParityActions {
         .pasteClipboardItem, .transformClipboardText, .saveClipboard, .restoreClipboard, .clearClipboard,
         .chooseMenuItem, .showContextMenu, .activatePreviousApp, .quitAppUnderCursor, .hideAppUnderCursor,
         .activateWindowByTitle, .minimizeAppWindows, .gatherWindowsToPointerDisplay, .tileFrontWindowsSideBySide,
-        .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .ejectAllDisks, .toggleDockAutoHide,
+        .switchInputSource, .setSoundInput, .toggleDisplayMirroring, .setDisplayInputSource, .toggleXDRBrightness, .ejectAllDisks, .toggleDockAutoHide,
         .bluetoothDevice, .setWiFiPower, .showEmojiPicker,
         .recognizeScreenText, .sendMIDI, .sendOSC, .pickScreenColor, .hapticFeedback, .postDistributedNotification,
         .restartRecording]
@@ -865,6 +865,30 @@ enum ParityActions {
                     completion(ok)
                 }
             }
+        case .setDisplayInputSource:
+            guard let number = p.displayInputCode, (0...65535).contains(number),
+                  MonitorVCP.validInputSource(UInt16(number)) else {
+                log("Choose a valid monitor DDC input source"); completion(false); return
+            }
+            let externals = DisplayControlService.displays().filter { !$0.isBuiltIn }
+            let pointer = NSEvent.mouseLocation
+            let pointerID = NSScreen.screens.first(where: { $0.frame.contains(pointer) })?
+                .deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let selected = externals.first { $0.displayID == pointerID?.uint32Value }
+                ?? (externals.count == 1 ? externals.first : nil)
+            guard let selected else {
+                log("Point at an external monitor or connect exactly one monitor"); completion(false); return
+            }
+            let accepted = MonitorControls.shared.requestRaw(selected.displayID, .inputSource, UInt16(number)) { result in
+                if result != .applied { log("Monitor DDC input switch was not acknowledged; check DDC/CI support") }
+                completion(result == .applied)
+            }
+            if !accepted { log("No writable DDC input control for this display"); completion(false) }
+        case .toggleXDRBrightness:
+            // The unverified transparent Metal overlay technique does not
+            // unlock panel backlight output; refuse until validated on real XDR hardware.
+            log("XDR extra brightness requires verified built-in Liquid Retina XDR hardware control")
+            completion(false)
         case .ejectAllDisks: ejectAll(completion)
         case .toggleDockAutoHide:
             let value: String
