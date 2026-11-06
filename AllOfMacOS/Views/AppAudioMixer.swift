@@ -117,6 +117,13 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
                     if let self, !self.previewShowsMixer, self.soundEnabled != AppAudioEngine.shared.isEnabled {
                         self.soundEnabled = AppAudioEngine.shared.isEnabled
                     }
+                    // The HAL safety fuse can disable only HomePod effects
+                    // from the output queue; keep the switch in sync with
+                    // the actual audio route without retriggering teardown.
+                    if let self, !self.previewShowsMixer,
+                       self.airPlayProcessingEnabled != AppAudioEngine.airPlayProcessingEnabled {
+                        self.airPlayProcessingEnabled = AppAudioEngine.airPlayProcessingEnabled
+                    }
                 }
                 self?.requestReload()
             }
@@ -1274,7 +1281,8 @@ struct AirPlayProcessingControls: View {
             } else {
                 Text(service.airPlayProcessingEnabled
                      ? "Apply app volume, EQ and boost to Mac audio sent to HomePod. Buffered playback adds latency."
-                     : "Direct playback: effects and app volume are bypassed on AirPlay.")
+                     : (UserDefaults.standard.string(forKey: AppAudioEngine.airPlaySafetyReasonKey)
+                        ?? "Direct playback: effects and app volume are bypassed on AirPlay."))
             }
         }
         .font(AOMFont.caption)

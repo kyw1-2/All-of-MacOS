@@ -71,6 +71,10 @@ mkdir -p "$CONTENTS/Resources/bin"
 cp "$PWD/AllOfMacOS/App/AllOfMacOS.sdef" "$CONTENTS/Resources/AllOfMacOS.sdef"
 cp "$PWD/scripts/aomctl.py" "$CONTENTS/Resources/bin/aomctl"
 chmod 755 "$CONTENTS/Resources/bin/aomctl"
+# Official Ulanzi Studio companion plugin (macOS, no direct HID takeover).
+mkdir -p "$CONTENTS/Resources/Ulanzi"
+ditto "$PWD/Extensions/Ulanzi/com.ulanzi.aom.ulanziPlugin" \
+    "$CONTENTS/Resources/Ulanzi/com.ulanzi.aom.ulanziPlugin"
 
 echo "==> Codesigning with '$SIGN_ID'"
 codesign --force --sign "$SIGN_ID" \

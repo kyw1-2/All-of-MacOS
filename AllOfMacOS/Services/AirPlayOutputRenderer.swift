@@ -79,6 +79,29 @@ struct AirPlayOverloadRecoveryEvidence {
     }
 }
 
+/// A safety fuse for repeated receiver HAL deadline errors that do not
+/// reproduce as app-capture underruns. Network outputs use a native sender
+/// after two separately observed episodes in a five-minute window.
+struct AirPlayNativeFallbackPolicy {
+    static let windowSeconds: TimeInterval = 300
+    static let requiredEpisodes = 2
+    private var episodes: [TimeInterval] = []
+    private var lastAt: TimeInterval = -.infinity
+
+    mutating func observe(episode: Bool, now: TimeInterval) -> Bool {
+        guard now.isFinite, now >= lastAt else { return false }
+        lastAt = now
+        episodes.removeAll { now - $0 > Self.windowSeconds }
+        guard episode else { return false }
+        episodes.append(now)
+        if episodes.count >= Self.requiredEpisodes {
+            episodes.removeAll()
+            return true
+        }
+        return false
+    }
+}
+
 /// Bounded across output replacements, so a troubled HomePod cannot trigger
 /// a rapid stop/reattach loop. The engine's existing retry policy separately
 /// limits automatic tap reattachment.
@@ -149,6 +172,7 @@ final class AirPlayOutputRenderer {
     /// output exists (start() … tearDown(), device queue only).
     private let napGuard = AirPlayNapGuard(reason: "AirPlay output mixing (realtime audio)")
     private var recoveryEvidence = AirPlayOverloadRecoveryEvidence()
+    private var nativeFallback = AirPlayNativeFallbackPolicy()
     private static let recoveryLock = NSLock()
     private static var recoveryBudgets: [String: AirPlayOverloadRecoveryBudget] = [:]
     private func permitsAutomaticRecovery(now: TimeInterval) -> Bool {
@@ -731,6 +755,20 @@ final class AirPlayOutputRenderer {
         let unstable = recoveryEvidence.observe(overloads: processorOverloads.load(),
             gaps: bridge.deviceCycleGaps, gapFrames: bridge.deviceGapFrames,
             now: uptime, startedAt: startedAt)
+        if nativeFallback.observe(episode: recoveryEvidence.lastEpisodeObserved,
+                                  now: uptime),
+           case .ready = state, !bus.hasNoLiveSources {
+            // The same receiver broke its HAL deadline twice independently:
+            // stop participating in its 128-frame hardware clock. Main queue
+            // owns the session and safely releases the muting taps.
+            DispatchQueue.main.async {
+                if #available(macOS 14.2, *) {
+                    AppAudioEngine.shared.fallBackToNativeAirPlay(
+                        reason: "Repeated HomePod HAL deadline faults; AOM AirPlay effects disabled to restore native audio")
+                }
+            }
+            return
+        }
         // Isolated overload/cycle-gap episodes are already repaired by the
         // bridge's clock-skip and fade-in. Resetting every capture tap on the
         // first recovered gap injects a much longer interruption than the HAL

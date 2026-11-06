@@ -192,13 +192,35 @@ final class AppAudioEngine {
         UserDefaults.standard.object(forKey: "AOMAudioAirPlayProcessingEnabled") as? Bool ?? true
     }
 
+    static let airPlaySafetyReasonKey = "AOMAudioAirPlaySafetyReason"
+
     func setAirPlayProcessingEnabled(_ enabled: Bool) {
         guard enabled != Self.airPlayProcessingEnabled else { return }
+        UserDefaults.standard.removeObject(forKey: Self.airPlaySafetyReasonKey)
         UserDefaults.standard.set(enabled, forKey: "AOMAudioAirPlayProcessingEnabled")
-        stopAll()
+        // Release the previously captured session before switching transport.
+        // Native mode never retains any AirPlay muting tap or separate sender.
+        for session in Array(sessions.values) where session.sourceToken?.isAirPlay == true {
+            stop(pid: session.pid)
+        }
+        MainActor.assumeIsolated {
+            SharedOutputRenderer.shared.shutdownAirPlayOutputs()
+        }
         errors.removeAll(); retryAfter.removeAll(); failedProcessIDs.removeAll()
         airPlayCaptureFailures.removeAll()
         scheduleSync()
+    }
+
+    /// Safety fuse: a second independently correlated HAL deadline miss within
+    /// five minutes disables only the extra AirPlay processing path. Do not
+    /// repeatedly rebuild taps underneath a playing browser or toggle AppAudio
+    /// itself. A user can explicitly re-enable the effects in Settings.
+    func fallBackToNativeAirPlay(reason: String) {
+        guard Self.airPlayProcessingEnabled else { return }
+        setAirPlayProcessingEnabled(false)
+        UserDefaults.standard.set(reason, forKey: Self.airPlaySafetyReasonKey)
+        AudioEventLog.shared.record(.outputAutoRecovery, source: "system", detail: reason)
+        GestureLog.shared.logFromAnyThread(reason, level: .error)
     }
 
     private(set) var airPlayBypassed = false
@@ -333,13 +355,15 @@ final class AppAudioEngine {
         }
         // Native mode releases taps without changing the selected HomePod.
         // Processing mode uses a separate sender, never an AVAudioEngine graph.
+        // Native AirPlay bypass must not disable unrelated local/HDMI
+        // per-app routes. Their captures still use separate local outputs.
         if airPlayBypassed {
-            let hadSessions = !sessions.isEmpty ||
-                MainActor.assumeIsolated { !SharedOutputRenderer.shared.activeDeviceUIDs.isEmpty }
-            if hadSessions {
-                stopAll()
+            for session in Array(sessions.values) where session.sourceToken?.isAirPlay == true {
+                stop(pid: session.pid)
             }
-            return
+            MainActor.assumeIsolated {
+                SharedOutputRenderer.shared.shutdownAirPlayOutputs()
+            }
         }
         updatePlaybackListeners()
         let apps = runningAudioApps()
@@ -348,7 +372,9 @@ final class AppAudioEngine {
         if apps.isEmpty && sessions.isEmpty { return }
         let devices = AudioOutputService.devices()
         defer {
-            let requested = Set(apps.compactMap { Self.targetOutputUID(for: $0.bundleID) })
+            let requested = Self.airPlayProcessingEnabled
+                ? Set(apps.compactMap { Self.targetOutputUID(for: $0.bundleID) })
+                : Set<String>()
             MainActor.assumeIsolated { SharedOutputRenderer.shared.releaseUnusedAirPlayOutputs(keeping: requested) }
         }
         let topology = Dictionary(devices.map { ($0.uid, $0.id) }, uniquingKeysWith: { first, _ in first })
@@ -545,7 +571,7 @@ final class AppAudioEngine {
 
     func status(pid: pid_t) -> String {
         if !isEnabled { return "Audio processing off — settings saved" }
-        if airPlayBypassed || bypassedPIDs.contains(pid) {
+        if bypassedPIDs.contains(pid) || (airPlayBypassed && sessions[pid] == nil) {
             return "AirPlay direct — volume, EQ and boost saved for local output"
         }
         if pendingAirPlayPIDs.contains(pid) { return "Preparing HomePod output — current playback continues" }
@@ -627,7 +653,6 @@ final class AppAudioEngine {
 
     private func needsProcessing(_ bundleID: String) -> Bool {
         guard isEnabled else { return false }
-        if Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled { return false }
         if let uid = Self.targetOutputUID(for: bundleID),
            let destination = AudioOutputService.devices().first(where: { $0.uid == uid }),
            Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
@@ -1150,7 +1175,6 @@ final class AppAudioEngine {
         // has been observed. Setup itself is asynchronous and outputs silence.
         guard let uid = Self.targetOutputUID(for: bundleID),
               let destination = AudioOutputService.devices().first(where: { $0.uid == uid }) else { return nil }
-        if Self.isNativeAirPlayActive() && !Self.airPlayProcessingEnabled { return nil }
         if Self.outputTransport(destination.id) == kAudioDeviceTransportTypeAirPlay {
             guard Self.airPlayProcessingEnabled,
                   case .ready = MainActor.assumeIsolated({ SharedOutputRenderer.shared.prepareAirPlay(device: destination) }) else { return nil }

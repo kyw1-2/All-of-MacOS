@@ -1,3 +1,10 @@
+## 3.4.17 (2026-11-06)
+
+- Safety-first HomePod playback: when two independently correlated CoreAudio HAL overload/gap episodes occur within five minutes, switch back to native AirPlay instead of repeatedly reattaching muted process taps. Expose why effects were disabled and allow an explicit re-enable.
+- Preserve local and HDMI per-app routing while native AirPlay bypass is active; avoid globally destroying unrelated output graphs.
+- Expand normal mouse support to buttons 3–32 and add a non-suppressing learn-button recorder to the trigger editor.
+- Add Ulanzi Studio Deck plugin bridge for AOM named triggers and floating menus; map sixteen physical-key action slots and three encoder slots. No vendor-app/HID driver takeover.
+
 ## 3.4.16 (2026-11-06)
 
 - Prevent an isolated AirPlay HAL cycle miss from cycling the entire AppAudio engine. Preserve the PCM bridge's short clock-gap fade; sustained correlated overloads still trigger bounded receiver recovery.

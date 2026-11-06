@@ -469,6 +469,9 @@ final class BTTMouseParityTests: XCTestCase {
         XCTAssertEqual(spec(0, .scrollLeft).displayName, "Scroll Left")
         XCTAssertEqual(TriggerInput.mouse(spec(3, .dragUp)).category, .normalMouse)
         XCTAssertTrue(MouseTriggerSpec.pickerButtons.contains(11), "buttons up to 12+ are selectable")
+        XCTAssertEqual(MouseTriggerSpec.pickerButtons.last, 31)
+        XCTAssertEqual(MouseTriggerSpec.buttonName(31), "Button 32")
+        XCTAssertEqual(MouseTriggerSpec(button: 31, kind: .doubleClick).button, 31)
     }
 
     func testLegacyMouseButtonStillDecodesAndKeepsMeaning() throws {

@@ -234,6 +234,17 @@ final class AirPlayRobustnessTests: XCTestCase {
 
     // MARK: - 3.4.2 HomePod overload recovery
 
+    func testNativeFallbackNeedsTwoIndependentFaultsWithinFiveMinutes() {
+        var policy = AirPlayNativeFallbackPolicy()
+        XCTAssertFalse(policy.observe(episode: false, now: 10))
+        XCTAssertFalse(policy.observe(episode: true, now: 20))
+        XCTAssertFalse(policy.observe(episode: false, now: 20.1))
+        XCTAssertTrue(policy.observe(episode: true, now: 80))
+        XCTAssertFalse(policy.observe(episode: true, now: 450))
+        XCTAssertFalse(policy.observe(episode: false, now: 451))
+        XCTAssertTrue(policy.observe(episode: true, now: 455))
+    }
+
     func testObservedIsolatedHomePodFaultsDoNotDestroyHealthyStreams() {
         var evidence = AirPlayOverloadRecoveryEvidence()
         // Actual 3.4.5 intervals: tiny shared-device gaps led to four full

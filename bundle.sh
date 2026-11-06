@@ -49,6 +49,9 @@ bash HardwareHelper/build-helper.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
 
 bash scripts/bundle-webp.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
 bash scripts/bundle-annotation-preview.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
+mkdir -p "$BUNDLE_DIR/Contents/Resources/Ulanzi"
+ditto "Extensions/Ulanzi/com.ulanzi.aom.ulanziPlugin" \
+    "$BUNDLE_DIR/Contents/Resources/Ulanzi/com.ulanzi.aom.ulanziPlugin"
 
 codesign --force --deep --sign "$SIGN_FLAG" \
     --identifier "$BUNDLE_ID" \

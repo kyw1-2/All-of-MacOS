@@ -1,0 +1,306 @@
+{
+  "Author": "AOM",
+  "Name": "AOM Automation Bridge",
+  "Description": "AOM named triggers for Ulanzi Deck",
+  "Icon": "resources/icon.png",
+  "Version": "1.0.0",
+  "UUID": "com.ulanzi.ulanzistudio.aom",
+  "CodePath": "plugin/app.html",
+  "Type": "JavaScript",
+  "Actions": [
+    {
+      "Name": "AOM Key 01",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key01",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 02",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key02",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 03",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key03",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 04",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key04",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 05",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key05",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 06",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key06",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 07",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key07",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 08",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key08",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 09",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key09",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 10",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key10",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 11",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key11",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 12",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key12",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 13",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key13",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 14",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key14",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 15",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key15",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Key 16",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.key16",
+      "States": [
+        {
+          "Name": "Run",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Encoder 1",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.dial01",
+      "States": [
+        {
+          "Name": "Control",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Encoder"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Encoder 2",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.dial02",
+      "States": [
+        {
+          "Name": "Control",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Encoder"
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "Name": "AOM Encoder 3",
+      "Icon": "resources/icon.png",
+      "UUID": "com.ulanzi.ulanzistudio.aom.dial03",
+      "States": [
+        {
+          "Name": "Control",
+          "Image": "resources/icon.png"
+        }
+      ],
+      "Controllers": [
+        "Encoder"
+      ],
+      "SupportedInMultiActions": true
+    }
+  ],
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "14.0"
+    }
+  ],
+  "Software": {
+    "MinVersion": "3.0.11"
+  }
+}

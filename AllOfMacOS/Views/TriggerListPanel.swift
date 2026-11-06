@@ -1363,6 +1363,35 @@ struct TriggerEditorCommands: Commands {
 struct MouseTriggerEditor: View {
     @Binding var spec: MouseTriggerSpec
     @Binding var modifiers: UInt
+    @State private var globalButtonRecorder: Any?
+    @State private var localButtonRecorder: Any?
+    @State private var recordingExtraButton = false
+
+    private func stopButtonRecorder() {
+        if let monitor = globalButtonRecorder { NSEvent.removeMonitor(monitor) }
+        if let monitor = localButtonRecorder { NSEvent.removeMonitor(monitor) }
+        globalButtonRecorder = nil
+        localButtonRecorder = nil
+        recordingExtraButton = false
+    }
+
+    private func acceptExtraButton(_ number: Int) {
+        guard recordingExtraButton, (2...MouseTriggerSpec.maxButton).contains(number) else { return }
+        spec = MouseTriggerSpec(button: number, kind: spec.kind)
+        stopButtonRecorder()
+    }
+
+    private func startButtonRecorder() {
+        stopButtonRecorder()
+        recordingExtraButton = true
+        globalButtonRecorder = NSEvent.addGlobalMonitorForEvents(matching: [.otherMouseDown]) { event in
+            DispatchQueue.main.async { acceptExtraButton(event.buttonNumber) }
+        }
+        localButtonRecorder = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown]) { event in
+            DispatchQueue.main.async { acceptExtraButton(event.buttonNumber) }
+            return event // Never consume the user's original mouse input.
+        }
+    }
 
     static func input(for spec: MouseTriggerSpec) -> TriggerInput {
         if spec.kind == .click, let legacy = MouseButton.from(cgButton: Int64(spec.button)) { return .mouseButton(legacy) }
@@ -1387,7 +1416,17 @@ struct MouseTriggerEditor: View {
             }
             if !spec.kind.isScroll {
                 Picker("Button", selection: Binding(get: { spec.button }, set: { spec = MouseTriggerSpec(button: $0, kind: spec.kind) })) {
-                    ForEach(MouseTriggerSpec.pickerButtons, id: \.self) { Text(MouseTriggerSpec.buttonName($0) + ($0 < 3 ? "" : " (\($0 + 1))")).tag($0) }
+                    ForEach(MouseTriggerSpec.pickerButtons, id: \.self) { Text(MouseTriggerSpec.buttonName($0)).tag($0) }
+                }
+                HStack(spacing: AOMSpace.x2) {
+                    Button(recordingExtraButton ? "Cancel Button Capture" : "Learn Extra Mouse Button") {
+                        if recordingExtraButton { stopButtonRecorder() }
+                        else { startButtonRecorder() }
+                    }
+                    if recordingExtraButton {
+                        Text("Press the mouse's additional button (3–32).")
+                            .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
+                    }
                 }
             }
             RequiredModifierToggles(modifiers: $modifiers)
@@ -1395,6 +1434,7 @@ struct MouseTriggerEditor: View {
                 AOMEditorNote(problem, tone: .warning)
             }
         }
+        .onDisappear { stopButtonRecorder() }
     }
 }
 

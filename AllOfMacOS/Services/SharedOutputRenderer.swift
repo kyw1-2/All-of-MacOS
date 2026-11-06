@@ -338,6 +338,14 @@ final class SharedOutputRenderer {
 
     var airPlayStatistics: [String: [String: Any]] { airPlayOutputs.mapValues { $0.statistics } }
 
+    /// Stop only remote hardware clients when switching to native AirPlay.
+    /// Local and HDMI graphs continue unaffected.
+    func shutdownAirPlayOutputs() {
+        for output in airPlayOutputs.values { output.stop() }
+        airPlayOutputs.removeAll()
+        airPlayMissingSince.removeAll()
+    }
+
     func shutdown() {
         for output in airPlayOutputs.values { output.stop() }
         airPlayOutputs.removeAll()

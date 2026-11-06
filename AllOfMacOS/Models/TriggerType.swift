@@ -265,8 +265,9 @@ enum MouseTriggerKind: String, CaseIterable, Identifiable, Codable {
 /// Scroll triggers carry no button; it is normalized to 0.
 struct MouseTriggerSpec: Codable, Hashable {
     static let maxButton = 31
-    /// Buttons the picker offers: left, right, middle and extra buttons 4…16.
-    static let pickerButtons = Array(0...15)
+    /// All CGEvent mouse button indices supported by the event tap. Some
+    /// multi-button mice number additional buttons past the 16th.
+    static let pickerButtons = Array(0...maxButton)
 
     var button: Int
     var kind: MouseTriggerKind
