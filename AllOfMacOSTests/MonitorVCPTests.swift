@@ -8,6 +8,35 @@ final class MonitorVCPTests: XCTestCase {
         XCTAssertEqual(MonitorVCP.brightness.request(value: 0), [0x84, 3, 0x10, 0, 0, 0xa8])
     }
 
+    func testExtendedDDCFeaturesAndRawEnumerations() {
+        XCTAssertEqual(MonitorVCP.contrast.rawValue, 0x12)
+        XCTAssertEqual(MonitorVCP.inputSource.rawValue, 0x60)
+        XCTAssertEqual(MonitorVCP.mute.rawValue, 0x8D)
+        XCTAssertTrue(MonitorVCP.validInputSource(0x11))
+        XCTAssertTrue(MonitorVCP.validInputSource(0x12))
+        XCTAssertTrue(MonitorVCP.validInputSource(0x0F))
+        XCTAssertTrue(MonitorVCP.validInputSource(0x1B))
+        XCTAssertFalse(MonitorVCP.validInputSource(0x13))
+        let source = reply([0x6e, 0x88, 2, 0, 0x60, 0, 0, 0, 0, 0x11])
+        XCTAssertEqual(MonitorVCP.inputSource.decode(source)?.current, 0x11)
+        XCTAssertEqual(MonitorVCP.inputSource.decode(source)?.fraction, 0)
+        XCTAssertNil(MonitorVCP.contrast.decode(source))
+    }
+
+    func testCombinedSliderCrossesHardwareFloorWithoutAmplification() {
+        let low = MonitorCombinedBrightness.target(slider: 0)
+        XCTAssertEqual(low.hardware, 0)
+        XCTAssertEqual(low.gain, 0.1, accuracy: 0.00001)
+        let floor = MonitorCombinedBrightness.target(slider: 0.1)
+        XCTAssertEqual(floor.hardware, 0)
+        XCTAssertEqual(floor.gain, 1)
+        let high = MonitorCombinedBrightness.target(slider: 1)
+        XCTAssertEqual(high.hardware, 1)
+        XCTAssertEqual(high.gain, 1)
+        XCTAssertEqual(MonitorCombinedBrightness.slider(hardware: 0, gain: 0.1), 0, accuracy: 0.00001)
+        XCTAssertEqual(MonitorCombinedBrightness.slider(hardware: 0.5, gain: 1), 0.55, accuracy: 0.00001)
+    }
+
     private func reply(_ body: [UInt8]) -> [UInt8] {
         body + [body.reduce(0x50, ^)]
     }
