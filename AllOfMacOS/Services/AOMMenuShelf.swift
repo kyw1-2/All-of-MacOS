@@ -67,7 +67,7 @@ private enum AOMMenuShelfProbe {
     }
 
     private static func children(_ el: AXUIElement) -> [AXUIElement] {
-        attribute(el, kAXChildrenAttribute) as? [AXUIElement] ?? []
+        attribute(el, kAXChildrenAttribute as CFString) as? [AXUIElement] ?? []
     }
 
     private static func items(pid: pid_t) -> [AXUIElement] {
@@ -81,11 +81,11 @@ private enum AOMMenuShelfProbe {
             return children(menu)
         }
         // Some hosts publish extras under their ordinary AXMenuBar instead.
-        if let bar = attribute(app, kAXMenuBarAttribute),
+        if let bar = attribute(app, kAXMenuBarAttribute as CFString),
            CFGetTypeID(bar) == AXUIElementGetTypeID() {
             let menu = bar as! AXUIElement
             AXUIElementSetMessagingTimeout(menu, 0.12)
-            return children(menu).filter { string($0, kAXSubroleAttribute) == "AXMenuExtra" }
+            return children(menu).filter { string($0, kAXSubroleAttribute as CFString) == "AXMenuExtra" }
         }
         return []
     }
@@ -97,11 +97,11 @@ private enum AOMMenuShelfProbe {
             if ProcessInfo.processInfo.systemUptime - started >= deadline { break }
             for (index, element) in items(pid: app.pid).prefix(30).enumerated() {
                 AXUIElementSetMessagingTimeout(element, 0.1)
-                let identifier = string(element, kAXIdentifierAttribute)
+                let identifier = string(element, kAXIdentifierAttribute as CFString)
                 let title = [
-                    string(element, kAXTitleAttribute),
-                    string(element, kAXDescriptionAttribute),
-                    string(element, kAXHelpAttribute)
+                    string(element, kAXTitleAttribute as CFString),
+                    string(element, kAXDescriptionAttribute as CFString),
+                    string(element, kAXHelpAttribute as CFString)
                 ].first { !$0.isEmpty } ?? "Item \(index + 1)"
                 result.append(AOMMenuShelfItem(pid: app.pid, ownerBundleID: app.bundleID,
                                                ownerName: app.name, title: title,
@@ -115,11 +115,11 @@ private enum AOMMenuShelfProbe {
         guard item.pid > 0 else { return false }
         let list = items(pid: item.pid)
         for (index, element) in list.enumerated() {
-            let identifier = string(element, kAXIdentifierAttribute)
+            let identifier = string(element, kAXIdentifierAttribute as CFString)
             let title = [
-                string(element, kAXTitleAttribute),
-                string(element, kAXDescriptionAttribute),
-                string(element, kAXHelpAttribute)
+                string(element, kAXTitleAttribute as CFString),
+                string(element, kAXDescriptionAttribute as CFString),
+                string(element, kAXHelpAttribute as CFString)
             ].first { !$0.isEmpty } ?? "Item \(index + 1)"
             // Never click another icon just because an app reordered its menu.
             let same = !item.axIdentifier.isEmpty
