@@ -29,7 +29,7 @@ final class TextSelectionMonitor {
     /// Distinguish a completed double-click from the beginning of a
     /// triple-click selection. The double-click may still get a third click, so wait
     /// for a short quiet interval after the second release before probing AX.
-    static func settledDelay(kind: Gesture.Kind, userDelay: TimeInterval) -> TimeInterval {
+    nonisolated static func settledDelay(kind: Gesture.Kind, userDelay: TimeInterval) -> TimeInterval {
         switch kind {
         case .doubleClick: return max(userDelay, 0.42)
         default: return userDelay
