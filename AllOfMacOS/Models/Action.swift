@@ -949,8 +949,14 @@ enum ActionTree {
                 if let error = ActionParameterValidation.problem(for: action) { return error }
                 if [.setVariable, .increaseVariable, .decreaseVariable, .askForInput, .saveSelectedText].contains(action.actionType)
                     || action.actionType == .ifElse && (p.conditionKind ?? "variable") == "variable" {
-                    let name = (p.variableName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !name.isEmpty, name.count <= 64, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return "Invalid variable name." }
+                    // Legacy/incomplete actions can omit the name entirely; the
+                    // runner and preset codec must still accept these drafts.
+                    // If an explicit name was supplied, reject empty/invalid text.
+                    if let rawName = p.variableName {
+                        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !name.isEmpty, name.count <= 64,
+                              name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return "Invalid variable name." }
+                    }
                 }
                 if action.actionType == .customSnapWindow {
                     guard WindowGeometry.normalizedRect(x: p.snapX ?? 0, y: p.snapY ?? 0, width: p.snapWidth ?? 0.5, height: p.snapHeight ?? 1) != nil,

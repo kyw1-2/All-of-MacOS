@@ -22,6 +22,17 @@ final class TriggerManagementTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(Trigger.self, from: JSONEncoder().encode(copy)), copy)
     }
 
+    func testIncompleteVariableDraftsRemainLoadableButExplicitEmptyNamesFail() {
+        var branch = TriggerAction(actionType: .ifElse)
+        branch.parameters.children = [TriggerAction(actionType: .showHUD)]
+        branch.parameters.elseChildren = [TriggerAction(actionType: .setVariable)]
+        XCTAssertNil(ActionTree.problem([branch]))
+        branch.parameters.variableName = " "
+        XCTAssertEqual(ActionTree.problem([branch]), "Invalid variable name.")
+        branch.parameters.variableName = "mode"
+        XCTAssertNil(ActionTree.problem([branch]))
+    }
+
     func testGlobalSensitivityFallbackAndIndividualOverride() {
         let suite = "AOMSensitivityTest-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
