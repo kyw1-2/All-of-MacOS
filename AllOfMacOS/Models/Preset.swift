@@ -128,10 +128,10 @@ struct CustomSnapZone: Identifiable, Codable, Hashable {
                 (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (0.18,0.14,0.64,0.72)
             case .leftThird:
                 (zone.hotX,zone.hotY,zone.hotWidth,zone.hotHeight) = (0,0.14,0.10,0.14)
-                (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (0,0,0.33,1)
+                (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (0,0,1.0/3.0,1)
             case .rightThird:
                 (zone.hotX,zone.hotY,zone.hotWidth,zone.hotHeight) = (0.90,0.14,0.10,0.14)
-                (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (0.67,0,0.33,1)
+                (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (2.0/3.0,0,1.0/3.0,1)
             case .centerThird:
                 (zone.hotX,zone.hotY,zone.hotWidth,zone.hotHeight) = (0.23,0.90,0.10,0.10)
                 (zone.targetX,zone.targetY,zone.targetWidth,zone.targetHeight) = (1.0/3,0,1.0/3,1)

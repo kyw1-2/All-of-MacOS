@@ -1318,8 +1318,7 @@ struct AnnotationDocument {
         guard !clipped.isNull, clipped.width >= 1, clipped.height >= 1 else { return }
         let sourceRect = CGRect(x: clipped.minX - imageRect.minX, y: imageRect.maxY - clipped.maxY,
                                 width: clipped.width, height: clipped.height)
-        guard let region = baseImage.cropping(to: sourceRect),
-              let output = AnnotationSecureRedaction.secureBlur(region: region,
+        guard let output = AnnotationSecureRedaction.secureBlur(baseImage: baseImage, sourceRect: sourceRect,
                                                                 blockSize: max(12 * scale, blockSize),
                                                                 seed: seed) else {
             // Fail closed: if the secure pipeline cannot run, black the region out.

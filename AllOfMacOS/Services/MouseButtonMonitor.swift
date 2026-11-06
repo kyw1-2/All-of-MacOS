@@ -31,6 +31,9 @@ class MouseButtonMonitor {
         let repeatWhileHeld: Bool
     }
 
+    private let sideHID = MouseSideButtonHID()
+    private var sideDeduplicator = MouseSideButtonDeduplicator()
+    private var hidGeneration = 0
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private(set) var entries: [Entry] = []
@@ -53,6 +56,21 @@ class MouseButtonMonitor {
         registerEntries(triggers, groups: groups)
         guard !entries.isEmpty || !suppressedButtons.isEmpty else { return }
         installTap()
+        sideHID.onEvent = { [weak self] button, down in
+            guard let self else { return }
+            let time = self.clock(), generation = self.hidGeneration
+            let point = CGEvent(source: nil)?.location ?? .zero
+            let flags = UInt(CGEventSource.flagsState(.combinedSessionState).rawValue)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) { [weak self] in
+                guard let self, self.hidGeneration == generation else { return }
+                let edge = MouseSideButtonDeduplicator.Edge(button: button, down: down)
+                guard self.sideDeduplicator.shouldDeliverHID(edge, time: time) else { return }
+                let swallowed = self.handle(MouseInputEvent(kind: down ? .down : .up, button: button,
+                    x: point.x, y: point.y, modifiers: flags, time: time))
+                self.sideDeduplicator.noteHID(edge, time: time, swallow: swallowed)
+            }
+        }
+        sideHID.start()
     }
 
     /// Builds the registration tables without touching the event system.
@@ -208,7 +226,7 @@ class MouseButtonMonitor {
         if let onFire { onFire(entry); return }
         let button = entry.spec.button
         let held: (() -> Bool)? = (entry.repeatWhileHeld && entry.spec.kind == .click && (0...31).contains(button))
-            ? { CGMouseButton(rawValue: UInt32(button)).map { CGEventSource.buttonState(.combinedSessionState, button: $0) } ?? false }
+            ? { [weak self] in self.map { $0.sideHID.held.contains(button) || $0.buttonIsDown(button) } ?? false }
             : nil
         DispatchQueue.main.async {
             ActionExecutor.fire(triggerID: entry.id, fallbackActions: entry.actions, isHeld: held)
@@ -248,6 +266,10 @@ class MouseButtonMonitor {
             if event.getIntegerValueField(.eventSourceUserData) == 0x475454 { return Unmanaged.passUnretained(event) }
             guard let input = MouseButtonMonitor.normalize(type: type, event: event, time: monitor.clock()) else {
                 return Unmanaged.passUnretained(event)
+            }
+            if (3...4).contains(input.button), input.kind == .down || input.kind == .up,
+               let swallow = monitor.sideDeduplicator.noteCG(.init(button: input.button, down: input.kind == .down), time: input.time) {
+                return swallow ? nil : Unmanaged.passUnretained(event)
             }
             return monitor.handle(input) ? nil : Unmanaged.passUnretained(event)
         }
@@ -300,6 +322,10 @@ class MouseButtonMonitor {
     }
 
     func unregisterAll() {
+        hidGeneration += 1
+        sideHID.stop()
+        sideHID.onEvent = nil
+        sideDeduplicator = MouseSideButtonDeduplicator()
         wake?.cancel(); wake = nil
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)

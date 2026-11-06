@@ -1,3 +1,10 @@
+## 3.4.19 — 2026-11-06
+
+- Recognize extra UGREEN/composite receiver side buttons through a narrowly scoped HID fallback, with CGEvent deduplication and press/release tracking.
+- Add capture, recording and overlay-restore actions to the automation catalog, with completion reporting.
+- Fix double-instance restart by relaunching only after shutdown; tighten invalid automation conditions and annotation redaction caching.
+- Preserve the 3.4.18 AirPlay safety and hardware monitor-control implementations; the alternative experimental renderer/DDC revisions remain unshipped pending independent device validation.
+
 ## 3.4.18 (2026-11-06)
 
 - PopClip parity: stabilize the Text Actions bar during double/triple-click selection and add an opt-in custom AI prompt template with placeholder substitution. Never automatically transmit selected text to a third party.

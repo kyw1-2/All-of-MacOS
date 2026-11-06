@@ -157,6 +157,14 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     case toggleClipboardRecording = "Pause / Resume Clipboard Recording"
 
     // Screen Capture
+    case captureAllInOne = "All-in-One Capture"
+    case captureActiveWindow = "Capture Active Window"
+    case captureScrollingHorizontal = "Capture Horizontal Scrolling"
+    case recordFullscreen = "Record Fullscreen"
+    case pauseRecording = "Pause Screen Recording"
+    case resumeRecording = "Resume Screen Recording"
+    case stopRecording = "Stop Screen Recording"
+    case restoreRecentlyClosedOverlay = "Restore Closed Capture Overlay"
     case captureArea = "Capture Area"
     case captureFullscreen = "Capture Fullscreen"
     case captureWindow = "Capture Window"
@@ -353,7 +361,8 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
              .moveMouseToPosition, .saveMousePosition, .restoreMousePosition,
              .startDrag, .stopDrag, .scrollUp, .scrollDown, .scrollLeft, .scrollRight:
             return .mouseActions
-        case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
+        case .captureAllInOne, .captureActiveWindow, .captureScrollingHorizontal, .recordFullscreen, .pauseRecording, .resumeRecording, .stopRecording, .restoreRecentlyClosedOverlay,
+             .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor,
              .recordScreen, .capturePreviousArea, .captureScrolling, .captureText, .captureTextWithLineBreaks,
              .captureTextWithoutLineBreaks, .captureAllDisplays, .captureSelfTimer,
              .annotateLastCapture, .pinLastCapture, .copyLastCapture, .saveLastCapture,
@@ -484,6 +493,14 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
         case .playPause: return "playpause"
         case .nextTrack: return "forward.end"
         case .previousTrack: return "backward.end"
+        case .captureAllInOne: return "rectangle.dashed"
+        case .captureActiveWindow: return "macwindow"
+        case .captureScrollingHorizontal: return "arrow.left.and.right"
+        case .recordFullscreen: return "record.circle"
+        case .pauseRecording: return "pause.circle"
+        case .resumeRecording: return "play.circle"
+        case .stopRecording: return "stop.circle"
+        case .restoreRecentlyClosedOverlay: return "arrow.uturn.backward"
         case .captureArea: return "viewfinder"
         case .captureFullscreen: return "rectangle.inset.filled"
         case .captureWindow: return "macwindow"
@@ -628,6 +645,15 @@ enum ActionType: String, Codable, Identifiable, CaseIterable {
     /// with the behaviour it describes.
     static func describeCaptureAction(_ type: ActionType) -> String {
         switch type {
+        case .captureAllInOne: return "Opens the combined capture, text, scrolling and recording selector."
+        case .captureActiveWindow: return "Captures the active application window."
+        case .captureScrollingHorizontal: return "Stitches a horizontally scrolling region."
+        case .recordFullscreen: return "Starts recording the display under the pointer."
+        case .pauseRecording: return "Pauses the current recording."
+        case .resumeRecording: return "Resumes a paused recording."
+        case .stopRecording: return "Finishes and saves the current recording."
+        case .restoreRecentlyClosedOverlay: return "Restores the most recently closed capture overlay."
+        case .restartRecording: return "Discards the current recording and starts again in the same region."
         case .captureArea: return "Dims the screen and lets you drag out a region to capture."
         case .captureFullscreen: return "Captures the display the pointer is on, with no selection step."
         case .captureWindow: return "Shows a grid of open windows to pick from."
@@ -921,10 +947,10 @@ enum ActionTree {
                     if let error = inspect(alternate, depth + 1, cost) { return error }
                 }
                 if let error = ActionParameterValidation.problem(for: action) { return error }
-                if [.setVariable, .increaseVariable, .decreaseVariable, .askForInput].contains(action.actionType)
+                if [.setVariable, .increaseVariable, .decreaseVariable, .askForInput, .saveSelectedText].contains(action.actionType)
                     || action.actionType == .ifElse && (p.conditionKind ?? "variable") == "variable" {
                     let name = (p.variableName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard name.count <= 64, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return "Invalid variable name." }
+                    guard !name.isEmpty, name.count <= 64, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return "Invalid variable name." }
                 }
                 if action.actionType == .customSnapWindow {
                     guard WindowGeometry.normalizedRect(x: p.snapX ?? 0, y: p.snapY ?? 0, width: p.snapWidth ?? 0.5, height: p.snapHeight ?? 1) != nil,

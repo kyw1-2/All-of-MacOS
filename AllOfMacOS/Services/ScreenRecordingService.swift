@@ -99,15 +99,19 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         else { promptAndStartRecording() }
     }
 
-    func recordFullscreenUnderPointer() {
-        guard !isRecording, !isStarting, !isStopping, !SelectionOverlayController.isActive else { return }
+    func recordFullscreenUnderPointer(completion: ((Bool) -> Void)? = nil) {
+        guard !isRecording, !isStarting, !isStopping, !SelectionOverlayController.isActive else { completion?(false); return }
         Task {
             do {
                 let content = try await SCShareableContent.current
                 guard let display = ScreenCaptureService.displayUnderPointer(in: content.displays)
                         ?? content.displays.first else { throw CaptureError.noDisplays }
                 try await startRecording(globalRect: display.frame)
-            } catch { GestureHUD.shared.show(title: "Recording Failed", detail: error.localizedDescription) }
+                completion?(isRecording)
+            } catch {
+                GestureHUD.shared.show(title: "Recording Failed", detail: error.localizedDescription)
+                completion?(false)
+            }
         }
     }
 

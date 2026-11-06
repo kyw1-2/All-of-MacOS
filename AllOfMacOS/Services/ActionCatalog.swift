@@ -187,7 +187,8 @@ extension ActionType {
         case .pasteNextClipboardItem: return "Pastes the next item of the paste stack."
         case .toggleClipboardRecording: return "Pauses or resumes clipboard recording."
         // Capture
-        case .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor, .recordScreen,
+        case .captureAllInOne, .captureActiveWindow, .captureScrollingHorizontal, .recordFullscreen, .pauseRecording, .resumeRecording, .stopRecording, .restoreRecentlyClosedOverlay,
+             .captureArea, .captureFullscreen, .captureWindow, .captureWindowUnderCursor, .recordScreen,
              .capturePreviousArea, .captureScrolling, .captureText, .captureTextWithLineBreaks,
              .captureTextWithoutLineBreaks, .captureAllDisplays, .captureSelfTimer, .annotateLastCapture,
              .pinLastCapture, .copyLastCapture, .saveLastCapture, .ocrLastCapture, .openCaptureHistory,

@@ -701,14 +701,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func restartApp() {
-        let url = Bundle.main.bundleURL
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-n", url.path]
-        try? task.run()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            NSApp.terminate(nil)
-        }
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = AppRelaunch.arguments(pid: ProcessInfo.processInfo.processIdentifier,
+                                               bundlePath: Bundle.main.bundleURL.path)
+        // Never launch the replacement until the original has finished cleanup.
+        do { try task.run() }
+        catch { NSLog("[AOM] Could not schedule restart: %@", error.localizedDescription); return }
+        NSApp.terminate(nil)
     }
 
 

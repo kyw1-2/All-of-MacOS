@@ -24,6 +24,33 @@ enum AnnotationSecureRedaction {
         return cache
     }()
 
+    private final class CachedRegion {
+        let source: CGImage // Retain identity so an allocator cannot recycle its address.
+        let output: CGImage
+        init(source: CGImage, output: CGImage) { self.source = source; self.output = output }
+    }
+    private static let regionCache: NSCache<NSString, CachedRegion> = {
+        let result = NSCache<NSString, CachedRegion>()
+        result.countLimit = 32
+        result.totalCostLimit = 64 * 1024 * 1024
+        return result
+    }()
+
+    /// Immutable base-image identity is checked before cropping or touching pixels.
+    static func secureBlur(baseImage: CGImage, sourceRect: CGRect, blockSize: CGFloat, seed: UUID) -> CGImage? {
+        guard !sourceRect.isNull, !sourceRect.isInfinite,
+              [sourceRect.minX, sourceRect.minY, sourceRect.width, sourceRect.height].allSatisfy(\.isFinite) else { return nil }
+        let rect = sourceRect.integral.intersection(CGRect(x: 0, y: 0, width: baseImage.width, height: baseImage.height))
+        guard !rect.isEmpty else { return nil }
+        let block = min(4096, max(4, blockSize.isFinite ? blockSize.rounded() : 16))
+        let key = "\(ObjectIdentifier(baseImage))-\(rect)-\(block)-\(seed)" as NSString
+        if let value = regionCache.object(forKey: key) { return value.output }
+        guard let region = baseImage.cropping(to: rect), let output = secureBlur(region: region, blockSize: block, seed: seed) else { return nil }
+        regionCache.setObject(CachedRegion(source: baseImage, output: output), forKey: key,
+                              cost: baseImage.bytesPerRow * baseImage.height + output.bytesPerRow * output.height)
+        return output
+    }
+
     static func rgba(_ image: CGImage) -> Buffer? {
         let width = image.width, height = image.height
         guard width > 0, height > 0, Int64(width) * Int64(height) <= 100_000_000 else { return nil }
@@ -51,7 +78,7 @@ enum AnnotationSecureRedaction {
 
     /// The secure replacement for `region` (same pixel size, fully opaque).
     static func secureBlur(region: CGImage, blockSize: CGFloat, seed: UUID) -> CGImage? {
-        let block = max(4, Int(blockSize.isFinite ? blockSize.rounded() : 16))
+        let block = Int(min(4096, max(4, blockSize.isFinite ? blockSize.rounded() : 16)))
         guard let source = rgba(region) else { return nil }
         let key = "\(seed.uuidString)-\(region.width)x\(region.height)-\(block)-\(fingerprint(source))" as NSString
         if let cached = cache.object(forKey: key) { return cached }

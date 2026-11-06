@@ -19,7 +19,7 @@ struct ActivationConditions: Codable, Hashable {
     var requiresWindowOfBundleID: String?
 
     var isEmpty: Bool {
-        timeWindow == nil && powerSource == nil && minimumDisplayCount == nil
+        timeWindow == nil && (powerSource ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && minimumDisplayCount == nil
             && maximumDisplayCount == nil && (requiresWindowOfBundleID ?? "").isEmpty
     }
 
@@ -34,7 +34,7 @@ struct ActivationConditions: Codable, Hashable {
 
     func isSatisfied(by snapshot: Snapshot, calendar: Calendar = .current) -> Bool {
         if let timeWindow, !timeWindow.contains(snapshot.date, calendar: calendar) { return false }
-        if let powerSource, snapshot.powerSource != powerSource { return false }
+        if let powerSource, !powerSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, snapshot.powerSource != powerSource { return false }
         if let minimumDisplayCount, snapshot.displayCount < minimumDisplayCount { return false }
         if let maximumDisplayCount, snapshot.displayCount > maximumDisplayCount { return false }
         if let bundle = requiresWindowOfBundleID, !bundle.isEmpty,
@@ -46,12 +46,12 @@ struct ActivationConditions: Codable, Hashable {
     var summary: String {
         var parts: [String] = []
         if let window = timeWindow {
-            let days = window.weekdays.sorted()
+            let days = window.weekdays.filter { (1...7).contains($0) }.sorted()
             let dayText = days == [2, 3, 4, 5, 6] ? "Weekdays" : days == [1, 7] ? "Weekends"
                 : days.count == 7 ? "Every day" : days.map { Calendar.current.shortWeekdaySymbols[($0 - 1) % 7] }.joined(separator: ", ")
             parts.append("\(dayText) \(Self.time(window.startMinute))–\(Self.time(window.endMinute))")
         }
-        if let powerSource { parts.append(powerSource == "battery" ? "On battery" : "On power adapter") }
+        if let powerSource, !powerSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(powerSource == "battery" ? "On battery" : "On power adapter") }
         switch (minimumDisplayCount, maximumDisplayCount) {
         case let (min?, max?) where min == max: parts.append("\(min) display\(min == 1 ? "" : "s")")
         case let (min?, max?): parts.append("\(min)–\(max) displays")

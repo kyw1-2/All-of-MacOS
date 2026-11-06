@@ -176,8 +176,9 @@ final class CaptureCoordinator {
     // MARK: - Entry points
 
     /// One selection surface switches between capture tools before committing.
-    func captureAllInOne() {
-        run(kind: .area) { [weak self] in
+    func captureAllInOne(completion: ((Bool) -> Void)? = nil) {
+        var deliveredWithoutImage = false
+        run(kind: .area, completion: completion, succeededWithoutImage: { deliveredWithoutImage }) { [weak self] in
             guard let self else { return nil }
             let choice: (CGRect, IntegratedCaptureMode, CGWindowID?)? = await withCheckedContinuation { continuation in
                 let overlay = SelectionOverlayController(integrated: true) { [weak self] rect in
@@ -193,6 +194,7 @@ final class CaptureCoordinator {
             switch mode {
             case .recording:
                 try await ScreenRecordingService.shared.startRecording(globalRect: rect)
+                deliveredWithoutImage = ScreenRecordingService.shared.isRecording
                 return nil
             case .scrolling:
                 return (try await ScrollingCaptureService.shared.capture(area: rect), .scrolling)
@@ -208,6 +210,7 @@ final class CaptureCoordinator {
             case .text:
                 let result = try await ScreenCaptureService.shared.captureArea(rect)
                 try await self.deliverRecognizedText(result, keepsLineBreaks: TextCaptureSettings.shared.keepsLineBreaks)
+                deliveredWithoutImage = true
                 return nil
             case .area, .fullscreen:
                 let result = try await ScreenCaptureService.shared.captureArea(rect)
@@ -320,8 +323,8 @@ final class CaptureCoordinator {
         }
     }
 
-    func captureActiveWindow() {
-        run(kind: .window) { [weak self] in
+    func captureActiveWindow(completion: ((Bool) -> Void)? = nil) {
+        run(kind: .window, completion: completion) { [weak self] in
             guard let self else { return nil }
             let window = try await ScreenCaptureService.shared.frontmostCapturableWindow()
             let result = try await ScreenCaptureService.shared.captureWindow(window)
@@ -434,7 +437,7 @@ final class CaptureCoordinator {
     /// grabbing, then trims the overlap.
     func captureScrolling(completion: ((Bool) -> Void)? = nil) { captureScrolling(direction: .vertical, completion: completion) }
 
-    func captureScrollingHorizontal() { captureScrolling(direction: .horizontal) }
+    func captureScrollingHorizontal(completion: ((Bool) -> Void)? = nil) { captureScrolling(direction: .horizontal, completion: completion) }
 
     private func captureScrolling(direction: ScrollingCaptureService.Direction, completion: ((Bool) -> Void)? = nil) {
         run(kind: .scrolling, completion: completion) { [weak self] in
@@ -454,6 +457,7 @@ final class CaptureCoordinator {
     /// — a cancel is not an error and must not surface as one.
     private func run(kind: CaptureKind, appliesSelfTimer: Bool = true, appliesDesktopSettings: Bool = true,
                      afterCaptureOverride: AfterCaptureAction? = nil, completion: ((Bool) -> Void)? = nil,
+                     succeededWithoutImage: @escaping () -> Bool = { false },
                      _ body: @escaping () async throws -> (CaptureResult, CaptureKind)?) {
         guard !isCapturing else {
             GestureHUD.shared.show(title: "Capture In Progress", detail: "Finish or cancel the current capture first.")
@@ -480,7 +484,7 @@ final class CaptureCoordinator {
                 let hiddenIcons = appliesDesktopSettings ? try hideDesktopIconsIfNeeded() : nil
                 defer { restoreDesktopIconsIfNeeded(hiddenIcons) }
 
-                guard let (result, resolvedKind) = try await body() else { return }
+                guard let (result, resolvedKind) = try await body() else { succeeded = succeededWithoutImage(); return }
                 succeeded = await finish(result, kind: resolvedKind, actionOverride: afterCaptureOverride)
             } catch CaptureError.cancelled {
                 // A cancelled capture is a normal outcome, not a failure to report.

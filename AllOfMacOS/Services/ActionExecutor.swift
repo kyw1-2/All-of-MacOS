@@ -453,6 +453,30 @@ class ActionExecutor {
             return
         }
         switch action.actionType {
+        case .captureAllInOne: onMain { CaptureCoordinator.shared.captureAllInOne(completion: completion) }; return
+        case .captureActiveWindow: onMain { CaptureCoordinator.shared.captureActiveWindow(completion: completion) }; return
+        case .captureScrollingHorizontal: onMain { CaptureCoordinator.shared.captureScrollingHorizontal(completion: completion) }; return
+        case .recordFullscreen: onMain { ScreenRecordingService.shared.recordFullscreenUnderPointer(completion: completion) }; return
+        case .pauseRecording, .resumeRecording:
+            onMain {
+                let service = ScreenRecordingService.shared
+                guard service.isRecording else { completion(false); return }
+                if action.actionType == .pauseRecording { service.pauseRecording() } else { service.resumeRecording() }
+                completion(service.isPaused == (action.actionType == .pauseRecording))
+            }; return
+        case .stopRecording:
+            onMain {
+                Task { @MainActor in
+                    do { completion(try await ScreenRecordingService.shared.stopRecording() != nil) }
+                    catch { completion(false) }
+                }
+            }; return
+        case .restoreRecentlyClosedOverlay:
+            onMain {
+                let service = CaptureCoordinator.shared
+                guard service.canRestoreQuickAccess else { completion(false); return }
+                service.restoreRecentlyClosedOverlay(); completion(true)
+            }; return
         case .captureArea: onMain { CaptureCoordinator.shared.captureArea(completion: completion) }; return
         case .captureFullscreen: onMain { CaptureCoordinator.shared.captureFullscreen(completion: completion) }; return
         case .captureWindow: onMain { CaptureCoordinator.shared.captureWindowFromPicker(completion: completion) }; return

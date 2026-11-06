@@ -50,6 +50,9 @@ enum AnnotationObjectClipboard {
                 && object.points.allSatisfy { $0.x.isFinite && $0.y.isFinite }
                 && object.text.utf8.count <= 1_000_000
                 && object.style.opacity.isFinite && (0...1).contains(object.style.opacity)
+                && object.style.hasValidTextStyle
+                && (object.image?.isValid ?? true)
+                && (object.rotation?.isFinite ?? true)
         }
         return valid ? payload.objects : nil
     }
