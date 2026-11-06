@@ -20,7 +20,7 @@ enum TextActionPerformer {
     /// Mirrors PopClip's configurable action payload without running scripts
     /// or sending selected text automatically to an external service.
     /// The user deliberately invokes the action and pastes after review.
-    static func preparedChatGPTPrompt(template: String, selection: String) -> String {
+    nonisolated static func preparedChatGPTPrompt(template: String, selection: String) -> String {
         let prompt = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return selection }
         if prompt.contains("{text}") {
