@@ -1281,7 +1281,7 @@ struct AirPlayProcessingControls: View {
             } else {
                 Text(service.airPlayProcessingEnabled
                      ? "Apply app volume, EQ and boost to Mac audio sent to HomePod. Buffered playback adds latency."
-                     : (UserDefaults.standard.string(forKey: AppAudioEngine.airPlaySafetyReasonKey)
+                     : (UserDefaults.standard.string(forKey: "AOMAudioAirPlaySafetyReason")
                         ?? "Direct playback: effects and app volume are bypassed on AirPlay."))
             }
         }
