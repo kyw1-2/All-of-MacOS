@@ -12,6 +12,10 @@ targets:
     platform: macOS
     sources:
       - path: AllOfMacOS
+    postBuildScripts:
+      - name: Bundle Hardware Helper
+        script: bash "$SRCROOT/HardwareHelper/build-helper.sh" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH" "${EXPANDED_CODE_SIGN_IDENTITY:--}"
+        basedOnDependencyAnalysis: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kyw.allofmacos

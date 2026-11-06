@@ -636,6 +636,7 @@ enum SettingsCatalog {
             item("hyperKey", .automation, "Hyper key", "Hold Caps Lock or another key for ⌃⌥⇧⌘", ["hyper", "caps lock", "캡스락", "하이퍼", "modifier"], AnyView(HyperKeyRow())),
             item("keyRemaps", .automation, "Remap keys", "Turn one key into another", ["remap", "리맵", "키 변경", "karabiner", "키보드"], AnyView(KeyRemapRow())),
             item("reverseWheel", .automation, "Reverse mouse wheel", "Flip a wheel mouse, keep the trackpad natural", ["scroll", "스크롤", "휠", "마우스", "reverse", "natural"], AnyView(ReverseWheelRow())),
+            item("pointerEngine", .automation, "Mouse movement", "Linear acceleration and smooth wheel scrolling", ["mouse", "pointer", "linear", "smooth", "가속도", "마우스"], AnyView(PointerOptionsRow())),
         ]
     }
 

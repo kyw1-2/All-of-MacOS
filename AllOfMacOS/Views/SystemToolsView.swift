@@ -83,6 +83,7 @@ struct SystemToolsView: View {
                     }
                     SystemStatusPanel(monitor: status, weather: weather.isOn ? weather : nil)
                 }
+                HardwareCareCard()
                 shortcuts
             }
             let shown = visibleGroups

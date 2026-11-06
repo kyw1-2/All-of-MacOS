@@ -1,3 +1,10 @@
+## 3.4.15 (2026-11-06)
+
+- Add optional external-mouse independent wheel direction, acceleration disable, and configurable wheel smoothing. Preserve trackpad and recover owned settings on exit.
+- Add Battery & Hardware view with on-demand SMC readouts for temperature, power, battery and installed fan RPM.
+- Add capability-checked native 80% charging limit plus optional privileged, signed helper for supported legacy charging policies and validated fan presets. Hardware writes default off, require explicit user enablement, verify readback and restore owned settings on disconnect or timeout.
+- Add policy and crash-restoration regression tests; real-device hardware control remains dependent on macOS, firmware and helper approval.
+
 ## 3.4.14 (2026-11-05)
 
 - Add Apple Silicon external monitor control with per-display DDC/CI capability probing for hardware brightness and monitor speaker volume; fall back to software dimming when hardware brightness is unsupported or a command fails.

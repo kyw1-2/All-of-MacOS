@@ -92,3 +92,22 @@ struct ReverseWheelRow: View {
         .onChange(of: enabled) { _, value in InputRemapSettings.reverseMouseWheel = value; InputRemapService.shared.apply() }
     }
 }
+
+struct PointerOptionsRow: View {
+    @State private var linear = InputRemapSettings.linearMouse
+    @State private var smooth = InputRemapSettings.smoothMouseWheel
+    @ObservedObject private var engine = PointerAcceleration.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Linear external mouse movement", isOn: $linear)
+            if engine.status != "Off" { Text(engine.status).font(.caption).foregroundStyle(.secondary) }
+            Toggle("Smooth mouse wheel", isOn: $smooth)
+            Text("Wheel changes require Accessibility permission. Continuous touch scrolling keeps its system behavior.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding()
+        .onChange(of: linear) { _, value in InputRemapSettings.linearMouse = value; InputRemapService.shared.apply() }
+        .onChange(of: smooth) { _, value in InputRemapSettings.smoothMouseWheel = value; InputRemapService.shared.apply() }
+    }
+}

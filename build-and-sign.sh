@@ -62,6 +62,7 @@ iconutil -c icns "$ICON_WORK/AppIcon.iconset" -o "$CONTENTS/Resources/AppIcon.ic
 /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$CONTENTS/Info.plist"
 
 "$PWD/XPC/build-runner.sh" "$CONTENTS" "$SIGN_ID"
+bash "$PWD/HardwareHelper/build-helper.sh" "$CONTENTS" "$SIGN_ID"
 
 bash "$PWD/scripts/bundle-webp.sh" "$CONTENTS" "$SIGN_ID"
 bash "$PWD/scripts/bundle-annotation-preview.sh" "$CONTENTS" "$SIGN_ID"

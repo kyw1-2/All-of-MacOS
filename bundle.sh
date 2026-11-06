@@ -45,6 +45,8 @@ if [ "$SIGN_FLAG" != "AOM Dev" ] && [ "$SIGN_FLAG" != "-" ]; then
     exit 1
 fi
 
+bash HardwareHelper/build-helper.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
+
 bash scripts/bundle-webp.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
 bash scripts/bundle-annotation-preview.sh "$BUNDLE_DIR/Contents" "$SIGN_FLAG"
 

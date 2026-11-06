@@ -382,6 +382,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// process. Without this, quitting while dimmed would leave the screen dark
     /// until the user changed the resolution or logged out.
     func applicationWillTerminate(_ notification: Notification) {
+        HardwareCareModel.shared.stop()
         ActionExecutor.cancelAllSequences()
         // Key remaps live only while AOM runs; give back exactly AOM's pairs.
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview { InputRemapService.shared.removeOwnedMappingsNow() }

@@ -139,6 +139,14 @@ enum InputRemapSettings {
         get { d.bool(forKey: "AOMReverseMouseWheel") }
         set { d.set(newValue, forKey: "AOMReverseMouseWheel") }
     }
+    static var smoothMouseWheel: Bool {
+        get { d.bool(forKey: "AOMSmoothMouseWheel") }
+        set { d.set(newValue, forKey: "AOMSmoothMouseWheel") }
+    }
+    static var linearMouse: Bool {
+        get { d.bool(forKey: "AOMLinearMouse") }
+        set { d.set(newValue, forKey: "AOMLinearMouse") }
+    }
     /// Exactly what AOM last applied, so it can take only its own pairs back.
     static var ownedPairs: [HIDMappingPair] {
         get {
@@ -166,9 +174,11 @@ final class InputRemapService {
         let hyper = InputRemapSettings.hyperEnabled
         let escape = InputRemapSettings.hyperTapEscape
         let wheel = InputRemapSettings.reverseMouseWheel
+        let linear = InputRemapSettings.linearMouse
         DispatchQueue.main.async {
             HyperKeyTap.shared.setEnabled(hyper, tapEscape: escape)
             ScrollWheelReverser.shared.setEnabled(wheel)
+            PointerAcceleration.shared.setEnabled(linear)
         }
         guard !desired.isEmpty || !owned.isEmpty else { return }
         queue.async { self.write(desired: desired, owned: owned) }
@@ -179,7 +189,8 @@ final class InputRemapService {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
         let owned = InputRemapSettings.ownedPairs
         HyperKeyTap.shared.setEnabled(false, tapEscape: false)
-        ScrollWheelReverser.shared.setEnabled(false)
+        ScrollWheelReverser.shared.stopAll()
+        PointerAcceleration.shared.setEnabled(false)
         guard !owned.isEmpty else { return }
         queue.sync { self.write(desired: [], owned: owned) }
     }
@@ -295,65 +306,5 @@ private func hyperKeyCallback(proxy: CGEventTapProxy, type: CGEventType, event: 
     if decision.sendEscape, hyper.tapEscape { SyntheticInput.key(UInt16(kVK_Escape)) }
     guard decision.pass else { return nil }
     if decision.addHyper { event.flags.formUnion([.maskCommand, .maskAlternate, .maskShift, .maskControl]) }
-    return Unmanaged.passUnretained(event)
-}
-
-/// Reverses a wheel mouse's scrolling and leaves trackpads (continuous
-/// scrolling) alone, so each device keeps its own natural direction.
-final class ScrollWheelReverser {
-    static let shared = ScrollWheelReverser()
-    fileprivate var tap: CFMachPort?
-    private var source: CFRunLoopSource?
-    var isRunning: Bool { tap != nil }
-
-    func setEnabled(_ enabled: Bool) { enabled ? start() : stop() }
-
-    private func start() {
-        guard tap == nil else { return }
-        let mask = CGEventMask(1 << CGEventType.scrollWheel.rawValue)
-        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                                           eventsOfInterest: mask, callback: scrollReverseCallback,
-                                           userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            GestureLog.shared.logFromAnyThread("Reversing the mouse wheel needs Accessibility permission", level: .error)
-            return
-        }
-        tap = port
-        source = CFMachPortCreateRunLoopSource(nil, port, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
-    }
-
-    private func stop() {
-        if let port = tap { CGEvent.tapEnable(tap: port, enable: false); CFMachPortInvalidate(port) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        tap = nil; source = nil
-    }
-
-    static func shouldReverse(isContinuous: Int64, isSynthetic: Bool) -> Bool { isContinuous == 0 && !isSynthetic }
-
-    static func reverse(_ event: CGEvent) {
-        for (line, point, fixed) in [(CGEventField.scrollWheelEventDeltaAxis1, CGEventField.scrollWheelEventPointDeltaAxis1, CGEventField.scrollWheelEventFixedPtDeltaAxis1),
-                                     (.scrollWheelEventDeltaAxis2, .scrollWheelEventPointDeltaAxis2, .scrollWheelEventFixedPtDeltaAxis2)] {
-            let lines = event.getIntegerValueField(line)
-            let points = event.getIntegerValueField(point)
-            let fraction = event.getDoubleValueField(fixed)
-            event.setIntegerValueField(line, value: -lines)
-            event.setIntegerValueField(point, value: -points)
-            event.setDoubleValueField(fixed, value: -fraction)
-        }
-    }
-}
-
-private func scrollReverseCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
-                                   refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput, let refcon {
-        if let port = Unmanaged<ScrollWheelReverser>.fromOpaque(refcon).takeUnretainedValue().tap { CGEvent.tapEnable(tap: port, enable: true) }
-        return Unmanaged.passUnretained(event)
-    }
-    if type == .scrollWheel, ScrollWheelReverser.shouldReverse(
-        isContinuous: event.getIntegerValueField(.scrollWheelEventIsContinuous),
-        isSynthetic: event.getIntegerValueField(.eventSourceUserData) == SyntheticInput.selfTag) {
-        ScrollWheelReverser.reverse(event)
-    }
     return Unmanaged.passUnretained(event)
 }
