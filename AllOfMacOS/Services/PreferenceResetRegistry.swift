@@ -40,6 +40,7 @@ enum PreferenceResetRegistry {
             ("AOMIntelligentClipboardEnabled", "\(consent) (reads clipboard content)"),
             ("AOMIntelligentClipboardReadsScreen", "\(consent) (reads the screen)"),
             ("AOMAudioDiagnostics", "\(consent) (diagnostics opt-in)"),
+            ("AOMAudioAirPlaySafetyReason", "\(runtime) (the last native AirPlay fallback explanation; no reset should re-enable supplemental HAL processing)"),
             // How much history stays: a default would delete older items or
             // record apps the user excluded.
             ("AOMClipboardSettings.v1", "clipboard history limits and the apps it never records"),
