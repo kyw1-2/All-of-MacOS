@@ -30,8 +30,9 @@ final class MouseSideButtonHID {
             guard result == kIOReturnSuccess, let context else { return }
             let owner = Unmanaged<MouseSideButtonHID>.fromOpaque(context).takeUnretainedValue()
             let element = IOHIDValueGetElement(value)
+            let device = IOHIDElementGetDevice(element)
             guard let button = MouseSideButtonHID.button(page: IOHIDElementGetUsagePage(element), usage: IOHIDElementGetUsage(element)),
-                  let device = IOHIDElementGetDevice(element), owner.isMouseReceiver(device) else { return }
+                  owner.isMouseReceiver(device) else { return }
             let down = IOHIDValueGetIntegerValue(value) != 0
             if down { guard owner.held.insert(button).inserted else { return } }
             else { guard owner.held.remove(button) != nil else { return } }
