@@ -112,6 +112,26 @@ final class TextActionsGateTests: XCTestCase {
                       "an app with no focused element at all")
     }
 
+    func testChatGPTWebSelectionMayRecoverByCopyWithoutGloballyEnablingCopy() {
+        let unreadable = attributes(role: "AXWebArea", text: nil)
+        for id in ["com.openai.codex", "COM.OPENAI.CODEX", "com.openai.chat", "com.openai.chatgpt"] {
+            XCTAssertTrue(TextActionsGate.mayReadWithCopy(unreadable, settings: settings, automatic: true,
+                                                          environment: environment { $0.bundleID = id }), id)
+        }
+        XCTAssertFalse(TextActionsGate.mayReadWithCopy(unreadable, settings: settings, automatic: true,
+                                                       environment: environment { $0.bundleID = "com.google.Chrome" }),
+                       "other apps still require explicit permission for automatic clipboard reads")
+        XCTAssertFalse(TextActionsGate.mayReadWithCopy(unreadable, settings: settings, automatic: true,
+                                                       environment: environment { $0.bundleID = "com.openai.codex"; $0.secureInput = true }))
+        XCTAssertFalse(TextActionsGate.mayReadWithCopy(attributes(role: "AXTextField", subrole: kAXSecureTextFieldSubrole as String,
+                                                                  text: nil), settings: settings, automatic: true,
+                                                       environment: environment { $0.bundleID = "com.openai.codex" }))
+        XCTAssertFalse(TextActionsGate.mayReadWithCopy(attributes(role: "AXTable", text: nil), settings: settings,
+                                                       automatic: true, environment: environment { $0.bundleID = "com.openai.codex" }))
+        XCTAssertFalse(TextActionsGate.mayReadWithCopy(unreadable, settings: settings, automatic: true,
+                                                       environment: environment { $0.bundleID = "com.openai.codex"; $0.paused = true }))
+    }
+
     func testCopyFallbackNeverRunsWherePrivacyOrFilesSayNo() {
         var on = settings
         on.readsWithCopy = true

@@ -8,12 +8,27 @@ enum MonitorVCP: UInt8, CaseIterable {
     case mute = 0x8D
 
     static let inputSources: [(code: UInt16, title: String)] = [
-        (0x11, "HDMI 1"), (0x12, "HDMI 2"), (0x0F, "DisplayPort"), (0x1B, "USB-C")
+        (0x11, "HDMI 1"), (0x12, "HDMI 2"),
+        (0x0F, "DisplayPort 1"), (0x10, "DisplayPort 2"),
+        (0x1B, "USB-C (vendor mapping)"),
+        (0x13, "Vendor input 0x13 (HDMI 3 / USB-C)")
     ]
+
+    /// Some monitors put vendor flags in the high byte of discrete Get VCP
+    /// replies. This normalization applies to *readbacks* only: callers must
+    /// still supply an exact safe input code to Set VCP.
+    static func normalizedRawValue(_ raw: UInt16, for feature: MonitorVCP) -> UInt16 {
+        switch feature {
+        case .inputSource, .mute: return raw & 0x00ff
+        default: return raw
+        }
+    }
 
     static func validInputSource(_ code: UInt16) -> Bool {
         inputSources.contains { $0.code == code }
     }
+
+    static func validMuteCode(_ code: UInt16) -> Bool { code == 1 || code == 2 }
 
     struct Reading: Equatable {
         let current: UInt16
@@ -41,7 +56,7 @@ enum MonitorVCP: UInt8, CaseIterable {
               reply[2] == 2, reply[3] == 0, reply[4] == rawValue, reply[5] == 0,
               reply.reduce(0x50, ^) == 0 else { return nil }
         let maximum = UInt16(reply[6]) << 8 | UInt16(reply[7])
-        let current = UInt16(reply[8]) << 8 | UInt16(reply[9])
+        let current = Self.normalizedRawValue(UInt16(reply[8]) << 8 | UInt16(reply[9]), for: self)
         // Enum controls do not report a meaningful maximum, and sometimes report zero.
         if self != .inputSource && self != .mute {
             guard maximum > 0, current <= maximum else { return nil }

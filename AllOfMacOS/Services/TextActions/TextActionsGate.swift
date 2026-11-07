@@ -62,6 +62,17 @@ enum TextActionsGate {
     static let ownBundleIDs: Set<String> = ["com.kyw.allofmacos", "com.kyw.allofmacos.preview"]
     /// File views: a drag there selects files, and ⌘C would copy files.
     static let fileListRoles: Set<String> = ["AXList", "AXOutline", "AXTable", "AXBrowser", "AXGrid", "AXImage"]
+    /// ChatGPT desktop is Chromium-backed and its native "Ask ChatGPT"
+    /// bubble may take AX focus away from the selected response. A bounded
+    /// local ⌘C read is allowed for this specific host even when the general
+    /// fallback setting is off; the pasteboard is restored by the caller.
+    /// Other apps retain the user's explicit opt-in.
+    static let selectionCopyRecoveryHosts: Set<String> = ["com.openai.codex", "com.openai.chat", "com.openai.chatgpt"]
+
+    static func mayRecoverWithCopy(automatic: Bool, settings: TextActionsSettings, bundleID: String?) -> Bool {
+        !automatic || settings.readsWithCopy ||
+            (bundleID.map { selectionCopyRecoveryHosts.contains($0.lowercased()) } ?? false)
+    }
 
     /// Checked before any read. Automatic triggers need the master switch;
     /// the shortcut works without it. Everything else applies to both.
@@ -95,7 +106,7 @@ enum TextActionsGate {
     /// password field, under secure input, or in a file list.
     static func mayReadWithCopy(_ attributes: TextSelectionAttributes?, settings: TextActionsSettings, automatic: Bool,
                                 environment: TextActionsEnvironment) -> Bool {
-        guard !automatic || settings.readsWithCopy else { return false }
+        guard mayRecoverWithCopy(automatic: automatic, settings: settings, bundleID: environment.bundleID) else { return false }
         guard check(environment, settings: settings, automatic: automatic) == nil else { return false }
         guard let attributes else { return true }
         if isPasswordField(role: attributes.role, subrole: attributes.subrole) { return false }

@@ -49,6 +49,9 @@ final class MonitorControls {
         var inFlight: Pending?
     }
     private var controls: [Key: Control] = [:]
+    /// Write-only monitors cannot confirm a switch. Keep the last requested
+    /// input for a clearly *unverified* menu hint, not as a readback.
+    private var requestedInputs: [CGDirectDisplayID: UInt16] = [:]
     private var output: (device: UInt32, display: CGDirectDisplayID)?
 
     func bindOutput(device: UInt32, display: CGDirectDisplayID?) {
@@ -68,6 +71,7 @@ final class MonitorControls {
         let revision = generation
         for control in controls.values { control.pending?.cancel() }
         controls.removeAll()
+        requestedInputs.removeAll()
         output = nil
         queues = queues.filter { displays.contains($0.key) }
         for id in displays where queues[id] == nil {
@@ -86,17 +90,30 @@ final class MonitorControls {
             for (id, port) in ports {
                 guard let queue = activeQueues[id] else { continue }
                 queue.async {
+                    // Probe every VCP first. A read failure on 0x60 does not
+                    // prove that Set VCP is unsupported, but an I2C port alone
+                    // is not proof of any DDC/CI support either.
+                    var probed: [MonitorVCP: MonitorVCP.Reading] = [:]
                     for feature in MonitorVCP.allCases {
                         guard self.isCurrent(revision) else { return }
-                        let probed = bus.probe(feature, on: port)
-                        // Certain monitors support Set VCP 0x60 but not Get VCP.
-                        // Write-only input control is explicit, never inferred as readable.
-                        guard let value = probed ?? (feature == .inputSource
+                        if let reading = bus.probe(feature, on: port) { probed[feature] = reading }
+                    }
+                    let confirmedDDC = !probed.isEmpty
+                    for feature in MonitorVCP.allCases {
+                        guard self.isCurrent(revision) else { return }
+                        guard let reading = probed[feature] ?? (feature == .inputSource && confirmedDDC
                             ? MonitorVCP.Reading(current: 0, maximum: 0) : nil) else { continue }
+                        let value = MonitorVCP.Reading(
+                            current: MonitorVCP.normalizedRawValue(reading.current, for: feature),
+                            maximum: reading.maximum)
+                        // An unrecognized input code should not be shown as a
+                        // confirmed active input, even when Get VCP responds.
+                        let readable = probed[feature] != nil &&
+                            (feature != .inputSource || MonitorVCP.validInputSource(value.current))
                         self.lock.lock()
                         if self.generation == revision {
                             self.controls[Key(id: id, feature: feature)] = Control(
-                                port: port, queue: queue, reading: value, readable: probed != nil)
+                                port: port, queue: queue, reading: value, readable: readable)
                         }
                         self.lock.unlock()
                     }
@@ -128,6 +145,12 @@ final class MonitorControls {
         return control.reading.current
     }
 
+    func unverifiedRequestedInput(_ id: CGDirectDisplayID) -> UInt16? {
+        lock.lock(); defer { lock.unlock() }
+        guard controls[Key(id: id, feature: .inputSource)]?.readable == false else { return nil }
+        return requestedInputs[id]
+    }
+
     func supports(_ id: CGDirectDisplayID, _ feature: MonitorVCP) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return controls[Key(id: id, feature: feature)] != nil
@@ -137,8 +160,10 @@ final class MonitorControls {
     @discardableResult
     func requestRaw(_ id: CGDirectDisplayID, _ feature: MonitorVCP, _ raw: UInt16,
                     completion: ((WriteResult) -> Void)? = nil) -> Bool {
+        // Validate exact write codes. Flagged readbacks may be normalized,
+        // but sending arbitrary vendor status bits to hardware is unsafe.
         guard (feature == .inputSource && MonitorVCP.validInputSource(raw))
-            || (feature == .mute && (raw == 1 || raw == 2)) else { return false }
+            || (feature == .mute && MonitorVCP.validMuteCode(raw)) else { return false }
         return requestTarget(id, feature, raw, completion: completion)
     }
 
@@ -199,6 +224,9 @@ final class MonitorControls {
         controls[key]?.inFlight = nil
         if ok {
             controls[key]?.reading = .init(current: pending.target, maximum: control.reading.maximum)
+            if key.feature == .inputSource && !control.readable {
+                requestedInputs[key.id] = pending.target
+            }
             if latest !== pending {
                 enqueue(key, revision, control.queue)
                 lock.unlock()
@@ -206,6 +234,7 @@ final class MonitorControls {
             }
             controls[key]?.pending = nil
         } else {
+            if key.feature == .inputSource { requestedInputs.removeValue(forKey: key.id) }
             controls[key] = nil
         }
         lock.unlock()

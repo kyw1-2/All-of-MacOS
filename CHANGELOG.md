@@ -1,3 +1,14 @@
+## 3.4.21 — 2026-11-07
+
+- Make Text Actions recognize Chromium/ChatGPT text selected under the pointer or in an accessibility parent, rather than relying exclusively on the focused element. Retry a missing automatic selection once after the host finishes its selection UI transition.
+- Give ChatGPT's unified macOS desktop application (bundle `com.openai.codex`) a narrowly scoped, clipboard-preserving local copy fallback when its native "Ask ChatGPT" selection bubble hides the AX selection. Other applications still require the user to enable Use Copy to Read the Selection.
+- Raise the nonactivating Text Actions toolbar to the standard menu layer so native selection popovers do not cover it. Keep password, secure-input, file-list, exclusion and pause checks; add regression tests.
+- Harden external monitor VCP 0x60/0x8D readbacks against nonstandard high bytes; refuse ghost input switching on ports with no DDC responses, add MCCS DisplayPort 2 (0x10) and explicitly labeled vendor input 0x13, and keep write-only switch requests marked unverified.
+- Handle screen-corner input actions and select the focused window's external screen when the pointer is elsewhere; fail safely if more than one output remains ambiguous.
+- Preserve existing per-display original ColorSync LUT snapshot/restore behavior instead of globally resetting calibrated displays. Validate normalized VCP values and combined brightness transitions with regression tests.
+- Scope UGREEN HID button releases to the removed receiver, consume each CG/HID duplicate edge only once, and connect Paste Next Clipboard Item and App Audio Mixer within the existing compact More menu.
+- Add deterministic OCR result-to-clipboard-index layout tests without introducing fabricated Vision OCR results; retain real Vision integration tests for capable hosts and explicit headless CI skips.
+
 ## 3.4.19 — 2026-11-06
 
 - Recognize extra UGREEN/composite receiver side buttons through a narrowly scoped HID fallback, with CGEvent deduplication and press/release tracking.

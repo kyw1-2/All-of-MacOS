@@ -16,11 +16,26 @@ final class MonitorVCPTests: XCTestCase {
         XCTAssertTrue(MonitorVCP.validInputSource(0x12))
         XCTAssertTrue(MonitorVCP.validInputSource(0x0F))
         XCTAssertTrue(MonitorVCP.validInputSource(0x1B))
-        XCTAssertFalse(MonitorVCP.validInputSource(0x13))
+        XCTAssertTrue(MonitorVCP.validInputSource(0x10), "MCCS DisplayPort 2")
+        XCTAssertTrue(MonitorVCP.validInputSource(0x13), "explicitly chosen vendor-dependent input")
+        XCTAssertFalse(MonitorVCP.validInputSource(0x14))
+        XCTAssertFalse(MonitorVCP.validInputSource(0x800f), "never accept high-byte garbage for writes")
         let source = reply([0x6e, 0x88, 2, 0, 0x60, 0, 0, 0, 0, 0x11])
         XCTAssertEqual(MonitorVCP.inputSource.decode(source)?.current, 0x11)
         XCTAssertEqual(MonitorVCP.inputSource.decode(source)?.fraction, 0)
         XCTAssertNil(MonitorVCP.contrast.decode(source))
+    }
+
+    func testInputAndMuteReadbacksDiscardVendorHighByteOnly() {
+        let source = reply([0x6e, 0x88, 2, 0, 0x60, 0, 0, 0, 0x80, 0x0f])
+        XCTAssertEqual(MonitorVCP.inputSource.decode(source)?.current, 0x0f)
+        let muted = reply([0x6e, 0x88, 2, 0, 0x8d, 0, 0, 0, 0x02, 0x01])
+        XCTAssertEqual(MonitorVCP.mute.decode(muted)?.current, 1)
+        let unmuted = reply([0x6e, 0x88, 2, 0, 0x8d, 0, 0, 0, 0x02, 0x00])
+        XCTAssertEqual(MonitorVCP.mute.decode(unmuted)?.current, 0)
+        let contrast = reply([0x6e, 0x88, 2, 0, 0x12, 0, 0, 100, 0, 50])
+        XCTAssertEqual(MonitorVCP.contrast.decode(contrast)?.current, 50)
+        XCTAssertEqual(MonitorVCP.normalizedRawValue(0xabcd, for: .contrast), 0xabcd)
     }
 
     func testCombinedSliderCrossesHardwareFloorWithoutAmplification() {
