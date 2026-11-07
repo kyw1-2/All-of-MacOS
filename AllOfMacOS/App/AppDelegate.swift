@@ -69,10 +69,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The running delegate, for AppleScript commands that reuse URL handling.
     @MainActor static weak var current: AppDelegate?
     var statusItem: NSStatusItem?
-    var appState: AppState?
+    var appState: AppState? {
+        didSet {
+            // AppState is main-actor isolated and the delegate is wired from
+            // the main-actor SwiftUI .task. Observe the model, not arbitrary
+            // defaults writes from unrelated modules.
+            MainActor.assumeIsolated {
+                enabledObserver = appState?.$globalEnabled
+                    .removeDuplicates()
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] _ in
+                        // @Published fires before storage is mutated.
+                        DispatchQueue.main.async { self?.updateStatusIcon() }
+                    }
+            }
+        }
+    }
     private weak var mainWindow: NSWindow?
     private var menuBarObserver: NSKeyValueObservation?
     private var suppressionObserver: AnyCancellable?
+    private var enabledObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.current = self

@@ -216,13 +216,15 @@ final class TextActionsController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.generation == token else { return }
-                self.read(app: app, pointer: gesture.pointer, automatic: true, anchor: anchor, token: token)
+                self.read(app: app, pointer: gesture.pointer, automatic: true, anchor: anchor,
+                          token: token, gesture: gesture.kind)
             }
         }
     }
 
     private func read(app: NSRunningApplication, pointer: CGPoint?, automatic: Bool,
-                      anchor: TextSelectionAnchorBox?, token: Int, attempt: Int = 0) {
+                      anchor: TextSelectionAnchorBox?, token: Int, attempt: Int = 0,
+                      gesture: TextSelectionMonitor.Gesture.Kind? = nil) {
         let pid = app.processIdentifier
         // NSScreen is main-actor state; capture the coordinate transform here.
         let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
@@ -231,7 +233,9 @@ final class TextActionsController {
             var unchanged = false
             if let anchor, anchor.pid == pid, let read {
                 unchanged = TextActionsGate.isUnchangedSelection(anchor: anchor.anchor?.range, final: read.attributes.range,
-                                                                 sameElement: anchor.anchor?.element.isSame(as: read.element) ?? false)
+                                                                 sameElement: anchor.anchor?.element.isSame(as: read.element) ?? false,
+                                                                 initialText: anchor.anchor?.selectedText,
+                                                                 finalText: read.attributes.selectedText)
             }
             var traits: TextSelectionTraits?
             if let read, TextActionsGate.check(read.attributes) == nil, let text = read.attributes.selectedText {
@@ -240,7 +244,8 @@ final class TextActionsController {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.finishRead(app: app, read: read, traits: traits, unchanged: unchanged, pointer: pointer,
-                                     automatic: automatic, token: token, attempt: attempt)
+                                     automatic: automatic, token: token, attempt: attempt,
+                                     anchor: anchor, gesture: gesture)
                 }
             }
         }
@@ -248,18 +253,37 @@ final class TextActionsController {
 
     private func finishRead(app: NSRunningApplication, read: (attributes: TextSelectionAttributes, element: TextSelectionElement)?,
                             traits: TextSelectionTraits?, unchanged: Bool, pointer: CGPoint?, automatic: Bool,
-                            token: Int, attempt: Int) {
+                            token: Int, attempt: Int, anchor: TextSelectionAnchorBox?,
+                            gesture: TextSelectionMonitor.Gesture.Kind?) {
         guard generation == token else { return }
         let settings = preferences.settings
         let environment = environment(for: app)
         // The rules again on the main thread: the app, the pause or secure input may have changed.
         guard TextActionsGate.check(environment, settings: settings, automatic: automatic) == nil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
-        if let attributes = read?.attributes, TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) {
-            if !automatic { notify(.passwordField) }
+        if let attributes = read?.attributes,
+           TextActionsGate.isForbiddenSelectionTarget(role: attributes.role, subrole: attributes.subrole) {
+            if !automatic { notify(TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) ? .passwordField : .notText) }
             return
         }
         if unchanged { return }
+        // A plain double-click never proves a selection: media fullscreen,
+        // window zoom and empty-space clicks would otherwise resurrect stale
+        // AXWebArea text. Keep this proof check before presenting the panel.
+        if automatic && (gesture == .doubleClick || gesture == .tripleClick) {
+            let before = anchor?.pid == app.processIdentifier ? anchor?.anchor : nil
+            let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+            let bounds = read?.attributes.bounds.map {
+                TextActionBarPlacement.appKitRect($0, primaryHeight: primaryHeight)
+            }
+            guard TextActionsGate.confirmedClickSelection(
+                gesture: gesture, anchorAvailable: before != nil,
+                sameElement: before?.element.isSame(as: read?.element) ?? false,
+                initialRange: before?.range, finalRange: read?.attributes.range,
+                initialText: before?.selectedText,
+                finalText: read?.attributes.selectedText,
+                finalBounds: bounds, pointer: pointer) else { return }
+        }
         if let read, let traits, let text = read.attributes.selectedText {
             present(TextSelection(text: text, traits: traits, attributes: read.attributes, element: read.element,
                                   pid: app.processIdentifier, bundleID: app.bundleIdentifier, appName: app.localizedName,
@@ -274,11 +298,13 @@ final class TextActionsController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
                 guard let self, self.generation == token,
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
-                self.read(app: app, pointer: pointer, automatic: true, anchor: nil, token: token, attempt: 1)
+                self.read(app: app, pointer: pointer, automatic: true, anchor: anchor,
+                          token: token, attempt: 1, gesture: gesture)
             }
             return
         }
-        guard TextActionsGate.mayReadWithCopy(read?.attributes, settings: settings, automatic: automatic,
+        guard TextActionsGate.mayUseCopyFallback(automatic: automatic, gesture: gesture),
+              TextActionsGate.mayReadWithCopy(read?.attributes, settings: settings, automatic: automatic,
                                               environment: environment) else {
             if !automatic { notify(.noSelection) }
             return

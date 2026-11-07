@@ -25,6 +25,14 @@ enum TextActionBarPlacement {
     static let tallSelection: CGFloat = 72
     /// The height of a text line when only the pointer is known.
     static let lineHeight: CGFloat = 22
+    /// ChatGPT's native Ask ChatGPT bubble occupies the space above a
+    /// selection. Put AOM below, with an extra 38 pt gap; near the Dock the
+    /// existing placement engine flips it above with the same separation.
+    static func nativePopoverClearance(bundleID: String?) -> CGFloat {
+        guard let id = bundleID?.lowercased(),
+              TextActionsGate.selectionCopyRecoveryHosts.contains(id) else { return 0 }
+        return 38
+    }
 
     /// Accessibility rectangle (top-left origin) to AppKit (bottom-left);
     /// `primaryHeight` is the main display's height.
@@ -56,7 +64,7 @@ enum TextActionBarPlacement {
 
     /// The bar's origin (bottom-left, AppKit coordinates).
     static func origin(for size: CGSize, anchor: CGRect, pointer: CGPoint?, screens: [TextActionScreen],
-                       position: TextActionBarPosition) -> CGPoint {
+                       position: TextActionBarPosition, extraClearance: CGFloat = 0) -> CGPoint {
         let screen = screen(for: anchor, pointer: pointer, screens: screens)
         let visible = screen?.visibleFrame ?? anchor.insetBy(dx: -1_000, dy: -1_000)
 
@@ -72,8 +80,9 @@ enum TextActionBarPlacement {
         let highestX = visible.maxX - size.width - margin
         x = highestX < lowestX ? lowestX : min(max(x, lowestX), highestX)
 
-        let above = anchor.maxY + gap
-        let below = anchor.minY - gap - size.height
+        let clearance = max(0, extraClearance)
+        let above = anchor.maxY + gap + clearance
+        let below = anchor.minY - gap - size.height - clearance
         let topLimit = visible.maxY - margin
         let bottomLimit = visible.minY + margin
         let fitsAbove = above + size.height <= topLimit
