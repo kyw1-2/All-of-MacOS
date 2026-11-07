@@ -79,8 +79,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .removeDuplicates()
                     .receive(on: DispatchQueue.main)
                     .sink { [weak self] _ in
-                        // @Published fires before storage is mutated.
-                        DispatchQueue.main.async { self?.updateStatusIcon() }
+                        // receive(on:) already defers until @Published storage is updated.
+                        self?.updateStatusIcon()
                     }
             }
         }
@@ -502,11 +502,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard statusItem == nil else { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            button.image = AOMMenuBarIcon.image(.active)
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        updateStatusIcon()
         // Optional Ice-style notch reveal installs a mouse-move listener
         // only when enabled; normal startup keeps its old event budget.
         MainActor.assumeIsolated { AOMMenuShelfController.shared.installHoverIfEnabled() }

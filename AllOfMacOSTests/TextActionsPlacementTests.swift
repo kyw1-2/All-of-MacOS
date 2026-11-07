@@ -137,10 +137,21 @@ final class TextActionsPlacementTests: XCTestCase {
         let selected = CGRect(x: 600, y: 400, width: 100, height: 18)
         let bubble = TextActionBarPlacement.origin(for: size, anchor: selected,
             pointer: CGPoint(x: 650, y: 405), screens: [main], position: .below, extraClearance: 38)
-        XCTAssertEqual(bubble.y, 400 - 8 - 32 - 38)
+        XCTAssertEqual(bubble.y, 400 - 8 - 32)
         let ordinary = TextActionBarPlacement.origin(for: size, anchor: selected,
             pointer: CGPoint(x: 650, y: 405), screens: [main], position: .above)
         XCTAssertEqual(ordinary.y, selected.maxY + 8)
+    }
+
+    func testChatGPTBelowFitsWithoutAboveBubbleClearance() {
+        let selection = CGRect(x: 600, y: 120, width: 100, height: 18)
+        let placed = TextActionBarPlacement.origin(for: size, anchor: selection,
+            pointer: CGPoint(x: 650, y: 125), screens: [main], position: .below, extraClearance: 38)
+        XCTAssertEqual(placed.y, 80, "Enough room below; do not flip early")
+        let low = CGRect(x: 600, y: 80, width: 100, height: 18)
+        let flipped = TextActionBarPlacement.origin(for: size, anchor: low,
+            pointer: CGPoint(x: 650, y: 85), screens: [main], position: .below, extraClearance: 38)
+        XCTAssertEqual(flipped.y, low.maxY + 8 + 38, "Above needs room for the native bubble")
     }
 
     func testPaging() {

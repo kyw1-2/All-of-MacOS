@@ -4,7 +4,8 @@ import ApplicationServices
 /// A focused element in another app, kept to act on its selection later.
 /// AXUIElement is a CF object, and Accessibility calls on it may come from
 /// any thread.
-final class TextSelectionElement: @unchecked Sendable {
+final class TextSelectionElement: @unchecked Sendable, Equatable {
+    static func == (lhs: TextSelectionElement, rhs: TextSelectionElement) -> Bool { lhs.isSame(as: rhs) }
     let element: AXUIElement
     init(_ element: AXUIElement) { self.element = element }
 
@@ -40,9 +41,12 @@ struct TextSelection {
 struct TextSelectionAnchor {
     var element: TextSelectionElement
     var range: TextSelectionRange?
-    /// Snapshot selected text only when AX does not expose a usable range;
-    /// prevents an unrelated video double-click from resurfacing stale text.
     var selectedText: String? = nil
+    var bounds: CGRect? = nil
+    var isTextTarget = false
+    var isVerifiedContext = false
+    var isBlocked = false
+    var role: String? = nil
 }
 
 /// Filled on the reader's queue at mouse down and read there at mouse up;
@@ -50,6 +54,7 @@ struct TextSelectionAnchor {
 final class TextSelectionAnchorBox: @unchecked Sendable {
     var pid: pid_t = 0
     var anchor: TextSelectionAnchor?
+    var focusedAnchor: TextSelectionAnchor?
 }
 
 /// Accessibility reads of another app's focused element. Every call runs on
@@ -76,106 +81,156 @@ enum TextSelectionReader {
     /// the mouse or by an AXWebArea ancestor, not by AXFocusedUIElement.
     /// A native selection bubble can even move focus to one of its buttons.
     /// Keep every AX operation on the reader queue and bound the parent walk.
-    static let maxSelectionAncestors = 9
+    static let maxSelectionAncestors = 32
+    typealias Read = (attributes: TextSelectionAttributes, element: TextSelectionElement)
 
-    /// The protected-element case cannot be conflated with "no selection".
-    /// If AX hit-testing resolves a secure field or file list, returning the
-    /// focused AXWebArea instead could launch an unsafe synthetic Command-C.
-    private enum AncestorProbeResult {
-        case found((attributes: TextSelectionAttributes, element: TextSelectionElement))
-        case blocked((attributes: TextSelectionAttributes, element: TextSelectionElement))
-        case notFound
+    /// This is the actual AX walk, parameterized so nested web lists, media
+    /// wrappers, cycles and exhausted budgets can be tested without other apps.
+    static func probe<Node: Equatable>(start: Node, metadata: (Node) -> TextSelectionAttributes,
+                                       selection: (Node, TextSelectionAttributes) -> TextSelectionAttributes,
+                                       parent: (Node) -> Node?, expired: () -> Bool = { false })
+        -> (attributes: TextSelectionAttributes, node: Node) {
+        var current: Node? = start
+        var visited: [Node] = []
+        var first: (attributes: TextSelectionAttributes, node: Node)?
+        var selected: (attributes: TextSelectionAttributes, node: Node)?
+        var collection: (attributes: TextSelectionAttributes, node: Node)?
+        var nonText: (attributes: TextSelectionAttributes, node: Node)?
+        var textTarget = false
+        var textEditor = false
+        var document = false
+        for _ in 0..<maxSelectionAncestors {
+            guard let node = current else { break }
+            guard !expired(), !visited.contains(node) else {
+                return (TextSelectionAttributes(isBlocked: true), start)
+            }
+            visited.append(node)
+            var attributes = metadata(node)
+            let role = attributes.role ?? ""
+            let isCollection = TextActionsGate.collectionRoles.contains(role)
+            // Password/media metadata is evaluated BEFORE asking for text.
+            if attributes.isBlocked || TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) ||
+                TextActionsGate.mediaRoles.contains(role) {
+                attributes.isBlocked = true
+                return (attributes, node)
+            }
+            if !isCollection && TextActionsGate.fileListRoles.contains(role), nonText == nil {
+                nonText = (attributes, node)
+            }
+            if visited.count == 1 { textTarget = TextActionsGate.textRoles.contains(role) }
+            textEditor = textEditor || role == "AXTextField" || role == "AXTextArea"
+            document = document || role == "AXWebArea" ||
+                TextActionsGate.contentListSubroles.contains(attributes.subrole ?? "")
+            if selected == nil && nonText == nil { attributes = selection(node, attributes) }
+            if first == nil { first = (attributes, node) }
+            if isCollection, collection == nil { collection = (attributes, node) }
+            if selected == nil, let text = attributes.selectedText,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                selected = (attributes, node)
+            }
+            // Continue past the selection to check secure/media ancestors.
+            if role == "AXApplication" || role == "AXWindow" { current = nil; break }
+            current = parent(node)
+        }
+        guard current == nil, !expired() else { return (TextSelectionAttributes(isBlocked: true), start) }
+        if var nonText {
+            nonText.attributes.isBlocked = true
+            nonText.attributes.isVerifiedContext = true
+            return nonText
+        }
+        // Collection roles alone mean neither files nor text. A real text
+        // selection or web-document context distinguishes content collections.
+        if var collection, selected == nil && !document && !textEditor {
+            collection.attributes.isBlocked = true
+            collection.attributes.isVerifiedContext = true
+            return collection
+        }
+        var result = selected ?? first ?? (TextSelectionAttributes(), start)
+        result.attributes.isTextTarget = textTarget
+        result.attributes.isVerifiedContext = true
+        return result
+    }
+
+    private static func selectedTextInAncestors(of start: AXUIElement, timeout: Float) -> Read {
+        let deadline = ProcessInfo.processInfo.systemUptime + (timeout == anchorTimeout ? 0.35 : 0.8)
+        let result = probe(start: TextSelectionElement(start), metadata: {
+            readMetadata(of: $0.element, timeout: timeout)
+        }, selection: { readAttributes(of: $0.element, metadata: $1) }, parent: {
+            element($0.element, kAXParentAttribute).map(TextSelectionElement.init)
+        }, expired: { ProcessInfo.processInfo.systemUptime >= deadline })
+        return (result.attributes, result.node)
+    }
+
+    private static func readMetadata(of node: AXUIElement, timeout: Float) -> TextSelectionAttributes {
+        AXUIElementSetMessagingTimeout(node, timeout)
+        var attributes = TextSelectionAttributes()
+        attributes.role = string(node, kAXRoleAttribute)
+        attributes.subrole = string(node, kAXSubroleAttribute)
+        guard attributes.role != nil else {
+            attributes.isBlocked = true
+            return attributes
+        }
+        if TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) {
+            attributes.isBlocked = true
+            return attributes
+        }
+        var classesValue: CFTypeRef?
+        let classes: [String] = AXUIElementCopyAttributeValue(node, "AXDOMClassList" as CFString, &classesValue) == .success
+            ? (classesValue as? [String] ?? []) : []
+        if TextActionsGate.isMediaSurface(role: attributes.role,
+            identifier: string(node, "AXDOMIdentifier") ?? string(node, kAXIdentifierAttribute),
+            htmlTag: string(node, "AXHTMLTag"), domClasses: classes) {
+            attributes.role = "AXVideo"
+            attributes.isBlocked = true
+        }
+        return attributes
     }
 
     static func readAttributes(pid: pid_t, pointer: CGPoint? = nil, primaryHeight: CGFloat = 0,
-                               timeout: Float = readTimeout) -> (attributes: TextSelectionAttributes, element: TextSelectionElement)? {
+                               timeout: Float = readTimeout, dragAnchor: TextSelectionAnchor? = nil) -> Read? {
         dispatchPrecondition(condition: .notOnQueue(.main))
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, timeout)
         let focused = element(app, kAXFocusedUIElementAttribute)
-        let initial = focused.map { readAttributes(of: $0, timeout: timeout) }
-        if let initial, TextActionsGate.isForbiddenSelectionTarget(role: initial.attributes.role,
-                                                                   subrole: initial.attributes.subrole) {
-            return initial
+        // Includes the focused node itself, including Chromium media metadata.
+        let initial = focused.map { node -> Read in
+            var result = selectedTextInAncestors(of: node, timeout: timeout)
+            // Focus alone never proves that a click landed on this text.
+            result.attributes.isTextTarget = false
+            return result
         }
+        if let initial, TextActionsGate.isPasswordField(role: initial.attributes.role, subrole: initial.attributes.subrole) ||
+            TextActionsGate.mediaRoles.contains(initial.attributes.role ?? "") { return initial }
 
-        // Hit-test the mouse-up location BEFORE using a valid focused WebArea
-        // selection. A secure field below the pointer takes precedence over an
-        // unrelated selected text node held by the browser's focus state.
         if let pointer, primaryHeight > 0, pointer.x.isFinite, pointer.y.isFinite {
             var underPointer: AXUIElement?
             if AXUIElementCopyElementAtPosition(app, Float(pointer.x), Float(primaryHeight - pointer.y),
                                                 &underPointer) == .success, let underPointer {
-                switch selectedTextInAncestors(of: underPointer, timeout: timeout) {
-                case .blocked(let blocked): return blocked
-                case .found(let found): return found
-                case .notFound: break
+                let hit = selectedTextInAncestors(of: underPointer, timeout: timeout)
+                // A verified selecting drag may finish just over an adjacent
+                // image/list. Passwords, media and incomplete walks still win.
+                if TextActionsGate.isBlocked(hit.attributes) {
+                    if hit.attributes.isVerifiedContext, let initial, let dragAnchor,
+                       TextActionsGate.mayUseFocusedDragSelection(initial.attributes,
+                        sameElement: dragAnchor.element.isSame(as: initial.element),
+                        initialText: dragAnchor.selectedText, initialRange: dragAnchor.range,
+                        initialBounds: dragAnchor.bounds,
+                        startedOnText: dragAnchor.isTextTarget && dragAnchor.isVerifiedContext && !dragAnchor.isBlocked,
+                        endpointRole: hit.attributes.role) { return initial }
+                    return hit
                 }
-            }
-        }
-        // Even the focused ancestors can be protected. Never interpret a
-        // blocked search as an ordinary miss and fall through to copying.
-        if let focused {
-            switch selectedTextInAncestors(of: focused, timeout: timeout, skipFirst: true) {
-            case .blocked(let blocked): return blocked
-            case .found(let found):
+                if TextActionsGate.check(hit.attributes) == nil { return hit }
                 if let initial, TextActionsGate.check(initial.attributes) == nil { return initial }
-                return found
-            case .notFound: break
+                return hit
             }
         }
         return initial
     }
 
-    private static func selectedTextInAncestors(of start: AXUIElement, timeout: Float,
-                                                 skipFirst: Bool = false) -> AncestorProbeResult {
-        var current: AXUIElement? = skipFirst ? element(start, kAXParentAttribute) : start
-        var visited: [AXUIElement] = []
-        var selection: (attributes: TextSelectionAttributes, element: TextSelectionElement)?
-        for _ in 0..<maxSelectionAncestors {
-            guard let node = current, !visited.contains(where: { CFEqual($0, node) }) else { break }
-            visited.append(node)
-            AXUIElementSetMessagingTimeout(node, timeout)
-            let role = string(node, kAXRoleAttribute)
-            let subrole = string(node, kAXSubroleAttribute)
-            let protected = TextActionsGate.isForbiddenSelectionTarget(role: role, subrole: subrole)
-            // Chromium's video canvas frequently presents AXGroup/AXButton
-            // rather than AXVideo. Inspect only its AX DOM metadata (not text
-            // content) before considering any parent WebArea selection.
-            let identifier = protected ? nil : (string(node, "AXDOMIdentifier") ?? string(node, kAXIdentifierAttribute))
-            let htmlTag = protected ? nil : string(node, "AXHTMLTag")
-            var classesValue: CFTypeRef?
-            let classes: [String] = !protected &&
-                AXUIElementCopyAttributeValue(node, "AXDOMClassList" as CFString, &classesValue) == .success
-                ? (classesValue as? [String] ?? []) : []
-            let media = TextActionsGate.isMediaSurface(role: role, identifier: identifier,
-                                                       htmlTag: htmlTag, domClasses: classes)
-            if protected || media {
-                var blocked = TextSelectionAttributes()
-                blocked.role = media ? "AXVideo" : role
-                blocked.subrole = subrole
-                return .blocked((blocked, TextSelectionElement(node)))
-            }
-            if let text = string(node, kAXSelectedTextAttribute),
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               selection == nil {
-                selection = readAttributes(of: node, timeout: timeout)
-            }
-            if role == "AXApplication" || role == "AXWindow" { break }
-            current = element(node, kAXParentAttribute)
-        }
-        return selection.map(AncestorProbeResult.found) ?? .notFound
-    }
-
     /// The focused element's role, its selection and where it is. A password
     /// field stops the read after its role: not even its selection length is asked.
-    private static func readAttributes(of focused: AXUIElement, timeout: Float) -> (attributes: TextSelectionAttributes, element: TextSelectionElement) {
-        AXUIElementSetMessagingTimeout(focused, timeout)
-        var attributes = TextSelectionAttributes()
-        attributes.role = string(focused, kAXRoleAttribute)
-        attributes.subrole = string(focused, kAXSubroleAttribute)
-        let handle = TextSelectionElement(focused)
-        if TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) { return (attributes, handle) }
+    private static func readAttributes(of focused: AXUIElement, metadata: TextSelectionAttributes) -> TextSelectionAttributes {
+        var attributes = metadata
 
         var value: CFTypeRef?
         switch AXUIElementCopyAttributeValue(focused, kAXSelectedTextAttribute as CFString, &value) {
@@ -183,7 +238,7 @@ enum TextSelectionReader {
         case .noValue: attributes.selectedText = ""
         default: attributes.selectedText = nil
         }
-        guard let text = attributes.selectedText, !text.isEmpty else { return (attributes, handle) }
+        guard let text = attributes.selectedText, !text.isEmpty else { return attributes }
 
         var settable: DarwinBoolean = false
         if AXUIElementIsAttributeSettable(focused, kAXSelectedTextAttribute as CFString, &settable) == .success {
@@ -208,35 +263,19 @@ enum TextSelectionReader {
                 attributes.bounds = rect(parameterized: focused, "AXBoundsForTextMarkerRange", markers)
             }
         }
-        return (attributes, handle)
+        return attributes
     }
 
-    /// The focused element and its selected range at mouse down. A password
-    /// field gives nothing.
-    static func readAnchor(pid: pid_t) -> TextSelectionAnchor? {
-        dispatchPrecondition(condition: .notOnQueue(.main))
-        guard let focused = focusedElement(pid: pid, timeout: anchorTimeout) else { return nil }
-        guard !TextActionsGate.isForbiddenSelectionTarget(role: string(focused, kAXRoleAttribute),
-                                                          subrole: string(focused, kAXSubroleAttribute)) else { return nil }
-        var anchor = TextSelectionAnchor(element: TextSelectionElement(focused), range: nil)
-        var snapshot: CFTypeRef?
-        // .noValue explicitly means there was no text selected at mouse down.
-        // Distinguish it from a failed/unsupported AX query, which provides
-        // no evidence and must not authorize an automatic click-triggered bar.
-        switch AXUIElementCopyAttributeValue(focused, kAXSelectedTextAttribute as CFString, &snapshot) {
-        case .success: anchor.selectedText = (snapshot as? String) ?? ""
-        case .noValue: anchor.selectedText = ""
-        default: anchor.selectedText = nil
-        }
-        var rangeRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
-           let rangeRef, CFGetTypeID(rangeRef) == AXValueGetTypeID() {
-            var range = CFRange()
-            if AXValueGetValue(rangeRef as! AXValue, .cfRange, &range) {
-                anchor.range = TextSelectionRange(location: range.location, length: range.length)
-            }
-        }
-        return anchor
+    /// Use the same pointer/ancestor resolution for both ends of the gesture.
+    static func readAnchor(pid: pid_t, pointer: CGPoint? = nil, primaryHeight: CGFloat = 0) -> TextSelectionAnchor? {
+        guard let read = readAttributes(pid: pid, pointer: pointer, primaryHeight: primaryHeight, timeout: anchorTimeout) else { return nil }
+        // A timed-out/cyclic first snapshot supplies no baseline. It must not
+        // veto a later, fully verified text hit, unlike an actual secure target.
+        if read.attributes.isBlocked && read.attributes.role == nil { return nil }
+        return TextSelectionAnchor(element: read.element, range: read.attributes.range,
+            selectedText: read.attributes.selectedText, bounds: read.attributes.bounds,
+            isTextTarget: read.attributes.isTextTarget, isVerifiedContext: read.attributes.isVerifiedContext,
+            isBlocked: TextActionsGate.isBlocked(read.attributes), role: read.attributes.role)
     }
 
     /// Replaces the selected text through Accessibility. True only when the

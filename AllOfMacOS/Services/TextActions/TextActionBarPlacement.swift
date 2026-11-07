@@ -26,8 +26,8 @@ enum TextActionBarPlacement {
     /// The height of a text line when only the pointer is known.
     static let lineHeight: CGFloat = 22
     /// ChatGPT's native Ask ChatGPT bubble occupies the space above a
-    /// selection. Put AOM below, with an extra 38 pt gap; near the Dock the
-    /// existing placement engine flips it above with the same separation.
+    /// selection. AOM needs extra space only when it is placed above,
+    /// including when the Dock forces the below preference to flip.
     static func nativePopoverClearance(bundleID: String?) -> CGFloat {
         guard let id = bundleID?.lowercased(),
               TextActionsGate.selectionCopyRecoveryHosts.contains(id) else { return 0 }
@@ -82,7 +82,7 @@ enum TextActionBarPlacement {
 
         let clearance = max(0, extraClearance)
         let above = anchor.maxY + gap + clearance
-        let below = anchor.minY - gap - size.height - clearance
+        let below = anchor.minY - gap - size.height
         let topLimit = visible.maxY - margin
         let bottomLimit = visible.minY + margin
         let fitsAbove = above + size.height <= topLimit

@@ -20,6 +20,11 @@ struct TextSelectionAttributes: Equatable {
     var range: TextSelectionRange?
     /// Accessibility coordinates: top-left origin of the main display.
     var bounds: CGRect?
+    /// The pointer hit text, and its complete ancestry passed the guards.
+    var isTextTarget = false
+    var isVerifiedContext = false
+    /// An incomplete/cyclic AX walk must not authorize clipboard recovery.
+    var isBlocked = false
 }
 
 /// The state of the Mac when a selection ends, as plain values.
@@ -69,42 +74,73 @@ enum TextActionsGate {
     /// Other apps retain the user's explicit opt-in.
     static let selectionCopyRecoveryHosts: Set<String> = ["com.openai.codex", "com.openai.chat", "com.openai.chatgpt"]
 
-    /// A video double-click toggles fullscreen. Never synthesize Command-C
-    /// from a click gesture with no confirmed AX text selection; it could
-    /// copy stale WebArea text or trigger unrelated host-app shortcuts.
-    static func mayUseCopyFallback(automatic: Bool, gesture: TextSelectionMonitor.Gesture.Kind?) -> Bool {
-        guard automatic else { return true }
-        return gesture != .doubleClick && gesture != .tripleClick
+    /// Click recovery is restricted to a known host and a verified text hit.
+    /// Neither a bare gesture nor an unreadable/blocked AX tree is evidence.
+    static func mayUseCopyFallback(automatic: Bool, gesture: TextSelectionMonitor.Gesture.Kind?,
+                                   bundleID: String? = nil, verifiedTextTarget: Bool = false) -> Bool {
+        guard automatic, gesture == .doubleClick || gesture == .tripleClick else { return true }
+        return verifiedTextTarget && (bundleID.map { selectionCopyRecoveryHosts.contains($0.lowercased()) } ?? false)
     }
 
-    /// A double-click is just a mouse gesture (fullscreen, window zoom,
-    /// select a row, etc.), not proof that text was newly selected. Require
-    /// evidence tied to that click. In particular a retained AXWebArea
-    /// selection without a range or new text must never display the toolbar.
+    static func containsSelection(_ bounds: CGRect?, pointer: CGPoint?) -> Bool {
+        guard let bounds, let pointer, bounds.minX.isFinite, bounds.minY.isFinite,
+              bounds.width.isFinite, bounds.height.isFinite, bounds.width > 0, bounds.height > 0 else { return false }
+        return bounds.insetBy(dx: -10, dy: -10).contains(pointer)
+    }
+
+    /// A hit on text can confirm a selection even if passive mouse-down AX
+    /// arrived after the app handled the click. Bounds must be selection bounds,
+    /// never the element frame. A large WebArea alone is still not evidence.
     static func confirmedClickSelection(gesture: TextSelectionMonitor.Gesture.Kind?,
                                         anchorAvailable: Bool, sameElement: Bool,
                                         initialRange: TextSelectionRange?, finalRange: TextSelectionRange?,
                                         initialText: String?, finalText: String?,
-                                        finalBounds: CGRect?, pointer: CGPoint?) -> Bool {
+                                        finalBounds: CGRect?, pointer: CGPoint?,
+                                        verifiedTextTarget: Bool = false, directTextSelection: Bool = false) -> Bool {
         guard gesture == .doubleClick || gesture == .tripleClick else { return true }
-        guard anchorAvailable, let finalText,
-              !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        if sameElement {
+        guard let finalText, !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if anchorAvailable && sameElement {
             if let before = initialRange, let after = finalRange,
                after.length > 0, before != after { return true }
-            // AXWebArea frequently does not expose a range; the before/after
-            // selected-text snapshots still establish a change. An unchanged
-            // selection or missing initial snapshot is *not* affirmative proof.
             if let before = initialText, before != finalText { return true }
         }
-        // Some apps move AX focus to a new text node. The only acceptable
-        // alternate evidence is a bounded selection rectangle at the click.
-        // A huge/stale WebArea rectangle must not qualify.
-        if let finalBounds, let pointer, finalBounds.width > 0,
-           finalBounds.height > 0, finalBounds.height <= 76,
-           finalBounds.width <= 600,
-           finalBounds.insetBy(dx: -10, dy: -10).contains(pointer) { return true }
+        if verifiedTextTarget {
+            if directTextSelection { return true }
+            if anchorAvailable, let before = initialText, before != finalText { return true }
+        }
+        if containsSelection(finalBounds, pointer: pointer) {
+            if verifiedTextTarget { return true }
+            if let finalBounds, finalBounds.height <= 76, finalBounds.width <= 600 { return true }
+        }
         return false
+    }
+
+    enum ReadDisposition: Equatable { case blocked, retry, present, copy, ignore }
+
+    static func mayUseFocusedDragSelection(_ final: TextSelectionAttributes, sameElement: Bool,
+                                            initialText: String?, initialRange: TextSelectionRange?,
+                                            initialBounds: CGRect?, startedOnText: Bool, endpointRole: String?) -> Bool {
+        guard startedOnText, sameElement, final.isVerifiedContext, check(final) == nil,
+              endpointRole == "AXImage" || collectionRoles.contains(endpointRole ?? "") else { return false }
+        // Missing baseline data is not affirmative evidence of a changed drag.
+        if let initialBounds, let bounds = final.bounds, initialBounds != bounds { return true }
+        if let initialRange, let range = final.range, initialRange != range { return true }
+        if let initialText, initialText != final.selectedText { return true }
+        return false
+    }
+
+    /// Shared by the controller and regression tests: a missing or unsettled
+    /// first read retries before the final freshness/copy decision.
+    static func disposition(automatic: Bool, attempt: Int, blocked: Bool, hasSelection: Bool,
+                            unchanged: Bool, click: Bool, confirmed: Bool, mayCopy: Bool,
+                            incomplete: Bool = false) -> ReadDisposition {
+        if incomplete { return automatic && attempt == 0 ? .retry : .blocked }
+        if blocked { return .blocked }
+        let accepted = hasSelection && (click ? confirmed : !unchanged)
+        if accepted { return .present }
+        if automatic && attempt == 0 { return .retry }
+        if !hasSelection && !unchanged && mayCopy { return .copy }
+        return .ignore
     }
 
     static func mayRecoverWithCopy(automatic: Bool, settings: TextActionsSettings, bundleID: String?) -> Bool {
@@ -150,16 +186,27 @@ enum TextActionsGate {
         return domClasses.contains { knownClasses.contains($0.lowercased()) }
     }
 
-    static func isForbiddenSelectionTarget(role: String?, subrole: String?) -> Bool {
-        isPasswordField(role: role, subrole: subrole) ||
-            (role.map { fileListRoles.contains($0) || mediaRoles.contains($0) } ?? false)
+    static let collectionRoles: Set<String> = ["AXList", "AXTable", "AXOutline", "AXGrid"]
+    static let textRoles: Set<String> = ["AXStaticText", "AXTextField", "AXTextArea"]
+    static let contentListSubroles: Set<String> = ["AXContentList", "AXDescriptionList"]
+
+    static func isForbiddenSelectionTarget(role: String?, subrole: String?, hasTextSelection: Bool = false) -> Bool {
+        if isPasswordField(role: role, subrole: subrole) { return true }
+        guard let role else { return false }
+        if collectionRoles.contains(role), hasTextSelection || contentListSubroles.contains(subrole ?? "") { return false }
+        return fileListRoles.contains(role) || mediaRoles.contains(role)
+    }
+
+    static func isBlocked(_ attributes: TextSelectionAttributes) -> Bool {
+        attributes.isBlocked || isForbiddenSelectionTarget(role: attributes.role, subrole: attributes.subrole,
+            hasTextSelection: !(attributes.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
     }
 
     /// Checked on what Accessibility returned: never a password field, never
     /// blank text.
     static func check(_ attributes: TextSelectionAttributes) -> TextActionsBlock? {
         if isPasswordField(role: attributes.role, subrole: attributes.subrole) { return .passwordField }
-        if let role = attributes.role, fileListRoles.contains(role) || mediaRoles.contains(role) { return .notText }
+        if isBlocked(attributes) { return .notText }
         guard let text = attributes.selectedText,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .noSelection }
         return nil
@@ -173,7 +220,7 @@ enum TextActionsGate {
         guard mayRecoverWithCopy(automatic: automatic, settings: settings, bundleID: environment.bundleID) else { return false }
         guard check(environment, settings: settings, automatic: automatic) == nil else { return false }
         guard let attributes else { return true }
-        if isForbiddenSelectionTarget(role: attributes.role, subrole: attributes.subrole) { return false }
+        if isBlocked(attributes) { return false }
         let text = attributes.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty
     }
@@ -187,17 +234,15 @@ enum TextActionsGate {
         return string
     }
 
-    /// A drag that left the selection exactly as it was (the same element and
-    /// range as at mouse down) moved a window, a scroll bar or a slider; it
-    /// did not select text.
+    /// Selection geometry distinguishes the same word at different locations.
+    /// Equal snapshots remain stale across AX wrapper changes; when geometry
+    /// is unavailable, a different wrapper alone is not a selection change.
     static func isUnchangedSelection(anchor: TextSelectionRange?, final: TextSelectionRange?, sameElement: Bool,
-                                     initialText: String? = nil, finalText: String? = nil) -> Bool {
-        guard sameElement else { return false }
-        if let anchor, let final, anchor.length > 0 { return anchor == final }
-        // Browser-backed text selections often have AXSelectedText but no
-        // AXSelectedTextRange. Compare their stable snapshots instead of
-        // interpreting an unchanged selection as a fresh double-click.
-        guard let initialText, let finalText, !initialText.isEmpty else { return false }
-        return initialText == finalText
+                                     initialText: String? = nil, finalText: String? = nil,
+                                     initialBounds: CGRect? = nil, finalBounds: CGRect? = nil) -> Bool {
+        if let initialBounds, let finalBounds, initialBounds != finalBounds { return false }
+        if sameElement, let anchor, let final, anchor.length > 0 { return anchor == final }
+        guard let initialText, let finalText, !initialText.isEmpty, initialText == finalText else { return false }
+        return true
     }
 }

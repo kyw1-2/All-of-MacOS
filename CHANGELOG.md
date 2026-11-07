@@ -1,3 +1,11 @@
+## Unreleased — Text Actions regressions after 3.4.23
+
+- Distinguish text-bearing lists/tables from file selection; inspect the focused node and deep AX ancestors for password/media guards, with cycle and time limits.
+- Resolve mouse-down and mouse-up through the same pointer/ancestor reader, retain selection geometry and focused snapshots, and retry unsettled click selections once before rejecting or recovering them.
+- Accept verified word/paragraph selection despite AX focus changes, missing anchors or post-click anchor races; retain stale-selection filtering for non-text drags and media double-clicks.
+- Restore narrowly scoped ChatGPT click-copy recovery only after a verified text hit; allow a fresh text drag to end on an adjacent non-media image/list.
+- Classify double/triple-click expansion drags as drags, reserve native popover clearance only above the selection, and synchronize recreated menu-bar icons with Automation/Pause state without a second main-queue hop.
+
 ## 3.4.23 — 2026-11-07
 
 - Include the new UGREEN thumb-wheel preference in exported and restored profile settings; add it to the mandatory backup coverage audit.

@@ -107,9 +107,9 @@ final class TextSelectionMonitor {
     static func gesture(clickCount: Int, distance: CGFloat, flags: NSEvent.ModifierFlags, dragged: Bool,
                         options: Options) -> Gesture.Kind? {
         guard !flags.contains(.command), !flags.contains(.control), !dragged else { return nil }
+        if distance >= dragThreshold { return options.drag ? .drag : nil }
         if clickCount >= 3 { return options.clicks ? .tripleClick : nil }
         if clickCount == 2 { return options.clicks ? .doubleClick : nil }
-        if distance >= dragThreshold { return options.drag ? .drag : nil }
         if flags.contains(.shift) { return options.drag ? .shiftClick : nil }
         return nil
     }

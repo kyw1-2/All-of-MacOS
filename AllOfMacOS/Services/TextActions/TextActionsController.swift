@@ -199,9 +199,16 @@ final class TextActionsController {
         let box = TextSelectionAnchorBox()
         anchorBox = box
         let pid = app.processIdentifier
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
         TextSelectionReader.queue.async {
             box.pid = pid
-            box.anchor = TextSelectionReader.readAnchor(pid: pid)
+            box.anchor = TextSelectionReader.readAnchor(pid: pid, pointer: point, primaryHeight: primaryHeight)
+            box.focusedAnchor = TextSelectionReader.readAnchor(pid: pid)
+            // A stale focused selection must not turn a scrollbar/image drag
+            // into a selecting drag merely because its end hit text.
+            box.focusedAnchor?.isTextTarget = box.anchor?.isTextTarget == true
+            box.focusedAnchor?.isVerifiedContext = box.anchor?.isVerifiedContext == true
+            box.focusedAnchor?.isBlocked = box.anchor?.isBlocked == true
         }
     }
 
@@ -229,14 +236,17 @@ final class TextActionsController {
         // NSScreen is main-actor state; capture the coordinate transform here.
         let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
         TextSelectionReader.queue.async { [weak self] in
-            let read = TextSelectionReader.readAttributes(pid: pid, pointer: pointer, primaryHeight: primaryHeight)
-            var unchanged = false
-            if let anchor, anchor.pid == pid, let read {
-                unchanged = TextActionsGate.isUnchangedSelection(anchor: anchor.anchor?.range, final: read.attributes.range,
-                                                                 sameElement: anchor.anchor?.element.isSame(as: read.element) ?? false,
-                                                                 initialText: anchor.anchor?.selectedText,
-                                                                 finalText: read.attributes.selectedText)
-            }
+            let before = anchor?.pid == pid ? anchor : nil
+            let read = TextSelectionReader.readAttributes(pid: pid, pointer: pointer, primaryHeight: primaryHeight,
+                dragAnchor: gesture == .drag ? (before?.focusedAnchor ?? before?.anchor) : nil)
+            let unchanged = read.map { read in
+                [before?.anchor, before?.focusedAnchor].compactMap { $0 }.contains { snapshot in
+                    TextActionsGate.isUnchangedSelection(anchor: snapshot.range, final: read.attributes.range,
+                        sameElement: snapshot.element.isSame(as: read.element),
+                        initialText: snapshot.selectedText, finalText: read.attributes.selectedText,
+                        initialBounds: snapshot.bounds, finalBounds: read.attributes.bounds)
+                }
+            } ?? false
             var traits: TextSelectionTraits?
             if let read, TextActionsGate.check(read.attributes) == nil, let text = read.attributes.selectedText {
                 traits = TextSelectionClassifier.classify(text)
@@ -261,40 +271,41 @@ final class TextActionsController {
         // The rules again on the main thread: the app, the pause or secure input may have changed.
         guard TextActionsGate.check(environment, settings: settings, automatic: automatic) == nil,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
-        if let attributes = read?.attributes,
-           TextActionsGate.isForbiddenSelectionTarget(role: attributes.role, subrole: attributes.subrole) {
-            if !automatic { notify(TextActionsGate.isPasswordField(role: attributes.role, subrole: attributes.subrole) ? .passwordField : .notText) }
-            return
+        let before = anchor?.pid == app.processIdentifier ? anchor?.anchor : nil
+        let click = automatic && (gesture == .doubleClick || gesture == .tripleClick)
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
+        let bounds = read?.attributes.bounds.map {
+            TextActionBarPlacement.appKitRect($0, primaryHeight: primaryHeight)
         }
-        if unchanged { return }
-        // A plain double-click never proves a selection: media fullscreen,
-        // window zoom and empty-space clicks would otherwise resurrect stale
-        // AXWebArea text. Keep this proof check before presenting the panel.
-        if automatic && (gesture == .doubleClick || gesture == .tripleClick) {
-            let before = anchor?.pid == app.processIdentifier ? anchor?.anchor : nil
-            let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
-            let bounds = read?.attributes.bounds.map {
-                TextActionBarPlacement.appKitRect($0, primaryHeight: primaryHeight)
+        let verifiedTextTarget = read?.attributes.isTextTarget == true && read?.attributes.isVerifiedContext == true
+        let confirmed = !click || TextActionsGate.confirmedClickSelection(
+            gesture: gesture, anchorAvailable: before != nil,
+            sameElement: before?.element.isSame(as: read?.element) ?? false,
+            initialRange: before?.range, finalRange: read?.attributes.range,
+            initialText: before?.selectedText, finalText: read?.attributes.selectedText,
+            finalBounds: bounds, pointer: pointer, verifiedTextTarget: verifiedTextTarget,
+            directTextSelection: TextActionsGate.textRoles.contains(read?.attributes.role ?? ""))
+        let mayCopy = TextActionsGate.mayUseCopyFallback(automatic: automatic, gesture: gesture,
+            bundleID: app.bundleIdentifier, verifiedTextTarget: verifiedTextTarget) &&
+            TextActionsGate.mayReadWithCopy(read?.attributes, settings: settings, automatic: automatic, environment: environment)
+        let blocked = read.map { TextActionsGate.isBlocked($0.attributes) } ?? false
+        // An unselected native table at mouse-down is ambiguous, not a
+        // permanent veto on a real text selection returned at mouse-up.
+        let startBlocked = before?.isBlocked == true &&
+            !TextActionsGate.collectionRoles.contains(before?.role ?? "")
+        let decision = TextActionsGate.disposition(automatic: automatic, attempt: attempt,
+            blocked: blocked || (automatic && startBlocked),
+            hasSelection: traits != nil, unchanged: unchanged, click: click, confirmed: confirmed, mayCopy: mayCopy,
+            incomplete: !startBlocked && read?.attributes.isBlocked == true && read?.attributes.role == nil)
+        switch decision {
+        case .blocked:
+            if !automatic {
+                notify(TextActionsGate.isPasswordField(role: read?.attributes.role, subrole: read?.attributes.subrole)
+                    ? .passwordField : .notText)
             }
-            guard TextActionsGate.confirmedClickSelection(
-                gesture: gesture, anchorAvailable: before != nil,
-                sameElement: before?.element.isSame(as: read?.element) ?? false,
-                initialRange: before?.range, finalRange: read?.attributes.range,
-                initialText: before?.selectedText,
-                finalText: read?.attributes.selectedText,
-                finalBounds: bounds, pointer: pointer) else { return }
-        }
-        if let read, let traits, let text = read.attributes.selectedText {
-            present(TextSelection(text: text, traits: traits, attributes: read.attributes, element: read.element,
-                                  pid: app.processIdentifier, bundleID: app.bundleIdentifier, appName: app.localizedName,
-                                  source: .accessibility),
-                    pointer: pointer, automatic: automatic)
             return
-        }
-        // Chromium can publish its selection after the mouse-up callback.
-        // Retry AX exactly once before synthesizing a copy. A new selection or
-        // app switch invalidates the token; no continuous polling is used.
-        if automatic && attempt == 0 {
+        case .retry:
+            // Retain the first click's anchors and generation across the retry.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
                 guard let self, self.generation == token,
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
@@ -302,12 +313,17 @@ final class TextActionsController {
                           token: token, attempt: 1, gesture: gesture)
             }
             return
-        }
-        guard TextActionsGate.mayUseCopyFallback(automatic: automatic, gesture: gesture),
-              TextActionsGate.mayReadWithCopy(read?.attributes, settings: settings, automatic: automatic,
-                                              environment: environment) else {
+        case .present:
+            guard let read, let traits, let text = read.attributes.selectedText else { return }
+            present(TextSelection(text: text, traits: traits, attributes: read.attributes, element: read.element,
+                pid: app.processIdentifier, bundleID: app.bundleIdentifier, appName: app.localizedName, source: .accessibility),
+                pointer: pointer, automatic: automatic)
+            return
+        case .ignore:
             if !automatic { notify(.noSelection) }
             return
+        case .copy:
+            break
         }
         TextActionPasteboard.readSelectionWithCopy(in: app) { [weak self] text in
             guard let self, self.generation == token else { return }
@@ -319,7 +335,10 @@ final class TextActionsController {
                 let traits = TextSelectionClassifier.classify(text)
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        guard let self, self.generation == token else { return }
+                        guard let self, self.generation == token,
+                              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
+                              TextActionsGate.check(self.environment(for: app), settings: self.preferences.settings,
+                                  automatic: automatic) == nil else { return }
                         let selection = TextSelection(text: text, traits: traits, attributes: read?.attributes ?? TextSelectionAttributes(),
                                                       element: read?.element, pid: app.processIdentifier,
                                                       bundleID: app.bundleIdentifier, appName: app.localizedName, source: .copy)
