@@ -1,4 +1,4 @@
-## Unreleased — Text Actions regressions after 3.4.23
+## 3.4.24 — 2026-11-07 (Text Actions regressions after 3.4.23)
 
 - Distinguish text-bearing lists/tables from file selection; inspect the focused node and deep AX ancestors for password/media guards, with cycle and time limits.
 - Resolve mouse-down and mouse-up through the same pointer/ancestor reader, retain selection geometry and focused snapshots, and retry unsettled click selections once before rejecting or recovering them.
