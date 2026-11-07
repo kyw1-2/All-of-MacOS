@@ -69,12 +69,80 @@ enum TextSelectionReader {
         return focused
     }
 
-    /// The focused element's role, its selection and where it is. A password
-    /// field stops the read after its role: not even the selection's length
-    /// is asked.
-    static func readAttributes(pid: pid_t, timeout: Float = readTimeout) -> (attributes: TextSelectionAttributes, element: TextSelectionElement)? {
+    /// Selection in browser-backed UIs is often exposed by the element under
+    /// the mouse or by an AXWebArea ancestor, not by AXFocusedUIElement.
+    /// A native selection bubble can even move focus to one of its buttons.
+    /// Keep every AX operation on the reader queue and bound the parent walk.
+    static let maxSelectionAncestors = 9
+
+    static func readAttributes(pid: pid_t, pointer: CGPoint? = nil, primaryHeight: CGFloat = 0,
+                               timeout: Float = readTimeout) -> (attributes: TextSelectionAttributes, element: TextSelectionElement)? {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        guard let focused = focusedElement(pid: pid, timeout: timeout) else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, timeout)
+        let focused = element(app, kAXFocusedUIElementAttribute)
+        let initial = focused.map { readAttributes(of: $0, timeout: timeout) }
+        // Password-field protections precede all alternate probes, including
+        // hit-testing, so no fallback reads another element instead.
+        if let initial, TextActionsGate.isPasswordField(role: initial.attributes.role, subrole: initial.attributes.subrole) {
+            return initial
+        }
+        if let initial, TextActionsGate.check(initial.attributes) == nil { return initial }
+
+        // The release point is captured before ChatGPT/Chromium adds its own
+        // selection toolbar. Probe that precise location instead of the current
+        // pointer, which may already have moved to the native toolbar.
+        if let pointer, primaryHeight > 0,
+           pointer.x.isFinite, pointer.y.isFinite {
+            var underPointer: AXUIElement?
+            if AXUIElementCopyElementAtPosition(app, Float(pointer.x), Float(primaryHeight - pointer.y),
+                                                &underPointer) == .success,
+               let underPointer,
+               let found = selectedTextInAncestors(of: underPointer, timeout: timeout) {
+                return found
+            }
+        }
+        // Some editors expose the selected text on their web-area parent even
+        // when the focused child is just a button or an unfocused text node.
+        if let focused, let found = selectedTextInAncestors(of: focused, timeout: timeout, skipFirst: true) {
+            return found
+        }
+        return initial
+    }
+
+    /// A private, bounded ancestor search. It stops at a password field or a
+    /// file-list container and never walks into unrelated AX sibling trees.
+    private static func selectedTextInAncestors(of start: AXUIElement, timeout: Float,
+                                                 skipFirst: Bool = false) -> (attributes: TextSelectionAttributes, element: TextSelectionElement)? {
+        var current: AXUIElement? = skipFirst ? element(start, kAXParentAttribute) : start
+        var visited: [AXUIElement] = []
+        var selection: (attributes: TextSelectionAttributes, element: TextSelectionElement)?
+        for _ in 0..<maxSelectionAncestors {
+            guard let node = current, !visited.contains(where: { CFEqual($0, node) }) else { break }
+            visited.append(node)
+            AXUIElementSetMessagingTimeout(node, timeout)
+            let role = string(node, kAXRoleAttribute)
+            let subrole = string(node, kAXSubroleAttribute)
+            if TextActionsGate.isPasswordField(role: role, subrole: subrole) { return nil }
+            // Do not interpret a selected filename as editable text.
+            if let role, TextActionsGate.fileListRoles.contains(role) { return nil }
+            // Read selection only when needed; range/bounds queries on every
+            // ancestor of a large browser tree would be very expensive.
+            if let text = string(node, kAXSelectedTextAttribute),
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               selection == nil {
+                selection = readAttributes(of: node, timeout: timeout)
+            }
+            if role == "AXApplication" || role == "AXWindow" { break }
+            current = element(node, kAXParentAttribute)
+        }
+        return selection
+    }
+
+    /// The focused element's role, its selection and where it is. A password
+    /// field stops the read after its role: not even its selection length is asked.
+    private static func readAttributes(of focused: AXUIElement, timeout: Float) -> (attributes: TextSelectionAttributes, element: TextSelectionElement) {
+        AXUIElementSetMessagingTimeout(focused, timeout)
         var attributes = TextSelectionAttributes()
         attributes.role = string(focused, kAXRoleAttribute)
         attributes.subrole = string(focused, kAXSubroleAttribute)

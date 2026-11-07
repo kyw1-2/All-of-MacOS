@@ -121,6 +121,15 @@ final class TextActionsPlacementTests: XCTestCase {
                                                    screens: [main]), "zero height")
     }
 
+    @MainActor
+    func testSelectionToolbarIsAboveNativeStatusBarPopovers() {
+        XCTAssertGreaterThanOrEqual(TextActionBarController.selectionPanelLevel.rawValue,
+                                    NSWindow.Level.popUpMenu.rawValue,
+                                    "ChatGPT's native selection menu must not cover the AOM toolbar")
+        XCTAssertGreaterThan(TextActionBarController.selectionPanelLevel.rawValue,
+                             NSWindow.Level.statusBar.rawValue)
+    }
+
     func testPaging() {
         XCTAssertEqual(TextActionBarPaging.pages(widths: [40, 40, 40], maxWidth: 300, chevron: 24), [0..<3])
         XCTAssertEqual(TextActionBarPaging.pages(widths: Array(repeating: 40, count: 12), maxWidth: 300, chevron: 24), [0..<6, 6..<12])

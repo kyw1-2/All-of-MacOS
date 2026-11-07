@@ -131,6 +131,11 @@ final class TextActionBarController {
     var onPerform: ((TextActionBarItem, TextTransformVariant?, Bool) -> Void)?
     var onDismiss: ((TextActionDismissReason) -> Void)?
 
+    /// Native selection popovers (notably ChatGPT's "Ask ChatGPT") use the
+    /// menu window layer. A status-bar-level panel appears behind them.
+    /// This nonactivating bar exists only during a valid text selection.
+    static let selectionPanelLevel: NSWindow.Level = .popUpMenu
+
     private var panel: TextActionBarPanel?
     private var hosting: TextActionBarHostingView?
     private var lifecycle = TextActionBarLifecycle(hideDelay: 4)
@@ -230,7 +235,7 @@ final class TextActionBarController {
     private func makePanel() -> TextActionBarPanel {
         let panel = TextActionBarPanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: TextActionBarMetrics.height),
                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        panel.level = .statusBar
+        panel.level = Self.selectionPanelLevel
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

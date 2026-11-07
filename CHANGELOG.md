@@ -1,3 +1,9 @@
+## 3.4.21 — 2026-11-07
+
+- Make Text Actions recognize Chromium/ChatGPT text selected under the pointer or in an accessibility parent, rather than relying exclusively on the focused element. Retry a missing automatic selection once after the host finishes its selection UI transition.
+- Give ChatGPT's unified macOS desktop application (bundle `com.openai.codex`) a narrowly scoped, clipboard-preserving local copy fallback when its native "Ask ChatGPT" selection bubble hides the AX selection. Other applications still require the user to enable Use Copy to Read the Selection.
+- Raise the nonactivating Text Actions toolbar to the standard menu layer so native selection popovers do not cover it. Keep password, secure-input, file-list, exclusion and pause checks; add regression tests.
+
 ## 3.4.19 — 2026-11-06
 
 - Recognize extra UGREEN/composite receiver side buttons through a narrowly scoped HID fallback, with CGEvent deduplication and press/release tracking.

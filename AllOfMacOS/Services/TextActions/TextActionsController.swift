@@ -222,10 +222,12 @@ final class TextActionsController {
     }
 
     private func read(app: NSRunningApplication, pointer: CGPoint?, automatic: Bool,
-                      anchor: TextSelectionAnchorBox?, token: Int) {
+                      anchor: TextSelectionAnchorBox?, token: Int, attempt: Int = 0) {
         let pid = app.processIdentifier
+        // NSScreen is main-actor state; capture the coordinate transform here.
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 0
         TextSelectionReader.queue.async { [weak self] in
-            let read = TextSelectionReader.readAttributes(pid: pid)
+            let read = TextSelectionReader.readAttributes(pid: pid, pointer: pointer, primaryHeight: primaryHeight)
             var unchanged = false
             if let anchor, anchor.pid == pid, let read {
                 unchanged = TextActionsGate.isUnchangedSelection(anchor: anchor.anchor?.range, final: read.attributes.range,
@@ -238,14 +240,15 @@ final class TextActionsController {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self?.finishRead(app: app, read: read, traits: traits, unchanged: unchanged, pointer: pointer,
-                                     automatic: automatic, token: token)
+                                     automatic: automatic, token: token, attempt: attempt)
                 }
             }
         }
     }
 
     private func finishRead(app: NSRunningApplication, read: (attributes: TextSelectionAttributes, element: TextSelectionElement)?,
-                            traits: TextSelectionTraits?, unchanged: Bool, pointer: CGPoint?, automatic: Bool, token: Int) {
+                            traits: TextSelectionTraits?, unchanged: Bool, pointer: CGPoint?, automatic: Bool,
+                            token: Int, attempt: Int) {
         guard generation == token else { return }
         let settings = preferences.settings
         let environment = environment(for: app)
@@ -262,6 +265,17 @@ final class TextActionsController {
                                   pid: app.processIdentifier, bundleID: app.bundleIdentifier, appName: app.localizedName,
                                   source: .accessibility),
                     pointer: pointer, automatic: automatic)
+            return
+        }
+        // Chromium can publish its selection after the mouse-up callback.
+        // Retry AX exactly once before synthesizing a copy. A new selection or
+        // app switch invalidates the token; no continuous polling is used.
+        if automatic && attempt == 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+                guard let self, self.generation == token,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
+                self.read(app: app, pointer: pointer, automatic: true, anchor: nil, token: token, attempt: 1)
+            }
             return
         }
         guard TextActionsGate.mayReadWithCopy(read?.attributes, settings: settings, automatic: automatic,
