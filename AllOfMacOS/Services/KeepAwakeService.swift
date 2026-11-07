@@ -80,13 +80,16 @@ final class KeepAwakeService: ObservableObject {
         clearCurrent()
         guard let assertion = createAssertion(minutes, keepDisplay) else { return }
         current = assertion
+        let detail = minutes.map { "Active (\($0) min)" } ?? "Active indefinitely"
         GestureLog.shared.logFromAnyThread("Keep Awake enabled\(minutes.map { " for \($0) min" } ?? "")", level: .action)
+        GestureHUD.shared.show(title: "Caffeine", detail: "ON — \(detail)")
     }
 
     func stop() {
         guard current != nil else { return }
         clearCurrent()
         GestureLog.shared.logFromAnyThread("Keep Awake disabled", level: .action)
+        GestureHUD.shared.show(title: "Caffeine", detail: "OFF")
     }
 
     /// An assertion object may still exist after its deadline released it;

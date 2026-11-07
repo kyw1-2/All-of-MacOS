@@ -7,11 +7,14 @@ import AppKit
 /// keeps its window alive after `windowShouldClose` only orders it out, and an
 /// activation can order that hidden window front again — the same mechanism the
 /// Control-Tab switcher already works around.
-///
-/// Furthermore, whenever an overlay or capture is triggered while the main
-/// window is already on screen, the main window must be hidden immediately so it
-/// does not obstruct the desktop or appear inside the captured frames.
 enum AOMOverlayActivation {
+    /// Pure decision: a window that was hidden before activation must not be
+    /// left visible after it. A window that was already visible on purpose is
+    /// left alone for general overlays.
+    static func shouldRestoreHiddenMainWindow(wasVisible: Bool, isVisibleNow: Bool) -> Bool {
+        !wasVisible && isVisibleNow
+    }
+
     private static weak var registeredMainWindow: NSWindow?
 
     /// `AppDelegate` registers the window it manages so the guard never guesses.
@@ -19,7 +22,7 @@ enum AOMOverlayActivation {
         registeredMainWindow = window
     }
 
-    /// The window a capture or overlay must never raise or leave visible.
+    /// The window a capture or overlay must never raise.
     static var mainWindow: NSWindow? {
         if let window = registeredMainWindow { return window }
         return NSApp.windows.first { !($0 is NSPanel) && $0.canBecomeMain }
@@ -53,7 +56,8 @@ enum AOMOverlayActivation {
                                      suppressUntil: suppressReopenUntil)
     }
 
-    /// Hides the main window and suppresses reopen requests during capture or overlays.
+    /// Hides the main window immediately for screen captures so it does not
+    /// obstruct the desktop or appear inside captured frames.
     static func hideMainWindow() {
         MainActor.assumeIsolated {
             suppressReopenUntil = Date().addingTimeInterval(3)
@@ -70,22 +74,24 @@ enum AOMOverlayActivation {
         }
     }
 
-    /// Pure decision for testing: any activation during overlay/capture must ensure
-    /// the main window does not remain visible.
-    static func shouldRestoreHiddenMainWindow(wasVisible: Bool, isVisibleNow: Bool) -> Bool {
-        isVisibleNow
-    }
-
-    /// Activate for a capture/overlay flow without bringing the main window up.
-    /// Call from the main thread, like every other AppKit window operation here.
+    /// Activate for a general overlay flow (clipboard, annotation, hud) without
+    /// bringing up a main window that was previously hidden.
+    /// If the main window was already visible on screen, it is left untouched.
     static func activateForOverlay() {
         MainActor.assumeIsolated {
+            let window = mainWindow
+            let wasVisible = window?.isVisible ?? false
             suppressReopenUntil = Date().addingTimeInterval(3)
             NSApp.activate(ignoringOtherApps: true)
-            hideMainWindow()
+            guard let window else { return }
+            if shouldRestoreHiddenMainWindow(wasVisible: wasVisible, isVisibleNow: window.isVisible) {
+                window.orderOut(nil)
+            }
             // SwiftUI can re-order the window on the next display cycle.
             DispatchQueue.main.async {
-                hideMainWindow()
+                if shouldRestoreHiddenMainWindow(wasVisible: wasVisible, isVisibleNow: window.isVisible) {
+                    window.orderOut(nil)
+                }
             }
         }
     }

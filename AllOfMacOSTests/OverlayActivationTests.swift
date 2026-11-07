@@ -8,8 +8,8 @@ final class OverlayActivationTests: XCTestCase {
         XCTAssertTrue(AOMOverlayActivation.shouldRestoreHiddenMainWindow(wasVisible: false, isVisibleNow: true))
     }
 
-    func testVisibleMainWindowIsAlsoOrderedOut() {
-        XCTAssertTrue(AOMOverlayActivation.shouldRestoreHiddenMainWindow(wasVisible: true, isVisibleNow: true))
+    func testVisibleMainWindowIsLeftAlone() {
+        XCTAssertFalse(AOMOverlayActivation.shouldRestoreHiddenMainWindow(wasVisible: true, isVisibleNow: true))
     }
 
     func testAlreadyHiddenWindowIsNotTouched() {

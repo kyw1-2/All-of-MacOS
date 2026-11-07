@@ -1,3 +1,10 @@
+## [3.4.30] - 2026-11-07
+
+### Fixed
+- **Selective Overlay Guard**: Keep main window visible during general overlays (clipboard shelf, annotation editor, floating menus) while preserving immediate concealment during active screen capture flows.
+- **Dock Reopen Handler**: Restore standard applicationShouldHandleReopen behavior so clicking the Dock icon or Spotlight reliably raises the main window.
+- **HUD Feedback**: Add tactile GestureHUD confirmations for Caffeine and Dark Mode toggle actions.
+
 ## [3.4.29] - 2026-11-07
 
 ### Fixed

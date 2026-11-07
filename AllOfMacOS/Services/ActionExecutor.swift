@@ -502,10 +502,18 @@ class ActionExecutor {
             // timed-out script used to be reported as success. 3.4.0: the
             // failure is explained (-1743 and friends) and a System Events
             // that was not running (-600) is asked once more.
-            let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
+            let script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not (get dark mode)"
             // The system change propagates to AOM by itself; forcing
             // NSApp.appearance here pinned AOM and ignored "Follow System".
-            AppleEventScripts.run(script, action: "Dark Mode", timeout: 5, completion: completion)
+            AppleEventScripts.run(script, action: "Dark Mode", timeout: 5) { success in
+                if success {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        let isDark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+                        GestureHUD.shared.show(title: "Dark Mode", detail: isDark ? "ON (Dark)" : "OFF (Light)")
+                    }
+                }
+                completion(success)
+            }
             return
         }
         if action.actionType == .recordScreen {
@@ -652,11 +660,11 @@ class ActionExecutor {
         case .annotateLastCapture:
             onMain { AnnotationEditorController.shared.openMostRecent() }
         case .openCaptureHistory:
-            onMain { CaptureHistoryWindowController.shared.present() }
+            onMain { CaptureHistoryWindowController.shared.toggle() }
         case .unpinAllCaptures:
             onMain { PinnedScreenshotController.shared.unpinAll() }
         case .showClipboardHistory:
-            onMain { ClipboardPanelController.shared.show() }
+            onMain { ClipboardPanelController.shared.toggle() }
         case .showPasteStack:
             onMain { ClipboardPanelController.shared.showStack() }
         case .pasteNextClipboardItem:

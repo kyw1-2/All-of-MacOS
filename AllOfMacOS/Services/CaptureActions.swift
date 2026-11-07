@@ -165,7 +165,11 @@ final class CaptureHistoryWindowController {
     private var window: NSWindow?
 
     func present() {
-        MediaHistoryOverlayController.shared.present()
+        MediaHistoryOverlayController.shared.toggle()
+    }
+
+    func toggle() {
+        MediaHistoryOverlayController.shared.toggle()
     }
 }
 
