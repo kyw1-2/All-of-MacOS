@@ -1,5 +1,7 @@
 ## 3.4.23 — 2026-11-07
 
+- Include the new UGREEN thumb-wheel preference in exported and restored profile settings; add it to the mandatory backup coverage audit.
+
 - Restore the observed UGREEN 2B89:0912 thumb wheel from relative Consumer AC Pan (HID 0x0C:0x0238) as horizontal pixel scrolling. Add a narrow opt-out toggle, 8-bit signed-delta decoding, report bounds, and line/point/16.16 scroll fields; ignore absolute Zoom/Z/Dial button reports.
 - Give native horizontal scrolling priority over synthesized HID fallback to prevent duplicate motion. Scope HID matching to that UGREEN receiver and stop all input observers on quit; never seize the device.
 - Reverse physical mouse scrolling only for discrete, non-momentum events; preserve all trackpad and touch-surface scrolling, including anomalous phase-bearing noncontinuous input.
