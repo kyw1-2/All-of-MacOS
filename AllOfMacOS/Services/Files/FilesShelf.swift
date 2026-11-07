@@ -270,7 +270,7 @@ enum FilesFileActions {
     static func airDrop(_ urls: [URL]) -> Bool {
         guard !PresetManager.isUIPreview, let service = NSSharingService(named: .sendViaAirDrop),
               service.canPerform(withItems: urls) else { return false }
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         service.perform(withItems: urls)
         return true
     }

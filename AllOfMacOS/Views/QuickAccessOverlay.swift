@@ -509,7 +509,7 @@ final class QuickAccessOverlayController {
         panel.nameFieldStringValue = entry.fileURL?.lastPathComponent
             ?? "Screenshot-\(entry.id.uuidString.prefix(8)).\(isVideo ? "mp4" : CaptureSettings.format.fileExtension)"
         pauseAutoClose()
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         panel.begin { [weak self] response in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -650,7 +650,7 @@ final class QuickAccessOverlayController {
         pauseAutoClose()
         defer { resumeAutoClose() }
         let prompt = QuickAccessResizePrompt(width: entry.pixelWidth, height: entry.pixelHeight)
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         guard let size = prompt.run() else { return }
         transform(label: "Resized") { QuickAccessImageTools.resized($0, width: size.width, height: size.height) }
     }
@@ -819,7 +819,7 @@ final class QuickAccessOverlayController {
             alert.informativeText = "The recording is removed from Capture History and its file goes to the Trash."
             alert.addButton(withTitle: "Move to Trash")
             alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             let response = alert.runModal()
             guard response == .alertFirstButtonReturn else { resumeAutoClose(); return }
         }

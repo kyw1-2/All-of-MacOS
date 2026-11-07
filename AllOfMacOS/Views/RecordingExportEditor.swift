@@ -839,7 +839,7 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
         let source = AOMStudioSourceLink.resolve(source)
         if let existing = windows[source] {
             existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             return
         }
         let height = RecordingExportEditor.preferredHeight
@@ -857,7 +857,7 @@ final class RecordingExportEditorController: NSObject, NSWindowDelegate {
         windows[source] = window
         window.center()
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
     }
 
     /// An export writes from this window's state; closing waits for it.

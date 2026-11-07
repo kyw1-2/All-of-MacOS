@@ -207,7 +207,7 @@ enum CapturePrintController {
 
     static func print(image: CGImage, scale: CGFloat, title: String, window: NSWindow?) {
         let operation = makeOperation(image: image, scale: scale, title: title)
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         if let window {
             operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
         } else {

@@ -105,7 +105,7 @@ final class ScreenRulerOverlayController {
         // brings back on screen (a closed main window) is put away again.
         capturePreviousFrontmost()
         let visibleBefore = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         let pointer = currentPointer()
         if let keyPanel = panels.first(where: { $0.rulerDisplay.contains(pointer) }) ?? panels.first {
             keyPanel.makeKey()

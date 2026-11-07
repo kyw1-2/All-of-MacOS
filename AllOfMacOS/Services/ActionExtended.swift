@@ -15,7 +15,7 @@ enum ActionConfirmation {
             alert.alertStyle = .warning
             alert.addButton(withTitle: confirmTitle)
             alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             answer(alert.runModal() == .alertFirstButtonReturn)
         }
         if Thread.isMainThread { show() } else { DispatchQueue.main.async(execute: show) }

@@ -64,7 +64,7 @@ enum FolderRulesModule {
         accessory.addSubview(trashBox)
         panel.accessoryView = accessory
         panel.isAccessoryViewDisclosed = true
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             FolderRulesEngine.shared.installDiskImage(url, trashAfter: trashBox.state == .on)

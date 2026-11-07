@@ -1,3 +1,9 @@
+## 3.4.28 (2026-11-07)
+
+- Stop capture and overlay flows from raising the main window. Every overlay path now activates through `AOMOverlayActivation.activateForOverlay()`, which records the main window's visibility before `NSApp.activate` and orders it back out when an activation revealed it: the SwiftUI `WindowGroup` window survives `windowShouldClose` (which only orders it out) and can be re-ordered front by activation. 30 call sites converted (selection overlay, quick access, text capture HUD, screen ruler, pinned screenshots, editors, clipboard panel/editor, files shelf, folder rules, focus, mic-mute, window picker, floating menus, palette links, shortcut conflicts, confirm-alert presenters). `AppDelegate.showMainWindow()` and `openSettings()` keep plain activation on purpose.
+- Cut idle Mission Control polling in half: 0.25 s → 0.5 s with 25 % tolerance, plus a 4-second 0.2 s burst triggered by the Dock's `com.apple.spaces.shows-before` notification so the close buttons still appear with the reveal animation. A 5-second sample of 3.4.27 showed the main thread in `MissionControlOverlayService.poll → mayProbe → ScreenLock.isLocked` at idle (0.7–3.3 % CPU), the item the 3.4.26 audit left out of scope.
+- Tests: `OverlayActivationTests` pins the restore decision and the polling cadence.
+
 ## 3.4.26 — 2026-11-07 (Modern Visual Architecture & Bento UI Overhaul)
 
 - **Apple System Settings / Arc / Raycast Sidebar (`AOMSidebar`)**: Add a top Brand & Engine status header above the Command Bar button (`⌘K`) and render every sidebar navigation item with a jewel-toned gradient squircle icon badge (`tab.accentColor`) instead of monochrome glyphs.

@@ -309,7 +309,7 @@ final class TextCaptureEditorWindowController: NSObject, NSWindowDelegate {
         window.setContentSize(NSSize(width: 520, height: 360))
         window.center()
         self.window = window
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         window.makeKeyAndOrderFront(nil)
     }
 

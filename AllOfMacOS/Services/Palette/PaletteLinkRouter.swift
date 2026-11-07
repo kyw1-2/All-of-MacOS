@@ -248,7 +248,7 @@ final class PaletteLinkRouter {
             item.image?.size = NSSize(width: 16, height: 16)
             menu.addItem(item)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 }

@@ -246,6 +246,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // (AOMSize.windowMinWidth/Height); a second AppKit minimum
                 // here used to make the window's limit depend on launch timing.
                 mainWindow = window
+                AOMOverlayActivation.registerMainWindow(window)
                 window.delegate = self
             }
             // Isolated previews can be reviewed as the active app, so window
@@ -416,7 +417,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
+        // A capture or overlay in progress must not drag the main window up.
+        if AOMOverlayActivation.shouldHandleReopen(hasVisibleWindows: flag) {
             showMainWindow()
         }
         return true

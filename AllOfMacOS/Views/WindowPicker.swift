@@ -59,7 +59,7 @@ final class WindowPickerPanel: NSWindowController {
     func present() {
         window?.center()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
     }
 
     private func finish(_ window: SCWindow?) {

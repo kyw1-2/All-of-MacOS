@@ -689,7 +689,7 @@ final class ClipboardPanelController {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Erase History")
         alert.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         store.eraseHistory()
         state.selected.removeAll()
@@ -719,7 +719,7 @@ final class ClipboardPanelController {
     func openSettings() {
         guard !PresetManager.isUIPreview else { return }
         hideImmediately()
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 

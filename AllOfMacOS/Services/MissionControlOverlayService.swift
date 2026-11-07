@@ -74,16 +74,73 @@ final class MissionControlOverlayService: ObservableObject {
         if isEnabled || MissionControlHotKeyHandler.isEnabled { start() } else if isPolling { stop() }
     }
 
+    /// Mission Control is closed most of the time, so four window-server probes
+    /// a second forever were measurable on the main thread. Idle polling runs at
+    /// half that rate; the Dock's "about to show" notification opens a short
+    /// fast burst so the ✕ buttons still arrive with the animation.
+    private static let idleInterval: TimeInterval = 0.5
+    private static let burstInterval: TimeInterval = 0.2
+    private static let burstDuration: TimeInterval = 4
+
+    private var spaceObserver: NSObjectProtocol?
+    private var fastUntil: Date = .distantPast
+
+    static func pollInterval(burst: Bool) -> TimeInterval { burst ? burstInterval : idleInterval }
+
+    private var currentInterval: TimeInterval {
+        Date() < fastUntil ? Self.burstInterval : Self.idleInterval
+    }
+
     func start() {
         guard pollTimer == nil else { return }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.poll() }
+        observeMissionControlShows()
+        scheduleTimer()
+    }
+
+    private func scheduleTimer() {
+        pollTimer?.invalidate()
+        let interval = currentInterval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.poll()
+                // A burst started or expired: move to the matching cadence.
+                if self.pollTimer != nil, abs(self.currentInterval - interval) > 0.01 {
+                    self.scheduleTimer()
+                }
+            }
+        }
+        timer.tolerance = interval * 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    private func observeMissionControlShows() {
+        guard spaceObserver == nil else { return }
+        // Dock's pre-reveal signal. Idle polling still discovers Mission Control
+        // when the notification never arrives, only half a second later.
+        spaceObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.apple.spaces.shows-before"),
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.pollTimer != nil else { return }
+                self.fastUntil = Date().addingTimeInterval(Self.burstDuration)
+                if abs(self.currentInterval - (self.pollTimer?.timeInterval ?? 0)) > 0.01 {
+                    self.scheduleTimer()
+                }
+            }
         }
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        if let spaceObserver {
+            DistributedNotificationCenter.default().removeObserver(spaceObserver)
+            self.spaceObserver = nil
+        }
+        fastUntil = .distantPast
         generation += 1
         teardown()
     }

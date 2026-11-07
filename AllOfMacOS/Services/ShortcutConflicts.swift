@@ -81,7 +81,7 @@ enum ShortcutConflicts {
         alert.addButton(withTitle: "Use \(alternativeHistoryShortcut.displayString) for All of MacOS")
         alert.addButton(withTitle: "Quit \(conflict.appName)")
         alert.addButton(withTitle: "Keep Both")
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             ClipboardShortcuts.shared.setShortcut(alternativeHistoryShortcut, for: .history)

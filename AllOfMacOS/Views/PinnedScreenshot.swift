@@ -31,7 +31,7 @@ final class PinnedScreenshotController {
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP, .gif, .bmp]
         panel.allowsMultipleSelection = true
         panel.prompt = "Pin"
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         panel.begin { [weak self] response in
             guard response == .OK else { return }
             MainActor.assumeIsolated {
@@ -416,7 +416,7 @@ private final class PinnedWindow: NSPanel {
         panel.directoryURL = CaptureSettings.saveDirectory
         panel.nameFieldStringValue = (url?.deletingPathExtension().lastPathComponent
             ?? CaptureNaming.defaultName(for: result)) + "." + format.fileExtension
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         panel.begin { [weak self] response in
             guard response == .OK, let destination = panel.url else { return }
             Task { @MainActor [weak self] in

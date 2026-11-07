@@ -102,7 +102,7 @@ final class SelectionOverlayController {
         // Remember who owned the keyboard before the overlay takes it, so a
         // cancelled selection can hand it back. Captured before `activate`.
         capturePreviousFrontmost()
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         windows.first?.makeKey()
         CaptureCoordinator.textLog.info("selection overlay presented")
     }

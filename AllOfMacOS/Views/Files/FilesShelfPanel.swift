@@ -250,7 +250,7 @@ final class FilesShelfPanelController: NSObject {
         open.allowsMultipleSelection = false
         open.prompt = move ? "Move" : "Copy"
         open.message = move ? "Move \(Self.count(items.count)) to:" : "Copy \(Self.count(items.count)) to:"
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         open.begin { [weak self] response in
             guard response == .OK, let folder = open.url else { return }
             MainActor.assumeIsolated { self?.runTransfer(items, to: folder, move: move) }

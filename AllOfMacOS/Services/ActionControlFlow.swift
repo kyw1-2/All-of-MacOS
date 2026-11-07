@@ -178,7 +178,7 @@ enum AskForInput {
             field.setAccessibilityLabel(alert.messageText)
             alert.accessoryView = field
             alert.window.initialFirstResponder = field
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             answer(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
         }
         if Thread.isMainThread { show() } else { DispatchQueue.main.async(execute: show) }

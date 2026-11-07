@@ -123,7 +123,7 @@ struct MicMuteSection: View {
 
     private func openShortcutSettings() {
         guard !PresetManager.isUIPreview else { return }
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NotificationCenter.default.post(name: .aomShowSettingsCategory, object: SettingsCategory.shortcuts.rawValue)

@@ -188,7 +188,7 @@ enum FocusModule {
             alert.addButton(withTitle: candidates.count == 1 ? "Quit App" : "Quit Apps")
             alert.addButton(withTitle: "Cancel")
             alert.buttons.last?.keyEquivalent = "\u{1b}"
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             env.idleApps.quit(candidates)
         }

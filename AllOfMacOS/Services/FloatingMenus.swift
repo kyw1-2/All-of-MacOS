@@ -107,13 +107,13 @@ final class FloatingMenuController {
     }
     func hideAll() { panels.values.forEach { $0.close() }; panels.removeAll() }
     func edit() {
-        if let editor { editor.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+        if let editor { editor.makeKeyAndOrderFront(nil); AOMOverlayActivation.activateForOverlay(); return }
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: FloatingMenuMetrics.editorSize),
                               styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Floating Menus & Widgets"; window.isReleasedWhenClosed = false
         window.applyCaptureVisibilityPreference()
         window.contentView = NSHostingView(rootView: FloatingMenuEditor())
-        window.center(); editor = window; window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        window.center(); editor = window; window.makeKeyAndOrderFront(nil); AOMOverlayActivation.activateForOverlay()
     }
 }
 

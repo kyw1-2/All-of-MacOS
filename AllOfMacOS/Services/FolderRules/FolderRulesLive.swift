@@ -87,7 +87,7 @@ enum FolderRulesLive {
             alert.addButton(withTitle: "Replace").hasDestructiveAction = true
             alert.addButton(withTitle: "Keep Both")
             alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             switch alert.runModal() {
             case .alertFirstButtonReturn: return .replace
             case .alertSecondButtonReturn: return .keepBoth
@@ -108,7 +108,7 @@ enum FolderRulesLive {
             alert.accessoryView = popup
             alert.addButton(withTitle: "Install")
             alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
             guard alert.runModal() == .alertFirstButtonReturn else { return nil }
             let index = popup.indexOfSelectedItem
             return apps.indices.contains(index) ? apps[index] : nil

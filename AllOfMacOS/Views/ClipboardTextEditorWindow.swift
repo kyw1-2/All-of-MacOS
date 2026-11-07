@@ -58,7 +58,7 @@ struct ClipboardTextEditorPresenter: NSViewRepresentable {
             panel = window
             window.center()
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            AOMOverlayActivation.activateForOverlay()
         }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {

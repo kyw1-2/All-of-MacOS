@@ -67,7 +67,7 @@ final class AnnotationEditorController {
         panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP, .gif, .bmp, AnnotationProject.contentType]
         panel.allowsMultipleSelection = true
         panel.prompt = "Open"
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
         panel.begin { [weak self] response in
             guard response == .OK else { return }
             MainActor.assumeIsolated {
@@ -227,7 +227,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     func present() {
         window?.center()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AOMOverlayActivation.activateForOverlay()
     }
 
     func windowWillClose(_ notification: Notification) {
