@@ -244,6 +244,50 @@ final class WindowPinCaptureLifecycleTests: XCTestCase {
         await capture.waitUntilSettled()
     }
 
+    func testFailedStartCanRetryIdenticalConfigurationAndClearOldError() async throws {
+        let failed = FakePinStream(), replacement = FakePinStream()
+        failed.startError = NSError(domain: "WindowPinningTests", code: 2)
+        var creations = 0
+        let capture = PinnedWindowCapture { _, _ in
+            creations += 1
+            return creations == 1 ? failed : replacement
+        }
+        capture.request(configuration)
+        await capture.waitUntilSettled()
+        XCTAssertNotNil(capture.failure)
+        XCTAssertNil(capture.desired)
+        capture.request(configuration)
+        try await capture.waitForStart()
+        XCTAssertNil(capture.failure)
+        XCTAssertEqual(creations, 2)
+        XCTAssertEqual(failed.stopCount, 1)
+        capture.close()
+        await capture.waitUntilSettled()
+        XCTAssertEqual(replacement.stopCount, 1)
+    }
+
+    func testFailedResizeStopsStreamAndAllowsExplicitRetry() async throws {
+        let failed = FakePinStream(), replacement = FakePinStream()
+        failed.updateError = NSError(domain: "WindowPinningTests", code: 3)
+        var creations = 0
+        let capture = PinnedWindowCapture { _, _ in
+            creations += 1
+            return creations == 1 ? failed : replacement
+        }
+        capture.request(configuration)
+        await capture.waitUntilSettled()
+        let resized = PinnedWindowCapture.Configuration(width: 1000, height: 700, fps: 30)
+        capture.request(resized)
+        await capture.waitUntilSettled()
+        XCTAssertNotNil(capture.failure)
+        XCTAssertEqual(failed.stopCount, 1)
+        capture.request(resized)
+        try await capture.waitForStart()
+        XCTAssertNil(capture.failure)
+        capture.close()
+        await capture.waitUntilSettled()
+    }
+
     private func yieldUntil(_ condition: () -> Bool) async {
         for _ in 0..<1000 { if condition() { return }; await Task.yield() }
         XCTFail("Capture operation did not reach the expected suspension point")
@@ -256,6 +300,7 @@ private final class FakePinStream: WindowPinCaptureStream {
     var startContinuation: CheckedContinuation<Void, Never>?
     var stopContinuation: CheckedContinuation<Void, Never>?
     var startError: Error?
+    var updateError: Error?
     var stopCount = 0
     var updates: [SCStreamConfiguration] = []
     func startCapture() async throws {
@@ -266,7 +311,46 @@ private final class FakePinStream: WindowPinCaptureStream {
         stopCount += 1
         if holdStop { await withCheckedContinuation { stopContinuation = $0 } }
     }
-    func updateConfiguration(_ configuration: SCStreamConfiguration) async throws { updates.append(configuration) }
+    func updateConfiguration(_ configuration: SCStreamConfiguration) async throws {
+        updates.append(configuration)
+        if let updateError { throw updateError }
+    }
     func finishStart() { startContinuation?.resume(); startContinuation = nil }
     func finishStop() { stopContinuation?.resume(); stopContinuation = nil }
+}
+
+@MainActor
+final class WindowPinSnapshotPollerTests: XCTestCase {
+    func testSlowReadLeavesMainActorFreeAndRejectsBacklogAndStaleResult() async {
+        let poller = WindowPinSnapshotPoller<Bool>()
+        let started = expectation(description: "Background query started")
+        let release = DispatchSemaphore(value: 0)
+        var applied = 0
+        XCTAssertTrue(poller.request(read: {
+            started.fulfill()
+            _ = release.wait(timeout: .now() + 5)
+            return Thread.isMainThread
+        }, apply: { _ in applied += 1 }))
+        await fulfillment(of: [started], timeout: 2)
+        // We are executing on MainActor while the query is still blocked.
+        XCTAssertTrue(poller.inFlight)
+        for _ in 0..<100 {
+            XCTAssertFalse(poller.request(read: { true }, apply: { _ in applied += 1 }))
+        }
+        poller.invalidate()
+        XCTAssertFalse(poller.request(read: { true }, apply: { _ in applied += 1 }))
+        release.signal()
+        for _ in 0..<2000 { if !poller.inFlight { break }; await Task.yield() }
+        XCTAssertFalse(poller.inFlight)
+        XCTAssertEqual(applied, 0, "An invalidated snapshot must never change the panels")
+        let finished = expectation(description: "Next query applied")
+        XCTAssertTrue(poller.request(read: { Thread.isMainThread }, apply: { onMain in
+            XCTAssertFalse(onMain)
+            XCTAssertTrue(Thread.isMainThread)
+            applied += 1
+            finished.fulfill()
+        }))
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(applied, 1)
+    }
 }

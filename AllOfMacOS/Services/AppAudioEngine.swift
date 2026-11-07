@@ -124,6 +124,17 @@ struct AudioCrackleRecoveryPolicy {
     }
 }
 
+/// Playback changes independently from app names/icons. Helpers count toward
+/// their owning app; a stopped or disappeared producer clears the next state.
+enum AudioPlaybackActivity {
+    static func playingOwners(_ objectsByOwner: [pid_t: [AudioObjectID]],
+                              isOutputting: (AudioObjectID) -> Bool) -> Set<pid_t> {
+        Set(objectsByOwner.compactMap { pid, objects in
+            objects.contains(where: isOutputting) ? pid : nil
+        })
+    }
+}
+
 @available(macOS 14.2, *)
 final class AppAudioEngine {
     static let shared = AppAudioEngine()
@@ -239,6 +250,8 @@ final class AppAudioEngine {
     private var crackleRestartPending = false
     var airPlayRecovering: Bool { !recoveringAirPlayUIDs.isEmpty }
     private var bypassedPIDs = Set<pid_t>()
+    private var playingPIDs = Set<pid_t>()
+    private var playbackSnapshotAt: TimeInterval = -.infinity
     private var appIdentitySnapshot: [AppState] = []
     private var appIdentitySnapshotAt: TimeInterval = -.infinity
     private var timer: Timer?
@@ -259,6 +272,13 @@ final class AppAudioEngine {
     private init() {
         AppAudioPreferences.migrateToSoundSourceModel()
         let workspaceCenter = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            sleepObservers.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.appIdentitySnapshotAt = -.infinity
+                Self.ownerResolutionCache.removeAll(keepingCapacity: true)
+                self?.scheduleSync()
+            })
+        }
         sleepObservers.append(workspaceCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
@@ -300,8 +320,6 @@ final class AppAudioEngine {
                     } else {
                         AudioEventLog.shared.record(.deviceListChanged, source: "system")
                     }
-                } else {
-                    self?.appIdentitySnapshotAt = -.infinity
                 }
                 self?.scheduleSync()
             }
@@ -396,6 +414,14 @@ final class AppAudioEngine {
             }
         }
         updatePlaybackListeners()
+        let objectsByOwner = Self.processObjectsByOwner()
+        refreshPlaybackActivity(objectsByOwner)
+        // Some apps become regular only after their launch notification.
+        // A newly playing owner must not wait for the metadata TTL to appear.
+        let knownPIDs = Set(appIdentitySnapshot.map(\.pid))
+        if playingPIDs.subtracting(knownPIDs).contains(where: {
+            NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular
+        }) { appIdentitySnapshotAt = -.infinity }
         let apps = runningAudioApps()
         // Nothing playing and nothing captured: enumerating devices and rebinding
         // renderers for an empty session list is pure overhead.
@@ -466,7 +492,6 @@ final class AppAudioEngine {
         errors = errors.filter { livePIDs.contains($0.key) }
         retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
         failedProcessIDs = failedProcessIDs.filter { livePIDs.contains($0.key) }
-        let objectsByOwner = Self.processObjectsByOwner()
         for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
             if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
             let ids = objectsByOwner[app.pid] ?? []
@@ -891,61 +916,30 @@ final class AppAudioEngine {
 
     // MARK: - Running audio apps (process objects, 14.2+)
 
+    private func refreshPlaybackActivity(_ objectsByOwner: [pid_t: [AudioObjectID]]) {
+        playingPIDs = AudioPlaybackActivity.playingOwners(objectsByOwner) {
+            Self.property($0, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
+        }
+        playbackSnapshotAt = ProcessInfo.processInfo.systemUptime
+    }
+
     func runningAudioApps() -> [AppState] {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - appIdentitySnapshotAt < 3 {
+        // The mixer still lists native playback with processing switched off.
+        if !isEnabled, !systemSleeping, now - playbackSnapshotAt >= 1 {
+            refreshPlaybackActivity(Self.processObjectsByOwner())
+        }
+        // Names and icons do not change with every playback edge. Workspace
+        // notifications invalidate this cache; the TTL also catches renames.
+        if now - appIdentitySnapshotAt < 30 {
             return currentStates(for: appIdentitySnapshot)
         }
         var results: [AppState] = []
         var seenPIDs = Set<pid_t>()
 
-        // 1. Process tap objects from CoreAudio
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        if AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr,
-           size > 0 {
-            let count = Int(size) / MemoryLayout<AudioObjectID>.stride
-            var objects = [AudioObjectID](repeating: 0, count: count)
-            if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr {
-                for object in objects {
-                    guard let rawPid = Self.property(object, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPid > 0,
-                          rawPid != ProcessInfo.processInfo.processIdentifier,
-                          Self.property(object, selector: kAudioProcessPropertyIsRunning, as: UInt32.self) == 1 else { continue }
-
-                    let app = Self.owner(of: object, pid: rawPid) ?? NSRunningApplication(processIdentifier: rawPid)
-                    guard let app, app.activationPolicy == .regular else { continue }
-                    let pid = app.processIdentifier
-                    let outputting = Self.property(object, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1
-                    guard pid != ProcessInfo.processInfo.processIdentifier else { continue }
-                    if seenPIDs.contains(pid) {
-                        // Helpers (WebKit, Chrome audio service) decide "playing".
-                        if outputting, let index = results.firstIndex(where: { $0.pid == pid }) { results[index].isPlaying = true }
-                        continue
-                    }
-                    seenPIDs.insert(pid)
-
-                    let bundleID = app.bundleIdentifier ?? "pid-\(pid)"
-                    results.append(AppState(
-                        pid: pid,
-                        name: app.localizedName ?? "Process \(pid)",
-                        bundleID: bundleID,
-                        icon: app.icon,
-                        gain: sessions[pid]?.gain ?? Self.storedGain(bundleID: bundleID),
-                        muted: sessions[pid]?.muted ?? UserDefaults.standard.bool(forKey: "AOMAudioMute_\(bundleID)"),
-                        tapped: sessions[pid] != nil,
-                        outputDeviceUID: UserDefaults.standard.string(forKey: "AOMAudioRoute_\(bundleID)"),
-                        magicBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)"),
-                        isPlaying: outputting,
-                        error: errors[pid], peakLevel: level(pid: pid), processingStatus: status(pid: pid)
-                    ))
-                }
-            }
-        }
-
-        // 2. Discover running media & regular user apps (SoundSource parity)
+        // Every regular owner of a CoreAudio helper is already in this list.
+        // Resolve process membership once in syncActiveProcesses, not again
+        // while constructing UI rows (which also used to reload every icon).
         let knownMedia = Set([
             "com.apple.Music", "com.spotify.client", "com.apple.Safari",
             "com.google.Chrome", "org.mozilla.firefox", "org.videolan.vlc",
@@ -1002,6 +996,7 @@ final class AppAudioEngine {
             state.gain = Self.storedGain(bundleID: state.bundleID)
             state.muted = d.bool(forKey: "AOMAudioMute_\(state.bundleID)")
             state.tapped = sessions[state.pid] != nil
+            state.isPlaying = playingPIDs.contains(state.pid)
             state.outputDeviceUID = d.string(forKey: "AOMAudioRoute_\(state.bundleID)")
             state.magicBoost = d.bool(forKey: "AOMAudioMagicBoost_\(state.bundleID)")
             state.overdrive = AppAudioPreferences.overdrive(bundleID: state.bundleID, defaults: d)

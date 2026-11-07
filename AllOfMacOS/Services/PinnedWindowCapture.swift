@@ -54,7 +54,7 @@ final class PinnedWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard !isClosed else { return }
         guard desired != configuration else { return }
         desired = configuration
-        if configuration == nil { hasFrame = false }
+        if configuration == nil { hasFrame = false } else { failure = nil }
         reconcile()
     }
 
@@ -99,7 +99,10 @@ final class PinnedWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                         let failed = stream
                         stream = nil; applied = nil
                         try? await failed?.stopCapture()
-                        if !isClosed, desired != nil { fail(error) }
+                        if !isClosed, desired != nil {
+                            desired = nil
+                            fail(error)
+                        }
                         return
                     }
                 } else if applied != wanted, let current = stream {
@@ -160,6 +163,7 @@ final class PinnedWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             self.stream = nil
             self.applied = nil
             self.desired = nil
+            self.videoLayer.flushAndRemoveImage()
             self.fail(error)
         }
     }
@@ -236,12 +240,19 @@ final class LivePinnedWindow: ObservableObject, Identifiable {
         guard !isClosed else { return }
         self.frame = frame
         if panel.frame != frame { panel.setFrame(frame, display: false) }
-        controls.setFrame(WindowPinningGeometry.controls(in: frame, corner: options.corner), display: false)
-        panel.alphaValue = min(1, max(0.2, opacity))
-        panel.contentView?.layer?.borderWidth = options.translucentBorder && opacity < 1 ? 1 : 0
-        panel.contentView?.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        let controlsFrame = WindowPinningGeometry.controls(in: frame, corner: options.corner)
+        if controls.frame != controlsFrame { controls.setFrame(controlsFrame, display: false) }
+        let alpha = min(1, max(0.2, opacity))
+        if panel.alphaValue != alpha { panel.alphaValue = alpha }
+        let border: CGFloat = options.translucentBorder && opacity < 1 ? 1 : 0
+        if let layer = panel.contentView?.layer, layer.borderWidth != border {
+            layer.borderWidth = border
+            layer.borderColor = NSColor.controlAccentColor.cgColor
+        }
         overlayWanted = visible && !isPaused && !interacting && !ducked
-        if visible && !ducked { controls.orderFrontRegardless() } else { controls.orderOut(nil) }
+        if visible && !ducked {
+            if !controls.isVisible { controls.orderFrontRegardless() }
+        } else if controls.isVisible { controls.orderOut(nil) }
         if overlayWanted {
             let screen = NSScreen.screens.max { a, b in
                 let x = a.frame.intersection(frame), y = b.frame.intersection(frame)
@@ -252,15 +263,17 @@ final class LivePinnedWindow: ObservableObject, Identifiable {
                                   fps: options.frameRate(displayRate: screen?.maximumFramesPerSecond ?? 60)))
             showIfReady()
         } else {
-            panel.orderOut(nil)
+            if panel.isVisible { panel.orderOut(nil) }
             capture.request(nil)
         }
     }
 
     private func showIfReady() {
         guard !isClosed, overlayWanted, capture.hasFrame else { return }
-        if !panel.isVisible { panel.orderFrontRegardless() }
-        controls.order(.above, relativeTo: panel.windowNumber)
+        if !panel.isVisible {
+            panel.orderFrontRegardless()
+            controls.order(.above, relativeTo: panel.windowNumber)
+        }
     }
 
     func parkSource(defaults: UserDefaults) -> Bool {

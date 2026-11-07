@@ -13,11 +13,13 @@ final class WindowPinningService: NSObject, ObservableObject {
         didSet {
             if let data = try? JSONEncoder().encode(options) { defaults.set(data, forKey: WindowPinningOptions.defaultsKey) }
             for pin in pins where options.excludedBundleIDs.contains(pin.bundleID) { unpin(pin.id) }
+            snapshotPoller.invalidate()
             tick()
         }
     }
     private let defaults: UserDefaults
     private var timer: Timer?
+    private let snapshotPoller = WindowPinSnapshotPoller<WindowPinSnapshot>()
     private var observers: [NSObjectProtocol] = []
     private var activePinID: CGWindowID?
     private var activationDeadline = Date.distantPast
@@ -160,6 +162,7 @@ final class WindowPinningService: NSObject, ObservableObject {
             self.unpin(pin.id)
             self.report(error)
         }
+        snapshotPoller.invalidate()
         pins.append(pin)
         lastError = nil
         startMonitoring()
@@ -177,6 +180,7 @@ final class WindowPinningService: NSObject, ObservableObject {
         if !pin.restoreSource(defaults: defaults), NSRunningApplication(processIdentifier: pin.target.pid)?.isTerminated == false {
             report("The source window could not be restored. AOM will retry recovery on its next launch.")
         }
+        snapshotPoller.invalidate()
         pin.close()
         pins.removeAll { $0.id == id }
         if activePinID == id { activePinID = nil }
@@ -194,6 +198,7 @@ final class WindowPinningService: NSObject, ObservableObject {
     func activate(_ pin: LivePinnedWindow) {
         guard !pin.isClosed, !pin.isPaused, AXIsProcessTrusted(), !ScreenLock.isLocked else { return }
         guard let app = NSRunningApplication(processIdentifier: pin.target.pid), !app.isTerminated else { unpin(pin.id); return }
+        snapshotPoller.invalidate()
         guard pin.restoreSource(defaults: defaults) else { report("The source window could not be restored."); return }
         // Deliver subsequent input to the real window; never synthesize clicks.
         _ = AXUIElementSetAttributeValue(pin.target.window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
@@ -207,22 +212,30 @@ final class WindowPinningService: NSObject, ObservableObject {
         activePinID = pin.id
         activationDeadline = Date().addingTimeInterval(0.5)
         pin.wasMouseInside = true
+        pin.update(frame: pin.frame, options: options, visible: true, interacting: true, ducked: false)
         tick()
     }
 
     func togglePause(_ pin: LivePinnedWindow) {
+        snapshotPoller.invalidate()
         pin.isPaused.toggle()
         if activePinID == pin.id { activePinID = nil }
+        if pin.isPaused {
+            _ = pin.restoreSource(defaults: defaults)
+            pin.update(frame: pin.frame, options: options, visible: pin.controls.isVisible, interacting: false, ducked: false)
+        }
         tick()
     }
 
     func setOpacity(_ value: Double, for pin: LivePinnedWindow) {
         guard value.isFinite else { return }
+        snapshotPoller.invalidate()
         pin.opacity = min(1, max(0.2, value))
         tick()
     }
 
     func closeSource(_ pin: LivePinnedWindow) {
+        snapshotPoller.invalidate()
         guard pin.restoreSource(defaults: defaults) else { report("The source window could not be restored."); return }
         _ = NSRunningApplication(processIdentifier: pin.target.pid)?.activate(options: [])
         _ = AXUIElementPerformAction(pin.target.window, kAXRaiseAction as CFString)
@@ -288,6 +301,7 @@ final class WindowPinningService: NSObject, ObservableObject {
     private func startMonitoring() {
         guard timer == nil else { return }
         let timer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+        timer.tolerance = 0.03
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
         let center = NSWorkspace.shared.notificationCenter
@@ -312,6 +326,7 @@ final class WindowPinningService: NSObject, ObservableObject {
     }
 
     private func stopMonitoring() {
+        snapshotPoller.invalidate()
         timer?.invalidate(); timer = nil
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers.removeAll()
@@ -320,20 +335,28 @@ final class WindowPinningService: NSObject, ObservableObject {
 
     private func tick() {
         guard !pins.isEmpty else { return }
-        let unavailable = sleeping || Date() < spaceTransitionUntil || ScreenLock.isLocked ||
-            !AXIsProcessTrusted() || !CGPreflightScreenCaptureAccess()
-        guard !unavailable,
-              let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            for pin in pins {
-                _ = pin.restoreSource(defaults: defaults)
-                pin.update(frame: pin.frame, options: options, visible: false, interacting: false, ducked: false)
-            }
+        guard !sleeping, Date() >= spaceTransitionUntil else {
+            snapshotPoller.invalidate()
+            hidePins()
             return
         }
-        let byID = Dictionary(info.compactMap { item -> (CGWindowID, [String: Any])? in
-            guard let id = item[kCGWindowNumber as String] as? UInt32 else { return nil }
-            return (id, item)
-        }, uniquingKeysWith: { first, _ in first })
+        let ids = Set(pins.map(\.id))
+        snapshotPoller.request(read: { WindowPinSnapshot.read(ids) }) { [weak self] snapshot in
+            guard let self, !self.pins.isEmpty, !self.sleeping, Date() >= self.spaceTransitionUntil else { return }
+            self.apply(snapshot)
+        }
+    }
+
+    private func hidePins() {
+        for pin in pins {
+            _ = pin.restoreSource(defaults: defaults)
+            pin.update(frame: pin.frame, options: options, visible: false, interacting: false, ducked: false)
+        }
+    }
+
+    private func apply(_ snapshot: WindowPinSnapshot) {
+        guard snapshot.available, AXIsProcessTrusted() else { hidePins(); return }
+        let byID = snapshot.windows
         let mouse = NSEvent.mouseLocation
         if let active = pins.first(where: { $0.id == activePinID }) {
             let focused = WindowManager.shared.captureTarget(pid: active.target.pid)
@@ -343,18 +366,17 @@ final class WindowPinningService: NSObject, ObservableObject {
         }
         let activeFrame = pins.first(where: { $0.id == activePinID })?.frame
         for pin in pins {
-            guard let item = byID[pin.id], (item[kCGWindowOwnerPID as String] as? pid_t) == pin.target.pid,
-                  let app = NSRunningApplication(processIdentifier: pin.target.pid), !app.isTerminated,
-                  let bounds = item[kCGWindowBounds as String] as? [String: Any],
-                  let cgFrame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { unpin(pin.id); continue }
+            guard let item = byID[pin.id], item.pid == pin.target.pid,
+                  let app = NSRunningApplication(processIdentifier: pin.target.pid), !app.isTerminated else { unpin(pin.id); continue }
+            let cgFrame = item.frame
             if let parked = pin.parkedFrame, !WindowGeometry.close(parked, cgFrame) { pin.sourceMoved(defaults: defaults) }
             let frame = pin.parkedFrame == nil
                 ? WindowPinningGeometry.appKitFrame(cgFrame, primaryTop: NSScreen.screens.first?.frame.maxY ?? 0) : pin.frame
-            var minimized: CFTypeRef?; var fullscreen: CFTypeRef?
+            var minimized: CFTypeRef?, fullscreen: CFTypeRef?
             _ = AXUIElementCopyAttributeValue(pin.target.window, kAXMinimizedAttribute as CFString, &minimized)
             _ = AXUIElementCopyAttributeValue(pin.target.window, "AXFullScreen" as CFString, &fullscreen)
-            let visible = !unavailable && !app.isHidden && minimized as? Bool != true && fullscreen as? Bool != true &&
-                ((item[kCGWindowIsOnscreen as String] as? Bool == true) || pin.parkedFrame != nil) &&
+            let visible = !app.isHidden && minimized as? Bool != true && fullscreen as? Bool != true &&
+                (item.onScreen || pin.parkedFrame != nil) &&
                 NSScreen.screens.contains { $0.frame.intersects(frame) } && frame.width > 0 && frame.height > 0
             let inside = frame.contains(mouse)
             let ducked = pin.id != activePinID && WindowPinningGeometry.shouldDuck(frame, activeFrame: activeFrame, enabled: options.duckOverlappingWindows)
@@ -448,4 +470,57 @@ extension WindowPinningService {
     @objc private func pauseFromMenu(_ item: NSMenuItem) { if let pin = pin(from: item) { togglePause(pin) } }
     @objc private func opacityFromMenu(_ item: NSMenuItem) { if let pin = pin(from: item) { setOpacity(Double(item.tag) / 100, for: pin) } }
     @objc private func closeFromMenu(_ item: NSMenuItem) { if let pin = pin(from: item) { closeSource(pin) } }
+}
+
+/// One blocking WindowServer read at a time, away from event delivery.
+/// Invalidating keeps the in-flight slot occupied until its read finishes, but
+/// prevents a late result from reviving a removed, paused or repositioned pin.
+@MainActor
+final class WindowPinSnapshotPoller<Value: Sendable> {
+    private(set) var inFlight = false
+    private var generation: UInt64 = 0
+
+    func invalidate() { generation &+= 1 }
+
+    @discardableResult
+    func request(read: @escaping @Sendable () -> Value,
+                 apply: @escaping (Value) -> Void) -> Bool {
+        guard !inFlight else { return false }
+        inFlight = true
+        let requestedGeneration = generation
+        Task { [weak self] in
+            let value = await Task.detached(priority: .utility, operation: read).value
+            guard let self else { return }
+            self.inFlight = false
+            guard self.generation == requestedGeneration else { return }
+            apply(value)
+        }
+        return true
+    }
+}
+
+private struct WindowPinSnapshot: Sendable {
+    struct Window: Sendable {
+        let pid: pid_t
+        let frame: CGRect
+        let onScreen: Bool
+    }
+    let available: Bool
+    let windows: [CGWindowID: Window]
+
+    static func read(_ ids: Set<CGWindowID>) -> Self {
+        guard !ScreenLock.isLocked, CGPreflightScreenCaptureAccess(),
+              let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return Self(available: false, windows: [:]) }
+        var windows: [CGWindowID: Window] = [:]
+        for item in info {
+            guard let id = item[kCGWindowNumber as String] as? UInt32, ids.contains(id),
+                  let pid = item[kCGWindowOwnerPID as String] as? pid_t,
+                  let bounds = item[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
+            windows[id] = Window(pid: pid, frame: frame,
+                                 onScreen: item[kCGWindowIsOnscreen as String] as? Bool == true)
+        }
+        return Self(available: true, windows: windows)
+    }
 }

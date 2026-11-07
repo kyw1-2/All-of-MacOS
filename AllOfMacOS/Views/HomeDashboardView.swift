@@ -49,7 +49,6 @@ struct AOMHomeView: View {
     /// The setup steps are open on first run; "Hide Steps" folds them into
     /// the header for the rest of the session.
     @State private var setupExpanded = true
-    @StateObject private var system = SystemStatusMonitor()
     @State private var dismissedSuggestions: Set<String> = []
     @State private var showsAllAttention = false
     /// What this page shows and in which order (design-3.4.0 b.15).
@@ -155,9 +154,6 @@ struct AOMHomeView: View {
                 try? await Task.sleep(for: .seconds(4))
             }
         }
-        // The This Mac readouts sample only while Workspace is on screen.
-        .onAppear { system.start() }
-        .onDisappear { system.stop() }
         .aomToast(toast)
     }
 
@@ -943,40 +939,7 @@ struct AOMHomeView: View {
     // MARK: This Mac
 
     private var thisMacCard: some View {
-        AOMSectionCard("This Mac", fillsHeight: true, contentPadding: 0, accessory: {
-            AOMCardLink("System Tools") { appState.selectedMainTab = .tools }
-        }) {
-            VStack(spacing: 0) {
-                let cpu = system.cpuPercent
-                WorkspaceGaugeRow(symbol: "cpu", title: "CPU",
-                                  value: cpu.map { "\(Int($0.rounded()))%" } ?? "…",
-                                  fraction: cpu.map { $0 / 100 },
-                                  tone: (cpu ?? 0) > 85 ? .warning : nil, showsDivider: false)
-                if let memory = system.memory {
-                    WorkspaceGaugeRow(symbol: "memorychip", title: "Memory",
-                                      value: "\(SystemStatus.memorySize(memory.used)) of \(SystemStatus.memorySize(memory.total))",
-                                      fraction: memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil,
-                                      tone: (memory.pressureLevel ?? 1) > 1 ? .warning : nil)
-                }
-                if let disk = system.disk {
-                    WorkspaceGaugeRow(symbol: "internaldrive", title: "Disk",
-                                      value: "\(SystemStatus.size(disk.available)) free of \(SystemStatus.size(disk.total))",
-                                      fraction: disk.total > 0 ? Double(disk.total - disk.available) / Double(disk.total) : nil,
-                                      tone: disk.total > 0 && Double(disk.available) / Double(disk.total) < 0.1 ? .warning : nil)
-                }
-                if let battery = system.battery {
-                    WorkspaceGaugeRow(symbol: battery.isCharging ? "battery.100percent.bolt" : "battery.75percent",
-                                      title: "Battery",
-                                      value: "\(battery.percent)%" + (battery.isCharging ? " · Charging" : (battery.onPower ? " · Power adapter" : "")),
-                                      fraction: Double(battery.percent) / 100,
-                                      tone: !battery.onPower && battery.percent <= 15 ? .warning : .success)
-                } else if !system.hasBattery {
-                    WorkspaceGaugeRow(symbol: "powerplug", title: "Power", value: "Power adapter", fraction: nil, tone: nil)
-                }
-            }
-            .padding(.vertical, AOMSpace.x1)
-        }
-        .accessibilityLabel("This Mac")
+        WorkspaceSystemCard { appState.selectedMainTab = .tools }
     }
 
     // MARK: Recent activity
@@ -1960,6 +1923,57 @@ private struct WorkspaceWeekChart: View {
 }
 
 // MARK: - This Mac
+
+/// Keep two-second monitor publications inside this card. Observing the
+/// monitor at Workspace root also rebuilt every tile and seven-day chart,
+/// even when the user had hidden the This Mac card.
+private struct WorkspaceSystemCard: View {
+    let openTools: () -> Void
+    @StateObject private var system = SystemStatusMonitor()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        AOMSectionCard("This Mac", fillsHeight: true, contentPadding: 0, accessory: {
+            AOMCardLink("System Tools", action: openTools)
+        }) {
+            VStack(spacing: 0) {
+                let cpu = system.cpuPercent
+                WorkspaceGaugeRow(symbol: "cpu", title: "CPU",
+                                  value: cpu.map { "\(Int($0.rounded()))%" } ?? "…",
+                                  fraction: cpu.map { $0 / 100 },
+                                  tone: (cpu ?? 0) > 85 ? .warning : nil, showsDivider: false)
+                if let memory = system.memory {
+                    WorkspaceGaugeRow(symbol: "memorychip", title: "Memory",
+                                      value: "\(SystemStatus.memorySize(memory.used)) of \(SystemStatus.memorySize(memory.total))",
+                                      fraction: memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil,
+                                      tone: (memory.pressureLevel ?? 1) > 1 ? .warning : nil)
+                }
+                if let disk = system.disk {
+                    WorkspaceGaugeRow(symbol: "internaldrive", title: "Disk",
+                                      value: "\(SystemStatus.size(disk.available)) free of \(SystemStatus.size(disk.total))",
+                                      fraction: disk.total > 0 ? Double(disk.total - disk.available) / Double(disk.total) : nil,
+                                      tone: disk.total > 0 && Double(disk.available) / Double(disk.total) < 0.1 ? .warning : nil)
+                }
+                if let battery = system.battery {
+                    WorkspaceGaugeRow(symbol: battery.isCharging ? "battery.100percent.bolt" : "battery.75percent",
+                                      title: "Battery",
+                                      value: "\(battery.percent)%" + (battery.isCharging ? " · Charging" : (battery.onPower ? " · Power adapter" : "")),
+                                      fraction: Double(battery.percent) / 100,
+                                      tone: !battery.onPower && battery.percent <= 15 ? .warning : .success)
+                } else if !system.hasBattery {
+                    WorkspaceGaugeRow(symbol: "powerplug", title: "Power", value: "Power adapter", fraction: nil, tone: nil)
+                }
+            }
+            .padding(.vertical, AOMSpace.x1)
+        }
+        .accessibilityLabel("This Mac")
+        .onAppear { if scenePhase == .active { system.start() } }
+        .onDisappear { system.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { system.start() } else { system.stop() }
+        }
+    }
+}
 
 /// A LabeledContent-style row (System Settings › About) with a continuous
 /// capacity bar under it (HIG Gauges; Storage and Disk Utility): green,

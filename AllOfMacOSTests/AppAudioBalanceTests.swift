@@ -247,3 +247,23 @@ final class AppAudioBalanceTests: XCTestCase {
         XCTAssertEqual(sqrt(left / right), 0.5, accuracy: 0.01, "50 % right balance leaves the left at half level")
     }
 }
+
+final class AudioPlaybackActivityTests: XCTestCase {
+    func testHelperPlaybackBelongsToOwnerAndStopsWithoutIdentityRefresh() {
+        let objects: [pid_t: [UInt32]] = [100: [1, 2], 200: [3], 300: []]
+        XCTAssertEqual(AudioPlaybackActivity.playingOwners(objects) { $0 == 2 }, [100])
+        XCTAssertEqual(AudioPlaybackActivity.playingOwners(objects) { $0 == 3 }, [200])
+        XCTAssertTrue(AudioPlaybackActivity.playingOwners(objects) { _ in false }.isEmpty)
+        XCTAssertTrue(AudioPlaybackActivity.playingOwners([:]) { _ in true }.isEmpty)
+    }
+
+    func testOwnerScanStopsAfterFirstOutputtingHelper() {
+        var reads: [UInt32] = []
+        let playing = AudioPlaybackActivity.playingOwners([100: [1, 2, 3]]) {
+            reads.append($0)
+            return $0 == 2
+        }
+        XCTAssertEqual(playing, [100])
+        XCTAssertEqual(reads, [1, 2])
+    }
+}
