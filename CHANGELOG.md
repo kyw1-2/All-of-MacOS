@@ -1,3 +1,11 @@
+## 3.4.22 — 2026-11-07
+
+- Require affirmative before/after text-selection evidence for automatically triggered double- and triple-click Text Actions. Reject stale AXWebArea selections, unchanged focus/ranges and unsupported copy fallback; normal fullscreen/window/video double-clicks stay native.
+- Give AX hit-test protected password/file-list/media targets priority over any stale focused selection. A blocked ancestor stops the entire search, and protects automatic copy fallback.
+- Preserve mouse-down selection anchors across Chromium retry; add string snapshots for browsers without selected-text ranges.
+- Place Text Actions below ChatGPT native Ask ChatGPT bubbles with extra clearance while preserving screen-edge flipping; observe AppState.globalEnabled to synchronize the menu-bar status icon.
+- Add regressions for unchanged versus fresh double-click selections, secure/media AX targets, and native-popover spacing.
+
 ## 3.4.21 — 2026-11-07
 
 - Make Text Actions recognize Chromium/ChatGPT text selected under the pointer or in an accessibility parent, rather than relying exclusively on the focused element. Retry a missing automatic selection once after the host finishes its selection UI transition.

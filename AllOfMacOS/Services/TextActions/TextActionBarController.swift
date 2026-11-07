@@ -163,7 +163,8 @@ final class TextActionBarController {
         self.context = context
         self.anchor = anchor
         self.pointer = pointer
-        position = settings.position
+        position = TextActionBarPlacement.nativePopoverClearance(bundleID: selection.bundleID) > 0
+            ? .below : settings.position
         lifecycle.hideDelay = settings.hideDelay
         confirmWork?.cancel()
         model.set(items, showsNames: settings.showsNames, maxWidth: TextActionBarMetrics.maxWidth)
@@ -227,7 +228,9 @@ final class TextActionBarController {
         let size = hosting.fittingSize
         guard size.width > 0, size.height > 0 else { return }
         let screens = NSScreen.screens.map { TextActionScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) }
-        let origin = TextActionBarPlacement.origin(for: size, anchor: anchor, pointer: pointer, screens: screens, position: position)
+        let clearance = TextActionBarPlacement.nativePopoverClearance(bundleID: selection?.bundleID)
+        let origin = TextActionBarPlacement.origin(for: size, anchor: anchor, pointer: pointer, screens: screens,
+                                                  position: position, extraClearance: clearance)
         let frame = NSRect(origin: origin, size: size)
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }

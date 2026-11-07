@@ -130,6 +130,19 @@ final class TextActionsPlacementTests: XCTestCase {
                              NSWindow.Level.statusBar.rawValue)
     }
 
+    func testChatGPTNativePopoverGetsSeparateVerticalSpace() {
+        XCTAssertEqual(TextActionBarPlacement.nativePopoverClearance(bundleID: "com.openai.codex"), 38)
+        XCTAssertEqual(TextActionBarPlacement.nativePopoverClearance(bundleID: "COM.OPENAI.CODEX"), 38)
+        XCTAssertEqual(TextActionBarPlacement.nativePopoverClearance(bundleID: "com.apple.Safari"), 0)
+        let selected = CGRect(x: 600, y: 400, width: 100, height: 18)
+        let bubble = TextActionBarPlacement.origin(for: size, anchor: selected,
+            pointer: CGPoint(x: 650, y: 405), screens: [main], position: .below, extraClearance: 38)
+        XCTAssertEqual(bubble.y, 400 - 8 - 32 - 38)
+        let ordinary = TextActionBarPlacement.origin(for: size, anchor: selected,
+            pointer: CGPoint(x: 650, y: 405), screens: [main], position: .above)
+        XCTAssertEqual(ordinary.y, selected.maxY + 8)
+    }
+
     func testPaging() {
         XCTAssertEqual(TextActionBarPaging.pages(widths: [40, 40, 40], maxWidth: 300, chevron: 24), [0..<3])
         XCTAssertEqual(TextActionBarPaging.pages(widths: Array(repeating: 40, count: 12), maxWidth: 300, chevron: 24), [0..<6, 6..<12])

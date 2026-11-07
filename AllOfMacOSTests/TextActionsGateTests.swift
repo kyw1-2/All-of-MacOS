@@ -27,6 +27,78 @@ final class TextActionsGateTests: XCTestCase {
         return attributes
     }
 
+    // MARK: Double-click is not selection proof
+
+    func testDoubleClickNeverDisplaysRetainedUnchangedSelection() {
+        let box = CGRect(x: 120, y: 140, width: 75, height: 18)
+        for gesture: TextSelectionMonitor.Gesture.Kind in [.doubleClick, .tripleClick] {
+            XCTAssertFalse(TextActionsGate.confirmedClickSelection(gesture: gesture,
+                anchorAvailable: true, sameElement: true,
+                initialRange: nil, finalRange: nil, initialText: "old selected word",
+                finalText: "old selected word", finalBounds: box, pointer: CGPoint(x: 900, y: 900)))
+            XCTAssertFalse(TextActionsGate.confirmedClickSelection(gesture: gesture,
+                anchorAvailable: false, sameElement: false,
+                initialRange: nil, finalRange: nil, initialText: nil,
+                finalText: "stale AXWebArea text", finalBounds: nil,
+                pointer: CGPoint(x: 150, y: 145)))
+            XCTAssertFalse(TextActionsGate.confirmedClickSelection(gesture: gesture,
+                anchorAvailable: true, sameElement: false,
+                initialRange: nil, finalRange: nil, initialText: nil,
+                finalText: "stale AXWebArea text",
+                finalBounds: CGRect(x: 0, y: 0, width: 1200, height: 900),
+                pointer: CGPoint(x: 150, y: 145)))
+            XCTAssertFalse(TextActionsGate.mayUseCopyFallback(automatic: true, gesture: gesture))
+        }
+    }
+
+    func testDoubleClickShowsOnlyConfirmedFreshTextSelection() {
+        XCTAssertTrue(TextActionsGate.confirmedClickSelection(gesture: .doubleClick,
+            anchorAvailable: true, sameElement: true,
+            initialRange: TextSelectionRange(location: 10, length: 0),
+            finalRange: TextSelectionRange(location: 10, length: 5),
+            initialText: "", finalText: "hello", finalBounds: nil,
+            pointer: CGPoint(x: 100, y: 100)))
+        XCTAssertTrue(TextActionsGate.confirmedClickSelection(gesture: .doubleClick,
+            anchorAvailable: true, sameElement: true,
+            initialRange: nil, finalRange: nil,
+            initialText: "", finalText: "hello", finalBounds: nil,
+            pointer: CGPoint(x: 100, y: 100)))
+        XCTAssertTrue(TextActionsGate.confirmedClickSelection(gesture: .doubleClick,
+            anchorAvailable: true, sameElement: false,
+            initialRange: nil, finalRange: nil,
+            initialText: nil, finalText: "hello",
+            finalBounds: CGRect(x: 100, y: 100, width: 40, height: 18),
+            pointer: CGPoint(x: 120, y: 110)))
+        XCTAssertFalse(TextActionsGate.confirmedClickSelection(gesture: .doubleClick,
+            anchorAvailable: true, sameElement: true,
+            initialRange: nil, finalRange: nil,
+            initialText: nil, finalText: "stale", finalBounds: nil,
+            pointer: CGPoint(x: 100, y: 100)))
+        XCTAssertTrue(TextActionsGate.confirmedClickSelection(gesture: .drag,
+            anchorAvailable: false, sameElement: false,
+            initialRange: nil, finalRange: nil,
+            initialText: nil, finalText: "normal drag", finalBounds: nil, pointer: nil))
+    }
+
+    func testProtectedAndMediaTargetsDenyCopyFallback() {
+        let secure = kAXSecureTextFieldSubrole as String
+        for (role, subrole): (String?, String?) in [
+            ("AXTextField", secure), ("AXSecureTextField", nil),
+            ("AXTable", nil), ("AXList", nil), ("AXVideo", nil) ] {
+            XCTAssertTrue(TextActionsGate.isForbiddenSelectionTarget(role: role, subrole: subrole))
+            XCTAssertFalse(TextActionsGate.mayReadWithCopy(attributes(role: role ?? "", subrole: subrole, text: nil),
+                settings: settings, automatic: false, environment: environment()))
+        }
+        XCTAssertTrue(TextActionsGate.isMediaSurface(role: "AXGroup", identifier: "movie_player",
+            htmlTag: nil, domClasses: []))
+        XCTAssertTrue(TextActionsGate.isMediaSurface(role: "AXGroup", identifier: nil,
+            htmlTag: "video", domClasses: []))
+        XCTAssertTrue(TextActionsGate.isMediaSurface(role: "AXGroup", identifier: nil,
+            htmlTag: nil, domClasses: ["ytp-chrome-controls"]))
+        XCTAssertFalse(TextActionsGate.isMediaSurface(role: "AXStaticText", identifier: nil,
+            htmlTag: "span", domClasses: ["comment-text"]))
+    }
+
     // MARK: Before anything is read
 
     func testAllowedWhenEverythingIsFine() {
