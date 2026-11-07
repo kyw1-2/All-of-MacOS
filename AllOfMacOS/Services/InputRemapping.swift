@@ -139,6 +139,12 @@ enum InputRemapSettings {
         get { d.bool(forKey: "AOMReverseMouseWheel") }
         set { d.set(newValue, forKey: "AOMReverseMouseWheel") }
     }
+    /// Restore the known UGREEN 2B89:0912 relative AC Pan thumb wheel.
+    /// Enabled by default only on that exact receiver; other mice are ignored.
+    static var ugreenThumbWheel: Bool {
+        get { d.object(forKey: "AOMUGREENThumbWheel") as? Bool ?? true }
+        set { d.set(newValue, forKey: "AOMUGREENThumbWheel") }
+    }
     static var smoothMouseWheel: Bool {
         get { d.bool(forKey: "AOMSmoothMouseWheel") }
         set { d.set(newValue, forKey: "AOMSmoothMouseWheel") }
@@ -174,10 +180,12 @@ final class InputRemapService {
         let hyper = InputRemapSettings.hyperEnabled
         let escape = InputRemapSettings.hyperTapEscape
         let wheel = InputRemapSettings.reverseMouseWheel
+        let thumbWheel = InputRemapSettings.ugreenThumbWheel
         let linear = InputRemapSettings.linearMouse
         DispatchQueue.main.async {
             HyperKeyTap.shared.setEnabled(hyper, tapEscape: escape)
             ScrollWheelReverser.shared.setEnabled(wheel)
+            MouseWheelInterceptor.shared.setEnabled(thumbWheel)
             PointerAcceleration.shared.setEnabled(linear)
         }
         guard !desired.isEmpty || !owned.isEmpty else { return }
@@ -190,6 +198,7 @@ final class InputRemapService {
         let owned = InputRemapSettings.ownedPairs
         HyperKeyTap.shared.setEnabled(false, tapEscape: false)
         ScrollWheelReverser.shared.stopAll()
+        MouseWheelInterceptor.shared.stop()
         PointerAcceleration.shared.setEnabled(false)
         guard !owned.isEmpty else { return }
         queue.sync { self.write(desired: [], owned: owned) }

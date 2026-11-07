@@ -85,6 +85,10 @@ final class InputRemappingTests: XCTestCase {
         XCTAssertTrue(ScrollWheelReverser.shouldReverse(isContinuous: 0, isSynthetic: false))
         XCTAssertFalse(ScrollWheelReverser.shouldReverse(isContinuous: 1, isSynthetic: false))
         XCTAssertFalse(ScrollWheelReverser.shouldReverse(isContinuous: 0, isSynthetic: true))
+        XCTAssertFalse(ScrollWheelReverser.shouldReverse(isContinuous: 0, isSynthetic: false, scrollPhase: 1))
+        XCTAssertFalse(ScrollWheelReverser.shouldReverse(isContinuous: 0, isSynthetic: false, momentumPhase: 1))
+        XCTAssertTrue(ScrollWheelReverser.shouldReverse(isContinuous: 0, isSynthetic: false,
+                                                        scrollPhase: 0, momentumPhase: 0))
     }
 
     func testWheelReversalFlipsEveryDeltaField() throws {

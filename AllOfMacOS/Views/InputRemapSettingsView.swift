@@ -96,6 +96,7 @@ struct ReverseWheelRow: View {
 struct PointerOptionsRow: View {
     @State private var linear = InputRemapSettings.linearMouse
     @State private var smooth = InputRemapSettings.smoothMouseWheel
+    @State private var thumbWheel = InputRemapSettings.ugreenThumbWheel
     @ObservedObject private var engine = PointerAcceleration.shared
 
     var body: some View {
@@ -103,11 +104,14 @@ struct PointerOptionsRow: View {
             Toggle("Linear external mouse movement", isOn: $linear)
             if engine.status != "Off" { Text(engine.status).font(.caption).foregroundStyle(.secondary) }
             Toggle("Smooth mouse wheel", isOn: $smooth)
+            Toggle("Restore UGREEN thumb wheel (horizontal scroll)", isOn: $thumbWheel)
+                .help("Uses relative AC Pan from UGREEN 2B89:0912 only. Native scroll takes priority.")
             Text("Wheel changes require Accessibility permission. Continuous touch scrolling keeps its system behavior.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
         .onChange(of: linear) { _, value in InputRemapSettings.linearMouse = value; InputRemapService.shared.apply() }
         .onChange(of: smooth) { _, value in InputRemapSettings.smoothMouseWheel = value; InputRemapService.shared.apply() }
+        .onChange(of: thumbWheel) { _, value in InputRemapSettings.ugreenThumbWheel = value; InputRemapService.shared.apply() }
     }
 }

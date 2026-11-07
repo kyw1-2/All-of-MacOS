@@ -115,7 +115,12 @@ final class ScrollWheelReverser {
         tap = nil; source = nil
     }
 
-    static func shouldReverse(isContinuous: Int64, isSynthetic: Bool) -> Bool { isContinuous == 0 && !isSynthetic }
+    /// Reverse only discrete physical wheel ticks. Phase/momentum scrolls
+    /// belong to touch surfaces even on drivers that omit isContinuous.
+    static func shouldReverse(isContinuous: Int64, isSynthetic: Bool,
+                              scrollPhase: Int64 = 0, momentumPhase: Int64 = 0) -> Bool {
+        isContinuous == 0 && !isSynthetic && scrollPhase == 0 && momentumPhase == 0
+    }
 
     static func reverse(_ event: CGEvent) {
         for (line, point, fixed) in [(CGEventField.scrollWheelEventDeltaAxis1, CGEventField.scrollWheelEventPointDeltaAxis1, CGEventField.scrollWheelEventFixedPtDeltaAxis1),
@@ -142,7 +147,9 @@ private func scrollReverseCallback(proxy: CGEventTapProxy, type: CGEventType, ev
     let engine = Unmanaged<ScrollWheelReverser>.fromOpaque(refcon).takeUnretainedValue()
     guard event.getIntegerValueField(.eventSourceUserData) != SyntheticInput.selfTag else { return Unmanaged.passUnretained(event) }
     guard AutomationGate.allows(.mouse), ScrollWheelReverser.shouldReverse(
-        isContinuous: event.getIntegerValueField(.scrollWheelEventIsContinuous), isSynthetic: false) else {
+        isContinuous: event.getIntegerValueField(.scrollWheelEventIsContinuous), isSynthetic: false,
+        scrollPhase: event.getIntegerValueField(.scrollWheelEventScrollPhase),
+        momentumPhase: event.getIntegerValueField(.scrollWheelEventMomentumPhase)) else {
         engine.cancelAnimation()
         return Unmanaged.passUnretained(event)
     }
