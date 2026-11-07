@@ -106,7 +106,7 @@ enum AOMSize {
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
     /// A Workspace tile: the squircle row (name over status) and the count line.
-    static let tileHeight: CGFloat = 104
+    static let tileHeight: CGFloat = 116
     /// The ⌘K palette.
     static let paletteWidth: CGFloat = 600
     /// Inline help popover width.
@@ -233,26 +233,26 @@ enum AOMColor {
     static let textTertiary = Color(nsColor: .tertiaryLabelColor)
 
     // Surfaces (opaque; glass is reserved for chrome)
-    /// Every page background: refined grouped canvas (#F5F6F8 in light, #141518 in dark).
-    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.965, blue: 0.973, alpha: 1),
-                                         dark: NSColor(srgbRed: 0.078, green: 0.082, blue: 0.094, alpha: 1))
+    /// Every page background: architectural slate canvas (#F0F2F7 in light, #0E1015 in dark).
+    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.941, green: 0.949, blue: 0.969, alpha: 1),
+                                         dark: NSColor(srgbRed: 0.055, green: 0.063, blue: 0.082, alpha: 1))
     static let canvasNSColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0.078, green: 0.082, blue: 0.094, alpha: 1)
-            : NSColor(srgbRed: 0.961, green: 0.965, blue: 0.973, alpha: 1)
+            ? NSColor(srgbRed: 0.055, green: 0.063, blue: 0.082, alpha: 1)
+            : NSColor(srgbRed: 0.941, green: 0.949, blue: 0.969, alpha: 1)
     }
     /// Cards, tiles, section groups: crisp elevated white (#FFFFFF) in light mode,
-    /// machined charcoal (#1D1F24) in dark mode.
+    /// machined graphite (#181B22) in dark mode.
     static let surface = Color.aomDynamic(light: .white,
-                                          dark: NSColor(srgbRed: 0.114, green: 0.122, blue: 0.141, alpha: 1),
+                                          dark: NSColor(srgbRed: 0.094, green: 0.106, blue: 0.133, alpha: 1),
                                           highContrastLight: .white,
-                                          highContrastDark: NSColor(srgbRed: 0.135, green: 0.145, blue: 0.165, alpha: 1))
+                                          highContrastDark: NSColor(srgbRed: 0.125, green: 0.137, blue: 0.169, alpha: 1))
     /// A card under the pointer: subtle tactile shift.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.984, green: 0.986, blue: 0.992, alpha: 1),
-                                               dark: NSColor(srgbRed: 0.145, green: 0.155, blue: 0.180, alpha: 1))
+    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.980, green: 0.984, blue: 0.996, alpha: 1),
+                                               dark: NSColor(srgbRed: 0.129, green: 0.145, blue: 0.180, alpha: 1))
     /// Pressed tiles and cards.
-    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.950, blue: 0.962, alpha: 1),
-                                                 dark: NSColor(srgbRed: 0.175, green: 0.185, blue: 0.212, alpha: 1))
+    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.953, blue: 0.973, alpha: 1),
+                                                 dark: NSColor(srgbRed: 0.157, green: 0.173, blue: 0.212, alpha: 1))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.
@@ -383,12 +383,13 @@ enum AOMModule: String, CaseIterable, Identifiable {
     var hue: Color {
         switch self {
         case .automation: return Color(nsColor: .systemIndigo)
-        case .tiling: return Color.aomDynamic(light: NSColor(srgbRed: 0, green: 0.518, blue: 0.549, alpha: 1),       // #00848C
-                                              dark: NSColor(srgbRed: 0.039, green: 0.604, blue: 0.643, alpha: 1))    // #0A9AA4
+        case .tiling: return Color.aomDynamic(light: NSColor(srgbRed: 0.031, green: 0.569, blue: 0.698, alpha: 1),     // #0891B2
+                                              dark: NSColor(srgbRed: 0.024, green: 0.714, blue: 0.831, alpha: 1))      // #06B6D4
         case .capture: return Color(nsColor: .systemPurple)
-        case .clipboard: return Color(nsColor: .systemBrown)
+        case .clipboard: return Color(nsColor: .systemOrange)
         case .audio: return Color(nsColor: .systemPink)
-        case .systemTools: return Color(nsColor: NSColor(srgbRed: 0.486, green: 0.486, blue: 0.510, alpha: 1))     // #7C7C82
+        case .systemTools: return Color.aomDynamic(light: NSColor(srgbRed: 0.051, green: 0.580, blue: 0.533, alpha: 1), // #0D9488
+                                                   dark: NSColor(srgbRed: 0.078, green: 0.722, blue: 0.651, alpha: 1))  // #14B8A6
         // 3.4 hues (design-3.4.0 b.8): green, amber, blue and tangerine sit
         // between the six existing hues; none is the danger red, so a running
         // Focus session never reads as an error or a recording. White glyphs

@@ -52,10 +52,13 @@ struct AOMAutomationRow<Accessory: View>: View {
 
     var body: some View {
         AOMListRow(trigger.displayName, detail: trigger.aomRowDetail, dimmed: !trigger.isEnabled) {
-            Image(systemName: trigger.input.category.iconName)
-                .font(AOMFont.callout.weight(.medium))
-                .foregroundStyle(trigger.isEnabled ? .secondary : .tertiary)
-                .help(trigger.input.category.rawValue)
+            AOMModuleBadge(
+                symbol: trigger.input.category.iconName,
+                hue: GestureVisual.tint(trigger.input.category),
+                size: 22,
+                active: trigger.isEnabled
+            )
+            .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {
                 accessory

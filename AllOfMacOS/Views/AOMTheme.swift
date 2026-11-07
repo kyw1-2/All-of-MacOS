@@ -208,18 +208,32 @@ struct AOMCardSurface: ViewModifier {
         case .paper:
             content
                 .padding(padding ?? 0)
-                .background(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface), in: shape)
+                .background {
+                    ZStack {
+                        shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
+                        shape.fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(scheme == .dark ? (hovering ? 0.06 : 0.035) : (hovering ? 0.75 : 0.45)),
+                                    Color.clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .center
+                            )
+                        )
+                    }
+                }
                 .overlay {
                     shape.strokeBorder(
                         contrast == .increased
                             ? AOMColor.strongLine
-                            : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.42 : 0.32) : AOMColor.hairline),
-                        lineWidth: contrast == .increased || showBorders || hovering ? 1 : 0.65
+                            : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.55 : 0.42) : AOMColor.hairline),
+                        lineWidth: contrast == .increased || showBorders || hovering ? 1.1 : 0.75
                     )
                     .allowsHitTesting(false)
                 }
-                .shadow(color: elevated ? Color.black.opacity(scheme == .dark ? 0.20 : 0.035) : .clear,
-                        radius: hovering ? 6 : 3, x: 0, y: hovering ? 2 : 1)
+                .shadow(color: elevated ? Color.black.opacity(scheme == .dark ? 0.28 : 0.05) : .clear,
+                        radius: hovering ? 8 : 4, x: 0, y: hovering ? 3 : 1.5)
                 .containerShape(shape)
         case .well:
             content

@@ -1173,6 +1173,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
     @ObservedObject var toast: AOMToastModel
     @ViewBuilder var action: Action
     @ViewBuilder var strip: Strip
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
     init(state: WorkspaceHeroState, chips: [(AOMPermission, AOMPermissionStatus)], toast: AOMToastModel,
@@ -1184,23 +1185,24 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
         self.strip = strip()
     }
 
-    private var isRunning: Bool {
-        if case .running = state { return true }
-        return false
-    }
-
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(alignment: .center, spacing: AOMSpace.x4) {
                 glyph
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                        Text(state.sentence)
-                            .font(AOMFont.heroSentence)
-                            .foregroundStyle(AOMColor.text)
-                            .lineLimit(1)
-                            .accessibilityAddTraits(.isHeader)
+                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                        HStack(alignment: .center, spacing: AOMSpace.x2) {
+                            Text(state.sentence)
+                                .font(AOMFont.heroSentence)
+                                .foregroundStyle(AOMColor.text)
+                                .lineLimit(1)
+                                .accessibilityAddTraits(.isHeader)
+                            AOMStatusPill(
+                                state.tone == .success ? "All Systems Ready" : (state.tone == .warning ? "Action Needed" : "Standby"),
+                                tone: state.tone
+                            )
+                        }
                         Text(state.detail(now: context.date))
                             .font(AOMFont.body)
                             .foregroundStyle(AOMColor.textSecondary)
@@ -1219,35 +1221,52 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
             }
             strip
         }
-        .padding(isRunning ? 0 : AOMSpace.cardPadding)
+        .padding(AOMSpace.cardPadding + 2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            if !isRunning {
-                ZStack {
-                    shape.fill(AOMColor.surface)
-                    if contrast != .increased { shape.fill(state.tone.color.opacity(0.08)) }
+            ZStack {
+                shape.fill(AOMColor.surface)
+                if contrast != .increased {
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                state.tone.color.opacity(scheme == .dark ? 0.18 : 0.10),
+                                AOMColor.accent.opacity(scheme == .dark ? 0.08 : 0.04),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                 }
             }
         }
         .overlay {
-            if !isRunning {
-                shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : state.tone.color.opacity(0.25),
-                                   lineWidth: contrast == .increased ? 1 : 0.5)
-            }
+            shape.strokeBorder(
+                contrast == .increased
+                    ? AOMColor.strongLine
+                    : state.tone.color.opacity(scheme == .dark ? 0.38 : 0.26),
+                lineWidth: contrast == .increased ? 1.2 : 0.9
+            )
         }
+        .shadow(color: Color.black.opacity(scheme == .dark ? 0.28 : 0.05), radius: 6, x: 0, y: 2)
         .aomAnimation(.standard, value: state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status: \(state.sentence)")
     }
 
     private var glyph: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(AOMIcon.hero), style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(AOMIcon.hero + 4), style: .continuous)
         return Image(systemName: state.badgeSymbol)
-            .font(.system(size: AOMIcon.heroGlyph, weight: .semibold))
+            .font(.system(size: AOMIcon.heroGlyph, weight: .bold))
             .foregroundStyle(.white)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: AOMIcon.hero, height: AOMIcon.hero)
+            .frame(width: AOMIcon.hero + 4, height: AOMIcon.hero + 4)
             .background(state.tone.color.gradient, in: shape)
+            .overlay {
+                shape.strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8)
+            }
+            .shadow(color: state.tone.color.opacity(scheme == .dark ? 0.45 : 0.28), radius: 5, x: 0, y: 2)
             .accessibilityHidden(true)
     }
 }
@@ -2089,11 +2108,11 @@ enum CaptureItemActions {
 enum GestureVisual {
     static func tint(_ category: TriggerCategory) -> Color {
         switch category {
-        case .trackpad: return AOMModule.automation.hue
-        case .keyboard: return AOMModule.automation.hue
-        case .normalMouse: return AOMModule.automation.hue
-        case .drawings: return AOMModule.automation.hue
-        case .otherTriggers: return AOMColor.textSecondary
+        case .trackpad: return Color(nsColor: .systemIndigo)
+        case .keyboard: return Color(nsColor: .systemPurple)
+        case .normalMouse: return Color(nsColor: .systemOrange)
+        case .drawings: return Color(nsColor: .systemPink)
+        case .otherTriggers: return Color(nsColor: .systemTeal)
         case .all: return AOMColor.accent
         }
     }

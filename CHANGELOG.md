@@ -1,3 +1,10 @@
+## 3.4.26 — 2026-11-07 (Modern Visual Architecture & Bento UI Overhaul)
+
+- **Apple System Settings / Arc / Raycast Sidebar (`AOMSidebar`)**: Add a top Brand & Engine status header above the Command Bar button (`⌘K`) and render every sidebar navigation item with a jewel-toned gradient squircle icon badge (`tab.accentColor`) instead of monochrome glyphs.
+- **Bento Hero Banner (`WorkspaceHero`) & Module Hero Headers (`AOMPageHeader`)**: Always render the Workspace Hero and every module page header as an elevated Bento banner card with a diagonal module-hue gradient wash, `0.9pt` tinted rim border, specular jewel badge, and live status pill.
+- **Control Center Module Tiles (`AOMModuleTile`) & Jewel Badges (`AOMModuleBadge`)**: Upgrade active module badges to jewel-toned gradient squircles with white symbols, top specular rims, and soft colored ambient shadows; redesign Workspace module tiles with module-tinted ambient glow, top-right switches, live status dots, and bottom-right monospaced metric pills.
+- **Tactile Filter Bars (`AOMScopeBar`, `AOMFilterChip`), Mode Launchpads (`AOMModeButton`), & Section Titles (`AOMSectionTitle`)**: Render selected filter chips as filled accent-gradient pills with high-contrast text and shadows, give Capture Studio mode buttons tinted icon squircles and keycap badges, add vertical accent bars and count capsules to section titles, and give Automation trigger rows and System Tool tiles category-colored jewel squircle badges.
+
 ## 3.4.25 — 2026-11-07 (UI/UX & Feature Discoverability Overhaul)
 
 - Redesign the AOM design system (`AOMTokens`, `AOMTheme`, `AOMComponents`) after 56 commercial macOS references (Raycast, Linear, CleanShot X, Paste, BetterTouchTool, Swish, SoundSource, Arc, Things 3, Karabiner-Elements, Input Source Pro, Velja, macOS Sequoia/Tahoe HIG): replace stark white/flat-grey surfaces with a native grouped slate canvas (`#F5F6F8` / `#141518`), elevated cards with crisp `0.65pt` rim borders and hover elevation, and tinted glass squircle badges (`13%–20%` tint fill + `0.75pt` border + hierarchical accent glyph).

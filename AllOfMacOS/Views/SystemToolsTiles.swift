@@ -8,11 +8,22 @@ import SwiftUI
 struct SystemTileButtonStyle: ButtonStyle {
     var radius: CGFloat = AOMRadius.well
     @State private var hovering = false
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     func makeBody(configuration: Configuration) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         configuration.label
             .background(configuration.isPressed ? AOMColor.surfacePressed : hovering ? AOMColor.surfaceHover : AOMColor.surface, in: shape)
+            .overlay {
+                shape.strokeBorder(
+                    contrast == .increased
+                        ? AOMColor.strongLine
+                        : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.5 : 0.38) : AOMColor.hairline),
+                    lineWidth: contrast == .increased || hovering ? 1 : 0.75
+                )
+            }
+            .shadow(color: Color.black.opacity(scheme == .dark ? 0.22 : 0.035), radius: hovering ? 5 : 2.5, x: 0, y: 1)
             .contentShape(shape)
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
@@ -39,14 +50,10 @@ struct SystemToolTile: View {
     var body: some View {
         Button(action: run) {
             HStack(spacing: AOMSpace.x2) {
-                Image(systemName: info.symbol)
-                    .font(AOMFont.body)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(info.group.tint)
-                    .frame(width: AOMIcon.row, height: AOMIcon.row)
+                AOMModuleBadge(symbol: info.symbol, hue: info.group.tint, size: 24, active: true)
                     .accessibilityHidden(true)
                 Text(info.title)
-                    .font(AOMFont.body)
+                    .font(AOMFont.body.weight(.medium))
                     .foregroundStyle(AOMColor.text)
                     .lineLimit(1)
                     .truncationMode(.tail)

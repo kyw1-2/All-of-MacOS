@@ -90,6 +90,8 @@ struct AOMPageHeader<Trailing: View>: View {
     /// Off modules show the badge without its hue.
     var active = true
     @ViewBuilder var trailing: Trailing
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(_ title: String, module: AOMModule? = nil, symbol: String? = nil, subtitle: String? = nil,
          status: AOMStatus? = nil, help: String? = nil, active: Bool = true,
@@ -105,16 +107,18 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
+        let bannerHue = active ? (module?.hue ?? AOMColor.accent) : AOMColor.paused
         HStack(alignment: .center, spacing: AOMSpace.x3) {
             if let module {
                 AOMModuleBadge(module, size: AOMIcon.headerBadge, active: active)
             } else if let symbol {
-                AOMModuleBadge(symbol: symbol, hue: nil, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: symbol, hue: AOMColor.accent, size: AOMIcon.headerBadge, active: active)
             }
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
+                HStack(alignment: .center, spacing: AOMSpace.x2) {
                     Text(title)
-                        .font(AOMFont.pageStatus)
+                        .font(AOMFont.heroSentence)
                         .foregroundStyle(AOMColor.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -139,7 +143,36 @@ struct AOMPageHeader<Trailing: View>: View {
                 AOMInfoButton(help, topic: title, textStyle: AOMFont.pageStatus)
             }
         }
-        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x1)
+        .padding(.horizontal, AOMSpace.cardPadding)
+        .padding(.vertical, AOMSpace.x3 + 2)
+        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x5)
+        .background {
+            ZStack {
+                shape.fill(AOMColor.surface)
+                if contrast != .increased {
+                    shape.fill(
+                        LinearGradient(
+                            colors: [
+                                bannerHue.opacity(scheme == .dark ? 0.18 : 0.10),
+                                bannerHue.opacity(scheme == .dark ? 0.04 : 0.02),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                }
+            }
+        }
+        .overlay {
+            shape.strokeBorder(
+                contrast == .increased
+                    ? AOMColor.strongLine
+                    : bannerHue.opacity(scheme == .dark ? 0.35 : 0.24),
+                lineWidth: contrast == .increased ? 1.2 : 0.85
+            )
+        }
+        .shadow(color: Color.black.opacity(scheme == .dark ? 0.25 : 0.04), radius: 5, x: 0, y: 2)
         .accessibilityElement(children: .contain)
     }
 }
@@ -164,6 +197,10 @@ struct AOMSectionTitle<Accessory: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x2) {
+            Capsule()
+                .fill(Color.accentColor.gradient)
+                .frame(width: 3.5, height: 14)
+                .accessibilityHidden(true)
             Text(title)
                 .font(AOMFont.section)
                 .foregroundStyle(AOMColor.text)
@@ -171,10 +208,16 @@ struct AOMSectionTitle<Accessory: View>: View {
                 .accessibilityAddTraits(.isHeader)
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption.weight(.medium))
                     .foregroundStyle(AOMColor.textSecondary)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .padding(.horizontal, AOMSpace.x2 - 1)
+                    .padding(.vertical, 2)
+                    .background(AOMColor.track, in: Capsule())
+                    .overlay {
+                        Capsule().strokeBorder(AOMColor.hairline.opacity(0.7), lineWidth: 0.5)
+                    }
             }
             if let help { AOMInfoButton(help, topic: title, textStyle: AOMFont.section) }
             Spacer(minLength: AOMSpace.x2)
@@ -558,8 +601,9 @@ extension EnvironmentValues {
 
 // MARK: - Module badge and tile
 
-/// A module identity badge: refined tinted squircle with a crisp inner rim
-/// and hierarchical symbol in the module's accent hue (Linear / Raycast / Arc style).
+/// A module identity badge: Apple System Settings / Raycast / Linear style
+/// jewel-toned gradient squircle with crisp white glyph, specular top rim,
+/// and subtle ambient glow when active; muted well when inactive.
 struct AOMModuleBadge: View {
     let symbol: String
     let hue: Color?
@@ -589,34 +633,48 @@ struct AOMModuleBadge: View {
         Image(systemName: symbol)
             .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
             .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(tinted ? tintColor : AOMColor.textSecondary)
+            .foregroundStyle(tinted ? Color.white : AOMColor.textSecondary)
             .frame(width: size, height: size)
-            .background(
-                tinted
-                    ? AnyShapeStyle(tintColor.opacity(scheme == .dark ? 0.20 : 0.13))
-                    : AnyShapeStyle(AOMColor.sunken),
-                in: shape
-            )
+            .background {
+                if tinted {
+                    ZStack {
+                        shape.fill(tintColor.gradient)
+                        shape.fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.22), Color.clear, Color.black.opacity(0.12)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    }
+                } else {
+                    shape.fill(AOMColor.sunken)
+                }
+            }
             .overlay {
                 shape.strokeBorder(
                     contrast == .increased
-                        ? AOMColor.strongLine
-                        : (tinted ? tintColor.opacity(scheme == .dark ? 0.36 : 0.25) : AOMColor.hairline.opacity(0.6)),
+                        ? LinearGradient(colors: [AOMColor.strongLine, AOMColor.strongLine],
+                                         startPoint: .top, endPoint: .bottom)
+                        : (tinted
+                            ? LinearGradient(colors: [Color.white.opacity(0.42), Color.white.opacity(0.10)],
+                                             startPoint: .top, endPoint: .bottom)
+                            : LinearGradient(colors: [AOMColor.hairline.opacity(0.7), AOMColor.hairline.opacity(0.5)],
+                                             startPoint: .top, endPoint: .bottom)),
                     lineWidth: contrast == .increased ? 1 : 0.75
                 )
             }
+            .shadow(color: tinted && size >= 24 ? tintColor.opacity(scheme == .dark ? 0.36 : 0.22) : .clear,
+                    radius: size >= 32 ? 4 : 2.5, x: 0, y: 1.5)
             .accessibilityHidden(true)
     }
 }
 
-/// A Workspace module tile (design-3.3.6 b.12, Reminders/Passwords/Home
-/// tiles): the 32 pt squircle with the name over one status line, then the
-/// live count in Title with its unit and the one control at its trailing end.
-/// `AOMSize.tileHeight` tall. Clicking anywhere but the control opens the
-/// module page; the control is its own target beside the text instead of
-/// floating over it, so the status line uses the full width.
-/// 3.4: `menu` adds the tile's own context-menu items after Open (Turn On,
-/// Hide from Workspace…); flat, no shortcuts (HIG Context menus).
+/// A Workspace module tile (Bento / Apple Control Center / Raycast style):
+/// top row shows the jewel squircle badge and the module's toggle/control;
+/// bottom row shows the bold module name, status subtitle, and a sleek
+/// monospaced metric pill badge on the trailing edge. Active modules emit a
+/// subtle top-leading ambient glow in the module's signature hue.
 struct AOMModuleTile<Control: View, MenuItems: View>: View {
     let module: AOMModule
     let metric: String
@@ -629,6 +687,8 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     @ViewBuilder var control: Control
     @ViewBuilder var menuItems: MenuItems
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(_ module: AOMModule, metric: String, unit: String? = nil, status: String, statusTone: AOMTone? = nil,
          active: Bool = true, running: Bool = false, open: @escaping () -> Void,
@@ -652,46 +712,43 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     }
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         ZStack(alignment: .topLeading) {
             // The whole card is the open button; the text on top passes
             // clicks through to it, the control keeps its own.
             Button(action: open) {
-                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                ZStack {
+                    Color.clear
+                    if active && contrast != .increased {
+                        LinearGradient(
+                            colors: [
+                                module.hue.opacity(scheme == .dark ? 0.16 : 0.08),
+                                module.hue.opacity(scheme == .dark ? 0.03 : 0.015),
+                                Color.clear
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: 0))
+            .overlay {
+                if active && contrast != .increased {
+                    shape.strokeBorder(module.hue.opacity(scheme == .dark ? 0.32 : 0.20), lineWidth: 0.85)
+                        .allowsHitTesting(false)
+                }
+            }
             .accessibilityLabel("\(module.title), \([metric, unit].compactMap { $0 }.joined(separator: " ")), \(status)")
             .accessibilityHint("Opens \(module.title)")
             .help("\(module.title): \(status)")
-            // 3.4: the name and status line use the tile's full width (a
-            // 1000 pt window no longer truncates "Needs Screen Recording");
-            // the control sits at the trailing end of the count row, like a
-            // Control Center module.
-            VStack(alignment: .leading, spacing: AOMSpace.x3) {
-                HStack(alignment: .center, spacing: AOMSpace.x3) {
-                    AOMModuleBadge(module, active: active)
-                        .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
-                    lines
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: AOMIcon.tileBadge)
-                .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .center, spacing: AOMSpace.x2) {
-                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                        Text(metric)
-                            .font(AOMFont.metricLarge)
-                            .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
-                            .contentTransition(.numericText())
-                            .lineLimit(1)
-                        if let unit {
-                            Text(unit)
-                                .font(AOMFont.callout)
-                                .foregroundStyle(AOMColor.textSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .layoutPriority(1)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                    AOMModuleBadge(module, size: AOMIcon.tileBadge + 2, active: active)
+                        .symbolEffect(.pulse, options: .repeating, isActive: running && !reduceMotion)
+                        .allowsHitTesting(false)
                     Spacer(minLength: AOMSpace.x2)
                     control
                         .labelsHidden()
@@ -699,6 +756,40 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                         .controlSize(.small)
                         .fixedSize()
                 }
+                Spacer(minLength: AOMSpace.x2)
+                HStack(alignment: .bottom, spacing: AOMSpace.x2) {
+                    lines
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(metric)
+                            .font(AOMFont.metric)
+                            .foregroundStyle(active ? module.hue : AOMColor.textSecondary)
+                            .contentTransition(.numericText())
+                            .lineLimit(1)
+                        if let unit {
+                            Text(unit)
+                                .font(AOMFont.caption.weight(.medium))
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, AOMSpace.x2)
+                    .padding(.vertical, 3)
+                    .background(
+                        active ? module.hue.opacity(scheme == .dark ? 0.16 : 0.10) : AOMColor.track,
+                        in: Capsule()
+                    )
+                    .overlay {
+                        Capsule().strokeBorder(
+                            active ? module.hue.opacity(0.25) : AOMColor.hairline.opacity(0.6),
+                            lineWidth: 0.5
+                        )
+                    }
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+                .allowsHitTesting(false)
             }
             .padding(AOMSpace.cardPadding)
         }
@@ -711,7 +802,7 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     }
 
     private var lines: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(module.title)
                 .font(AOMFont.headline)
                 .foregroundStyle(AOMColor.text)
@@ -722,9 +813,14 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                         .imageScale(.small)
                         .foregroundStyle(tone.color)
                         .accessibilityHidden(true)
+                } else if active {
+                    Circle()
+                        .fill(AOMColor.success)
+                        .frame(width: 5.5, height: 5.5)
+                        .accessibilityHidden(true)
                 }
                 Text(status)
-                    .font(AOMFont.callout)
+                    .font(AOMFont.caption)
                     .foregroundStyle(emphasisedTone?.textColor ?? AOMColor.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)

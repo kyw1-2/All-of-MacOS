@@ -208,15 +208,16 @@ struct AOMFilterChip: View {
     private var outlined: Bool { selected && (contrast == .increased || differentiateWithoutColor) }
 
     private var restingFill: Color {
-        if hovering { return filled ? AOMColor.sunken : AOMColor.track }
-        return filled ? AOMColor.track : .clear
+        if hovering { return AOMColor.surfaceHover }
+        return filled ? AOMColor.surface : AOMColor.track
     }
 
     var body: some View {
+        let onAccentText = AOMTheme.onAccent(Color.accentColor)
         Button(action: action) {
             HStack(spacing: AOMSpace.x1) {
                 if let dot {
-                    Circle().fill(dot).frame(width: AOMFeatureSize.chipDot, height: AOMFeatureSize.chipDot)
+                    Circle().fill(selected ? onAccentText : dot).frame(width: AOMFeatureSize.chipDot, height: AOMFeatureSize.chipDot)
                 } else if let appIcon {
                     Image(nsImage: appIcon).resizable().scaledToFit()
                         .frame(width: AOMFeatureSize.chipIcon, height: AOMFeatureSize.chipIcon)
@@ -228,23 +229,31 @@ struct AOMFilterChip: View {
                 if let count {
                     Text("\(count)")
                         .monospacedDigit()
-                        .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMColor.textTertiary)
+                        .foregroundStyle(selected ? onAccentText.opacity(0.85) : AOMColor.textSecondary)
                 }
                 if showsClear && selected {
                     Image(systemName: "xmark").imageScale(.small).accessibilityHidden(true)
                 }
             }
             .font(AOMFont.callout.weight(selected ? .semibold : .medium))
-            .foregroundStyle(selected ? Color.accentColor : (hovering ? AOMColor.text : AOMColor.textSecondary))
+            .foregroundStyle(selected ? onAccentText : (hovering ? AOMColor.text : AOMColor.textSecondary))
             .padding(.horizontal, AOMSpace.x3 - AOMSpace.x0_5)
             .frame(maxWidth: expands ? .infinity : nil)
             .frame(height: AOMFeatureSize.chip)
             .background {
-                Capsule().fill(selected ? Color.accentColor.opacity(contrast == .increased ? 0.24 : 0.13) : restingFill)
+                if selected {
+                    Capsule().fill(Color.accentColor.gradient)
+                } else {
+                    Capsule().fill(restingFill)
+                }
             }
             .overlay {
-                if outlined { Capsule().strokeBorder(Color.accentColor, lineWidth: 1) }
+                Capsule().strokeBorder(
+                    outlined ? Color.primary : (selected ? Color.white.opacity(0.25) : AOMColor.hairline),
+                    lineWidth: outlined ? 1.2 : 0.65
+                )
             }
+            .shadow(color: selected ? Color.accentColor.opacity(0.22) : .clear, radius: 3, x: 0, y: 1)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

@@ -360,30 +360,46 @@ struct AOMModeButton: View {
                 .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard - 2)
                 .contentShape(Rectangle())
             } else {
-                VStack(spacing: AOMSpace.x0_5 + 1) {
-                    // The glyph follows the text style (Body at the large
-                    // symbol scale, about 17 pt), not a fixed 14 pt font.
-                    Image(systemName: symbol)
-                        .font(AOMFont.body)
-                        .imageScale(.large)
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(tint)
-                        .frame(height: AOMIcon.row)
+                VStack(spacing: AOMSpace.x1) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: AOMRadius.squircle(28), style: .continuous)
+                            .fill(tint.opacity(0.14))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: AOMRadius.squircle(28), style: .continuous)
+                                    .strokeBorder(tint.opacity(0.24), lineWidth: 0.6)
+                            }
+                            .frame(width: 28, height: 28)
+                        Image(systemName: symbol)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(tint)
+                    }
                     Text(title)
-                        .font(AOMFont.caption.weight(.medium))
+                        .font(AOMFont.caption.weight(.semibold))
                         .foregroundStyle(AOMTheme.text)
                         .lineLimit(1)
                         .minimumScaleFactor(0.92)
                         .truncationMode(.tail)
                     Text(shortcut ?? " ")
                         .font(AOMFont.badge)
-                        .foregroundStyle(AOMTheme.textTertiary)
+                        .foregroundStyle(AOMTheme.textSecondary)
                         .lineLimit(1)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(AOMColor.track, in: RoundedRectangle(cornerRadius: AOMRadius.keycap, style: .continuous))
                         .opacity(shortcut == nil ? 0 : 1)
                 }
                 .padding(.horizontal, AOMSpace.x1)
                 .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
                 .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                        .fill(AOMColor.sunken.opacity(0.45))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
+                        .strokeBorder(AOMColor.hairline.opacity(0.65), lineWidth: 0.5)
+                }
                 .contentShape(Rectangle())
             }
         }
@@ -466,10 +482,11 @@ private struct AOMScopeChip<ID: Hashable>: View {
     private var outlined: Bool { selected && (contrast == .increased || differentiateWithoutColor) }
 
     var body: some View {
+        let onAccentText = AOMTheme.onAccent(Color.accentColor)
         Button(action: action) {
             HStack(spacing: AOMSpace.x1 + 1) {
                 if let dot = item.dot {
-                    Circle().fill(dot).frame(width: 6, height: 6)
+                    Circle().fill(selected ? onAccentText : dot).frame(width: 6, height: 6)
                 } else if let symbol = item.symbol {
                     Image(systemName: symbol).imageScale(.small)
                 }
@@ -477,20 +494,32 @@ private struct AOMScopeChip<ID: Hashable>: View {
                 if let count = item.count {
                     Text("\(count)")
                         .monospacedDigit()
-                        .foregroundStyle(selected ? Color.accentColor.opacity(0.75) : AOMTheme.textTertiary)
+                        .foregroundStyle(selected ? onAccentText.opacity(0.85) : AOMTheme.textSecondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background(
+                            Capsule().fill(selected ? onAccentText.opacity(0.18) : AOMColor.track)
+                        )
                 }
             }
             .font(AOMFont.caption.weight(selected ? .semibold : .medium))
-            .foregroundStyle(selected ? Color.accentColor : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
-            .padding(.horizontal, AOMSpace.x2)
-            .frame(height: 22)
+            .foregroundStyle(selected ? onAccentText : (hovering ? AOMTheme.text : AOMTheme.textSecondary))
+            .padding(.horizontal, AOMSpace.x2 + 2)
+            .frame(height: 24)
             .background {
-                Capsule().fill(selected ? Color.accentColor.opacity(contrast == .increased ? 0.24 : 0.13)
-                                        : (hovering ? AOMTheme.track : Color.clear))
+                if selected {
+                    Capsule().fill(Color.accentColor.gradient)
+                } else {
+                    Capsule().fill(hovering ? AOMColor.surfaceHover : AOMColor.surface)
+                }
             }
             .overlay {
-                if outlined { Capsule().strokeBorder(Color.accentColor, lineWidth: 1) }
+                Capsule().strokeBorder(
+                    outlined ? Color.primary : (selected ? Color.white.opacity(0.25) : AOMColor.hairline),
+                    lineWidth: outlined ? 1.2 : 0.65
+                )
             }
+            .shadow(color: selected ? Color.accentColor.opacity(0.25) : .clear, radius: 3, x: 0, y: 1)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
