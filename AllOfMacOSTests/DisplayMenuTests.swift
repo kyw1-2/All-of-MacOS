@@ -12,6 +12,22 @@ import SwiftUI
 @MainActor
 final class DisplayMenuTests: XCTestCase {
 
+    func testInputSwitchTargetingHandlesCornersButNeverPicksArbitraryExternal() {
+        let left = DisplayInputTargeting.Screen(id: 11, frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let right = DisplayInputTargeting.Screen(id: 12, frame: CGRect(x: 800, y: 0, width: 800, height: 600))
+        let internalScreen = DisplayInputTargeting.Screen(id: 1, frame: CGRect(x: 0, y: -400, width: 800, height: 400))
+        let screens = [internalScreen, left, right]
+        XCTAssertEqual(DisplayInputTargeting.choose(externalIDs: [11, 12], screens: screens,
+            pointer: CGPoint(x: 1599, y: 600), focusedScreenID: nil), 12)
+        XCTAssertEqual(DisplayInputTargeting.choose(externalIDs: [11, 12], screens: screens,
+            pointer: CGPoint(x: 50, y: -250), focusedScreenID: 11), 11)
+        XCTAssertNil(DisplayInputTargeting.choose(externalIDs: [11, 12], screens: screens,
+            pointer: CGPoint(x: 50, y: -250), focusedScreenID: nil),
+            "when multiple externals exist, a pointer on the built-in display is ambiguous")
+        XCTAssertEqual(DisplayInputTargeting.choose(externalIDs: [11], screens: screens,
+            pointer: CGPoint(x: 50, y: -250), focusedScreenID: nil), 11)
+    }
+
     private func section() throws -> NSMenuItem {
         try XCTSkipIf(DisplayControlService.displays().isEmpty, "no display attached")
         let item = DisplayMenu.build()

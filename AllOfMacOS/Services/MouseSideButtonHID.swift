@@ -7,6 +7,9 @@ import IOKit.hid
 final class MouseSideButtonHID {
     private var manager: IOHIDManager?
     private(set) var held = Set<Int>()
+    /// A disconnected keyboard/headset must not release a button held by the
+    /// UGREEN mouse receiver. Keep ownership per HID device, not globally.
+    private var heldByDevice: [IOHIDDevice: Set<Int>] = [:]
     var onEvent: ((Int, Bool) -> Void)?
 
     static func button(page: UInt32, usage: UInt32) -> Int? {
@@ -33,16 +36,12 @@ final class MouseSideButtonHID {
             let device = IOHIDElementGetDevice(element)
             guard let button = MouseSideButtonHID.button(page: IOHIDElementGetUsagePage(element), usage: IOHIDElementGetUsage(element)),
                   owner.isMouseReceiver(device) else { return }
-            let down = IOHIDValueGetIntegerValue(value) != 0
-            if down { guard owner.held.insert(button).inserted else { return } }
-            else { guard owner.held.remove(button) != nil else { return } }
-            owner.onEvent?(button, down)
+            owner.receive(button: button, down: IOHIDValueGetIntegerValue(value) != 0, from: device)
         }, Unmanaged.passUnretained(self).toOpaque())
-        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, device in
             guard let context else { return }
             let owner = Unmanaged<MouseSideButtonHID>.fromOpaque(context).takeUnretainedValue()
-            for button in owner.held { owner.onEvent?(button, false) }
-            owner.held.removeAll()
+            owner.remove(device: device)
         }, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         let result = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -75,12 +74,35 @@ final class MouseSideButtonHID {
         }
     }
 
+    private func receive(button: Int, down: Bool, from device: IOHIDDevice) {
+        if down {
+            guard heldByDevice[device, default: []].insert(button).inserted else { return }
+            if held.insert(button).inserted { onEvent?(button, true) }
+        } else {
+            guard heldByDevice[device]?.remove(button) != nil else { return }
+            if heldByDevice[device]?.isEmpty == true { heldByDevice.removeValue(forKey: device) }
+            if !heldByDevice.values.contains(where: { $0.contains(button) }), held.remove(button) != nil {
+                onEvent?(button, false)
+            }
+        }
+    }
+
+    private func remove(device: IOHIDDevice) {
+        // Only a device that actually contributed held buttons can release
+        // them. An unrelated HID removal must not clear the mouse state.
+        guard let removed = heldByDevice.removeValue(forKey: device) else { return }
+        for button in removed where !heldByDevice.values.contains(where: { $0.contains(button) }) {
+            if held.remove(button) != nil { onEvent?(button, false) }
+        }
+    }
+
     func stop() {
         guard let manager else { return }
         IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         self.manager = nil
         held.removeAll()
+        heldByDevice.removeAll()
     }
     deinit { stop() }
 }
@@ -95,11 +117,14 @@ struct MouseSideButtonDeduplicator {
         cg[edge] = time
         guard let prior = fallback[edge], abs(time - prior.time) <= 0.08 else { return nil }
         fallback[edge] = nil
+        // A single native CG edge matches at most one HID edge.
+        cg[edge] = nil
         return prior.swallow
     }
-    func shouldDeliverHID(_ edge: Edge, time: TimeInterval) -> Bool {
-        guard let seen = cg[edge] else { return true }
-        return abs(time - seen) > 0.08
+    mutating func shouldDeliverHID(_ edge: Edge, time: TimeInterval) -> Bool {
+        guard let seen = cg[edge], abs(time - seen) <= 0.08 else { return true }
+        cg[edge] = nil
+        return false
     }
     mutating func noteHID(_ edge: Edge, time: TimeInterval, swallow: Bool) {
         fallback[edge] = (time, swallow)

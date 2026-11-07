@@ -854,6 +854,27 @@ final class Clipboard333Tests: XCTestCase {
         XCTAssertEqual(ClipboardImageText.unitRect(for: view, in: fitted), unit)
     }
 
+    func testOCRProjectionKeepsRealProvidedGeometryWithoutSynthesizingText() {
+        // The CI fixture supplies the recognition *result*, not a made-up
+        // fallback from the actual Vision image. No OCR capability is claimed.
+        let source = TextRecognitionResult(text: "HARBOR\nPELICAN", lines: [
+            TextLayoutLine(text: "HARBOR", box: CGRect(x: 40, y: 10, width: 160, height: 25)),
+            TextLayoutLine(text: "PELICAN", box: CGRect(x: 620, y: 10, width: 250, height: 25))
+        ], imageSize: CGSize(width: 1_000, height: 100), detectedLanguage: "en", passCount: 1,
+        usedLiveText: false, upscale: 1, inverted: false, liveTextTranscript: nil)
+        let projected = ClipboardImageText.projectRecognition(source)
+        XCTAssertEqual(projected.text, "HARBOR\nPELICAN")
+        XCTAssertEqual(projected.lines.count, 2)
+        XCTAssertEqual(projected.lines[1].box.minX, 0.62, accuracy: 0.0001)
+        XCTAssertEqual(ClipboardImageText.text(in: CGRect(x: 0.5, y: 0, width: 0.5, height: 0.6),
+                                               lines: projected.lines), "PELICAN")
+        XCTAssertEqual(ClipboardImageText.matchBoxes(in: projected.lines, terms: ["pelican"]).count, 1)
+        XCTAssertEqual(ClipboardImageText.projectRecognition(source, maximumLength: 6).text, "HARBOR")
+        let missing = TextRecognitionResult.empty(CGSize(width: 1_000, height: 100))
+        XCTAssertEqual(ClipboardImageText.projectRecognition(missing).lines, [],
+                       "a missing OCR response must never create synthetic user-visible text")
+    }
+
     func testIndexingKeepsLineBoxesAndRegionsReadOnlyTheirText() async throws {
         let harness = makeHarness()
         defer { cleanUp(harness) }

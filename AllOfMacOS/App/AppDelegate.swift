@@ -613,11 +613,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clipboardTools.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: nil)
         let clipboardMenu = NSMenu(title: "Clipboard Tools")
         clipboardMenu.addItem(entry("Paste Stack", "square.stack.3d.down.right", #selector(showClipboardStack)))
+        clipboardMenu.addItem(entry("Paste Next Clipboard Item", "doc.on.clipboard", #selector(pasteNextClipboard)))
         let paused = MainActor.assumeIsolated { ClipboardStore.shared.paused }
         clipboardMenu.addItem(entry(paused ? "Resume Clipboard History" : "Pause Clipboard History",
                                     paused ? "play.circle" : "pause.circle", #selector(toggleClipboardPause)))
         clipboardTools.submenu = clipboardMenu
         moreMenu.addItem(clipboardTools)
+        if #available(macOS 14.2, *) {
+            moreMenu.addItem(entry("App Audio Mixer…", "slider.horizontal.3", #selector(showAudioMixer)))
+        }
         let productivityTools = NSMenuItem(title: "Productivity Tools", action: nil, keyEquivalent: "")
         productivityTools.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
         let productivityMenu = NSMenu(title: "Productivity Tools")

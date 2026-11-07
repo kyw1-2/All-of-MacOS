@@ -96,7 +96,7 @@ struct ParityActionForm: View {
                     Text(source.title).tag(Int(source.code))
                 }
             }
-            note("Targets the external display under the pointer (or the only external display). Switching inputs can disconnect this Mac. Requires monitor DDC/CI VCP 0x60.")
+            note("Targets the external display under the pointer, then the front window's external display, or the only external display. Ambiguous multi-monitor actions are cancelled. Switching inputs can disconnect this Mac. Requires monitor DDC/CI VCP 0x60; USB-C and vendor codes vary by model.")
         case .toggleXDRBrightness:
             note("Unavailable until a validated Liquid Retina XDR hardware controller is implemented. EDR overlays cannot unlock panel hardware brightness. Does nothing on MacBook Air.")
         case .ejectAllDisks:

@@ -21,6 +21,17 @@ final class MouseSideButtonHIDTests: XCTestCase {
         XCTAssertFalse(events.shouldDeliverHID(press, time: 10.025))
         XCTAssertTrue(events.shouldDeliverHID(press, time: 10.2))
     }
+    func testEachCGEdgeConsumesExactlyOneDelayedHIDEdge() {
+        var events = MouseSideButtonDeduplicator()
+        let edge = MouseSideButtonDeduplicator.Edge(button: 3, down: true)
+        XCTAssertNil(events.noteCG(edge, time: 10))
+        XCTAssertFalse(events.shouldDeliverHID(edge, time: 10.01))
+        // A distinct second press isn't swallowed by a stale CG timestamp.
+        XCTAssertTrue(events.shouldDeliverHID(edge, time: 10.02))
+        XCTAssertNil(events.noteCG(edge, time: 11))
+        XCTAssertFalse(events.shouldDeliverHID(edge, time: 11.02))
+    }
+
     func testCGObservationAfterHIDPassesItsSuppressionVerdict() {
         var events = MouseSideButtonDeduplicator()
         let press = MouseSideButtonDeduplicator.Edge(button: 4, down: true)

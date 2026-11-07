@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AVFoundation
 import Carbon
 import CoreMIDI
@@ -712,6 +713,55 @@ enum ColorHex {
     }
 }
 
+// MARK: - Safe DDC input targeting
+
+/// Never choose a random external monitor when a KVM shortcut lacks a target:
+/// switching the wrong input could leave a machine without a visible display.
+enum DisplayInputTargeting {
+    struct Screen {
+        var id: CGDirectDisplayID
+        var frame: CGRect
+    }
+
+    static func choose(externalIDs: [CGDirectDisplayID], screens: [Screen],
+                       pointer: CGPoint, focusedScreenID: CGDirectDisplayID?) -> CGDirectDisplayID? {
+        // Exact hit wins; the second pass accepts a one-point screen corner.
+        if let exact = screens.first(where: { externalIDs.contains($0.id) && $0.frame.contains(pointer) }) {
+            return exact.id
+        }
+        if let edge = screens.first(where: { externalIDs.contains($0.id) &&
+            $0.frame.insetBy(dx: -1, dy: -1).contains(pointer) }) { return edge.id }
+        if let focusedScreenID, externalIDs.contains(focusedScreenID) { return focusedScreenID }
+        return externalIDs.count == 1 ? externalIDs[0] : nil
+    }
+
+    /// AX window bounds use top-left coordinates. A bounded AX read is only
+    /// needed when the pointer is on the Mac's internal display and there are
+    /// multiple external outputs. It never activates an app or changes focus.
+    static func focusedWindowScreenID(screens: [Screen], primaryHeight: CGFloat) -> CGDirectDisplayID? {
+        guard AXIsProcessTrusted(), let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        var window: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success,
+              let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        let element = window as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, 0.15)
+        var pos: CFTypeRef?, size: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &pos) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success,
+              let pos, let size, CFGetTypeID(pos) == AXValueGetTypeID(),
+              CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        var origin = CGPoint.zero, extent = CGSize.zero
+        guard AXValueGetValue(pos as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent),
+              extent.width > 0, extent.height > 0 else { return nil }
+        let centre = CGPoint(x: origin.x + extent.width / 2,
+                             y: primaryHeight - origin.y - extent.height / 2)
+        return screens.first(where: { $0.frame.contains(centre) })?.id
+    }
+}
+
 // MARK: - Dispatcher
 
 enum ParityActions {
@@ -871,15 +921,26 @@ enum ParityActions {
                 log("Choose a valid monitor DDC input source"); completion(false); return
             }
             let externals = DisplayControlService.displays().filter { !$0.isBuiltIn }
-            let pointer = NSEvent.mouseLocation
-            let pointerID = NSScreen.screens.first(where: { $0.frame.contains(pointer) })?
-                .deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
-            let selected = externals.first { $0.displayID == pointerID?.uint32Value }
-                ?? (externals.count == 1 ? externals.first : nil)
-            guard let selected else {
-                log("Point at an external monitor or connect exactly one monitor"); completion(false); return
+            let screens: [DisplayInputTargeting.Screen] = NSScreen.screens.compactMap { screen in
+                guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return nil }
+                return .init(id: id, frame: screen.frame)
             }
-            let accepted = MonitorControls.shared.requestRaw(selected.displayID, .inputSource, UInt16(number)) { result in
+            let pointer = NSEvent.mouseLocation
+            let hitsExternal = screens.contains { external in
+                externals.contains(where: { $0.displayID == external.id }) &&
+                    external.frame.insetBy(dx: -1, dy: -1).contains(pointer)
+            }
+            let focused = !hitsExternal && externals.count > 1
+                ? DisplayInputTargeting.focusedWindowScreenID(screens: screens,
+                    primaryHeight: NSScreen.screens.first?.frame.maxY ?? 0) : nil
+            guard let selectedID = DisplayInputTargeting.choose(
+                externalIDs: externals.map(\.displayID), screens: screens,
+                pointer: pointer, focusedScreenID: focused) else {
+                log("Point at the intended external monitor, or focus a window on it before switching inputs")
+                completion(false)
+                return
+            }
+            let accepted = MonitorControls.shared.requestRaw(selectedID, .inputSource, UInt16(number)) { result in
                 if result != .applied { log("Monitor DDC input switch was not acknowledged; check DDC/CI support") }
                 completion(result == .applied)
             }

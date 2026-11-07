@@ -9,6 +9,9 @@ final class MonitorControlsTests: XCTestCase {
         var writes: [[UInt8]] = []
         var succeeds = true
         var readableInput = true
+        var otherFeaturesReadable = true
+        var responseFlags: UInt16 = 0
+        var muteValue: UInt16 = 2
         var writeGate: DispatchSemaphore?
 
         func ports(for ids: [UInt32]) -> [UInt32: CFTypeRef] {
@@ -17,10 +20,10 @@ final class MonitorControlsTests: XCTestCase {
 
         func probe(_ feature: MonitorVCP, on port: CFTypeRef) -> MonitorVCP.Reading? {
             switch feature {
-            case .volume: return .init(current: 40, maximum: 200)
-            case .inputSource: return readableInput ? .init(current: 0x11, maximum: 0) : nil
-            case .mute: return .init(current: 2, maximum: 0)
-            case .contrast: return .init(current: 50, maximum: 100)
+            case .volume: return otherFeaturesReadable ? .init(current: 40, maximum: 200) : nil
+            case .inputSource: return readableInput ? .init(current: responseFlags | 0x11, maximum: 0) : nil
+            case .mute: return otherFeaturesReadable ? .init(current: responseFlags | muteValue, maximum: 0) : nil
+            case .contrast: return otherFeaturesReadable ? .init(current: 50, maximum: 100) : nil
             case .brightness: return nil
             }
         }
@@ -64,12 +67,54 @@ final class MonitorControlsTests: XCTestCase {
         XCTAssertNil(controls.rawValue(1, .inputSource), "Last write must not be reported as verified current source")
     }
 
+    func testNoGhostInputMenuWhenNoVCPFeatureResponds() {
+        let bus = Bus()
+        bus.readableInput = false
+        bus.otherFeaturesReadable = false
+        let controls = MonitorControls(bus: bus)
+        discover(controls)
+        XCTAssertFalse(controls.supports(1, .inputSource))
+        XCTAssertNil(controls.unverifiedRequestedInput(1))
+        XCTAssertFalse(controls.requestRaw(1, .inputSource, 0x11))
+        XCTAssertTrue(bus.writes.isEmpty)
+    }
+
+    func testFlaggedInputSourceAndZeroMuteNormalizeReadback() {
+        let bus = Bus()
+        bus.responseFlags = 0x8000
+        bus.muteValue = 0
+        let controls = MonitorControls(bus: bus)
+        discover(controls)
+        XCTAssertEqual(controls.rawValue(1, .inputSource), 0x11)
+        XCTAssertEqual(controls.rawValue(1, .mute), 0)
+        XCTAssertFalse(controls.requestRaw(1, .mute, 0), "zero can be read, but should never be sent")
+    }
+
+    func testWriteOnlyInputTracksUnverifiedRequestWithoutForgingReadback() {
+        let bus = Bus()
+        bus.readableInput = false
+        let controls = MonitorControls(bus: bus)
+        discover(controls)
+        XCTAssertNil(controls.unverifiedRequestedInput(1))
+        let done = expectation(description: "requested input")
+        XCTAssertTrue(controls.requestRaw(1, .inputSource, 0x10) { outcome in
+            XCTAssertEqual(outcome, .applied)
+            done.fulfill()
+        })
+        wait(for: [done], timeout: 2)
+        XCTAssertNil(controls.rawValue(1, .inputSource))
+        XCTAssertEqual(controls.unverifiedRequestedInput(1), 0x10)
+        discover(controls)
+        XCTAssertNil(controls.unverifiedRequestedInput(1), "a new DDC topology cannot inherit unverified state")
+    }
+
     func testRawSourceAndMuteWritesAreValidated() {
         let bus = Bus()
         let controls = MonitorControls(bus: bus)
         discover(controls)
         XCTAssertEqual(controls.rawValue(1, .inputSource), 0x11)
-        XCTAssertFalse(controls.requestRaw(1, .inputSource, 0x13))
+        XCTAssertFalse(controls.requestRaw(1, .inputSource, 0x14))
+        XCTAssertFalse(controls.requestRaw(1, .inputSource, 0x800f))
         XCTAssertFalse(controls.requestRaw(1, .mute, 0))
         XCTAssertFalse(controls.request(1, .inputSource, 0.5))
         let switched = expectation(description: "input switch")

@@ -48,8 +48,10 @@ final class StatusMenuLayoutTests: XCTestCase {
         XCTAssertFalse(more.contains("App Audio Engine"), "Audio is now an everyday toggle")
         let clipboardTools = menu.items.first { $0.title == "More" }?.submenu?.items
             .first { $0.title == "Clipboard Tools" }?.submenu.map(titles) ?? []
-        XCTAssertEqual(clipboardTools.count, 2)
+        XCTAssertEqual(clipboardTools.count, 3)
         XCTAssertTrue(clipboardTools.contains("Paste Stack"))
+        XCTAssertTrue(clipboardTools.contains("Paste Next Clipboard Item"))
+        XCTAssertTrue(more.contains("App Audio Mixer…"), "Mixer is reachable under More, not at the root")
         XCTAssertTrue(clipboardTools.contains { $0 == "Pause Clipboard History" || $0 == "Resume Clipboard History" })
         let productivityMenu = menu.items.first { $0.title == "More" }?.submenu?.items
             .first { $0.title == "Productivity Tools" }?.submenu

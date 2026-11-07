@@ -51,8 +51,15 @@ enum ClipboardImageText {
 
     static func recognize(_ image: CGImage, maximumLength: Int = 100_000) async -> Recognition? {
         guard let result = try? await TextRecognitionService.recognize(image, options: indexingOptions) else { return nil }
-        return Recognition(text: String(result.text.prefix(maximumLength)),
-                           lines: normalizedLines(result.lines.map { ($0.text, $0.box) }, imageSize: result.imageSize))
+        return projectRecognition(result, maximumLength: maximumLength)
+    }
+
+    /// Deterministic, pure part of the OCR→clipboard index pipeline. This can
+    /// be tested with an explicit recognition fixture on headless CI without
+    /// fabricating OCR text when Vision is actually unavailable.
+    static func projectRecognition(_ result: TextRecognitionResult, maximumLength: Int = 100_000) -> Recognition {
+        Recognition(text: String(result.text.prefix(maximumLength)),
+                    lines: normalizedLines(result.lines.map { ($0.text, $0.box) }, imageSize: result.imageSize))
     }
 
     /// Pixel boxes (top-left origin) to unit boxes, clamped, empty lines

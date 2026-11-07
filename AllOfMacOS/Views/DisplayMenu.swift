@@ -146,7 +146,11 @@ enum DisplayMenu {
                               keyEquivalent: "")
         item.target = DisplayMenuAction.shared
         item.representedObject = display.displayID
-        item.state = raw == 1 ? .on : .off
+        // Several monitors encode "unmuted" as 0 (not MCCS 2), and others
+        // return vendor flags in the high byte. Both still toggle to 1.
+        item.state = MonitorVCP.normalizedRawValue(raw, for: .mute) == 1 ? .on : .off
+        item.image = NSImage(systemSymbolName: item.state == .on ? "speaker.slash.fill" : "speaker.wave.2",
+                             accessibilityDescription: nil)
         return item
     }
 
@@ -154,7 +158,13 @@ enum DisplayMenu {
         guard !display.isBuiltIn,
               MonitorControls.shared.supports(display.displayID, .inputSource) else { return nil }
         let current = MonitorControls.shared.rawValue(display.displayID, .inputSource)
-        let item = NSMenuItem(title: "Monitor Input Source · DDC", action: nil, keyEquivalent: "")
+        let lastRequested = MonitorControls.shared.unverifiedRequestedInput(display.displayID)
+        let requestLabel = lastRequested.flatMap { code in
+            MonitorVCP.inputSources.first(where: { $0.code == code })?.title
+        }
+        let title = requestLabel.map { "Monitor Input Source · Requested \($0) (unverified)" }
+            ?? "Monitor Input Source · DDC"
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let menu = NSMenu()
         menu.autoenablesItems = false
         for source in MonitorVCP.inputSources {
@@ -369,7 +379,8 @@ final class DisplayMenuAction: NSObject {
     @objc func toggleMute(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? CGDirectDisplayID,
               let current = MonitorControls.shared.rawValue(id, .mute) else { return }
-        _ = MonitorControls.shared.requestRaw(id, .mute, current == 1 ? 2 : 1)
+        let normalized = MonitorVCP.normalizedRawValue(current, for: .mute)
+        _ = MonitorControls.shared.requestRaw(id, .mute, normalized == 1 ? 2 : 1)
     }
 
     @objc func setInputSource(_ sender: NSMenuItem) {
