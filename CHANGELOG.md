@@ -1,3 +1,9 @@
+## [3.4.29] - 2026-11-07
+
+### Fixed
+- **Capture Window Concealment**: Ensure AOM main window is immediately ordered out when starting capture, even if it was previously visible on screen, preventing it from appearing in captured frames.
+- **Immediate Overlay Guard**: Flush WindowServer transaction and suppress reopen requests during capture/overlay flows.
+
 ## 3.4.28 (2026-11-07)
 
 - Stop capture and overlay flows from raising the main window. Every overlay path now activates through `AOMOverlayActivation.activateForOverlay()`, which records the main window's visibility before `NSApp.activate` and orders it back out when an activation revealed it: the SwiftUI `WindowGroup` window survives `windowShouldClose` (which only orders it out) and can be re-ordered front by activation. 30 call sites converted (selection overlay, quick access, text capture HUD, screen ruler, pinned screenshots, editors, clipboard panel/editor, files shelf, folder rules, focus, mic-mute, window picker, floating menus, palette links, shortcut conflicts, confirm-alert presenters). `AppDelegate.showMainWindow()` and `openSettings()` keep plain activation on purpose.

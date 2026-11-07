@@ -473,6 +473,7 @@ final class CaptureCoordinator {
         }
 
         isCapturing = true
+        AOMOverlayActivation.hideMainWindow()
         Task { @MainActor in
             var succeeded = false
             defer {

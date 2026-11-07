@@ -62,6 +62,7 @@ final class SelectionOverlayController {
 
     func present() {
         Self.activeController = self
+        AOMOverlayActivation.hideMainWindow()
         // The display query overlaps the user's drag instead of following it.
         ScreenCaptureService.shared.prewarm()
         let screens = NSScreen.screens
