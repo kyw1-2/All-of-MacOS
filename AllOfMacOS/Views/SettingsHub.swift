@@ -839,9 +839,15 @@ struct SettingsHubView: View {
         .onReceive(NotificationCenter.default.publisher(for: .aomOpenReleaseNotes)) { _ in openReleaseNotes() }
         .onReceive(NotificationCenter.default.publisher(for: .aomOpenCaptureOptions)) { _ in sheet = .captureDetail }
         .onReceive(NotificationCenter.default.publisher(for: .aomShowSettingsCategory)) { note in
-            if let raw = note.object as? String, let target = SettingsCategory(rawValue: raw) {
-                query = ""
-                category = target
+            if let raw = note.object as? String {
+                if raw.hasPrefix("sheet:"), let targetSheet = AdvancedSheet(rawValue: String(raw.dropFirst(6))) {
+                    query = ""
+                    category = .general
+                    sheet = targetSheet
+                } else if let target = SettingsCategory(rawValue: raw) {
+                    query = ""
+                    category = target
+                }
             }
         }
         .onAppear {

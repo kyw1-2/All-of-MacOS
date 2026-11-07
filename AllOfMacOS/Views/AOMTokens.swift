@@ -233,23 +233,26 @@ enum AOMColor {
     static let textTertiary = Color(nsColor: .tertiaryLabelColor)
 
     // Surfaces (opaque; glass is reserved for chrome)
-    /// Every page background: grouped canvas, #FFFFFF / #282828.
-    static let canvas = Color.aomDynamic(light: .white, dark: NSColor(white: 0.157, alpha: 1))
+    /// Every page background: refined grouped canvas (#F5F6F8 in light, #141518 in dark).
+    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.965, blue: 0.973, alpha: 1),
+                                         dark: NSColor(srgbRed: 0.078, green: 0.082, blue: 0.094, alpha: 1))
     static let canvasNSColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(white: 0.157, alpha: 1) : .white
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.078, green: 0.082, blue: 0.094, alpha: 1)
+            : NSColor(srgbRed: 0.961, green: 0.965, blue: 0.973, alpha: 1)
     }
-    /// Cards, tiles, section groups: #F4F4F6 / #323234, a step stronger than
-    /// 3.3.5's #F8F8F8 so cards read without leaning on the hairline.
-    static let surface = Color.aomDynamic(light: NSColor(srgbRed: 0.957, green: 0.957, blue: 0.965, alpha: 1),
-                                          dark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.204, alpha: 1),
-                                          highContrastLight: NSColor(white: 0.985, alpha: 1),
-                                          highContrastDark: NSColor(white: 0.17, alpha: 1))
-    /// A card under the pointer: the fill shifts, the card never lifts.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.929, green: 0.929, blue: 0.937, alpha: 1),
-                                               dark: NSColor(srgbRed: 0.231, green: 0.231, blue: 0.239, alpha: 1))
+    /// Cards, tiles, section groups: crisp elevated white (#FFFFFF) in light mode,
+    /// machined charcoal (#1D1F24) in dark mode.
+    static let surface = Color.aomDynamic(light: .white,
+                                          dark: NSColor(srgbRed: 0.114, green: 0.122, blue: 0.141, alpha: 1),
+                                          highContrastLight: .white,
+                                          highContrastDark: NSColor(srgbRed: 0.135, green: 0.145, blue: 0.165, alpha: 1))
+    /// A card under the pointer: subtle tactile shift.
+    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.984, green: 0.986, blue: 0.992, alpha: 1),
+                                               dark: NSColor(srgbRed: 0.145, green: 0.155, blue: 0.180, alpha: 1))
     /// Pressed tiles and cards.
-    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.902, green: 0.902, blue: 0.910, alpha: 1),
-                                                 dark: NSColor(srgbRed: 0.267, green: 0.267, blue: 0.275, alpha: 1))
+    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.950, blue: 0.962, alpha: 1),
+                                                 dark: NSColor(srgbRed: 0.175, green: 0.185, blue: 0.212, alpha: 1))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.

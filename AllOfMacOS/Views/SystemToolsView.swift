@@ -25,6 +25,7 @@ struct SystemToolsView: View {
     @State private var showActionLibrary = false
     @State private var choosingWeather = false
     @State private var query = ""
+    @State private var selectedGroup: SystemToolGroup? = nil
 
     /// Wide enough for the longest name ("Awake While App Runs") plus a
     /// state pill on one line: four columns in a 1320 pt window.
@@ -44,9 +45,31 @@ struct SystemToolsView: View {
 
     private var visibleGroups: [(group: SystemToolGroup, tools: [SystemToolInfo])] {
         SystemToolGroup.allCases.compactMap { group in
+            if let selectedGroup, selectedGroup != group { return nil }
             let tools = SystemToolCatalog.availableTools(in: group).filter { $0.matches(query) }
             return tools.isEmpty ? nil : (group, tools)
         }
+    }
+
+    private var groupFilterBar: some View {
+        let availableGroups = SystemToolGroup.allCases.filter { !SystemToolCatalog.availableTools(in: $0).isEmpty }
+        return ScrollView(.horizontal) {
+            HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                AOMFilterChip("All Groups", count: SystemToolsInventory.count, selected: selectedGroup == nil) {
+                    withAnimation(AOMMotion.quick) { selectedGroup = nil }
+                }
+                ForEach(availableGroups, id: \.self) { group in
+                    let count = SystemToolCatalog.availableTools(in: group).count
+                    AOMFilterChip(group.name, count: count, selected: selectedGroup == group) {
+                        withAnimation(AOMMotion.quick) {
+                            selectedGroup = selectedGroup == group ? nil : group
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
     }
 
     /// The last result, or how to use the page before anything ran.
@@ -86,6 +109,7 @@ struct SystemToolsView: View {
                 HardwareCareCard()
                 shortcuts
             }
+            groupFilterBar
             let shown = visibleGroups
             if shown.isEmpty {
                 AOMEmptyState("No Tools Match “\(query)”", systemImage: "magnifyingglass",
@@ -121,9 +145,19 @@ struct SystemToolsView: View {
                 .help("Browse every action AOM can run")
             }
             ToolbarItem(placement: .automatic) {
+                Button { FloatingMenuController.shared.edit() } label: {
+                    Label("Floating Menus", systemImage: "menubar.rectangle")
+                }
+                .help("Configure custom floating menus and desktop widgets")
+            }
+            ToolbarItem(placement: .automatic) {
+                Button { model.run(.vpn) } label: {
+                    Label("VPN", systemImage: "network.badge.shield.half.filled")
+                }
+                .help("Manage VPN and Tailscale connections")
+            }
+            ToolbarItem(placement: .automatic) {
                 Menu {
-                    // Activation groups belong to Automation: its toolbar's
-                    // scope menu has "Edit Activation Groups…".
                     Button("Floating Menus & Widgets…") { FloatingMenuController.shared.edit() }
                     Divider()
                     Button("VPN Connections…") { model.run(.vpn) }

@@ -572,6 +572,19 @@ struct ClipboardStudioView: View {
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
+            Button {
+                newText = ""
+                showingNewTextSheet = true
+            } label: {
+                Label("New Text", systemImage: "plus.bubble")
+            }
+            .help("Create a text snippet in clipboard history")
+            Button {
+                showingSettings = true
+            } label: {
+                Label("Settings", systemImage: "slider.horizontal.3")
+            }
+            .help("Clipboard history capacity, ignored apps and paste shortcuts")
             Picker("Layout", selection: $gridLayout) {
                 Label("List", systemImage: "list.bullet").tag(false)
                 Label("Gallery", systemImage: "square.grid.2x2").tag(true)

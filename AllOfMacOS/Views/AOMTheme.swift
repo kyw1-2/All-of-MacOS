@@ -195,8 +195,9 @@ struct AOMCardSurface: ViewModifier {
     var padding: CGFloat? = AOMSpace.cardPadding
     var hovering = false
     var pressed = false
-    /// Kept for source compatibility; elevation is tone, not shadow.
+    /// Kept for source compatibility; elevation adds subtle native card depth.
     var elevated = true
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityShowBorders) private var showBorders
 
@@ -209,19 +210,25 @@ struct AOMCardSurface: ViewModifier {
                 .padding(padding ?? 0)
                 .background(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface), in: shape)
                 .overlay {
-                    shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
-                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
-                        .allowsHitTesting(false)
+                    shape.strokeBorder(
+                        contrast == .increased
+                            ? AOMColor.strongLine
+                            : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.42 : 0.32) : AOMColor.hairline),
+                        lineWidth: contrast == .increased || showBorders || hovering ? 1 : 0.65
+                    )
+                    .allowsHitTesting(false)
                 }
+                .shadow(color: elevated ? Color.black.opacity(scheme == .dark ? 0.20 : 0.035) : .clear,
+                        radius: hovering ? 6 : 3, x: 0, y: hovering ? 2 : 1)
                 .containerShape(shape)
         case .well:
             content
                 .padding(padding ?? 0)
                 .background(AOMColor.sunken, in: shape)
                 .overlay {
-                    if contrast == .increased || showBorders {
-                        shape.strokeBorder(AOMColor.hairline, lineWidth: 1).allowsHitTesting(false)
-                    }
+                    shape.strokeBorder(contrast == .increased || showBorders ? AOMColor.strongLine : AOMColor.hairline.opacity(0.65),
+                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
+                        .allowsHitTesting(false)
                 }
         case .glass:
             content

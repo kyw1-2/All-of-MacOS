@@ -44,7 +44,9 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
-            AOMSidebar(showingCommandPalette: $showingCommandPalette)
+            AOMSidebar(showingCommandPalette: $showingCommandPalette,
+                       showLog: $showLog,
+                       showTouchVisualizer: $showTouchVisualizer)
                 .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
                                                 max: AOMSize.sidebarMax)
                 .tutorialAnchor(.sidebar)
@@ -121,8 +123,18 @@ struct AOMMainShell<Content: View>: View {
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
+    @Binding var showLog: Bool
+    @Binding var showTouchVisualizer: Bool
     /// The selection is the accent only in the key window; elsewhere it is grey.
     @Environment(\.controlActiveState) private var controlActiveState
+
+    init(showingCommandPalette: Binding<Bool>,
+         showLog: Binding<Bool> = .constant(false),
+         showTouchVisualizer: Binding<Bool> = .constant(false)) {
+        self._showingCommandPalette = showingCommandPalette
+        self._showLog = showLog
+        self._showTouchVisualizer = showTouchVisualizer
+    }
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -170,6 +182,9 @@ struct AOMSidebar: View {
         // System Settings › Appearance (HIG Sidebars), so no override here.
         .safeAreaInset(edge: .top, spacing: 0) {
             AOMSidebarSearchButton(showingCommandPalette: $showingCommandPalette)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            AOMSidebarFooterDock(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
         }
         .accessibilityElement(children: .contain)
     }
@@ -343,6 +358,102 @@ private struct AOMSidebarSearchButton: View {
         .padding(.bottom, AOMSpace.x1)
         .help("Search pages, settings and actions")
         .accessibilityLabel("Search")
+    }
+}
+
+/// Raycast / Linear / Arc style bottom sidebar dock: 1-click access to engine
+/// pause/resume, live Touch Visualizer, Diagnostics Console, and Settings (⌘,).
+private struct AOMSidebarFooterDock: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var showLog: Bool
+    @Binding var showTouchVisualizer: Bool
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        VStack(spacing: 0) {
+            AOMDivider()
+            HStack(spacing: AOMSpace.x1) {
+                Button {
+                    appState.toggleGlobalEnabled()
+                } label: {
+                    HStack(spacing: AOMSpace.x1) {
+                        Circle()
+                            .fill(appState.globalEnabled ? AOMColor.success : AOMColor.textTertiary)
+                            .frame(width: 7, height: 7)
+                        Text(appState.globalEnabled ? "Active" : "Paused")
+                            .font(AOMFont.caption.weight(.semibold))
+                            .foregroundStyle(appState.globalEnabled ? AOMColor.text : AOMColor.textSecondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .padding(.horizontal, AOMSpace.x2)
+                    .frame(height: 26)
+                    .background(
+                        Capsule().fill(appState.globalEnabled ? AOMColor.success.opacity(0.12) : AOMColor.track)
+                    )
+                    .overlay {
+                        Capsule().strokeBorder(
+                            appState.globalEnabled ? AOMColor.success.opacity(0.28) : AOMColor.hairline,
+                            lineWidth: 0.6
+                        )
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(appState.globalEnabled ? "AOM is active — click to pause all automations" : "AOM is paused — click to resume")
+
+                Spacer(minLength: AOMSpace.x1)
+
+                dockIconButton(
+                    symbol: "hand.point.up.braille",
+                    active: showTouchVisualizer,
+                    help: "Toggle Live Touch Visualizer"
+                ) {
+                    showTouchVisualizer.toggle()
+                }
+
+                dockIconButton(
+                    symbol: "terminal",
+                    active: showLog,
+                    help: "Toggle Diagnostics Console"
+                ) {
+                    showLog.toggle()
+                }
+
+                dockIconButton(
+                    symbol: "gearshape",
+                    active: false,
+                    help: "Settings (⌘,)"
+                ) {
+                    openSettings()
+                }
+            }
+            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
+            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+        }
+        .background(.ultraThinMaterial)
+    }
+
+    private func dockIconButton(symbol: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(active ? Color.accentColor : AOMColor.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                        .fill(active ? Color.accentColor.opacity(0.14) : Color.clear)
+                )
+                .overlay {
+                    if active {
+                        RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.30), lineWidth: 0.6)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

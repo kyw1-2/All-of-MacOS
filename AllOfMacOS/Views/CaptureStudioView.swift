@@ -75,7 +75,11 @@ struct CaptureStudioView: View {
             // A bare strip: the toolbar's Capture menu lists the same tools,
             // so the strip needs no title of its own (VoiceOver keeps one).
             AOMSection(padding: AOMSpace.x2) {
-                captureLaunchpad
+                VStack(spacing: AOMSpace.x2) {
+                    captureLaunchpad
+                    AOMDivider()
+                    captureQuickUtilitiesBar
+                }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Capture tools")
@@ -273,6 +277,63 @@ struct CaptureStudioView: View {
                 GridRow { ForEach(all.suffix(from: 5)) { toolButton($0) } }
             }
         }
+    }
+
+    private var captureQuickUtilitiesBar: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: AOMSpace.x2) {
+                Button {
+                    AnnotationEditorController.shared.chooseImageOrProject()
+                } label: {
+                    Label("Open & Annotate…", systemImage: "pencil.and.outline")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open an image file or annotation project to mark up")
+
+                Button {
+                    CaptureHistoryWindowController.shared.present()
+                } label: {
+                    Label("History Overlay", systemImage: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open the floating capture history window")
+
+                Button {
+                    CaptureCoordinator.shared.toggleDesktopIcons()
+                    toast.show("Desktop icons toggled")
+                } label: {
+                    Label("Toggle Desktop Icons", systemImage: "menubar.dock.rectangle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Hide or show Finder desktop icons for clean screenshots")
+
+                Toggle("Append OCR Text", isOn: Binding(
+                    get: { textCapture.additiveClipboard },
+                    set: { textCapture.additiveClipboard = $0 }
+                ))
+                .toggleStyle(.checkbox)
+                .font(AOMFont.callout)
+                .padding(.horizontal, AOMSpace.x1)
+                .help("When enabled, Copy Text (OCR) appends to the clipboard instead of replacing it")
+
+                Spacer(minLength: AOMSpace.x2)
+
+                Button {
+                    showingSettingsSheet = true
+                } label: {
+                    Label("Capture Settings…", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Format, save folder, recording FPS, audio & Quick Access options")
+            }
+            .padding(.horizontal, AOMSpace.x1)
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
     }
 
     /// What the gallery shows, with the thumbnail size at the trailing end of

@@ -21,8 +21,8 @@ struct ModernGesturesWorkspace: View {
     @State private var searchPresented = false
     @State private var runStates: [UUID: AOMRunState] = [:]
     @State private var expandedActionIDs: Set<UUID> = []
-    @State private var showOptions = false
-    @State private var showInputSettings = false
+    @State private var showOptions = true
+    @State private var showInputSettings = true
     @State private var sortOrder: [KeyPathComparator<Trigger>] = []
     @State private var parentID: UUID?
     @State private var toElse = false
@@ -149,7 +149,7 @@ struct ModernGesturesWorkspace: View {
         .aomToast(toast)
         .onAppear {
             reconcileSelection()
-            showInputSettings = selectedTrigger?.actions.isEmpty == true
+            syncExpandedEditorState()
             applyPreviewEditorHook()
             let args = ProcessInfo.processInfo.arguments
             if PresetManager.isUIPreview, args.contains("--aom-preview-add-midi-trigger") {
@@ -166,9 +166,7 @@ struct ModernGesturesWorkspace: View {
         }
         .onChange(of: filteredTriggers.map(\.id)) { _, _ in reconcileSelection() }
         .onChange(of: appState.selectedTrigger?.id) { _, _ in
-            expandedActionIDs.removeAll()
-            showInputSettings = selectedTrigger?.actions.isEmpty == true
-            showOptions = false
+            syncExpandedEditorState()
             applyPreviewEditorHook()
         }
         .onDeleteCommand { if let trigger = selectedTrigger { delete(trigger) } }
@@ -177,12 +175,27 @@ struct ModernGesturesWorkspace: View {
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
             scopeMenu
+            Button {
+                showingGroupsEditor = true
+            } label: {
+                Label("Groups", systemImage: "square.stack.3d.up")
+            }
+            .help("Edit Activation Groups")
             Picker("View", selection: $viewMode) {
                 Label("List", systemImage: "list.bullet").tag(ViewMode.list)
                 Label("Table", systemImage: "tablecells").tag(ViewMode.table)
             }
             .pickerStyle(.segmented)
             .help("Show as a list or a sortable table")
+            Menu {
+                Button("Import Preset…", systemImage: "square.and.arrow.down") { appState.presentPresetImport() }
+                Button("Export Preset…", systemImage: "square.and.arrow.up") { appState.presentPresetExport() }
+                Divider()
+                Button("Edit Activation Groups…", systemImage: "square.stack.3d.up") { showingGroupsEditor = true }
+            } label: {
+                Label("Presets", systemImage: "ellipsis.circle")
+            }
+            .help("Import or export presets and manage activation groups")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -218,6 +231,21 @@ struct ModernGesturesWorkspace: View {
         if !filteredTriggers.contains(where: { $0.id == appState.selectedTrigger?.id }) {
             appState.selectedTrigger = filteredTriggers.first
             appState.selectedAction = nil
+        }
+    }
+
+    private func syncExpandedEditorState() {
+        showInputSettings = true
+        showOptions = true
+        if let trigger = selectedTrigger {
+            let allRows = ActionTree.rows(trigger.actions)
+            if allRows.count <= 6 {
+                expandedActionIDs = Set(allRows.map(\.id))
+            } else {
+                expandedActionIDs.removeAll()
+            }
+        } else {
+            expandedActionIDs.removeAll()
         }
     }
 
@@ -271,19 +299,22 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    /// The input filter as labelled chips with their counts; inputs nothing
-    /// uses are left out (the selected one always stays).
+    /// The input filter as labelled chips with their counts; all categories
+    /// stay visible so users can discover Trackpad, Keyboard, Mouse, Drawing
+    /// and Other triggers at a glance.
     private var filterBar: some View {
-        let items = TriggerCategory.allCases.compactMap { category -> AOMScopeItem<TriggerCategory>? in
+        let items = TriggerCategory.allCases.map { category -> AOMScopeItem<TriggerCategory> in
             let number = count(category)
-            guard category == .all || number > 0 || category == selectedDeviceCategory else { return nil }
             return AOMScopeItem(id: category, title: Self.shortTitle(category),
                                 symbol: category == .all ? nil : category.iconName, count: number)
         }
-        return AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
-            .padding(.horizontal, AOMSpace.rowInset)
-            // One chip plus 8 pt above and below it.
-            .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
+        return ScrollView(.horizontal) {
+            AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
+                .padding(.horizontal, AOMSpace.rowInset)
+        }
+        .scrollIndicators(.hidden)
+        // One chip plus 8 pt above and below it.
+        .frame(height: AOMFeatureSize.chip + AOMSpace.x4)
     }
 
     private var list: some View {

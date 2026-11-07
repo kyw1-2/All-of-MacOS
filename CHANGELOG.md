@@ -1,3 +1,12 @@
+## 3.4.25 — 2026-11-07 (UI/UX & Feature Discoverability Overhaul)
+
+- Redesign the AOM design system (`AOMTokens`, `AOMTheme`, `AOMComponents`) after 56 commercial macOS references (Raycast, Linear, CleanShot X, Paste, BetterTouchTool, Swish, SoundSource, Arc, Things 3, Karabiner-Elements, Input Source Pro, Velja, macOS Sequoia/Tahoe HIG): replace stark white/flat-grey surfaces with a native grouped slate canvas (`#F5F6F8` / `#141518`), elevated cards with crisp `0.65pt` rim borders and hover elevation, and tinted glass squircle badges (`13%–20%` tint fill + `0.75pt` border + hierarchical accent glyph).
+- Add a persistent Sidebar Footer Dock (`AOMSidebarFooterDock`) for 1-click access to Engine Pause/Resume, Live Touch Visualizer, Diagnostics Console, and Settings (`⌘,`).
+- Add a Workspace Power Utilities bar (`powerUtilitiesBar`) providing direct 1-click access to Hyper Key & Remaps, App Input Sources (한/영), Browser Link Rules, Floating Menus & Widgets, Snap Zones & Profiles, Click Hints & Sequences, Floating Audio Mixer, and Global Shortcuts.
+- Surface all 6 Automation input categories (`All`, `Trackpad`, `Keyboard`, `Mouse`, `Drawing`, `Other`) permanently in the Automation filter bar, auto-expand the When input inspector, Action steps (up to 6 steps), and Advanced trigger options in the Automation detail editor, and expose Groups and Presets directly in the toolbar.
+- Surface Snap Zones, Display Profiles, Saved Windows, and Window Switcher at the top of Window Tiling (`quickZonesBar` + toolbar) and expand Advanced tiling options by default.
+- Add direct utility strips and toolbar controls in Capture Studio (`Open & Annotate…`, `History Overlay`, `Toggle Desktop Icons`, `Append OCR Text`, `Capture Settings…`), Clipboard (`New Text`, `Settings`), Audio (`Floating Mixer`, `Show All Apps`, auto-expanded Output EQ/effects), and System Tools (group filter bar + `Floating Menus` and `VPN` toolbar buttons).
+
 ## 3.4.24 — 2026-11-07 (Text Actions regressions after 3.4.23)
 
 - Distinguish text-bearing lists/tables from file selection; inspect the focused node and deep AX ancestors for password/media guards, with cycle and time limits.

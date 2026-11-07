@@ -18,7 +18,7 @@ struct ModernWindowSnappingView: View {
     @State private var showingSnapZones = false
     @State private var showingProfiles = false
     @State private var showingWindowLayouts = false
-    @State private var showsAdvanced = ModernWindowSnappingView.previewExpandsAdvanced
+    @State private var showsAdvanced = true
     @AppStorage(TitleBarWindowSnap.enabledKey) private var trackpadSnapOn = false
     @AppStorage(TitleBarWindowSnap.hapticKey) private var trackpadSnapHaptic = true
     @AppStorage(TitleBarWindowSnap.activateKey) private var trackpadSnapActivate = true
@@ -101,6 +101,7 @@ struct ModernWindowSnappingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     header
+                    quickZonesBar
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
                             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
@@ -153,6 +154,26 @@ struct ModernWindowSnappingView: View {
         .background(AOMColor.canvas)
         .navigationTitle("Window Tiling")
         .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                Button {
+                    showingSnapZones = true
+                } label: {
+                    Label("Snap Zones", systemImage: "rectangle.split.3x3")
+                }
+                .help("Draw and edit custom snap zones")
+                Button {
+                    showingProfiles = true
+                } label: {
+                    Label("Display Profiles", systemImage: "display.2")
+                }
+                .help("Per-monitor snap profiles")
+                Button {
+                    showingWindowLayouts = true
+                } label: {
+                    Label("Saved Windows", systemImage: "macwindow.on.rectangle")
+                }
+                .help("Save and restore multi-window layouts")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     WindowSwitcherController.shared.show()
@@ -218,6 +239,65 @@ struct ModernWindowSnappingView: View {
         guard drag else { return nil }
         if !appState.effectiveSnapZones.contains(where: \.isEnabled) { return AOMStatus("No zones on", tone: .warning) }
         return appState.snapMonitoring ? nil : AOMStatus("Not listening", tone: .warning)
+    }
+
+    private var quickZonesBar: some View {
+        HStack(spacing: AOMSpace.tileGap) {
+            quickZoneButton(
+                title: "Edit Snap Zones",
+                subtitle: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) active zones",
+                symbol: "rectangle.split.3x3"
+            ) {
+                showingSnapZones = true
+            }
+            quickZoneButton(
+                title: "Display Profiles",
+                subtitle: appState.activeSnapProfile?.name ?? "Per-monitor layouts",
+                symbol: "display.2"
+            ) {
+                showingProfiles = true
+            }
+            quickZoneButton(
+                title: "Saved Windows",
+                subtitle: "Snapshots & restore",
+                symbol: "macwindow.on.rectangle"
+            ) {
+                showingWindowLayouts = true
+            }
+            quickZoneButton(
+                title: "Window Switcher",
+                subtitle: "Thumbnail overlay",
+                symbol: "rectangle.stack"
+            ) {
+                WindowSwitcherController.shared.show()
+            }
+        }
+    }
+
+    private func quickZoneButton(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: AOMSpace.x2) {
+                AOMModuleBadge(symbol: symbol, hue: AOMModule.tiling.hue, size: AOMIcon.hitArea)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(AOMFont.bodyEmphasis)
+                        .foregroundStyle(AOMColor.text)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: AOMSpace.x1)
+                Image(systemName: "chevron.right")
+                    .font(AOMFont.caption.weight(.semibold))
+                    .foregroundStyle(AOMColor.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
+        .help("\(title) — \(subtitle)")
     }
 
     // MARK: - Title-bar snap

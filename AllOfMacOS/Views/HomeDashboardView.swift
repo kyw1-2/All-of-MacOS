@@ -55,6 +55,7 @@ struct AOMHomeView: View {
     /// What this page shows and in which order (design-3.4.0 b.15).
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.openSettings) private var openSettings
     @State private var showsCustomize = false
     /// The Productivity modules' `attention` lines, polled with the rest of
     /// the status so a module's countdown never redraws the whole page.
@@ -101,6 +102,7 @@ struct AOMHomeView: View {
                 if layout.shows(.quickActions) {
                     quickActions
                 }
+                powerUtilitiesBar
                 overview(snapshot)
             }
             .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
@@ -689,6 +691,95 @@ struct AOMHomeView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Quick actions")
+    }
+
+    // MARK: Power utilities (1-click access to deep features)
+
+    private struct PowerUtilityItem: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let symbol: String
+        let hue: Color
+        let action: () -> Void
+    }
+
+    private func openSettingsTarget(_ target: String) {
+        openSettings()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            NotificationCenter.default.post(name: .aomShowSettingsCategory, object: target)
+        }
+    }
+
+    private var powerUtilitiesBar: some View {
+        let items: [PowerUtilityItem] = [
+            PowerUtilityItem(id: "hyperKey", title: "Hyper Key & Remaps", subtitle: "Caps Lock → ⌃⌥⌘⇧ & key remaps",
+                             symbol: "command.square", hue: AOMModule.automation.hue) {
+                openSettingsTarget("automation")
+            },
+            PowerUtilityItem(id: "inputSources", title: "App Input Sources", subtitle: "Auto-switch Korean / English by app",
+                             symbol: "globe", hue: Color(nsColor: .systemIndigo)) {
+                openSettingsTarget("general")
+            },
+            PowerUtilityItem(id: "linkRules", title: "Browser Link Rules", subtitle: "Route URLs & strip tracking tags",
+                             symbol: "arrow.triangle.branch", hue: Color(nsColor: .systemCyan)) {
+                openSettingsTarget("sheet:linkRules")
+            },
+            PowerUtilityItem(id: "floatingWidgets", title: "Floating Menus", subtitle: "Custom palettes & screen widgets",
+                             symbol: "menubar.rectangle", hue: Color(nsColor: .systemPurple)) {
+                FloatingMenuController.shared.edit()
+            },
+            PowerUtilityItem(id: "snapZones", title: "Snap Zones & Profiles", subtitle: "Custom drop areas & display sets",
+                             symbol: "rectangle.split.3x3", hue: AOMModule.tiling.hue) {
+                appState.selectedMainTab = .snapping
+            },
+            PowerUtilityItem(id: "clickHints", title: "Click Hints & Sequences", subtitle: "Keyboard-driven UI click labels",
+                             symbol: "keyboard.badge.eye", hue: AOMModule.textActions.hue) {
+                appState.selectedMainTab = .textActions
+            },
+            PowerUtilityItem(id: "audioMixer", title: "Floating Audio Mixer", subtitle: "Per-app volume, EQ & Magic Boost",
+                             symbol: "slider.horizontal.3", hue: AOMModule.audio.hue) {
+                AppAudioMixerService.shared.showPanel()
+            },
+            PowerUtilityItem(id: "globalShortcuts", title: "Global Shortcuts", subtitle: "Capture, clipboard & tool hotkeys",
+                             symbol: "command", hue: Color(nsColor: .systemOrange)) {
+                openSettingsTarget("shortcuts")
+            }
+        ]
+        let cols = Self.gridColumns(count: items.count, width: contentWidth, preferred: [4, 2], minimum: 210)
+        return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
+            AOMSectionTitle("Power utilities", detail: "Direct access")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top), count: cols),
+                      alignment: .leading, spacing: AOMSpace.tileGap) {
+                ForEach(items) { item in
+                    Button(action: item.action) {
+                        HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
+                            AOMModuleBadge(symbol: item.symbol, hue: item.hue, size: AOMIcon.hitArea)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(AOMFont.bodyEmphasis)
+                                    .foregroundStyle(AOMColor.text)
+                                    .lineLimit(1)
+                                Text(item.subtitle)
+                                    .font(AOMFont.caption)
+                                    .foregroundStyle(AOMColor.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: AOMSpace.x1)
+                            Image(systemName: "chevron.right")
+                                .font(AOMFont.caption.weight(.semibold))
+                                .foregroundStyle(AOMColor.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
+                    .help("\(item.title) — \(item.subtitle)")
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Power utilities")
     }
 
     private func quickActionTile(_ kind: WorkspaceQuickActionKind) -> some View {

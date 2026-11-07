@@ -534,7 +534,9 @@ struct AOMStatusPill: View {
         .padding(.horizontal, AOMSpace.x2 - AOMSpace.x0_5)
         .frame(minHeight: AOMIcon.row)
         .background(filled ? AnyShapeStyle(fill) : AnyShapeStyle(fill.opacity(wash)), in: Capsule())
-        .overlay { if increased { Capsule().strokeBorder(fill, lineWidth: 1) } }
+        .overlay {
+            Capsule().strokeBorder(fill.opacity(increased ? 0.9 : 0.25), lineWidth: increased ? 1 : 0.5)
+        }
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
@@ -556,13 +558,14 @@ extension EnvironmentValues {
 
 // MARK: - Module badge and tile
 
-/// A module identity badge: the module hue with a white glyph (24 pt tiles,
-/// 28 pt page headers). Off modules show a quiet well with a secondary glyph.
+/// A module identity badge: refined tinted squircle with a crisp inner rim
+/// and hierarchical symbol in the module's accent hue (Linear / Raycast / Arc style).
 struct AOMModuleBadge: View {
     let symbol: String
     let hue: Color?
     var size: CGFloat = AOMIcon.tileBadge
     var active = true
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
     init(_ module: AOMModule, size: CGFloat = AOMIcon.tileBadge, active: Bool = true) {
@@ -580,17 +583,28 @@ struct AOMModuleBadge: View {
     }
 
     var body: some View {
-        // An app-icon squircle at any size; the glyph is half the side
-        // (16 pt in a 32 pt tile badge, 20 pt in a 40 pt header badge).
         let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
         let tinted = active && hue != nil
+        let tintColor = hue ?? AOMColor.accent
         Image(systemName: symbol)
             .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(tinted ? Color.white : AOMColor.textSecondary)
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(tinted ? tintColor : AOMColor.textSecondary)
             .frame(width: size, height: size)
-            .background(tinted ? AnyShapeStyle(hue ?? .clear) : AnyShapeStyle(AOMColor.sunken), in: shape)
-            .overlay { if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) } }
+            .background(
+                tinted
+                    ? AnyShapeStyle(tintColor.opacity(scheme == .dark ? 0.20 : 0.13))
+                    : AnyShapeStyle(AOMColor.sunken),
+                in: shape
+            )
+            .overlay {
+                shape.strokeBorder(
+                    contrast == .increased
+                        ? AOMColor.strongLine
+                        : (tinted ? tintColor.opacity(scheme == .dark ? 0.36 : 0.25) : AOMColor.hairline.opacity(0.6)),
+                    lineWidth: contrast == .increased ? 1 : 0.75
+                )
+            }
             .accessibilityHidden(true)
     }
 }

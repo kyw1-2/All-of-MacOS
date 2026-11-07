@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 struct AudioWorkspaceView: View {
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var searchText = ""
-    @State private var expandedOutput = false
+    @State private var expandedOutput = true
     /// Confirmations for the page and its rows (design-3.4.0 b.5).
     @StateObject private var toast = AOMToastModel()
 
@@ -75,7 +75,13 @@ struct AudioWorkspaceView: View {
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItemGroup(placement: .automatic) {
+            Button {
+                service.showPanel()
+            } label: {
+                Label("Floating Mixer", systemImage: "slider.horizontal.3")
+            }
+            .help("Open the floating per-app audio mixer panel")
             Menu {
                 Button("Add Application…", systemImage: "plus") { pickAndAddApplication() }
                 Toggle("Show All Running Apps", isOn: $service.showAllApps)
@@ -143,8 +149,14 @@ struct AudioWorkspaceView: View {
         let total = lists.favorites.count + lists.active.count + lists.other.count
         return AOMSectionCard("Applications", symbol: "square.grid.2x2", detail: total > 0 ? "\(total)" : nil, contentPadding: 0,
                               accessory: {
-            Button { pickAndAddApplication() } label: { Label("Add…", systemImage: "plus") }
-                .help("Choose an application to add to your favorites")
+            HStack(spacing: AOMSpace.x2) {
+                Toggle("Show All Apps", isOn: $service.showAllApps)
+                    .toggleStyle(.checkbox)
+                    .font(AOMFont.callout)
+                    .help("Show all running applications even when silent")
+                Button { pickAndAddApplication() } label: { Label("Add…", systemImage: "plus") }
+                    .help("Choose an application to add to your favorites")
+            }
         }) {
             // In-card empty states (design-3.4.0 b.6): one sentence, one action.
             if !service.isSupported {
