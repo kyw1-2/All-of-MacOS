@@ -1,3 +1,24 @@
+## [3.4.35] - 2026-11-08
+
+### Fixed
+- **Double press could repeat itself**: a completed pair stamped the second press as a new "first" press, so a third press inside the same window ran the double-press actions again and swallowed the single-press action. The pair now clears its stamp (caught by `DoublePressGateTests.testThirdPressDoesNotStayDouble`).
+
+## [3.4.34] - 2026-11-08
+
+### Changed
+- **Gesture preview stops burning CPU**: the editor preview played its animation forever. With the window visible on Gestures & Automation an idle app measured 30 % CPU against 7 % on Home; the preview now plays for 8 s after it appears, replays while the pointer is on it, and rests otherwise, at 24 fps instead of 30.
+
+## [3.4.33] - 2026-11-08
+
+### Fixed
+- **Idle CPU 44% → single digits**: `GesturePreviewView` gated its 30 fps `TimelineView` and four `repeatForever` animations on `scenePhase == .active`. A SwiftUI `WindowGroup` keeps its scene active after the window is ordered out or closed, so the preview requested a frame clock with nothing on screen: measured 43–45 % CPU (and ~47 % WindowServer) while idle, 6 % after switching pages. New `AOMUIVisibility` follows real window visibility (visible + not miniaturised + not occluded, status-bar window excluded) and gates the preview, so an idle app stops animating.
+- **UGREEN side buttons: real single/double press**: the two side-button triggers faked the distinction with `Cycle Through Actions` plus a 600 ms `delayBeforeMs` on the first child. A single click therefore lagged half a second, and a double click ran *both* actions (the delayed back/forward plus Mission Control / ⌘W). Shortcuts can now carry `pressCount` 1 or 2; the single press waits one multi-click window (`AOMMouseMultiClickIntervalMs`, default = the system double-click interval) and is cancelled when the second press lands.
+
+### Added
+- `DoublePressGate` (pure rules, unit-tested): a pair completes only inside the window, a third press starts a new pair, keys are independent.
+- Trigger editor: a **Press count** row (Single press / Double press) for keyboard shortcuts, so the new binding can be set in the app instead of only in the preset file.
+- Tests: `DoublePressGateTests`, `AOMUIVisibilityTests`.
+
 ## [3.4.30] - 2026-11-07
 
 ### Fixed

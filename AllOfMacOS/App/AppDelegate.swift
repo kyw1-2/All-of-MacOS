@@ -93,6 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.current = self
         AOMScrollChromePolicy.shared.start()
+        // 3.4.32 audit: an ordered-out SwiftUI scene keeps ticking; the
+        // animation gate needs a real visibility signal from the window server.
+        AOMUIVisibility.shared.start()
         if !PresetManager.isRunningTests && !PresetManager.isUIPreview {
             DisplayMediaKeys.shared.start()
             startMissionControlOverlay()

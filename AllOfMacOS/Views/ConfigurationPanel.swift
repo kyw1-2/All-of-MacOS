@@ -269,6 +269,18 @@ struct TriggerConfigView: View {
                             }
                             .pickerStyle(.menu)
                         }
+                        // 3.4.33: the same shortcut can carry a single-press and
+                        // a double-press binding, as the UGREEN side buttons do.
+                        AOMSettingRow("Press count",
+                                      detail: trigger.pressCount >= 2
+                                        ? "Runs only on the second press inside the multi-click window"
+                                        : "Runs on the first press; a double-press binding for this shortcut waits for it") {
+                            Picker("Press count", selection: triggerBinding(\.pressCount)) {
+                                Text("Single press").tag(1)
+                                Text("Double press").tag(2)
+                            }
+                            .pickerStyle(.menu)
+                        }
                     }
                     if trigger.supportsHold && trigger.keyboardPhase == .keyDown {
                         AOMToggleRow("Repeat while held",

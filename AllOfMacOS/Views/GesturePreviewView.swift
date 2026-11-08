@@ -14,11 +14,23 @@ extension EnvironmentValues {
 struct GesturePreviewView: View {
     let gesture: TrackpadGesture
     @EnvironmentObject var appState: AppState
-    @State private var animating = false
+    /// 3.4.33 audit: this preview looped forever at 30 fps. On an otherwise
+    /// idle machine the Gestures page measured 30 % CPU against 7 % on Home,
+    /// purely from that loop. It now plays for a few seconds and then rests,
+    /// and restarts while the pointer is on it.
+    @State private var autoPhase = false
+    @State private var hovering = false
+    private static let autoPhaseSeconds: UInt64 = 8
+    private var animating: Bool { autoPhase || hovering }
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 3.4.32 audit: `scenePhase` stays `.active` for an ordered-out
+    /// `WindowGroup` window, so this preview used to animate at 30 fps with
+    /// nothing on screen. Gate it on real visibility instead.
+    @ObservedObject private var uiVisibility = AOMUIVisibility.shared
 
-    private var animationKey: String { "\(gesture.rawValue)-\(scenePhase == .active)-\(reduceMotion)" }
+    private var animationKey: String { "\(gesture.rawValue)-\(isOnScreen)-\(reduceMotion)" }
+    private var isOnScreen: Bool { scenePhase == .active && uiVisibility.anyWindowVisible }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -40,15 +52,19 @@ struct GesturePreviewView: View {
             .frame(width: 120, height: 92)
             .clipped()
             .task(id: animationKey) {
-                animating = false
-                guard scenePhase == .active, !reduceMotion else { return }
+                autoPhase = false
+                guard isOnScreen, !reduceMotion else { return }
                 do {
                     try await Task.sleep(nanoseconds: 200_000_000)
                     try Task.checkCancellation()
-                    animating = true
+                    autoPhase = true
+                    try await Task.sleep(nanoseconds: Self.autoPhaseSeconds * 1_000_000_000)
+                    try Task.checkCancellation()
+                    autoPhase = false
                 } catch { /* The preview disappeared or its configuration changed. */ }
             }
-            .onDisappear { animating = false }
+            .onHover { inside in hovering = inside }
+            .onDisappear { autoPhase = false; hovering = false }
 
             Text(gesture.rawValue)
                 .font(.caption)
@@ -543,7 +559,9 @@ struct CircleAnimation: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating || reduceMotion || scenePhase != .active)) { timeline in
+        // `animating` is already false off screen (GesturePreviewView gates it),
+        // so this clock stops with the window.
+        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !animating || reduceMotion)) { timeline in
             CircleAnimationContent(
                 clockwise: clockwise,
                 date: timeline.date
@@ -618,7 +636,7 @@ struct TriangleDrawAnimation: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating || reduceMotion || scenePhase != .active)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !animating || reduceMotion)) { timeline in
             TriangleDrawContent(date: timeline.date)
         }
     }

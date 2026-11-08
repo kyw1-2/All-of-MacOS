@@ -228,6 +228,10 @@ class KeyboardMonitor: ObservableObject {
     private var pressApps: [UInt16: String] = [:]
     private var pressTimes: [UInt16: TimeInterval] = [:]
     private var pressSerial: [UInt16: UUID] = [:]
+    /// 3.4.32: single/double press discrimination (UGREEN side buttons, any
+    /// shortcut that carries both a single-press and a double-press trigger).
+    private(set) var doublePressGate = DoublePressGate()
+    private var deferredSingles: [String: UUID] = [:]
     /// Injectable so hold-time behavior is testable without real waiting or input.
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var scheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
@@ -521,7 +525,40 @@ class KeyboardMonitor: ObservableObject {
         let serial = UUID()
         pressSerial[keyCode] = serial
         let longPressMs = TriggerTimingSettings.keyboardLongPressMs(timingDefaults)
-        for trigger in matches {
+        // 3.4.32 audit: a shortcut can carry a single-press and a double-press
+        // binding. Hold the single press for one multi-click window so the
+        // second press can cancel it — otherwise both actions ran, and the
+        // UGREEN side buttons needed a 600 ms delay to fake the distinction.
+        var handledByPressCount = Set<UUID>()
+        let doubleTriggers = matches.filter { $0.pressCount >= 2 }
+        if !doubleTriggers.isEmpty {
+            let window = Double(TriggerTimingSettings.mouseMultiClickMs(timingDefaults)) / 1000
+            let gateKey = "\(keyCode)-\(shortcut.modifiers.rawValue)"
+            if doublePressGate.register(gateKey, now: clock(), window: window) {
+                // Second press: the pair's own triggers run now, the deferred
+                // single-press actions are dropped.
+                deferredSingles.removeValue(forKey: gateKey)
+                for trigger in doubleTriggers {
+                    if case .immediately = TriggerKeyHold.plan(phase: trigger.keyboardPhase, minHoldMs: trigger.minHoldMs,
+                                                               longPressMs: longPressMs) {
+                        fire(trigger, keyCode: keyCode)
+                    }
+                    handledByPressCount.insert(trigger.id)
+                }
+                for trigger in matches where trigger.pressCount < 2 { handledByPressCount.insert(trigger.id) }
+            } else {
+                let singles = matches.filter { $0.pressCount < 2 }
+                let token = UUID()
+                deferredSingles[gateKey] = token
+                scheduler(window) { [weak self] in
+                    guard let self, self.deferredSingles[gateKey] == token else { return }
+                    self.deferredSingles.removeValue(forKey: gateKey)
+                    for trigger in singles { self.fire(trigger, keyCode: keyCode) }
+                }
+                for trigger in matches { handledByPressCount.insert(trigger.id) }
+            }
+        }
+        for trigger in matches where !handledByPressCount.contains(trigger.id) {
             switch TriggerKeyHold.plan(phase: trigger.keyboardPhase, minHoldMs: trigger.minHoldMs, longPressMs: longPressMs) {
             case .immediately: fire(trigger, keyCode: keyCode)
             case .onRelease: break
@@ -617,6 +654,7 @@ class KeyboardMonitor: ObservableObject {
         releasedWhileDown.formUnion(pressed.keys)
         pressed.removeAll(); pressApps.removeAll()
         pressTimes.removeAll(); pressSerial.removeAll()
+        doublePressGate.reset(); deferredSingles.removeAll()
         // The sequence detector's held keys too (3.4.0 audit): their key-ups
         // may never come (a disabled tap, a shortcut recorder that took them).
         sequenceDetector.reset()

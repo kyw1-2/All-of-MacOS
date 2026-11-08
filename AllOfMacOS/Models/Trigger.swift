@@ -309,6 +309,11 @@ struct Trigger: Identifiable, Codable, Hashable {
     /// `BTTKEYOrderRelevant`. Absent means order matters.
     var sequenceOrderRelevant: Bool = true
     var sequenceHoldMs: Int = 0 // A one-key sequence fires after this uninterrupted hold, if > 0.
+    /// Keyboard shortcuts: 1 (default) runs on the first press, 2 requires a
+    /// quick second press. A shortcut that carries both kinds defers the
+    /// single-press trigger for one multi-click window and cancels it when the
+    /// second press lands, so a double press never runs both actions.
+    var pressCount: Int = 1
     var drawingSamples: [[DrawingPoint]] = [] // User-drawn templates for .drawingPattern
     var drawingCertainty: Double = 0.7
     var drawingIgnoreDirection: Bool = false
@@ -365,6 +370,7 @@ struct Trigger: Identifiable, Codable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, name, input, actions, isFavorite, isEnabled, appBundleID, activationGroupID, order, suppressClick, hapticFeedback, requiredModifiers, executionPolicy, keyboardPhase, repeatWhileHeld, holdDelayMs, holdIntervalMs, sequenceMaxGapMs, sequenceOrderRelevant, sequenceHoldMs, drawingSamples, drawingCertainty, drawingIgnoreDirection
         case notes, delayBeforeTriggeringMs, minHoldMs, maxHoldMs, colorLabel, folder, longTouchDurationMs
+        case pressCount
         case valueBinding
     }
 
@@ -390,6 +396,7 @@ struct Trigger: Identifiable, Codable, Hashable {
         sequenceMaxGapMs = try container.decodeIfPresent(Int.self, forKey: .sequenceMaxGapMs) ?? 450
         sequenceOrderRelevant = try container.decodeIfPresent(Bool.self, forKey: .sequenceOrderRelevant) ?? true
         sequenceHoldMs = try container.decodeIfPresent(Int.self, forKey: .sequenceHoldMs) ?? 0
+        pressCount = min(max(try container.decodeIfPresent(Int.self, forKey: .pressCount) ?? 1, 1), 2)
         drawingSamples = try container.decodeIfPresent([[DrawingPoint]].self, forKey: .drawingSamples) ?? []
         drawingCertainty = try container.decodeIfPresent(Double.self, forKey: .drawingCertainty) ?? 0.7
         drawingIgnoreDirection = try container.decodeIfPresent(Bool.self, forKey: .drawingIgnoreDirection) ?? false
