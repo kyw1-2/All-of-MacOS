@@ -31,6 +31,13 @@ enum UGREENThumbWheelMapping {
         return Int(max(-8, min(8, signed)))
     }
 
+    /// A deliberate click of the UGREEN thumb wheel changes the current
+    /// system output by 3 percentage points. The device reports signed AC Pan
+    /// ticks; positive means right, negative means left. Cap abnormal bursts.
+    static func volumeDelta(ticks: Int) -> Double {
+        Double(max(-4, min(4, ticks))) * 3.0
+    }
+
     static let pixelsPerTick = 36
 
     /// Populate line, point and 16.16 fixed-point fields consistently.
@@ -63,6 +70,12 @@ final class MouseWheelInterceptor {
     static let shared = MouseWheelInterceptor()
     private var manager: IOHIDManager?
     private var nativeMonitor: Any?
+    /// Unlike the legacy horizontal-scroll fallback, this mode consumes the
+    /// receiver's actual relative AC Pan reports for output volume. It does not
+    /// claim all horizontal gestures from a trackpad or other mouse.
+    private var volumeMode = false
+    private var volumeWork: DispatchWorkItem?
+    private var pendingVolumeTicks = 0
     static let nativeSuppressionWindow: TimeInterval = 0.08
 
     static func shouldSynthesize(elapsedSinceNative: TimeInterval) -> Bool {
@@ -76,9 +89,10 @@ final class MouseWheelInterceptor {
     private var latestFlags: CGEventFlags = []
     private(set) var isRunning = false
 
-    func setEnabled(_ enabled: Bool) {
+    func setEnabled(_ enabled: Bool, volumeMode: Bool = false) {
         dispatchPrecondition(condition: .onQueue(.main))
         stop()
+        self.volumeMode = volumeMode
         guard enabled, !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
         guard AXIsProcessTrusted() else { return }
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -93,13 +107,21 @@ final class MouseWheelInterceptor {
             guard result == kIOReturnSuccess, let context else { return }
             let owner = Unmanaged<MouseWheelInterceptor>.fromOpaque(context).takeUnretainedValue()
             let element = IOHIDValueGetElement(value)
-            guard UGREENThumbWheelMapping.isWheel(page: IOHIDElementGetUsagePage(element),
-                                                  usage: IOHIDElementGetUsage(element),
+            let page = IOHIDElementGetUsagePage(element)
+            let usage = IOHIDElementGetUsage(element)
+            guard UGREENThumbWheelMapping.isWheel(page: page, usage: usage,
                                                   isRelative: IOHIDElementIsRelative(element)),
                   let ticks = UGREENThumbWheelMapping.ticks(raw: IOHIDValueGetIntegerValue(value),
                                                             bitSize: Int(IOHIDElementGetReportSize(element)),
                                                             isRelative: IOHIDElementIsRelative(element)) else { return }
-            owner.receive(ticks)
+            if owner.volumeMode {
+                // Only Consumer AC Pan 0C:0238 is the physical SIDE wheel.
+                // Do not turn the receiver's buttons, X/Y motion, Z or Dial into volume.
+                guard page == 12, usage == 0x0238 else { return }
+                owner.receiveVolume(ticks)
+            } else {
+                owner.receive(ticks)
+            }
         }, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -109,7 +131,7 @@ final class MouseWheelInterceptor {
             return
         }
         self.manager = manager
-        nativeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+        if !volumeMode { nativeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self else { return }
             if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == SyntheticInput.selfTag { return }
             // Only native horizontal motion is relevant. Vertical wheels or
@@ -122,8 +144,32 @@ final class MouseWheelInterceptor {
             self.pendingTicks = 0
             self.pendingWork?.cancel()
             self.pendingWork = nil
-        }
+        } }
         isRunning = true
+        NSLog("[MouseWheelInterceptor] UGREEN AC Pan mode: %@", volumeMode ? "output-volume" : "horizontal-scroll")
+    }
+
+    private func receiveVolume(_ ticks: Int) {
+        guard isRunning, volumeMode, AutomationGate.allows(.mouse),
+              TriggerSuppression.shared.allows(kind: .mouse) else { return }
+        pendingVolumeTicks = max(-4, min(4, pendingVolumeTicks + ticks))
+        guard volumeWork == nil else { return }
+        // Coalesce multiple HID reports per detent; never queue dozens of
+        // CoreAudio writes for a quick flick of the side wheel.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isRunning, self.volumeMode else { return }
+            self.volumeWork = nil
+            let ticks = self.pendingVolumeTicks
+            self.pendingVolumeTicks = 0
+            let delta = UGREENThumbWheelMapping.volumeDelta(ticks: ticks)
+            guard delta != 0, AutomationGate.allows(.mouse),
+                  TriggerSuppression.shared.allows(kind: .mouse) else { return }
+            AudioOutputService.shared.adjustVolume(percentagePoints: delta) { ok in
+                if !ok { NSLog("[MouseWheelInterceptor] UGREEN side wheel: output volume write failed") }
+            }
+        }
+        volumeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025, execute: work)
     }
 
     private func receive(_ ticks: Int) {
@@ -156,6 +202,7 @@ final class MouseWheelInterceptor {
         dispatchPrecondition(condition: .onQueue(.main))
         isRunning = false
         pendingWork?.cancel(); pendingWork = nil; pendingTicks = 0
+        volumeWork?.cancel(); volumeWork = nil; pendingVolumeTicks = 0
         if let nativeMonitor { NSEvent.removeMonitor(nativeMonitor) }
         nativeMonitor = nil
         if let manager {

@@ -3,6 +3,14 @@ import XCTest
 @testable import AllOfMacOS
 
 final class UGREENThumbWheelTests: XCTestCase {
+    func testSideWheelVolumeDirectionAndClamping() {
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: 1), 3)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: -1), -3)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: 4), 12)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: -100), -12)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: 0), 0)
+    }
+
     func testUGREENPanRelativeOnly() {
         XCTAssertEqual(UGREENThumbWheelMapping.vendor, 0x2b89)
         XCTAssertEqual(UGREENThumbWheelMapping.product, 0x0912)

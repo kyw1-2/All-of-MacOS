@@ -97,6 +97,7 @@ struct PointerOptionsRow: View {
     @State private var linear = InputRemapSettings.linearMouse
     @State private var smooth = InputRemapSettings.smoothMouseWheel
     @State private var thumbWheel = InputRemapSettings.ugreenThumbWheel
+    @State private var thumbWheelVolume = InputRemapSettings.ugreenThumbWheelVolume
     @ObservedObject private var engine = PointerAcceleration.shared
 
     var body: some View {
@@ -104,8 +105,10 @@ struct PointerOptionsRow: View {
             Toggle("Linear external mouse movement", isOn: $linear)
             if engine.status != "Off" { Text(engine.status).font(.caption).foregroundStyle(.secondary) }
             Toggle("Smooth mouse wheel", isOn: $smooth)
-            Toggle("Restore UGREEN thumb wheel (horizontal scroll)", isOn: $thumbWheel)
-                .help("Uses relative AC Pan from UGREEN 2B89:0912 only. Native scroll takes priority.")
+            Toggle("Enable UGREEN side wheel (2B89:0912)", isOn: $thumbWheel)
+            Toggle("Side wheel controls volume (right + / left -)", isOn: $thumbWheelVolume)
+                .disabled(!thumbWheel)
+                .help("When disabled, use the original horizontal-scroll fallback instead. Vertical wheel and trackpad scrolling are unchanged.")
             Text("Wheel changes require Accessibility permission. Continuous touch scrolling keeps its system behavior.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -113,5 +116,6 @@ struct PointerOptionsRow: View {
         .onChange(of: linear) { _, value in InputRemapSettings.linearMouse = value; InputRemapService.shared.apply() }
         .onChange(of: smooth) { _, value in InputRemapSettings.smoothMouseWheel = value; InputRemapService.shared.apply() }
         .onChange(of: thumbWheel) { _, value in InputRemapSettings.ugreenThumbWheel = value; InputRemapService.shared.apply() }
+        .onChange(of: thumbWheelVolume) { _, value in InputRemapSettings.ugreenThumbWheelVolume = value; InputRemapService.shared.apply() }
     }
 }
