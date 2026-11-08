@@ -105,6 +105,24 @@ class TrackpadMonitor {
     }
     private var suppressedTipTapClicks = 0
     private static var activeTrackpadMonitor: TrackpadMonitor?
+    /// An active CGEventTap is needed only for gestures that can suppress a
+    /// native click. Swipe/scroll/drawing triggers must not hold up mouse input.
+    static let clickSuppressionGestures: Set<TrackpadGesture> = [
+        .twoFingerClick, .threeFingerClick, .fourFingerClick, .fiveFingerClick,
+        .cornerClickTopLeft, .cornerClickTopRight, .cornerClickBottomLeft, .cornerClickBottomRight,
+        .middleClickTop, .middleClickBottom,
+        .forceClick, .forceClickTwoFinger, .forceClickThreeFinger,
+        .cornerForceClickTopLeft, .cornerForceClickTopRight,
+        .cornerForceClickBottomLeft, .cornerForceClickBottomRight,
+        .tipTapLeft, .tipTapRight, .tipTapMiddle
+    ]
+
+    /// Quartz does not expose a reliable external-mouse vs trackpad device ID
+    /// for each CGEvent. Fail open unless a recent raw trackpad frame confirms
+    /// physical force, rather than treating a resting finger as a mouse click.
+    static func hasPhysicalTrackpadPress(fingers: Int, pressure: Float, frameAge: TimeInterval) -> Bool {
+        fingers > 0 && pressure >= 0.7 && frameAge >= 0 && frameAge <= 0.15
+    }
 
     // Swipe tracking
     private var scrollDeltaX: CGFloat = 0
@@ -1252,7 +1270,10 @@ class TrackpadMonitor {
     // MARK: - Click Suppression CGEventTap
 
     private func setupClickSuppressionTap() {
-        guard registeredTriggers.contains(where: { $0.suppressClick }) else { return }
+        guard registeredTriggers.contains(where: {
+            $0.suppressClick && $0.actions.contains(where: \.isEnabled) &&
+            Self.clickSuppressionGestures.contains($0.gesture)
+        }) else { return }
         TrackpadMonitor.activeTrackpadMonitor = self
         let mask = [CGEventType.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp]
             .reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
@@ -1297,12 +1318,23 @@ class TrackpadMonitor {
             return false
         }
         let enabled = AutomationGate.isOn
-        if enabled, type == .leftMouseDown, tipTapShield.contains(now) {
+        if enabled, type == .leftMouseDown, tipTapShield.consumeClick(at: now) {
             // Pair every residual click, including a delayed second click,
             // without turning the residual movement into another gesture.
             suppressedButtons.insert(button)
             suppressedTipTapClicks += 1
             return true
+        }
+        // The raw contact stream sees a real click as pressure. A finger merely
+        // resting on the trackpad must never steal a physical mouse click in a
+        // browser (including pages which perform heavy scripting on mousedown).
+        // Unit tests inject the contact stream explicitly and bypass hardware
+        // provenance; production uses the fail-open pressure/freshness check.
+        if systemMonitoringEnabled && !Self.hasPhysicalTrackpadPress(
+            fingers: currentFingers, pressure: livePressure,
+            frameAge: now - (lastHardwareFrame ?? -.infinity)) {
+            inFlightNativeButtons.insert(button)
+            return false
         }
         if type == .rightMouseDown {
             // A native secondary tap may arrive after a contact has lifted.

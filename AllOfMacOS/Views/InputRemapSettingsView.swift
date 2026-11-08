@@ -98,6 +98,7 @@ struct PointerOptionsRow: View {
     @State private var smooth = InputRemapSettings.smoothMouseWheel
     @State private var thumbWheel = InputRemapSettings.ugreenThumbWheel
     @State private var thumbWheelVolume = InputRemapSettings.ugreenThumbWheelVolume
+    @State private var thumbWheelReversed = InputRemapSettings.ugreenThumbWheelReversed
     @ObservedObject private var engine = PointerAcceleration.shared
 
     var body: some View {
@@ -106,9 +107,12 @@ struct PointerOptionsRow: View {
             if engine.status != "Off" { Text(engine.status).font(.caption).foregroundStyle(.secondary) }
             Toggle("Smooth mouse wheel", isOn: $smooth)
             Toggle("Enable UGREEN side wheel (2B89:0912)", isOn: $thumbWheel)
-            Toggle("Side wheel controls volume (right + / left -)", isOn: $thumbWheelVolume)
+            Toggle("Side wheel controls volume", isOn: $thumbWheelVolume)
                 .disabled(!thumbWheel)
                 .help("When disabled, use the original horizontal-scroll fallback instead. Vertical wheel and trackpad scrolling are unchanged.")
+            Toggle("Reverse UGREEN side-wheel direction", isOn: $thumbWheelReversed)
+                .disabled(!thumbWheel)
+                .help("Reverse the UGREEN side wheel for volume or horizontal scrolling without reversing the main wheel.")
             Text("Wheel changes require Accessibility permission. Continuous touch scrolling keeps its system behavior.")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -117,5 +121,6 @@ struct PointerOptionsRow: View {
         .onChange(of: smooth) { _, value in InputRemapSettings.smoothMouseWheel = value; InputRemapService.shared.apply() }
         .onChange(of: thumbWheel) { _, value in InputRemapSettings.ugreenThumbWheel = value; InputRemapService.shared.apply() }
         .onChange(of: thumbWheelVolume) { _, value in InputRemapSettings.ugreenThumbWheelVolume = value; InputRemapService.shared.apply() }
+        .onChange(of: thumbWheelReversed) { _, value in InputRemapSettings.ugreenThumbWheelReversed = value; InputRemapService.shared.apply() }
     }
 }

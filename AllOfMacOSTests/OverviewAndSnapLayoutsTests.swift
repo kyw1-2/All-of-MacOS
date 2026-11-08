@@ -222,17 +222,20 @@ extension OverviewAndSnapLayoutsTests {
         key.activationGroupID = group.id
         XCTAssertNotEqual(MonitorBindings([key], groups: [], category: .keyboard), MonitorBindings([key], groups: [group], category: .keyboard))
     }
-    func testTipTapShieldTracksOriginatingDeviceAndEveryResidualClick() {
+    func testTipTapShieldCapturesOneResidualClickThenFailsOpen() {
         var shield = TipTapClickShield()
         shield.arm(device: 1, now: 10)
-        shield.observe(device: 2, count: 0, now: 10.1)
-        XCTAssertTrue(shield.contains(10.9))
-        shield.observe(device: 1, count: 0, now: 11)
-        XCTAssertTrue(shield.contains(11.1)); XCTAssertTrue(shield.contains(11.3))
-        shield.observe(device: 1, count: 0, now: 11.3)
-        XCTAssertFalse(shield.contains(11.36), "Repeated empty frames must not extend the tail")
-        shield.arm(device: 1, now: 20); XCTAssertFalse(shield.contains(22.1), "Lost touch-up fails open")
-        shield.reset(); XCTAssertFalse(shield.contains(20.1))
+        shield.observe(device: 2, count: 0, now: 10.01)
+        XCTAssertTrue(shield.contains(10.04), "A different device cannot release it")
+        XCTAssertTrue(shield.consumeClick(at: 10.04))
+        XCTAssertFalse(shield.consumeClick(at: 10.05), "Never swallow another intentional click")
+        shield.arm(device: 1, now: 20)
+        shield.observe(device: 1, count: 0, now: 20.02)
+        XCTAssertTrue(shield.contains(20.06))
+        XCTAssertFalse(shield.contains(20.09), "Release tail must be short")
+        shield.arm(device: 1, now: 30)
+        XCTAssertFalse(shield.contains(30.16), "Lost touch-up must fail open promptly")
+        shield.reset(); XCTAssertFalse(shield.contains(30.01))
     }
     func testWindowLayoutMatchingNeverGuessesBetweenSameNamedWindows() throws {
         let window = SavedWindowPlacement(bundleID: "app", title: "Document", identifier: "", displayID: "display", normalizedFrame: CGRect(x: 0, y: 0, width: 0.5, height: 1))

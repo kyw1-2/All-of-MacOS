@@ -200,7 +200,7 @@ class PresetManager {
             "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold",
             // 3.3.3: how far Force Touch pressure eases off before a stage can fire again.
             PressureStageTracker.hysteresisKey,
-            "AOMHUDEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume",
+            "AOMHUDEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume", "AOMUGREENThumbWheelReversed",
             // Key remapping and the Hyper key (the remaps AOM owns at runtime are not settings).
             "AOMKeyRemaps", "AOMHyperKeyEnabled", "AOMHyperKeySource", "AOMHyperKeyTapEscape",
             "AOMMissionControlButtons", "AOMMissionControlHotkeys",

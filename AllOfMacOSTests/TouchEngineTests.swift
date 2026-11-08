@@ -178,24 +178,45 @@ final class TouchEngineTests: XCTestCase {
         check(monitor)
     }
 
-    func testTipTapConsumesMultipleResidualClicksAndPairsLateRelease() {
+    func testTipTapConsumesOnlyOneResidualClickAndPairsLateRelease() {
         withCompletedTipTap { monitor in
             let now = ProcessInfo.processInfo.systemUptime
             XCTAssertTrue(monitor.shouldSuppressMouseEvent(.leftMouseDown, at: now))
             XCTAssertFalse(monitor.shouldSuppressMouseEvent(.rightMouseUp, at: now))
             XCTAssertTrue(monitor.shouldSuppressMouseEvent(.leftMouseUp, at: now + 1))
-            XCTAssertTrue(monitor.shouldSuppressMouseEvent(.leftMouseDown, at: now + 1.1))
-            XCTAssertTrue(monitor.shouldSuppressMouseEvent(.leftMouseUp, at: now + 2.2))
-            XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseDown, at: now + 2.3))
+            XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseDown, at: now + 0.01),
+                           "A second click on the newly navigated page must pass")
+            XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseUp, at: now + 1.1))
         }
     }
 
     func testTipTapShieldExpiresWithoutSwallowingLaterIntentionalClick() {
         withCompletedTipTap { monitor in
             XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseDown,
-                at: ProcessInfo.processInfo.systemUptime + 2.1))
+                at: ProcessInfo.processInfo.systemUptime + 0.16))
             XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseUp))
         }
+    }
+
+    func testTipTapShieldDoesNotSwallowClickAfterContactRelease() {
+        withCompletedTipTap { monitor in
+            monitor.processTouchFrame([], count: 0, timestamp: 1.3, pressedButtons: 0)
+            XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseDown,
+                at: ProcessInfo.processInfo.systemUptime + 0.07))
+            XCTAssertFalse(monitor.shouldSuppressMouseEvent(.leftMouseUp))
+        }
+    }
+
+    func testExternalMouseClickFailsOpenWithoutFreshPhysicalTrackpadPressure() {
+        XCTAssertFalse(TrackpadMonitor.hasPhysicalTrackpadPress(fingers: 1, pressure: 0.15, frameAge: 0.01),
+                       "Resting on the trackpad must not eat UGREEN left clicks")
+        XCTAssertFalse(TrackpadMonitor.hasPhysicalTrackpadPress(fingers: 0, pressure: 1, frameAge: 0.01))
+        XCTAssertFalse(TrackpadMonitor.hasPhysicalTrackpadPress(fingers: 2, pressure: 1, frameAge: 0.16))
+        XCTAssertFalse(TrackpadMonitor.hasPhysicalTrackpadPress(fingers: 2, pressure: 1, frameAge: -0.01))
+        XCTAssertTrue(TrackpadMonitor.hasPhysicalTrackpadPress(fingers: 2, pressure: 0.9, frameAge: 0.01))
+        XCTAssertTrue(TrackpadMonitor.clickSuppressionGestures.contains(.twoFingerClick))
+        XCTAssertFalse(TrackpadMonitor.clickSuppressionGestures.contains(.twoFingerSwipeUp),
+                       "A swipe trigger alone must not install a click-eating active tap")
     }
 
     func testTipTapShieldHonorsSuppressionSwitchAndAppOverride() {

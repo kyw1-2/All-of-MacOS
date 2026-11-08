@@ -3,6 +3,16 @@ import XCTest
 @testable import AllOfMacOS
 
 final class UGREENThumbWheelTests: XCTestCase {
+    func testSideWheelDirectionIsReversedByDefaultButUserCanRestoreIt() {
+        XCTAssertEqual(UGREENThumbWheelMapping.orientedTicks(1, reversed: true), -1)
+        XCTAssertEqual(UGREENThumbWheelMapping.orientedTicks(-2, reversed: true), 2)
+        XCTAssertEqual(UGREENThumbWheelMapping.orientedTicks(3, reversed: false), 3)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks:
+            UGREENThumbWheelMapping.orientedTicks(1, reversed: true)), -3)
+        XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks:
+            UGREENThumbWheelMapping.orientedTicks(-1, reversed: true)), 3)
+    }
+
     func testSideWheelVolumeDirectionAndClamping() {
         XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: 1), 3)
         XCTAssertEqual(UGREENThumbWheelMapping.volumeDelta(ticks: -1), -3)

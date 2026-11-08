@@ -691,6 +691,17 @@ final class BTTMouseParityTests: XCTestCase {
         XCTAssertEqual(rig.fired.count, 1)
     }
 
+    func testLegacyExtraButtonCannotTakeAnUnmodifiedPrimaryClick() {
+        var legacy = Trigger(name: "side", input: .mouseButton(.button4))
+        legacy.suppressClick = true
+        legacy.actions = [TriggerAction(actionType: .showHUD)]
+        let rig = Rig([legacy, mouseTrigger(0, .click, mods: cmd, suppress: true)])
+        XCTAssertFalse(rig.down(0), "Normal browser navigation never loses its left down")
+        XCTAssertFalse(rig.up(0), "Nor should its left up be stolen")
+        XCTAssertTrue(rig.down(0, cmd), "Explicitly modified left click still works")
+        XCTAssertTrue(rig.up(0))
+    }
+
     func testLeftClickWithoutModifierIsRejectedAtRegistration() {
         let rig = Rig([mouseTrigger(0, .click, mods: nil), mouseTrigger(1, .doubleClick, mods: 0), mouseTrigger(0, .scrollUp, mods: nil)])
         XCTAssertTrue(rig.monitor.entries.isEmpty, "unsafe triggers are never installed, even if they reach the monitor")

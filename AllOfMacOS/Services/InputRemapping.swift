@@ -151,6 +151,11 @@ enum InputRemapSettings {
         get { d.object(forKey: "AOMUGREENThumbWheelVolume") as? Bool ?? true }
         set { d.set(newValue, forKey: "AOMUGREENThumbWheelVolume") }
     }
+    /// Default inverted for the 2B89:0912 side wheel; user can switch it back.
+    static var ugreenThumbWheelReversed: Bool {
+        get { d.object(forKey: "AOMUGREENThumbWheelReversed") as? Bool ?? true }
+        set { d.set(newValue, forKey: "AOMUGREENThumbWheelReversed") }
+    }
     static var smoothMouseWheel: Bool {
         get { d.bool(forKey: "AOMSmoothMouseWheel") }
         set { d.set(newValue, forKey: "AOMSmoothMouseWheel") }
@@ -188,11 +193,12 @@ final class InputRemapService {
         let wheel = InputRemapSettings.reverseMouseWheel
         let thumbWheel = InputRemapSettings.ugreenThumbWheel
         let thumbVolume = InputRemapSettings.ugreenThumbWheelVolume
+        let thumbReversed = InputRemapSettings.ugreenThumbWheelReversed
         let linear = InputRemapSettings.linearMouse
         DispatchQueue.main.async {
             HyperKeyTap.shared.setEnabled(hyper, tapEscape: escape)
             ScrollWheelReverser.shared.setEnabled(wheel)
-            MouseWheelInterceptor.shared.setEnabled(thumbWheel, volumeMode: thumbVolume)
+            MouseWheelInterceptor.shared.setEnabled(thumbWheel, volumeMode: thumbVolume, reversed: thumbReversed)
             PointerAcceleration.shared.setEnabled(linear)
         }
         guard !desired.isEmpty || !owned.isEmpty else { return }

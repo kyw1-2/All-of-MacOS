@@ -31,9 +31,14 @@ enum UGREENThumbWheelMapping {
         return Int(max(-8, min(8, signed)))
     }
 
+    /// Reverse the physical side-wheel direction without affecting the regular
+    /// scroll wheel, trackpad gestures, or other HID devices.
+    static func orientedTicks(_ ticks: Int, reversed: Bool) -> Int {
+        reversed ? -ticks : ticks
+    }
+
     /// A deliberate click of the UGREEN thumb wheel changes the current
-    /// system output by 3 percentage points. The device reports signed AC Pan
-    /// ticks; positive means right, negative means left. Cap abnormal bursts.
+    /// system output by 3 percentage points. Cap abnormal bursts.
     static func volumeDelta(ticks: Int) -> Double {
         Double(max(-4, min(4, ticks))) * 3.0
     }
@@ -74,6 +79,7 @@ final class MouseWheelInterceptor {
     /// receiver's actual relative AC Pan reports for output volume. It does not
     /// claim all horizontal gestures from a trackpad or other mouse.
     private var volumeMode = false
+    private var reversed = true
     private lazy var volumeQueue = MouseWheelVolumeQueue { [weak self] delta, completion in
         guard let self, self.isRunning, self.volumeMode, AutomationGate.allows(.mouse) else {
             completion(); return
@@ -98,9 +104,10 @@ final class MouseWheelInterceptor {
     private var latestFlags: CGEventFlags = []
     private(set) var isRunning = false
 
-    func setEnabled(_ enabled: Bool, volumeMode: Bool = false) {
+    func setEnabled(_ enabled: Bool, volumeMode: Bool = false, reversed: Bool = true) {
         dispatchPrecondition(condition: .onQueue(.main))
         wantsEnabled = enabled
+        self.reversed = reversed
         if enabled, isRunning, self.volumeMode == volumeMode { return }
         stopObservation()
         self.volumeMode = volumeMode
@@ -127,13 +134,14 @@ final class MouseWheelInterceptor {
                   let ticks = UGREENThumbWheelMapping.ticks(raw: IOHIDValueGetIntegerValue(value),
                                                             bitSize: Int(IOHIDElementGetReportSize(element)),
                                                             isRelative: IOHIDElementIsRelative(element)) else { return }
+            let oriented = UGREENThumbWheelMapping.orientedTicks(ticks, reversed: owner.reversed)
             if owner.volumeMode {
                 // Only Consumer AC Pan 0C:0238 is the physical SIDE wheel.
                 // Do not turn the receiver's buttons, X/Y motion, Z or Dial into volume.
                 guard page == 12, usage == 0x0238 else { return }
-                owner.receiveVolume(ticks)
+                owner.receiveVolume(oriented)
             } else {
-                owner.receive(ticks)
+                owner.receive(oriented)
             }
         }, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
@@ -202,7 +210,8 @@ final class MouseWheelInterceptor {
     private func observeRecovery() {
         guard observers.isEmpty else { return }
         let settingsToken = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.setEnabled(InputRemapSettings.ugreenThumbWheel, volumeMode: InputRemapSettings.ugreenThumbWheelVolume)
+            self?.setEnabled(InputRemapSettings.ugreenThumbWheel, volumeMode: InputRemapSettings.ugreenThumbWheelVolume,
+                             reversed: InputRemapSettings.ugreenThumbWheelReversed)
         }
         observers.append((.default, settingsToken))
         func observe(_ center: NotificationCenter, _ name: Notification.Name, restart: Bool, suspend: Bool = false) {

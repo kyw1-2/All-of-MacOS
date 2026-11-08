@@ -286,23 +286,30 @@ final class HoldRepeater {
     deinit { timer?.cancel() }
 }
 
-/// Protect the entire residual touch, not just its first click. A short tail
-/// covers delayed macOS tap events; the hard limit fails open if frames stop.
+/// Suppress at most one residual native click immediately following a TipTap.
+/// The old two-second window also swallowed unrelated intentional mouse clicks
+/// after navigating web pages. Failing open matters more than a late residual.
 struct TipTapClickShield {
     private var device: UInt64?
     private var hardDeadline: TimeInterval = 0
     private var releasedAt: TimeInterval?
+    private var consumed = false
     mutating func arm(device: UInt64, now: TimeInterval) {
-        self.device = device; hardDeadline = now + 2; releasedAt = nil
+        self.device = device; hardDeadline = now + 0.15; releasedAt = nil; consumed = false
     }
     mutating func observe(device: UInt64, count: Int, now: TimeInterval) {
         guard self.device == device, releasedAt == nil, count == 0 else { return }
         releasedAt = now
     }
     func contains(_ now: TimeInterval) -> Bool {
-        device != nil && now < min(hardDeadline, releasedAt.map { $0 + 0.35 } ?? hardDeadline)
+        device != nil && !consumed && now < min(hardDeadline, releasedAt.map { $0 + 0.06 } ?? hardDeadline)
     }
-    mutating func reset() { device = nil; hardDeadline = 0; releasedAt = nil }
+    mutating func consumeClick(at now: TimeInterval) -> Bool {
+        guard contains(now) else { return false }
+        consumed = true
+        return true
+    }
+    mutating func reset() { device = nil; hardDeadline = 0; releasedAt = nil; consumed = false }
 }
 
 final class GestureHUD {

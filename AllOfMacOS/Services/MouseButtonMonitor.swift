@@ -129,6 +129,10 @@ class MouseButtonMonitor {
         case .down:
             // A fresh down supersedes any lost release for this button.
             suppressedButtons.remove(event.button)
+            // Never intercept an ordinary unmodified primary click, even if a
+            // malformed old/legacy trigger requested suppressClick for button 0.
+            // Browser links, buttons, and navigation must remain native.
+            if event.button == 0 && (event.modifiers & TriggerResolver.modifierMask) == 0 { return false }
             // Pause and per-app suppression pass the click through untouched.
             guard TriggerSuppression.shared.allows(kind: .mouse), globalEnabled() else { return false }
             if entries.contains(where: { $0.isLegacy && $0.spec.button == event.button }) {
