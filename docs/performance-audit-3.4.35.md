@@ -37,6 +37,7 @@
 - signpost 스모크 검증: 실제 소스와 SHA-256이 같은 helper를 opt-in으로 실행하고 15초 attach trace를 수집했다. **930개 이벤트(Begin 465 / End 465)**가 export되었다. 캡처 경계가 interval 중간일 수 있으므로 완결된 interval 465개라는 뜻은 아니다. 첫 8초 launch trace에서는 유효 표식이 없었고 프로세스가 제한 시간 종료 시 SIGKILL로 끝났으며, 성공 근거로 세지 않는다.
 - 빌드 과정에서 기존 `DoublePressGateTests`가 순수 함수 `AOMUIVisibility.isVisible`의 MainActor 격리 때문에 컴파일되지 않는 문제가 드러났다. 이 함수는 전달받은 Bool만 사용하므로 `nonisolated`로 명시했다.
 - 전체 회귀 테스트: **2,556개 실행, 9개 건너뜀, 실패 0개** (205.419초; `work/full-tests.log`). 별도 DSP 9개 및 OCR 2개를 포함한 기존 제외 항목은 이번 전체 결과에 포함하지 않는다.
+- GitHub Actions 첫 릴리즈 시도에서 앱 본체 빌드는 통과했으나 독립적으로 컴파일하는 HardwareHelper에 신규 `AOMPerformance.swift`를 포함하지 않아 패키징이 실패했다. `HardwareHelper/build-helper.sh`에 공유 파일을 추가하고 helper 별도 컴파일 검증을 수행했다.
 - 릴리즈 빌드: macOS `swift build -c release --scratch-path ../release-build -j 2` **성공 (403.74초)**. 컴파일 경고는 있으나 오류 없음 (`work/release-build.log`).
 
 ## 계측 사용법과 남은 검증

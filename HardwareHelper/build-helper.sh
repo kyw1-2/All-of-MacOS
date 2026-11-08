@@ -14,6 +14,7 @@ trap 'rm -rf "$WORK"' EXIT
 BINARIES=()
 for ARCH in $ARCHES; do
     xcrun swiftc -O -swift-version 5 -target "$ARCH-apple-macosx14.0" -sdk "$SDK" \
+        "$ROOT/AllOfMacOS/Services/AOMPerformance.swift" \
         "$SENSORS/SMCValue.swift" "$SENSORS/SMCTransport.swift" "$SENSORS/HardwareReader.swift" \
         "$BATTERY/BatteryCarePolicy.swift" "$BATTERY/HardwareHelperProtocol.swift" \
         "$BATTERY/SMCWriteSession.swift" "$BATTERY/HardwareController.swift" \

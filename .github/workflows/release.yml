@@ -6,6 +6,7 @@ on:
     paths:
       - "AllOfMacOS/**"
       - "XPC/**"
+      - "HardwareHelper/**"
       - "Extensions/**"
       - "scripts/bundle-webp.sh"
       - "scripts/bundle-annotation-preview.sh"
