@@ -109,6 +109,8 @@ enum MissionControlWindows {
     /// to `budget`; nil while Mission Control is not showing. Runs off the
     /// main thread (the ✕ overlay polls with it).
     static func liveThumbnails(budget: TimeInterval = 0.35) -> [MissionControlThumbnail]? {
+        let interval = AOMPerformance.begin("MissionControl.probe")
+        defer { AOMPerformance.end("MissionControl.probe", interval) }
         let limit = AXDeadline(perRequest: 0.1, budget: budget)
         for pid in ownerPIDs() {
             let app = AXUIElementCreateApplication(pid)

@@ -35,6 +35,8 @@ enum TriggerResolver {
         groups: [ActivationGroup] = [],
         activationGroupIDOf: (Item) -> UUID? = { _ in nil }
     ) -> [Item] {
+        let interval = AOMPerformance.begin("Trigger.resolve")
+        defer { AOMPerformance.end("Trigger.resolve", interval) }
         let candidates = items.filter { payloadOf($0) == payload && modifiersMatch(requiredModifiersOf($0), modifiers) }
         guard !candidates.isEmpty else { return [] } // Fast path for unrelated keyboard/mouse events.
         let appSpecific = candidates.filter {

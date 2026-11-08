@@ -1,3 +1,14 @@
+## [3.4.36] - 2026-11-08
+
+### Performance
+- Suspend System Tools, sensor, VPN, and status sampling when their actual host window is not visible; throttle fallback refreshes to 15 seconds and sensor checks to 8 seconds while keeping event-driven updates.
+- Stop Mission Control fallback polling during display sleep, system sleep, and inactive sessions; retain existing interactive polling cadence.
+- Index keyboard trigger chords, reuse app-owner metadata during an audio sweep, and avoid repeated trigger-list filtering.
+- Add opt-in `AOM_PERFORMANCE_TRACE=1` signposts to distinguish wake-up frequency from execution duration, without recording user input contents.
+
+### Validation
+- 2,556 tests executed, with 9 skipped and no failures on macOS; 930 opt-in signpost begin/end events validated in an instrumentation smoke trace. Full-device CPU savings remain unmeasured.
+
 ## [3.4.35] - 2026-11-08
 
 ### Fixed

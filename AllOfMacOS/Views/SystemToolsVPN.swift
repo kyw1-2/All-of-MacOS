@@ -51,7 +51,7 @@ final class VPNModel: ObservableObject {
         timer = nil
     }
 
-    /// Called with the page's slow refresh (every 4 s while it is visible).
+    /// Called with the page's throttled slow refresh while it is visible.
     func refreshForTiles() {
         refresh()
         refreshTailscale(force: false, interval: 20)
@@ -221,8 +221,9 @@ struct VPNSheet: View {
         .frame(minWidth: 600, idealWidth: 640, minHeight: 460, idealHeight: 540)
         .background(AOMColor.canvas)
         .aomToast(model.toasts)
-        .onAppear { model.startLive() }
-        .onDisappear { model.stopLive() }
+        .aomOnWindowVisibilityChange { visible in
+            if visible { model.refreshForTiles(); model.startLive() } else { model.stopLive() }
+        }
         .onExitCommand { dismiss() }
     }
 

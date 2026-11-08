@@ -98,6 +98,10 @@ final class SystemToolsModel: ObservableObject {
     let preferences: SystemPreferenceStore = CFPreferenceStore()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
+    private let stateObserver = SystemToolsStateObserver()
+    private var eventRefresh: DispatchWorkItem?
+    private var eventNeedsFullRefresh = false
+    private var settlingRefreshes: [DispatchWorkItem] = []
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -127,22 +131,48 @@ final class SystemToolsModel: ObservableObject {
         isVisible = true
         refreshStates()
         refreshSlowStates(force: true)
-        // Other apps and System Settings change these too; a slow poll keeps
-        // the pills honest without observers on every domain.
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
+        stateObserver.start { [weak self] in self?.scheduleEventRefresh($0) }
+        // Notifications update common changes promptly; preferences without a
+        // reliable event use a 15-second fallback with timer tolerance while visible.
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.isVisible else { return }
                 self.refreshStates()
                 self.refreshSlowStates()
             }
         }
-        refreshTimer?.tolerance = 0.5
+        refreshTimer?.tolerance = 3
     }
 
-    deinit { refreshTimer?.invalidate() }
+    deinit {
+        refreshTimer?.invalidate()
+        eventRefresh?.cancel()
+        settlingRefreshes.forEach { $0.cancel() }
+    }
+
+    private func scheduleEventRefresh(_ change: SystemToolsStateObserver.Change) {
+        guard isVisible else { return }
+        if change == .general { eventNeedsFullRefresh = true }
+        guard eventRefresh == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.eventRefresh = nil
+            guard self.isVisible else { return }
+            let full = self.eventNeedsFullRefresh
+            self.eventNeedsFullRefresh = false
+            if full { self.refreshStates(); self.refreshSlowStates() }
+            else { self.refreshAudioStates() }
+        }
+        eventRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
 
     func disappear() {
         isVisible = false
+        stateObserver.stop()
+        eventRefresh?.cancel(); eventRefresh = nil
+        eventNeedsFullRefresh = false
+        settlingRefreshes.forEach { $0.cancel() }; settlingRefreshes.removeAll()
         slowRefreshGeneration += 1
         slowRefreshThrottle.invalidate()
         refreshTimer?.invalidate()
@@ -171,6 +201,9 @@ final class SystemToolsModel: ObservableObject {
     // MARK: - States
 
     func refreshStates() {
+        guard isVisible else { return }
+        let interval = AOMPerformance.begin("SystemTools.refresh")
+        defer { AOMPerformance.end("SystemTools.refresh", interval) }
         var next: [SystemToolID: SystemToolState] = [:]
         let style = preferences.value("AppleInterfaceStyle", domain: CFPreferenceStore.globalDomain) as? String
         next[.darkMode] = SystemToolState(style?.caseInsensitiveCompare("Dark") == .orderedSame)
@@ -181,8 +214,6 @@ final class SystemToolsModel: ObservableObject {
         next[.desktop] = SystemToolState(MacMagicSystemToolService.finderFlag("CreateDesktop", in: finder, default: true))
         next[.dockAutoHide] = SystemToolState(SystemTweak.bool(preferences.value("autohide", domain: SystemTweak.dock)) ?? false)
         if let wifi = CWWiFiClient.shared().interface() { next[.wifi] = SystemToolState(wifi.powerOn()) } else { next[.wifi] = .value("None") }
-        next[.muteSound] = AudioOutputService.isOutputMuted() ? .on("Muted") : .off()
-        next[.muteMic] = AudioOutputService.isInputMuted() ? .on("Muted") : .off()
         next[.keyboardClean] = KeyboardCleaningLock.shared.isActive ? .on("Locked") : .off()
         let tweaks: [(SystemToolID, SystemTweak)] = [(.extensions, .showAllExtensions), (.pathbar, .pathBar), (.statusbar, .statusBar),
                                                      (.posixtitle, .fullPathInTitle), (.dockactive, .dockActiveAppsOnly),
@@ -196,15 +227,30 @@ final class SystemToolsModel: ObservableObject {
         if next != states { states = next }
     }
 
+    /// Volume notifications can arrive rapidly. Do not re-query displays,
+    /// preferences or launch helper processes on each audio change.
+    func refreshAudioStates() {
+        guard isVisible else { return }
+        let interval = AOMPerformance.begin("SystemTools.audioRefresh")
+        defer { AOMPerformance.end("SystemTools.audioRefresh", interval) }
+        var next = states
+        refreshAudioStates(into: &next)
+        if next != states { states = next }
+    }
+
     /// System changes land a moment after the command returns (Finder
     /// relaunching, System Events applying the appearance).
     func refreshSoon() {
         slowRefreshGeneration += 1
         slowRefreshThrottle.invalidate()
-        if isVisible { refreshSlowStates(force: true) }
+        settlingRefreshes.forEach { $0.cancel() }; settlingRefreshes.removeAll()
+        guard isVisible else { return }
+        refreshSlowStates(force: true)
         refreshStates()
         for delay in [0.6, 2.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.refreshStates() }
+            let work = DispatchWorkItem { [weak self] in self?.refreshStates() }
+            settlingRefreshes.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         }
     }
 

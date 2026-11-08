@@ -66,8 +66,9 @@ struct HardwareCareCard: View {
                 if model.busy { ProgressView().controlSize(.small) }
             }
         }
-        .onAppear { model.appear() }
-        .onDisappear { model.disappear() }
+        .aomOnWindowVisibilityChange { visible in
+            if visible { model.appear() } else { model.disappear() }
+        }
         .onChange(of: scenePhase) { _, phase in if phase == .active { model.refreshHelper() } }
     }
 }

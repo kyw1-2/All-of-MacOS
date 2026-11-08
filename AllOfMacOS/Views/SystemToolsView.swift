@@ -193,8 +193,6 @@ struct SystemToolsView: View {
         .onChange(of: vpn.tailscale) { _, _ in model.refreshStates() }
         .onAppear {
             SystemToolAvailability.shared.invalidate()
-            model.appear()
-            status.start()
             if PresetManager.isUIPreview {
                 weather.loadPreviewSample()
                 MicMutePreview.runIfRequested()
@@ -208,7 +206,10 @@ struct SystemToolsView: View {
                 }
             }
         }
-        .onDisappear { model.disappear(); status.stop() }
+        .aomOnWindowVisibilityChange { visible in
+            if visible { model.appear(); status.start() }
+            else { model.disappear(); status.stop() }
+        }
     }
 
     /// A group title's one action: Homebrew's sheet, the VPN sheet.

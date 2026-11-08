@@ -6,6 +6,8 @@ final class HardwareReader {
     private var attemptedSMC = false
 
     func sample() -> HardwareSample {
+        let interval = AOMPerformance.begin("Hardware.sample")
+        defer { AOMPerformance.end("Hardware.sample", interval) }
         var sample = HardwareSample()
         if !attemptedSMC { smc = try? SMCTransport(); attemptedSMC = true }
         let channels = [

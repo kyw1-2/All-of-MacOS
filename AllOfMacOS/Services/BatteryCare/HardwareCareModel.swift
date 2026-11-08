@@ -35,8 +35,8 @@ final class HardwareCareModel: ObservableObject {
         refreshHelper()
         sampleNow()
         if sampling == nil {
-            let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in self?.sampleNow() }
-            timer.tolerance = 0.6
+            let timer = Timer(timeInterval: 8, repeats: true) { [weak self] _ in self?.sampleNow() }
+            timer.tolerance = 1.6
             sampling = timer
             RunLoop.main.add(timer, forMode: .common)
         }
@@ -48,7 +48,7 @@ final class HardwareCareModel: ObservableObject {
     }
 
     private func sampleNow() {
-        guard !samplingInFlight else { return }
+        guard !terminating, !samplingInFlight else { return }
         samplingInFlight = true
         worker.async {
             let snapshot = self.reader.sample()
@@ -63,10 +63,12 @@ final class HardwareCareModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.samplingInFlight = false
+                guard !self.terminating else { return }
                 if self.sample != snapshot { self.sample = snapshot }
                 if self.nativeStatus != text { self.nativeStatus = text }
                 if !self.busy, self.helperBattery == .off {
-                    self.battery = current?.enabled == true && current?.percent == 80 ? .limit80 : .off
+                    let next: BatteryCareMode = current?.enabled == true && current?.percent == 80 ? .limit80 : .off
+                    if self.battery != next { self.battery = next }
                 }
             }
         }

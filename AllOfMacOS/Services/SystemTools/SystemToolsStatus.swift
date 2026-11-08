@@ -290,6 +290,8 @@ final class SystemStatusMonitor: ObservableObject {
     }
 
     func sample() {
+        let interval = AOMPerformance.begin("SystemStatus.sample")
+        defer { AOMPerformance.end("SystemStatus.sample", interval) }
         var next = snapshot
         if let ticks = SystemStatus.cpuTicks() {
             if let lastTicks { next.cpuPercent = SystemStatus.cpuUsage(from: lastTicks, to: ticks) ?? next.cpuPercent }

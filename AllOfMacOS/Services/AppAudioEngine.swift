@@ -135,6 +135,26 @@ enum AudioPlaybackActivity {
     }
 }
 
+/// Value snapshot for fallback helper ownership. Bundle URLs are resolved once
+/// per sweep, not once per helper times every running app.
+struct AudioOwnerIdentity {
+    let pid: pid_t
+    let bundleID: String
+    let bundlePath: String?
+
+    static func uniqueOwner(bundleID: String, processPath: String?, among apps: [Self]) -> pid_t? {
+        var match: pid_t?
+        for app in apps {
+            let matchesBundle = bundleID == app.bundleID || bundleID.hasPrefix(app.bundleID + ".")
+            let matchesPath = app.bundlePath.map { path in processPath?.hasPrefix(path + "/") == true } ?? false
+            guard matchesBundle || matchesPath else { continue }
+            guard match == nil else { return nil }
+            match = app.pid
+        }
+        return match
+    }
+}
+
 @available(macOS 14.2, *)
 final class AppAudioEngine {
     static let shared = AppAudioEngine()
@@ -375,6 +395,8 @@ final class AppAudioEngine {
     }
 
     func syncActiveProcesses() {
+        let interval = AOMPerformance.begin("Audio.sync")
+        defer { AOMPerformance.end("Audio.sync", interval) }
         guard !syncing else { return }
         syncing = true
         lastSyncAt = ProcessInfo.processInfo.systemUptime
@@ -856,28 +878,22 @@ final class AppAudioEngine {
     /// within a sweep without changing behaviour when an app really does change.
     private nonisolated(unsafe) static var ownerResolutionCache: [pid_t: (app: NSRunningApplication?, at: TimeInterval)] = [:]
 
-    private static func owner(of object: AudioObjectID, pid: pid_t) -> NSRunningApplication? {
+    private static func owner(of object: AudioObjectID, pid: pid_t, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
         let now = ProcessInfo.processInfo.systemUptime
         if let hit = ownerResolutionCache[pid], now - hit.at < 5 { return hit.app }
-        let app = resolveOwner(of: object, pid: pid)
+        let app = resolveOwner(of: object, pid: pid, fallback: fallback)
         if ownerResolutionCache.count > 512 { ownerResolutionCache.removeAll(keepingCapacity: true) }
         ownerResolutionCache[pid] = (app, now)
         return app
     }
 
-    private static func resolveOwner(of object: AudioObjectID, pid: pid_t) -> NSRunningApplication? {
+    private static func resolveOwner(of object: AudioObjectID, pid: pid_t, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
         if let app = mainApp(for: pid) { return app }
         let bundleID = AudioOutputService.string(object, kAudioProcessPropertyBundleID)
         let processURL = NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL.path
-        let matches = NSWorkspace.shared.runningApplications.filter { app in
-            guard app.activationPolicy == .regular, let id = app.bundleIdentifier, !id.isEmpty else { return false }
-            if bundleID == id || bundleID.hasPrefix(id + ".") { return true }
-            if let path = app.bundleURL?.standardizedFileURL.path, let processURL {
-                return processURL.hasPrefix(path + "/")
-            }
-            return false
-        }
-        return matches.count == 1 ? matches[0] : nil
+        guard let ownerPID = AudioOwnerIdentity.uniqueOwner(bundleID: bundleID, processPath: processURL,
+                                                            among: fallback()) else { return nil }
+        return NSRunningApplication(processIdentifier: ownerPID)
     }
 
     static func processObjectIDs(for targetPID: pid_t) -> [AudioObjectID] {
@@ -888,15 +904,28 @@ final class AppAudioEngine {
     /// Callers used to re-read the whole list, and re-scan every running app, once
     /// per pid, which is what made the once-a-second sweep expensive.
     static func processObjectsByOwner() -> [pid_t: [AudioObjectID]] {
+        let interval = AOMPerformance.begin("Audio.processOwners")
+        defer { AOMPerformance.end("Audio.processOwners", interval) }
         var map: [pid_t: [AudioObjectID]] = [:]
         var ownerCache: [pid_t: pid_t] = [:]
+        var fallbackSnapshot: [AudioOwnerIdentity]?
+        func fallback() -> [AudioOwnerIdentity] {
+            if let fallbackSnapshot { return fallbackSnapshot }
+            let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AudioOwnerIdentity? in
+                guard app.activationPolicy == .regular, let id = app.bundleIdentifier, !id.isEmpty else { return nil }
+                return AudioOwnerIdentity(pid: app.processIdentifier, bundleID: id,
+                    bundlePath: app.bundleURL?.standardizedFileURL.path)
+            }
+            fallbackSnapshot = apps
+            return apps
+        }
         for obj in processObjectList() {
             guard let rawPID = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPID > 0,
                   rawPID != ProcessInfo.processInfo.processIdentifier else { continue }
             let ownerPID: pid_t
             if let cached = ownerCache[rawPID] { ownerPID = cached }
             else {
-                let resolved = owner(of: obj, pid: rawPID)?.processIdentifier ?? rawPID
+                let resolved = owner(of: obj, pid: rawPID, fallback: fallback)?.processIdentifier ?? rawPID
                 ownerCache[rawPID] = resolved
                 ownerPID = resolved
             }

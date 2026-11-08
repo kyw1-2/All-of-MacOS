@@ -39,6 +39,7 @@ struct TriggerListPanel: View {
     @AppStorage("AOMGroupTriggersByFolder") private var groupByFolder = false
 
     var body: some View {
+        let displayedTriggers = appState.displayedTriggers
         let conflicts = TriggerConflictKey.counts(appState.currentPreset.triggers)
         VStack(spacing: 0) {
             // Header: Category Title + Trigger Count
@@ -49,7 +50,7 @@ struct TriggerListPanel: View {
                 Text(appState.selectedTriggerCategory == .all ? "All Triggers" : "\(appState.selectedTriggerCategory.rawValue) Triggers")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(appState.displayedTriggers.count)")
+                Text("\(displayedTriggers.count)")
                     .font(.caption2.monospacedDigit().weight(.bold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 1.5)
@@ -71,13 +72,13 @@ struct TriggerListPanel: View {
                     // The count rides inside the search field. Beside the
                     // sort control it read as a sort option, and at this pane
                     // width its digits were clipped by the picker.
-                    Text("\(appState.displayedTriggers.count)")
+                    Text("\(displayedTriggers.count)")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(.quaternary.opacity(0.5), in: Capsule())
                         .fixedSize()
-                        .accessibilityLabel("\(appState.displayedTriggers.count) triggers shown")
+                        .accessibilityLabel("\(displayedTriggers.count) triggers shown")
                 }.padding(7).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
                 HStack(spacing: 8) {
                     HStack(spacing: 4) {
@@ -112,7 +113,7 @@ struct TriggerListPanel: View {
 
             // BTT-style All overview: one section per input device, keeping
             // scope selection independent from category selection.
-            if appState.displayedTriggers.isEmpty {
+            if displayedTriggers.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: appState.selectedTriggerCategory.iconName)
@@ -135,16 +136,16 @@ struct TriggerListPanel: View {
                     }
                 )) {
                     if groupByFolder {
-                        ForEach(Array(Set(appState.displayedTriggers.map { $0.folder ?? "" })).sorted(), id: \.self) { folder in
+                        ForEach(Array(Set(displayedTriggers.map { $0.folder ?? "" })).sorted(), id: \.self) { folder in
                             Section(folder.isEmpty ? "Ungrouped" : folder) {
-                                ForEach(appState.displayedTriggers.filter { ($0.folder ?? "") == folder }) { trigger in
+                                ForEach(displayedTriggers.filter { ($0.folder ?? "") == folder }) { trigger in
                                     triggerRow(trigger, conflicts: conflicts)
                                 }
                             }
                         }
-                    } else if appState.selectedTriggerCategory == .all && !appState.isSearchingTriggers && !appState.displayedTriggers.contains(where: \.isFavorite) {
+                    } else if appState.selectedTriggerCategory == .all && !appState.isSearchingTriggers && !displayedTriggers.contains(where: \.isFavorite) {
                         ForEach(TriggerCategory.inputCategories) { category in
-                            let items = appState.displayedTriggers.filter { $0.input.category == category }
+                            let items = displayedTriggers.filter { $0.input.category == category }
                             if !items.isEmpty {
                                 Section {
                                     ForEach(items) { trigger in triggerRow(trigger, conflicts: conflicts) }
@@ -160,7 +161,7 @@ struct TriggerListPanel: View {
                             }
                         }
                     } else {
-                        ForEach(appState.displayedTriggers) { trigger in triggerRow(trigger, conflicts: conflicts) }
+                        ForEach(displayedTriggers) { trigger in triggerRow(trigger, conflicts: conflicts) }
                     }
                 }.listStyle(.inset)
                     .onDeleteCommand {

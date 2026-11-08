@@ -71,7 +71,7 @@ final class MissionControlOverlayService: ObservableObject {
     }
 
     private func applySettings() {
-        if isEnabled || MissionControlHotKeyHandler.isEnabled { start() } else if isPolling { stop() }
+        if isEnabled || MissionControlHotKeyHandler.isEnabled { start() } else if isStarted { stop() }
     }
 
     /// Mission Control is closed most of the time, so four window-server probes
@@ -82,6 +82,10 @@ final class MissionControlOverlayService: ObservableObject {
     private static let burstInterval: TimeInterval = 0.2
     private static let burstDuration: TimeInterval = 4
 
+    private var isStarted = false
+    enum Suspension: Hashable { case system, screens, session }
+    private var suspensions: Set<Suspension> = []
+    private var lifecycleObservers: [NSObjectProtocol] = []
     private var spaceObserver: NSObjectProtocol?
     private var fastUntil: Date = .distantPast
 
@@ -92,13 +96,17 @@ final class MissionControlOverlayService: ObservableObject {
     }
 
     func start() {
-        guard pollTimer == nil else { return }
+        guard !isStarted else { return }
+        isStarted = true
+        observeLifecycle()
         observeMissionControlShows()
         scheduleTimer()
     }
 
     private func scheduleTimer() {
         pollTimer?.invalidate()
+        pollTimer = nil
+        guard isStarted, suspensions.isEmpty else { return }
         let interval = currentInterval
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -133,7 +141,36 @@ final class MissionControlOverlayService: ObservableObject {
         }
     }
 
+    private func observeLifecycle() {
+        let center = NSWorkspace.shared.notificationCenter
+        let events: [(Notification.Name, Suspension, Bool)] = [
+            (NSWorkspace.willSleepNotification, .system, true),
+            (NSWorkspace.didWakeNotification, .system, false),
+            (NSWorkspace.screensDidSleepNotification, .screens, true),
+            (NSWorkspace.screensDidWakeNotification, .screens, false),
+            (NSWorkspace.sessionDidResignActiveNotification, .session, true),
+            (NSWorkspace.sessionDidBecomeActiveNotification, .session, false)
+        ]
+        for (name, reason, suspended) in events {
+            lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setSuspended(suspended, reason: reason) }
+            })
+        }
+    }
+
+    func setSuspended(_ suspended: Bool, reason: Suspension) {
+        if suspended { suspensions.insert(reason) } else { suspensions.remove(reason) }
+        guard isStarted else { return }
+        generation += 1
+        if !suspensions.isEmpty { fastUntil = .distantPast; teardown() }
+        scheduleTimer()
+    }
+
     func stop() {
+        isStarted = false
+        lifecycleObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        lifecycleObservers.removeAll()
+        suspensions.removeAll()
         pollTimer?.invalidate()
         pollTimer = nil
         if let spaceObserver {

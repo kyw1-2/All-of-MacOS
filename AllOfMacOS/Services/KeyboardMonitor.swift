@@ -243,7 +243,30 @@ class KeyboardMonitor: ObservableObject {
     private var triggerEventTap: CFMachPort?
     private var triggerRunLoopSource: CFRunLoopSource?
     /// Internal for the registration integration test (@testable).
-    var registeredTriggers: [Trigger] = []
+    var registeredTriggers: [Trigger] = [] {
+        didSet {
+            shortcutIndex.removeAll(keepingCapacity: true)
+            rawShortcutIndex.removeAll(keepingCapacity: true)
+            for trigger in registeredTriggers {
+                guard case .keyboardShortcut(let shortcut) = trigger.input else { continue }
+                let normalized = KeyboardShortcut(keyCode: shortcut.keyCode,
+                    modifiers: shortcut.modifiers.intersection([.command, .option, .control, .shift, .function]))
+                shortcutIndex[normalized, default: []].append(trigger)
+                rawShortcutIndex[shortcut, default: []].append(trigger)
+            }
+        }
+    }
+    private var shortcutIndex: [KeyboardShortcut: [Trigger]] = [:]
+    private var rawShortcutIndex: [KeyboardShortcut: [Trigger]] = [:]
+
+    /// Resolve only this chord; app/group priority is still evaluated live.
+    func matchingShortcuts(_ shortcut: KeyboardShortcut, frontBundleID: String?) -> [Trigger] {
+        let candidates = shortcutIndex[shortcut] ?? []
+        guard !candidates.isEmpty else { return [] }
+        return TriggerResolver.resolve(candidates, payload: true, frontBundleID: frontBundleID,
+            payloadOf: { _ in true }, appBundleIDOf: { $0.appBundleID },
+            groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+    }
     private var activationGroups: [ActivationGroup] = []
     /// Read by the 3.4.0 audit tests (@testable).
     private(set) var sequenceDetector = KeySequenceDetector()
@@ -274,16 +297,11 @@ class KeyboardMonitor: ObservableObject {
                   AutomationGate.isOn,
                   TriggerSuppression.shared.allows(kind: .keyboard) else { return [] }
             let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            let candidates = Set(self.registeredTriggers.compactMap { trigger -> KeyboardShortcut? in
-                if case .keyboardShortcut(let shortcut) = trigger.input { return shortcut }
-                return nil
+            return Set(self.rawShortcutIndex.compactMap { shortcut, candidates in
+                TriggerResolver.resolve(candidates, payload: true, frontBundleID: front,
+                    payloadOf: { _ in true }, appBundleIDOf: { $0.appBundleID }, groups: self.activationGroups,
+                    activationGroupIDOf: { $0.activationGroupID }).isEmpty ? nil : shortcut
             })
-            return candidates.filter { shortcut in
-                !TriggerResolver.resolve(self.registeredTriggers, payload: shortcut, frontBundleID: front,
-                    payloadOf: { if case .keyboardShortcut(let value) = $0.input { return value }; return nil },
-                    appBundleIDOf: { $0.appBundleID }, groups: self.activationGroups,
-                    activationGroupIDOf: { $0.activationGroupID }).isEmpty
-            }
         }, handle: { [weak self] shortcut, isDown in
             guard let self else { return }
             if isDown && ActionExecutor.activeTextTypingSessions > 0 { return }
@@ -422,6 +440,8 @@ class KeyboardMonitor: ObservableObject {
 
     @discardableResult
     func handleInput(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isDown: Bool, isRepeat: Bool = false, text: String? = nil) -> Bool {
+        let interval = AOMPerformance.begin("Keyboard.handleInput")
+        defer { AOMPerformance.end("Keyboard.handleInput", interval) }
         guard !Self.isRecordingShortcut, !isMonitoring else { return false }
 
         // Mission Control hotkeys (W/⇧W/M/H) only while MC is open — the Dock
@@ -500,9 +520,8 @@ class KeyboardMonitor: ObservableObject {
         // A paused/suppressed keyboard never swallows keys or runs user
         // bindings; AOM's own built-in shortcuts below are unaffected.
         let suppressed = !TriggerSuppression.shared.allows(kind: .keyboard)
-        let matches = suppressed ? [] : TriggerResolver.resolve(registeredTriggers, payload: shortcut,
-            frontBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-            payloadOf: { if case .keyboardShortcut(let shortcut) = $0.input { return KeyboardShortcut(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers.intersection([.command, .option, .control, .shift, .function])) }; return nil }, appBundleIDOf: { $0.appBundleID }, groups: activationGroups, activationGroupIDOf: { $0.activationGroupID })
+        let matches = suppressed ? [] : matchingShortcuts(shortcut,
+            frontBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         if matches.isEmpty {
             // Explicit user bindings win; consume the entire physical key pair
             // for built-ins too, even when their panel changes focus on key down.

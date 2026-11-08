@@ -28,14 +28,7 @@ extension SystemToolsModel {
         if let screen = NSScreen.main, let url = NSWorkspace.shared.desktopImageURL(for: screen) {
             next[.wallpaper] = .value(DisplaySoundState.shortName(url.deletingPathExtension().lastPathComponent, limit: 12))
         }
-        if let output = AudioOutputService.currentDeviceID() {
-            next[.soundOutput] = .value(DisplaySoundState.shortName(AudioOutputService.string(output, kAudioObjectPropertyName)))
-        }
-        if let input = AudioOutputService.defaultInputDeviceID() {
-            next[.soundInput] = .value(DisplaySoundState.shortName(AudioOutputService.string(input, kAudioObjectPropertyName)))
-        }
-        if AudioOutputService.isOutputMuted() { next[.volume] = .value("Muted") }
-        else if let text = DisplaySoundState.percentText(AudioOutputService.currentVolume()) { next[.volume] = .value(text) }
+        refreshAudioStates(into: &next)
         let timer = SleepTimerService.shared
         next[.sleepTimer] = timer.isActive ? .on("At " + (timer.firesAt?.formatted(date: .omitted, time: .shortened) ?? "")) : .off()
         let awake = AppAwakeService.shared
@@ -46,6 +39,21 @@ extension SystemToolsModel {
         for (id, state) in slowStates { next[id] = state }
     }
 
+    func refreshAudioStates(into next: inout [SystemToolID: SystemToolState]) {
+        for id: SystemToolID in [.soundOutput, .soundInput, .volume] { next[id] = nil }
+        if let output = AudioOutputService.currentDeviceID() {
+            next[.soundOutput] = .value(DisplaySoundState.shortName(AudioOutputService.string(output, kAudioObjectPropertyName)))
+        }
+        if let input = AudioOutputService.defaultInputDeviceID() {
+            next[.soundInput] = .value(DisplaySoundState.shortName(AudioOutputService.string(input, kAudioObjectPropertyName)))
+        }
+        let muted = AudioOutputService.isOutputMuted()
+        next[.muteSound] = muted ? .on("Muted") : .off()
+        next[.muteMic] = AudioOutputService.isInputMuted() ? .on("Muted") : .off()
+        if muted { next[.volume] = .value("Muted") }
+        else if let text = DisplaySoundState.percentText(AudioOutputService.currentVolume()) { next[.volume] = .value(text) }
+    }
+
     /// States that need a helper process: alert volume, startup chime and
     /// Time Machine. One refresh at a time, off the main thread.
     func refreshSlowStates(force: Bool = false) {
@@ -54,6 +62,7 @@ extension SystemToolsModel {
         slowRefreshRunning = true
         let generation = slowRefreshGeneration
         Task.detached(priority: .utility) {
+            let interval = AOMPerformance.begin("SystemTools.slowRefresh")
             var slow: [SystemToolID: SystemToolState] = [:]
             if let output = try? SystemToolsCommand.run("/usr/bin/osascript", ["-e", "alert volume of (get volume settings)"]),
                output.succeeded, let value = Int(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -68,6 +77,7 @@ extension SystemToolsModel {
             }
             slow.merge(Self.slow340States()) { _, new in new }
             let result = slow
+            AOMPerformance.end("SystemTools.slowRefresh", interval)
             await MainActor.run {
                 self.slowRefreshRunning = false
                 guard self.isVisible else { return }

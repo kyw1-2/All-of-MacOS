@@ -509,6 +509,8 @@ private struct WindowPinSnapshot: Sendable {
     let windows: [CGWindowID: Window]
 
     static func read(_ ids: Set<CGWindowID>) -> Self {
+        let interval = AOMPerformance.begin("WindowPin.snapshot")
+        defer { AOMPerformance.end("WindowPin.snapshot", interval) }
         guard !ScreenLock.isLocked, CGPreflightScreenCaptureAccess(),
               let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
         else { return Self(available: false, windows: [:]) }
