@@ -23,9 +23,15 @@ BINARY_NAME="AllOfMacOS"
 
 echo "==> swift build (release; limited parallelism)"
 SCRATCH="${ALLOFMACOS_SCRATCH_PATH:-$PWD/.build}"
-swift build -c release --scratch-path "$SCRATCH" -j "${ALLOFMACOS_BUILD_JOBS:-2}"
+# Optional per-file release optimization: still -O, but avoids WMO compile
+# bottlenecks on large SwiftUI targets when building locally.
+EXTRA_SWIFTC_FLAGS=()
+if [ "${ALLOFMACOS_NO_WMO:-0}" = "1" ]; then
+    EXTRA_SWIFTC_FLAGS=(-Xswiftc -no-whole-module-optimization)
+fi
+swift build -c release --scratch-path "$SCRATCH" -j "${ALLOFMACOS_BUILD_JOBS:-2}" "${EXTRA_SWIFTC_FLAGS[@]}"
 
-BIN="$(swift build -c release --scratch-path "$SCRATCH" --show-bin-path)/AllOfMacOS"
+BIN="$(swift build -c release --scratch-path "$SCRATCH" "${EXTRA_SWIFTC_FLAGS[@]}" --show-bin-path)/AllOfMacOS"
 echo "==> Assembling app bundle at $APP"
 rm -rf "$APP"
 mkdir -p "$MACOS"
