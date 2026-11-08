@@ -326,6 +326,7 @@ private struct BoostColumnsPlaceholder: View {
 }
 
 private struct OutputDeviceRow: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var expanded: Bool
     @ObservedObject private var service = AppAudioMixerService.shared
     @State private var devices: [AudioOutputDevice] = []
@@ -398,8 +399,17 @@ private struct OutputDeviceRow: View {
             Divider()
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
-        .onAppear(perform: refresh)
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            refresh()
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    try Task.checkCancellation()
+                    refresh()
+                }
+            } catch { /* Hidden or inactive audio controls stop polling hardware. */ }
+        }
     }
 
     private var currentUID: String {
@@ -507,6 +517,7 @@ private struct OutputEffectsPanel: View {
 }
 
 private struct InputDeviceRow: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var devices: [AudioOutputDevice] = []
     @State private var volume: Double = 80
     @State private var isMuted = false
@@ -556,8 +567,17 @@ private struct InputDeviceRow: View {
             }
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
-        .onAppear(perform: refresh)
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            refresh()
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    try Task.checkCancellation()
+                    refresh()
+                }
+            } catch { /* Hidden or inactive audio controls stop polling hardware. */ }
+        }
     }
 
     private var currentUID: String {

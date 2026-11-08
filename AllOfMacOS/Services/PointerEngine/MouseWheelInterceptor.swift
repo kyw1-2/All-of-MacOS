@@ -74,8 +74,17 @@ final class MouseWheelInterceptor {
     /// receiver's actual relative AC Pan reports for output volume. It does not
     /// claim all horizontal gestures from a trackpad or other mouse.
     private var volumeMode = false
-    private var volumeWork: DispatchWorkItem?
-    private var pendingVolumeTicks = 0
+    private lazy var volumeQueue = MouseWheelVolumeQueue { [weak self] delta, completion in
+        guard let self, self.isRunning, self.volumeMode, AutomationGate.allows(.mouse) else {
+            completion(); return
+        }
+        AudioOutputService.shared.adjustVolume(percentagePoints: delta) { ok in
+            if !ok { NSLog("[MouseWheelInterceptor] UGREEN side wheel: output volume write failed") }
+            completion()
+        }
+    }
+    private var wantsEnabled = false
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     static let nativeSuppressionWindow: TimeInterval = 0.08
 
     static func shouldSynthesize(elapsedSinceNative: TimeInterval) -> Bool {
@@ -91,9 +100,13 @@ final class MouseWheelInterceptor {
 
     func setEnabled(_ enabled: Bool, volumeMode: Bool = false) {
         dispatchPrecondition(condition: .onQueue(.main))
-        stop()
+        wantsEnabled = enabled
+        if enabled, isRunning, self.volumeMode == volumeMode { return }
+        stopObservation()
         self.volumeMode = volumeMode
-        guard enabled, !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
+        guard !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
+        observeRecovery()
+        guard enabled else { return }
         guard AXIsProcessTrusted() else { return }
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         let match: [String: Int] = [kIOHIDVendorIDKey: UGREENThumbWheelMapping.vendor,
@@ -137,8 +150,8 @@ final class MouseWheelInterceptor {
             // Only native horizontal motion is relevant. Vertical wheels or
             // touchpad momentum must not suppress the UGREEN thumb wheel.
             let nativeHorizontal = event.scrollingDeltaX != 0 ||
-                event.cgEvent?.getIntegerValueField(.scrollWheelEventDeltaAxis2) != 0 ||
-                event.cgEvent?.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) != 0
+                (event.cgEvent?.getIntegerValueField(.scrollWheelEventDeltaAxis2) ?? 0) != 0 ||
+                (event.cgEvent?.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) ?? 0) != 0
             guard nativeHorizontal else { return }
             self.lastNativeHorizontal = ProcessInfo.processInfo.systemUptime
             self.pendingTicks = 0
@@ -150,26 +163,8 @@ final class MouseWheelInterceptor {
     }
 
     private func receiveVolume(_ ticks: Int) {
-        guard isRunning, volumeMode, AutomationGate.allows(.mouse),
-              TriggerSuppression.shared.allows(kind: .mouse) else { return }
-        pendingVolumeTicks = max(-4, min(4, pendingVolumeTicks + ticks))
-        guard volumeWork == nil else { return }
-        // Coalesce multiple HID reports per detent; never queue dozens of
-        // CoreAudio writes for a quick flick of the side wheel.
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.isRunning, self.volumeMode else { return }
-            self.volumeWork = nil
-            let ticks = self.pendingVolumeTicks
-            self.pendingVolumeTicks = 0
-            let delta = UGREENThumbWheelMapping.volumeDelta(ticks: ticks)
-            guard delta != 0, AutomationGate.allows(.mouse),
-                  TriggerSuppression.shared.allows(kind: .mouse) else { return }
-            AudioOutputService.shared.adjustVolume(percentagePoints: delta) { ok in
-                if !ok { NSLog("[MouseWheelInterceptor] UGREEN side wheel: output volume write failed") }
-            }
-        }
-        volumeWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025, execute: work)
+        guard isRunning, volumeMode, AutomationGate.allows(.mouse) else { return }
+        volumeQueue.add(ticks: ticks)
     }
 
     private func receive(_ ticks: Int) {
@@ -200,9 +195,37 @@ final class MouseWheelInterceptor {
 
     func stop() {
         dispatchPrecondition(condition: .onQueue(.main))
+        wantsEnabled = false
+        stopObservation()
+    }
+
+    private func observeRecovery() {
+        guard observers.isEmpty else { return }
+        let settingsToken = NotificationCenter.default.addObserver(forName: .aomSettingChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.setEnabled(InputRemapSettings.ugreenThumbWheel, volumeMode: InputRemapSettings.ugreenThumbWheelVolume)
+        }
+        observers.append((.default, settingsToken))
+        func observe(_ center: NotificationCenter, _ name: Notification.Name, restart: Bool, suspend: Bool = false) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.wantsEnabled else { return }
+                if restart || suspend { self.stopObservation() }
+                if !suspend { self.setEnabled(true, volumeMode: self.volumeMode) }
+            }
+            observers.append((center, token))
+        }
+        observe(.default, PermissionWatchdog.accessibilityLost, restart: false, suspend: true)
+        observe(.default, PermissionWatchdog.accessibilityRecovered, restart: true)
+        observe(.default, NSApplication.didBecomeActiveNotification, restart: false)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification, restart: false, suspend: true)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification, restart: true)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidBecomeActiveNotification, restart: true)
+    }
+
+    private func stopObservation() {
         isRunning = false
         pendingWork?.cancel(); pendingWork = nil; pendingTicks = 0
-        volumeWork?.cancel(); volumeWork = nil; pendingVolumeTicks = 0
+        volumeQueue.reset()
+        lastNativeHorizontal = -.infinity
         if let nativeMonitor { NSEvent.removeMonitor(nativeMonitor) }
         nativeMonitor = nil
         if let manager {
@@ -210,5 +233,63 @@ final class MouseWheelInterceptor {
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         manager = nil
+    }
+
+    deinit {
+        for (center, token) in observers { center.removeObserver(token) }
+        stopObservation()
+    }
+}
+
+/// Main-thread coalescing with at most one hardware request in flight. Slow
+/// monitor/DDC volume writes must not build a seconds-long queue of old ticks.
+final class MouseWheelVolumeQueue {
+    typealias Schedule = (@escaping () -> Void) -> Void
+    private let schedule: Schedule
+    private let write: (Double, @escaping () -> Void) -> Void
+    private var pending = 0.0
+    private var scheduled = false
+    private var writing = false
+    private var generation = 0
+
+    init(schedule: @escaping Schedule = { work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025, execute: work)
+    }, write: @escaping (Double, @escaping () -> Void) -> Void) {
+        self.schedule = schedule
+        self.write = write
+    }
+
+    func add(ticks: Int) {
+        // Preserve the existing four-tick/12-point burst limit, including
+        // when the device takes longer than one batching interval to reply.
+        let limit = UGREENThumbWheelMapping.volumeDelta(ticks: 4)
+        pending = max(-limit, min(limit, pending + UGREENThumbWheelMapping.volumeDelta(ticks: ticks)))
+        drainLater()
+    }
+
+    func reset() {
+        generation += 1
+        pending = 0
+        scheduled = false
+        // An already submitted write still owns the slot until completion.
+    }
+
+    private func drainLater() {
+        guard pending != 0, !scheduled, !writing else { return }
+        scheduled = true
+        let expected = generation
+        schedule { [weak self] in
+            guard let self, self.generation == expected else { return }
+            self.scheduled = false
+            let delta = self.pending
+            self.pending = 0
+            guard delta != 0 else { return }
+            self.writing = true
+            self.write(delta) { [weak self] in
+                guard let self else { return }
+                self.writing = false
+                self.drainLater()
+            }
+        }
     }
 }

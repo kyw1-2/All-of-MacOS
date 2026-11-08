@@ -200,7 +200,7 @@ class PresetManager {
             "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold",
             // 3.3.3: how far Force Touch pressure eases off before a stage can fire again.
             PressureStageTracker.hysteresisKey,
-            "AOMHUDEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel",
+            "AOMHUDEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume",
             // Key remapping and the Hyper key (the remaps AOM owns at runtime are not settings).
             "AOMKeyRemaps", "AOMHyperKeyEnabled", "AOMHyperKeySource", "AOMHyperKeyTapEscape",
             "AOMMissionControlButtons", "AOMMissionControlHotkeys",
@@ -613,7 +613,7 @@ class PresetManager {
             || key == "AOMSuppressMouseDuringDrawing" { return "Trackpad gestures" }
         if ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",
             "AOMMouseQuickReleaseMaxMs", "AOMMouseMultiClickIntervalMs", "AOMMouseDragThresholdPx", "AOMForcePressEnabled",
-            "AOMForcePressThreshold", PressureStageTracker.hysteresisKey, "AOMReverseMouseWheel", "AOMUGREENThumbWheel"].contains(key) {
+            "AOMForcePressThreshold", PressureStageTracker.hysteresisKey, "AOMReverseMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume"].contains(key) {
             return "Gesture timing"
         }
         if key.hasPrefix("AOMKeyRemap") || key.hasPrefix("AOMHyperKey") { return "Key remapping" }

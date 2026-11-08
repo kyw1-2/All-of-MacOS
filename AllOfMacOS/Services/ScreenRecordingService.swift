@@ -778,7 +778,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         stopTimer()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / Double(CaptureSettings.recordingFPS), repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.isPaused else { return }
+                guard let self, self.isRecording, !self.isStopping, !self.isPaused else { return }
                 // A full disk or encoder failure used to stop writing silently
                 // while the REC bar kept counting. Stop and say why; the
                 // fragments stay recoverable.
@@ -793,7 +793,10 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 if self.outputGIF && seconds >= 120 && !self.isStopping {
                     Task { @MainActor in _ = try? await self.stopRecording() }
                 }
-                if seconds.isFinite { self.elapsedSeconds = max(0, Int(seconds)) }
+                if seconds.isFinite {
+                    let elapsed = max(0, Int(seconds))
+                    if self.elapsedSeconds != elapsed { self.elapsedSeconds = elapsed }
+                }
             }
         }
     }

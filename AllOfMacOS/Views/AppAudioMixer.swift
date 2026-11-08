@@ -629,7 +629,7 @@ private struct AppAudioMixerView: View {
                 }
                 .padding(AOMSpace.x3)
             }
-            MixerOutputSection()
+            MixerOutputSection(isVisible: service.isShowing)
             // SoundSource keeps the output's effects folded under the output
             // so the applications get the room; 3.4 does the same.
             Button {
@@ -800,6 +800,9 @@ struct MasterBoostControls: View {
 /// SoundSource header row. Uses AudioOutputService, which exists on every
 /// supported macOS version (no 14.2 gate).
 struct MixerOutputSection: View {
+    // This mixer lives in an NSHostingView/nonactivating NSPanel, outside a
+    // SwiftUI Scene. Its explicit visibility is authoritative, not scenePhase.
+    var isVisible = true
     @State private var devices: [AudioOutputDevice] = []
     @State private var volume: Double = 50
     @State private var muted = false
@@ -866,8 +869,17 @@ struct MixerOutputSection: View {
         }
         .padding(.horizontal, AOMSpace.x3)
         .padding(.bottom, AOMSpace.x3)
-        .onAppear(perform: refresh)
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+        .task(id: isVisible) {
+            guard isVisible else { return }
+            refresh()
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    try Task.checkCancellation()
+                    refresh()
+                }
+            } catch { /* Hidden or inactive audio controls stop polling hardware. */ }
+        }
     }
 
     private var currentUID: String {

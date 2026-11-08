@@ -87,7 +87,7 @@ final class BackupScopeTests: XCTestCase {
     func testTheSettingsThePagePromisesAreBackedUp() {
         for key in ["AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs", "AOMMouseLongPressMs",
                     "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold", "AOMKeyRemaps",
-                    "AOMHyperKeyEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel",
+                    "AOMHyperKeyEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume",
                     AppAudioRenderBus.stableDynamicsKey, "AOMMenuShelfPinnedItems", "AOMMenuShelfNotchHover", "AOMHUDEnabled", "AOMAudioOverdrive_com.example.app",
                     "AOMMissionControlButtons", "AOMMissionControlHotkeys", TextCaptureSettings.Key.languages,
                     TextCaptureShortcutAction.readQRCode.userDefaultsKey] {

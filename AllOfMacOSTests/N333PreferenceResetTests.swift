@@ -186,7 +186,12 @@ final class N333PreferenceResetTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(found.count, 150, "the scan found the app's settings (\(found.count))")
-        let unseen = found.filter { !PreferenceResetRegistry.isAOMKey($0.key) }.map { "\($0.value): \($0.key)" }.sorted()
+        // Dark-mode feedback reads this macOS preference; it is not an AOM
+        // preference and Reset Preferences must never claim or remove it.
+        let systemReadOnlyKeys: Set<String> = ["AppleInterfaceStyle"]
+        for key in systemReadOnlyKeys { XCTAssertFalse(PreferenceResetRegistry.isAOMKey(key)) }
+        let unseen = found.filter { !systemReadOnlyKeys.contains($0.key) && !PreferenceResetRegistry.isAOMKey($0.key) }
+            .map { "\($0.value): \($0.key)" }.sorted()
         XCTAssertEqual(unseen, [], "add these to PreferenceResetRegistry.unprefixedPreferenceKeys")
     }
 

@@ -30,7 +30,7 @@ final class OverlayActivationTests: XCTestCase {
 
     /// Idle Mission Control polling is half the old 0.25 s rate; the burst stays
     /// fast so the ✕ buttons still arrive with the reveal animation.
-    func testMissionControlPollingCadence() {
+    @MainActor func testMissionControlPollingCadence() {
         XCTAssertEqual(MissionControlOverlayService.pollInterval(burst: false), 0.5, accuracy: 0.0001)
         XCTAssertEqual(MissionControlOverlayService.pollInterval(burst: true), 0.2, accuracy: 0.0001)
         XCTAssertLessThan(MissionControlOverlayService.pollInterval(burst: true),

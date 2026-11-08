@@ -15,7 +15,7 @@ struct TouchPoint: Identifiable, Equatable {
     var pressure: Float = 0
 }
 
-struct TrailPoint {
+struct TrailPoint: Equatable {
     var x: Float
     var y: Float
     var age: TimeInterval // seconds since creation
@@ -103,7 +103,7 @@ class LiveTouchState: ObservableObject {
             next[point.id] = trail
         }
         // One publication for the entire dictionary, not one per finger.
-        if !next.isEmpty || !trails.isEmpty { trails = next }
+        if next != trails { trails = next }
         updateFadeTimer()
     }
 
@@ -123,26 +123,22 @@ class LiveTouchState: ObservableObject {
         }
     }
 
-    private func tickFade() {
-        let now = ProcessInfo.processInfo.systemUptime
-        var changed = false
+    func tickFade(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        var next = trails
         for (fingerID, trail) in trails {
             let filtered = trail.filter { now - $0.age < maxTrailAge }
             if filtered.count != trail.count {
-                changed = true
                 if filtered.isEmpty {
-                    trails.removeValue(forKey: fingerID)
+                    next.removeValue(forKey: fingerID)
                 } else {
-                    trails[fingerID] = filtered
+                    next[fingerID] = filtered
                 }
             }
         }
+        if next != trails { trails = next }
         if trails.isEmpty {
             fadeTimer?.invalidate()
             fadeTimer = nil
-        } else if changed {
-            // Force publish change so Canvas redraws
-            objectWillChange.send()
         }
     }
 

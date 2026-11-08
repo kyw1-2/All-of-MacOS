@@ -42,6 +42,8 @@ class MouseButtonMonitor {
     /// Buttons whose press was swallowed; their drag and release are swallowed too.
     private var suppressedButtons = Set<Int>()
     private var wake: DispatchWorkItem?
+    private var wakeDeadline: TimeInterval?
+    private var lifecycleObservers: [(NotificationCenter, NSObjectProtocol)] = []
     private static var activeMonitor: MouseButtonMonitor?
 
     // Test seams.
@@ -51,10 +53,14 @@ class MouseButtonMonitor {
     /// When set, replaces the real fire path (ActionExecutor + HUD).
     var onFire: ((Entry) -> Void)?
     var globalEnabled: () -> Bool = { AutomationGate.isOn }
+    var needsSideButtonHID: Bool {
+        entries.contains { !$0.spec.kind.isScroll && (3...4).contains($0.spec.button) }
+    }
 
     func registerTriggers(_ triggers: [Trigger], groups: [ActivationGroup] = []) {
         registerEntries(triggers, groups: groups)
         guard !entries.isEmpty || !suppressedButtons.isEmpty else { return }
+        observeRecovery()
         installTap()
         sideHID.onEvent = { [weak self] button, down in
             guard let self else { return }
@@ -70,7 +76,7 @@ class MouseButtonMonitor {
                 self.sideDeduplicator.noteHID(edge, time: time, swallow: swallowed)
             }
         }
-        sideHID.start()
+        if needsSideButtonHID { sideHID.start() }
     }
 
     /// Builds the registration tables without touching the event system.
@@ -188,10 +194,15 @@ class MouseButtonMonitor {
 
     /// Wakes the recognizer exactly when a long press or deferred click is due.
     private func scheduleWake() {
+        let deadline = recognizer.nextDeadline
+        if wake != nil, wakeDeadline == deadline { return }
         wake?.cancel(); wake = nil
-        guard let deadline = recognizer.nextDeadline else { return }
+        wakeDeadline = deadline
+        guard let deadline else { return }
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            self.wake = nil
+            self.wakeDeadline = nil
             self.pollNow()
         }
         wake = item
@@ -218,6 +229,7 @@ class MouseButtonMonitor {
     /// button is still down keeps its release swallowed.
     func tapWasDisabled() {
         wake?.cancel(); wake = nil
+        wakeDeadline = nil
         recognizer.reset()
         suppressedButtons = suppressedButtons.filter(buttonIsDown)
     }
@@ -238,6 +250,48 @@ class MouseButtonMonitor {
     }
 
     // MARK: Event tap
+
+    private func observeRecovery() {
+        guard lifecycleObservers.isEmpty, !PresetManager.isRunningTests, !PresetManager.isUIPreview else { return }
+        func observe(_ center: NotificationCenter, _ name: Notification.Name, suspend: Bool) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                if suspend {
+                    self.hidGeneration += 1
+                    self.sideHID.stop()
+                    self.sideDeduplicator = MouseSideButtonDeduplicator()
+                    self.tapWasDisabled()
+                    self.removeTap()
+                } else {
+                    guard !self.entries.isEmpty || !self.suppressedButtons.isEmpty else { return }
+                    if let tap = self.eventTap, !CFMachPortIsValid(tap) { self.removeTap() }
+                    if self.eventTap == nil { self.installTap() }
+                    if let tap = self.eventTap, !CGEvent.tapIsEnabled(tap: tap) {
+                        self.tapWasDisabled()
+                        CGEvent.tapEnable(tap: tap, enable: true)
+                    }
+                    if self.needsSideButtonHID { self.sideHID.start() }
+                }
+            }
+            lifecycleObservers.append((center, token))
+        }
+        observe(.default, PermissionWatchdog.accessibilityLost, suspend: true)
+        observe(.default, PermissionWatchdog.accessibilityRecovered, suspend: false)
+        observe(.default, NSApplication.didBecomeActiveNotification, suspend: false)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification, suspend: true)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.didWakeNotification, suspend: false)
+        observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidBecomeActiveNotification, suspend: false)
+    }
+
+    private func removeTap() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        eventTap = nil
+        runLoopSource = nil
+    }
 
     private func installTap() {
         MouseButtonMonitor.activeMonitor = self
@@ -322,19 +376,15 @@ class MouseButtonMonitor {
     }
 
     func unregisterAll() {
+        for (center, token) in lifecycleObservers { center.removeObserver(token) }
+        lifecycleObservers.removeAll()
         hidGeneration += 1
         sideHID.stop()
         sideHID.onEvent = nil
         sideDeduplicator = MouseSideButtonDeduplicator()
         wake?.cancel(); wake = nil
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
-            runLoopSource = nil
-        }
+        wakeDeadline = nil
+        removeTap()
         if MouseButtonMonitor.activeMonitor === self {
             MouseButtonMonitor.activeMonitor = nil
         }

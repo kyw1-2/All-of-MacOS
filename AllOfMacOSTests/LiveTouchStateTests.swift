@@ -195,4 +195,32 @@ final class LiveTouchStateTests: XCTestCase {
         let p2 = TouchPoint(id: 2, x: 0.3, y: 0.7, size: 4.0)
         XCTAssertNotEqual(p1.id, p2.id)
     }
+    func testRestingFingerDoesNotRepublishIdenticalTrails() {
+        let state = LiveTouchState()
+        let points = [TouchPoint(id: 1, x: 0.3, y: 0.4, size: 0.5)]
+        state.update(points)
+        var changes = 0
+        let token = state.objectWillChange.sink { changes += 1 }
+        for _ in 0..<100 { state.update(points) }
+        XCTAssertEqual(changes, 0)
+        withExtendedLifetime(token) {}
+    }
+
+    func testFadePrunesAllFingersInOnePublication() {
+        let state = LiveTouchState()
+        state.trails = [
+            1: [TrailPoint(x: 0, y: 0, age: 1)],
+            2: [TrailPoint(x: 1, y: 1, age: 1), TrailPoint(x: 2, y: 2, age: 2)]
+        ]
+        var changes = 0
+        let token = state.objectWillChange.sink { changes += 1 }
+        state.tickFade(now: 2)
+        XCTAssertEqual(changes, 1)
+        XCTAssertNil(state.trails[1])
+        XCTAssertEqual(state.trails[2]?.count, 1)
+        state.tickFade(now: 2.1)
+        XCTAssertEqual(changes, 1)
+        withExtendedLifetime(token) {}
+    }
+
 }

@@ -62,4 +62,73 @@ final class UGREENThumbWheelTests: XCTestCase {
         XCTAssertNil(UGREENThumbWheelMapping.scrollEvent(ticks: 0, location: point))
         XCTAssertNil(UGREENThumbWheelMapping.scrollEvent(ticks: 9, location: point))
     }
+    func testSlowVolumeWritesKeepOneRequestInFlightAndCoalescePendingInput() {
+        var scheduled: [() -> Void] = []
+        var completed: [() -> Void] = []
+        var deltas: [Double] = []
+        let queue = MouseWheelVolumeQueue(schedule: { scheduled.append($0) }) { delta, done in
+            deltas.append(delta); completed.append(done)
+        }
+        queue.add(ticks: 1)
+        queue.add(ticks: 1)
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(deltas, [6])
+        for _ in 0..<1_000 { queue.add(ticks: 1) }
+        XCTAssertTrue(scheduled.isEmpty, "A slow device must not accumulate hardware requests")
+        XCTAssertEqual(deltas.count, 1)
+        completed.removeFirst()()
+        XCTAssertEqual(scheduled.count, 1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(deltas, [6, 12], "A delayed device must retain the four-tick burst limit")
+        completed.removeFirst()()
+        XCTAssertTrue(scheduled.isEmpty)
+    }
+
+    func testOppositeTicksCancelBeforeWrite() {
+        var scheduled: [() -> Void] = []
+        var writes = 0
+        let queue = MouseWheelVolumeQueue(schedule: { scheduled.append($0) }) { _, done in
+            writes += 1; done()
+        }
+        queue.add(ticks: 1)
+        queue.add(ticks: -1)
+        scheduled.removeFirst()()
+        XCTAssertEqual(writes, 0)
+    }
+
+    func testResetDiscardsScheduledInputWithoutReplayingItAfterRestart() {
+        var scheduled: [() -> Void] = []
+        var deltas: [Double] = []
+        let queue = MouseWheelVolumeQueue(schedule: { scheduled.append($0) }) { delta, done in
+            deltas.append(delta); done()
+        }
+        queue.add(ticks: 4)
+        queue.reset()
+        queue.add(ticks: -1)
+        scheduled.removeFirst()()
+        XCTAssertTrue(deltas.isEmpty)
+        scheduled.removeFirst()()
+        XCTAssertEqual(deltas, [-3])
+    }
+
+    func testRestartWaitsForOutstandingWriteAndDropsOldPendingInput() {
+        var scheduled: [() -> Void] = []
+        var completed: [() -> Void] = []
+        var deltas: [Double] = []
+        let queue = MouseWheelVolumeQueue(schedule: { scheduled.append($0) }) { delta, done in
+            deltas.append(delta); completed.append(done)
+        }
+        queue.add(ticks: 1)
+        scheduled.removeFirst()()
+        queue.add(ticks: 4)
+        queue.reset()
+        queue.add(ticks: -1)
+        XCTAssertTrue(scheduled.isEmpty)
+        completed.removeFirst()()
+        scheduled.removeFirst()()
+        XCTAssertEqual(deltas, [3, -3])
+        completed.removeFirst()()
+    }
+
 }

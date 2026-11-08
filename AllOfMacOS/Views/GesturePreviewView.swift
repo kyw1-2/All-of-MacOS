@@ -15,7 +15,10 @@ struct GesturePreviewView: View {
     let gesture: TrackpadGesture
     @EnvironmentObject var appState: AppState
     @State private var animating = false
-    @State private var animationID = UUID()
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var animationKey: String { "\(gesture.rawValue)-\(scenePhase == .active)-\(reduceMotion)" }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -32,12 +35,20 @@ struct GesturePreviewView: View {
                 // proportionally downscaled with the body
                 gestureAnimation
                     .scaleEffect(2.0 / 3.0)
-                    .id(animationID)
+                    .id(animationKey)
             }
             .frame(width: 120, height: 92)
             .clipped()
-            .onAppear { startAnimation() }
-            .onChange(of: gesture) { _ in restartAnimation() }
+            .task(id: animationKey) {
+                animating = false
+                guard scenePhase == .active, !reduceMotion else { return }
+                do {
+                    try await Task.sleep(nanoseconds: 200_000_000)
+                    try Task.checkCancellation()
+                    animating = true
+                } catch { /* The preview disappeared or its configuration changed. */ }
+            }
+            .onDisappear { animating = false }
 
             Text(gesture.rawValue)
                 .font(.caption)
@@ -45,21 +56,6 @@ struct GesturePreviewView: View {
         }
         .padding(8)
         .environment(\.themeColor, appState.accentColorChoice.color)
-    }
-
-    private func startAnimation() {
-        animating = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(AOMDesign.animation(.default)) { animating = true }
-        }
-    }
-
-    private func restartAnimation() {
-        animating = false
-        animationID = UUID()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation(AOMDesign.animation(.default)) { animating = true }
-        }
     }
 
     /// Leading digit of the gesture name is its finger count.
@@ -319,7 +315,7 @@ struct SwipeAnimation: View {
                 )
         }
         .animation(
-            AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)),
+            animating ? AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) : nil,
             value: animating
         )
     }
@@ -380,7 +376,7 @@ struct TapAnimation: View {
             }
         }
         .animation(
-            AOMDesign.animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)),
+            animating ? AOMDesign.animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) : nil,
             value: animating
         )
     }
@@ -453,7 +449,7 @@ struct PinchAnimation: View {
             }
         }
         .animation(
-            AOMDesign.animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)),
+            animating ? AOMDesign.animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) : nil,
             value: animating
         )
     }
@@ -476,7 +472,7 @@ struct RotateAnimation: View {
         }
         .rotationEffect(.degrees(animating ? (clockwise ? 45 : -45) : 0))
         .animation(
-            AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)),
+            animating ? AOMDesign.animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) : nil,
             value: animating
         )
     }
@@ -489,6 +485,8 @@ struct TipTapAnimation: View {
     let direction: TipTapDir
     let animating: Bool
     @State private var tapping = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -518,17 +516,20 @@ struct TipTapAnimation: View {
                     .offset(y: tapping ? 0 : -12)
             }
         }
-        .onAppear { runTipTap() }
-    }
-
-    private func runTipTap() {
-        // Reduce Motion: show the finger resting on the pad instead of a loop.
-        guard !AOMDesign.reduceMotion else { tapping = true; return }
-        withAnimation(AOMDesign.animation(.easeOut(duration: 0.2))) { tapping = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            withAnimation(AOMDesign.animation(.easeIn(duration: 0.2))) { tapping = false }
+        .task(id: "\(animating)-\(scenePhase == .active)-\(reduceMotion)") {
+            tapping = reduceMotion
+            guard animating, scenePhase == .active, !reduceMotion else { return }
+            do {
+                while !Task.isCancelled {
+                    withAnimation(AOMDesign.animation(.easeOut(duration: 0.2))) { tapping = true }
+                    try await Task.sleep(nanoseconds: 350_000_000)
+                    try Task.checkCancellation()
+                    withAnimation(AOMDesign.animation(.easeIn(duration: 0.2))) { tapping = false }
+                    try await Task.sleep(nanoseconds: 650_000_000)
+                    try Task.checkCancellation()
+                }
+            } catch { /* Cancellation stops offscreen previews. */ }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { runTipTap() }
     }
 }
 
@@ -538,8 +539,11 @@ struct CircleAnimation: View {
     let clockwise: Bool
     let animating: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating || reduceMotion || scenePhase != .active)) { timeline in
             CircleAnimationContent(
                 clockwise: clockwise,
                 date: timeline.date
@@ -610,8 +614,11 @@ private struct CircleAnimationContent: View {
 struct TriangleDrawAnimation: View {
     let animating: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animating || reduceMotion || scenePhase != .active)) { timeline in
             TriangleDrawContent(date: timeline.date)
         }
     }
@@ -690,7 +697,7 @@ struct EdgeDragAnimation: View {
     let direction: Direction
     let animating: Bool
     @Environment(\.themeColor) private var themeColor
-    @State private var progress: CGFloat = 0
+    private var progress: CGFloat { animating || AOMDesign.reduceMotion ? 1 : 0 }
 
     var body: some View {
         let edgeX: CGFloat = edge == .left ? -65 : 65
@@ -714,16 +721,8 @@ struct EdgeDragAnimation: View {
             FingerDot(size: 16)
                 .offset(x: edgeX, y: startY + (endY - startY) * progress)
         }
-        .onAppear { startLoop() }
-    }
-
-    private func startLoop() {
-        // Reduce Motion: show the finished stroke instead of looping it.
-        progress = AOMDesign.reduceMotion ? 1 : 0
-        guard let loop = AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) else { return }
-        withAnimation(loop) {
-            progress = 1
-        }
+        .animation(animating ? AOMDesign.animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) : nil,
+                   value: animating)
     }
 }
 
@@ -737,6 +736,8 @@ struct PositionClickAnimation: View {
     let animating: Bool
     @Environment(\.themeColor) private var themeColor
     @State private var pressing = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -757,18 +758,22 @@ struct PositionClickAnimation: View {
                 .frame(width: pressing ? 36 : 16, height: pressing ? 36 : 16)
                 .offset(x: dotX, y: dotY)
         }
-        .onAppear { runPress() }
+        .task(id: "\(animating)-\(scenePhase == .active)-\(reduceMotion)") {
+            pressing = reduceMotion
+            guard animating, scenePhase == .active, !reduceMotion else { return }
+            do {
+                while !Task.isCancelled {
+                    withAnimation(AOMDesign.animation(.easeOut(duration: 0.25))) { pressing = true }
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                    try Task.checkCancellation()
+                    withAnimation(AOMDesign.animation(.easeIn(duration: 0.25))) { pressing = false }
+                    try await Task.sleep(nanoseconds: 700_000_000)
+                    try Task.checkCancellation()
+                }
+            } catch { /* Cancellation stops offscreen previews. */ }
+        }
     }
 
-    private func runPress() {
-        // Reduce Motion: a single static press instead of a repeating ripple.
-        guard !AOMDesign.reduceMotion else { pressing = true; return }
-        withAnimation(AOMDesign.animation(.easeOut(duration: 0.25))) { pressing = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(AOMDesign.animation(.easeIn(duration: 0.25))) { pressing = false }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { runPress() }
-    }
 
     private var dotX: CGFloat {
         switch position {

@@ -6,11 +6,20 @@ import IOKit.hid
 /// only PrimaryUsage=Mouse, and never seize the receiver or read key values.
 final class MouseSideButtonHID {
     private var manager: IOHIDManager?
+    private let openManager: (IOHIDManager) -> IOReturn
+    var isRunning: Bool { manager != nil }
     private(set) var held = Set<Int>()
     /// A disconnected keyboard/headset must not release a button held by the
     /// UGREEN mouse receiver. Keep ownership per HID device, not globally.
     private var heldByDevice: [IOHIDDevice: Set<Int>] = [:]
+    private var receiverCache: [IOHIDDevice: Bool] = [:]
     var onEvent: ((Int, Bool) -> Void)?
+
+    init(openManager: @escaping (IOHIDManager) -> IOReturn = {
+        IOHIDManagerOpen($0, IOOptionBits(kIOHIDOptionsTypeNone))
+    }) {
+        self.openManager = openManager
+    }
 
     static func button(page: UInt32, usage: UInt32) -> Int? {
         switch (page, usage) {
@@ -29,6 +38,10 @@ final class MouseSideButtonHID {
             [kIOHIDElementUsagePageKey: $0.0, kIOHIDElementUsageKey: $0.1]
         }
         IOHIDManagerSetInputValueMatchingMultiple(manager, matches as CFArray)
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, _ in
+            guard let context else { return }
+            Unmanaged<MouseSideButtonHID>.fromOpaque(context).takeUnretainedValue().receiverCache.removeAll()
+        }, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerRegisterInputValueCallback(manager, { context, result, _, value in
             guard result == kIOReturnSuccess, let context else { return }
             let owner = Unmanaged<MouseSideButtonHID>.fromOpaque(context).takeUnretainedValue()
@@ -41,12 +54,15 @@ final class MouseSideButtonHID {
         IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, device in
             guard let context else { return }
             let owner = Unmanaged<MouseSideButtonHID>.fromOpaque(context).takeUnretainedValue()
+            owner.receiverCache.removeAll()
             owner.remove(device: device)
         }, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-        let result = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        let result = openManager(manager)
         if result != kIOReturnSuccess {
             NSLog("[MouseSideButtonHID] Cannot observe side buttons (%d); check Input Monitoring permission", result)
+            // Do not retain a failed manager: start() must be able to retry.
+            stop()
         }
     }
 
@@ -59,6 +75,13 @@ final class MouseSideButtonHID {
     }
 
     private func isMouseReceiver(_ device: IOHIDDevice) -> Bool {
+        if let cached = receiverCache[device] { return cached }
+        let result = classifyMouseReceiver(device)
+        receiverCache[device] = result
+        return result
+    }
+
+    private func classifyMouseReceiver(_ device: IOHIDDevice) -> Bool {
         guard let vendor = IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? NSNumber,
               let product = IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? NSNumber else { return false }
         if Self.isKnownCompositeReceiver(vendor: vendor.intValue, product: product.intValue) { return true }
@@ -103,6 +126,7 @@ final class MouseSideButtonHID {
         self.manager = nil
         held.removeAll()
         heldByDevice.removeAll()
+        receiverCache.removeAll()
     }
     deinit { stop() }
 }
@@ -111,22 +135,39 @@ final class MouseSideButtonHID {
 /// edge are consumed once; distinct down/up pairs (double click) stay distinct.
 struct MouseSideButtonDeduplicator {
     struct Edge: Hashable { let button: Int; let down: Bool }
-    private var cg: [Edge: TimeInterval] = [:]
-    private var fallback: [Edge: (time: TimeInterval, swallow: Bool)] = [:]
+    private var cg: [Edge: [TimeInterval]] = [:]
+    private var fallback: [Edge: [(time: TimeInterval, swallow: Bool)]] = [:]
+    private static let window: TimeInterval = 0.08
+
+    private mutating func prune(at time: TimeInterval) {
+        for edge in Array(cg.keys) {
+            cg[edge]?.removeAll { time - $0 > Self.window }
+            if cg[edge]?.isEmpty == true { cg[edge] = nil }
+        }
+        for edge in Array(fallback.keys) {
+            fallback[edge]?.removeAll { time - $0.time > Self.window }
+            if fallback[edge]?.isEmpty == true { fallback[edge] = nil }
+        }
+    }
+
     mutating func noteCG(_ edge: Edge, time: TimeInterval) -> Bool? {
-        cg[edge] = time
-        guard let prior = fallback[edge], abs(time - prior.time) <= 0.08 else { return nil }
-        fallback[edge] = nil
-        // A single native CG edge matches at most one HID edge.
-        cg[edge] = nil
-        return prior.swallow
+        prune(at: time)
+        if let index = fallback[edge]?.firstIndex(where: { abs(time - $0.time) <= Self.window }) {
+            return fallback[edge]?.remove(at: index).swallow
+        }
+        cg[edge, default: []].append(time)
+        if cg[edge]!.count > 32 { cg[edge]!.removeFirst() }
+        return nil
     }
     mutating func shouldDeliverHID(_ edge: Edge, time: TimeInterval) -> Bool {
-        guard let seen = cg[edge], abs(time - seen) <= 0.08 else { return true }
-        cg[edge] = nil
+        prune(at: time)
+        guard let index = cg[edge]?.firstIndex(where: { abs(time - $0) <= Self.window }) else { return true }
+        cg[edge]?.remove(at: index)
         return false
     }
     mutating func noteHID(_ edge: Edge, time: TimeInterval, swallow: Bool) {
-        fallback[edge] = (time, swallow)
+        prune(at: time)
+        fallback[edge, default: []].append((time, swallow))
+        if fallback[edge]!.count > 32 { fallback[edge]!.removeFirst() }
     }
 }

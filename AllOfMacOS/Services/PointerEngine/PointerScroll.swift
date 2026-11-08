@@ -17,9 +17,11 @@ final class ScrollWheelReverser {
     var isRunning: Bool { tap != nil }
 
     func setEnabled(_ enabled: Bool) {
+        let smooth = InputRemapSettings.smoothMouseWheel
+        if enabled == reverseEnabled, smooth == smoothEnabled, isRunning { return }
         stop()
         reverseEnabled = enabled
-        smoothEnabled = InputRemapSettings.smoothMouseWheel
+        smoothEnabled = smooth
         if !observing {
             observing = true
             for name in [PermissionWatchdog.accessibilityRecovered, NSApplication.didBecomeActiveNotification] {
