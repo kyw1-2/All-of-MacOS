@@ -115,14 +115,6 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Scroll chrome
-
-extension View {
-    func suppressScrollerReservation() -> some View {
-        scrollIndicators(.hidden).background(NativeScrollChrome(.hidden))
-    }
-}
-
 /// App-owned scroll views keep their native scrolling behavior without tracks.
 /// Observe AppKit's resets as SwiftUI updates Lists, Forms and text editors.
 /// No global preferences, method swizzling or wheel event interception.

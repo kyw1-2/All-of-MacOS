@@ -1125,10 +1125,6 @@ struct AOMTipCard: View {
         self._dismissed = AppStorage(wrappedValue: false, "AOMTipDismissed.\(id)")
     }
 
-    static func isDismissed(_ id: String, defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: "AOMTipDismissed.\(id)")
-    }
-
     var body: some View {
         if !dismissed {
             let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)

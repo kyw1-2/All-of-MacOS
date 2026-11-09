@@ -109,8 +109,4 @@ enum TextRecognitionService {
         return await recognizeForIndexing(image, maximumLength: maximumLength)
     }
 
-    /// The languages Vision can currently recognize, for a settings picker.
-    static func supportedLanguages() -> [String] {
-        TextCaptureLanguages.supported
-    }
 }

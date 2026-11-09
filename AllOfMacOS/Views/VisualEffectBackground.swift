@@ -52,16 +52,3 @@ struct TranslucentWindow: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { WindowProbe(frame: .zero) }
     func updateNSView(_ view: NSView, context: Context) { (view as? WindowProbe)?.configure() }
 }
-
-extension View {
-
-    /// Gives a pane the System Settings treatment: a real behind-window blur
-    /// with the window itself made non-opaque so the blur is visible.
-    func translucentPane(_ material: NSVisualEffectView.Material = .sidebar) -> some View {
-        background {
-            VisualEffectBackground(material: material)
-                .ignoresSafeArea()
-        }
-        .background(TranslucentWindow().frame(width: 0, height: 0))
-    }
-}

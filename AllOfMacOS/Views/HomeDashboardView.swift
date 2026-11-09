@@ -2099,20 +2099,6 @@ enum CaptureItemActions {
         return NSItemProvider(object: NSImage(cgImage: entry.image, size: .zero))
     }
 
-    static func overlayButton(_ symbol: String, _ help: String, role: ButtonRole? = nil,
-                              action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            Image(systemName: symbol)
-                .font(AOMFont.callout.weight(.semibold))
-                .foregroundStyle(role == .destructive ? AOMColor.dangerText : Color.primary)
-                .frame(width: 24, height: 24)
-                .background(.regularMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
-    }
 }
 
 // MARK: - Shared row components
