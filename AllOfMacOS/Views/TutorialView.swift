@@ -45,18 +45,6 @@ extension View {
     }
 }
 
-struct CutoutMaskShape: Shape {
-    let fullRect: CGRect
-    let cutout: CGRect
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addRect(fullRect)
-        path.addRect(cutout)
-        return path
-    }
-}
-
 /// First run: a short, skippable setup instead of a tour of the interface
 /// (HIG Onboarding; Nova's and Paste's first-launch assistants). Three steps —
 /// what AOM does, the access it needs (live status, asked with a reason, never

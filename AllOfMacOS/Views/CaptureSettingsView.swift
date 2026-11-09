@@ -85,7 +85,6 @@ struct CaptureSettingsView: View {
     @AppStorage(CaptureSettings.RecordingKey.rightClickColor) private var rightClickColorHex: String?
     @AppStorage(CaptureSettings.RecordingKey.clickSize) private var clickSize: Double?
     @AppStorage(CaptureSettings.RecordingKey.clickDuration) private var clickDuration: Double?
-    @AppStorage(CaptureSettings.RecordingKey.keystrokeModifiers) private var keystrokeModifiersRaw: String?
     @AppStorage(CaptureSettings.RecordingKey.hidesDesktopIcons) private var recordingHidesDesktopIcons = false
     @AppStorage(CaptureSettings.RecordingKey.gifMaxDimension) private var gifMaxDimension: Int?
     @AppStorage(CaptureSettings.RecordingKey.gifLoops) private var gifLoops = true

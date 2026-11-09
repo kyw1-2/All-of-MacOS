@@ -172,36 +172,6 @@ struct AOMPageChrome: ViewModifier {
     }
 }
 
-/// A circular icon button for floating chrome (HUDs, Quick Access, pins).
-struct AOMFloatingIconButtonStyle: ButtonStyle {
-    var size: CGFloat = 26
-    var destructive = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        AOMFloatingIconButtonBody(configuration: configuration, size: size, destructive: destructive)
-    }
-}
-
-private struct AOMFloatingIconButtonBody: View {
-    let configuration: ButtonStyle.Configuration
-    let size: CGFloat
-    let destructive: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        configuration.label
-            .font(.system(size: size * 0.42, weight: .semibold))
-            .foregroundStyle(destructive ? AOMColor.dangerText : Color.primary)
-            .frame(width: size, height: size)
-            .background(Circle().fill(.regularMaterial))
-            .overlay(Circle().strokeBorder(AOMColor.hairline, lineWidth: 0.5))
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
-            .aomAnimation(.quick, value: configuration.isPressed)
-            .contentShape(Circle())
-    }
-}
-
 // MARK: - Content cards
 
 /// A titled card (3.x API). Renders the one section pattern: the title sits
@@ -289,30 +259,6 @@ struct AOMCardLink: View {
         .onHover { hovering = $0 }
         .aomAnimation(.quick, value: hovering)
         .help(title)
-    }
-}
-
-/// A footer strip inside a card: the card's action and a quiet hint.
-struct AOMCardFooter<Leading: View, Trailing: View>: View {
-    @ViewBuilder var leading: Leading
-    @ViewBuilder var trailing: Trailing
-
-    init(@ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
-        self.leading = leading()
-        self.trailing = trailing()
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AOMRowDivider(inset: 0, trailingInset: 0)
-            HStack(spacing: AOMSpace.x2) {
-                leading
-                Spacer(minLength: AOMSpace.x2)
-                trailing
-            }
-            .padding(.horizontal, AOMSpace.rowInset)
-            .frame(minHeight: AOMSize.rowStandard + AOMSpace.x0_5)
-        }
     }
 }
 

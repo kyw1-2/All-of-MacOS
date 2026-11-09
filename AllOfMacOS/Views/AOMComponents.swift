@@ -911,26 +911,6 @@ struct AOMListRow<Leading: View, Trailing: View>: View {
 
 // MARK: - Heading
 
-/// A section heading (3.x API): renders `AOMSectionTitle`.
-struct AOMHeading<Accessory: View>: View {
-    let title: String
-    var count: String?
-    var showsRule = true
-    @ViewBuilder var accessory: Accessory
-
-    init(_ title: String, count: String? = nil, showsRule: Bool = true,
-         @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
-        self.title = title
-        self.count = count
-        self.showsRule = showsRule
-        self.accessory = accessory()
-    }
-
-    var body: some View {
-        AOMSectionTitle(title, detail: count) { accessory }
-    }
-}
-
 // MARK: - Notice
 
 /// The inline warning or error banner (e.6): a severity glyph, a `.primary`

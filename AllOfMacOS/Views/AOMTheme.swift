@@ -164,16 +164,6 @@ extension View {
 
 // MARK: - Window canvas
 
-/// The window's lowest layer: the opaque page canvas.
-struct AOMWindowCanvas: View {
-    var body: some View {
-        AOMColor.canvas
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Surfaces
 
 /// The surfaces AOM uses. There is one content surface (the card); wells sit
@@ -342,24 +332,6 @@ struct AOMResizeDivider: View {
 
 // MARK: - Pressable surfaces
 
-/// The shared press response: a quick dim, no scale.
-struct AOMCardButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        AOMPressableBody(configuration: configuration)
-    }
-}
-
-private struct AOMPressableBody: View {
-    let configuration: ButtonStyle.Configuration
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        configuration.label
-            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
-            .aomAnimation(.quick, value: configuration.isPressed)
-    }
-}
-
 /// A row or cell inside a card as a button: a quiet hover wash and the shared
 /// press response, no edge of its own.
 struct AOMRowButtonStyle: ButtonStyle {
@@ -399,17 +371,6 @@ struct AOMCardTileButtonStyle: ButtonStyle {
     }
 }
 
-/// Tile button kept for existing call sites.
-struct AOMGlassTileButtonStyle: ButtonStyle {
-    var radius: CGFloat = AOMTheme.cardRadius
-    var padding: CGFloat? = AOMSpace.cardPadding
-    var style: AOMCardStyle = .paper
-
-    func makeBody(configuration: Configuration) -> some View {
-        AOMCardTileBody(configuration: configuration, style: style, radius: radius, padding: padding)
-    }
-}
-
 private struct AOMCardTileBody: View {
     let configuration: ButtonStyle.Configuration
     let style: AOMCardStyle
@@ -435,39 +396,7 @@ private struct AOMCardTileBody: View {
 
 // MARK: - Icon glyph
 
-/// A content glyph without a background (hierarchical). `filled` keeps the
-/// hue; unfilled glyphs are secondary. Module identity uses `AOMModuleBadge`.
-struct AOMIconBadge: View {
-    let systemImage: String
-    var tint: Color = AOMTheme.blue
-    var size: CGFloat = AOMIcon.tileBadge
-    var filled = false
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: max(11, size * 0.5), weight: .medium))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(filled ? tint : AOMTheme.textSecondary)
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Buttons
-
-/// The one primary action of a view: the system prominent style (tinted glass
-/// on macOS 26+). Kept as a style type for older call sites.
-struct AOMFilledButtonStyle: PrimitiveButtonStyle {
-    var tint: Color = AOMTheme.actionBlue
-    var height: CGFloat = 28
-
-    func makeBody(configuration: Configuration) -> some View {
-        Button(configuration)
-            .buttonStyle(.borderedProminent)
-            .tint(tint)
-            .controlSize(height >= 32 ? .large : .regular)
-    }
-}
 
 /// A secondary action in content: the system bordered style. The tint is
 /// ignored on purpose; colour is reserved for the primary action and status.
@@ -479,30 +408,6 @@ struct AOMTintedButtonStyle: PrimitiveButtonStyle {
         Button(configuration)
             .buttonStyle(.bordered)
             .controlSize(height >= 32 ? .large : .regular)
-    }
-}
-
-/// Small capsule for state and filters (renders as an `AOMStatusPill`).
-struct AOMChip: View {
-    let text: String
-    var tint: Color = AOMTheme.textSecondary
-    var background: Color?
-    var symbol: String?
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    var body: some View {
-        HStack(spacing: AOMSpace.x1) {
-            if let symbol {
-                Image(systemName: symbol).imageScale(.small)
-            }
-            Text(text).lineLimit(1)
-        }
-        .font(AOMFont.caption.weight(.medium))
-        .foregroundStyle(tint)
-        .padding(.horizontal, AOMSpace.x2)
-        .frame(minHeight: AOMIcon.row)
-        .background(background ?? tint.opacity(contrast == .increased ? 0.22 : 0.12), in: Capsule())
-        .overlay { if contrast == .increased { Capsule().strokeBorder(tint, lineWidth: 1) } }
     }
 }
 

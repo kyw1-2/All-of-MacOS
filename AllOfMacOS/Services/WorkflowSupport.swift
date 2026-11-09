@@ -667,7 +667,6 @@ struct BTTHUDView: View {
     }
 }
 
-typealias CompactHUDView = BTTHUDView
 
 private struct CheatSheetView: View {
     let triggers: [Trigger]

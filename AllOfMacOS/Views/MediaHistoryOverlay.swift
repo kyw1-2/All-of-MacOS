@@ -925,16 +925,6 @@ private struct CaptureHistoryCard: View {
         .accessibilityLabel(help)
     }
 
-    private func iconForKind(_ kind: CaptureKind) -> String {
-        switch kind {
-        case .area, .selection: return "crop"
-        case .fullscreen: return "display"
-        case .window, .windowUnderCursor: return "macwindow"
-        case .previousArea: return "clock.arrow.circlepath"
-        case .scrolling: return "arrow.up.and.down.text.horizontal"
-        case .videoRecording: return "video.fill"
-        }
-    }
 
     private func relativeTimeString(_ date: Date) -> String {
         let diff = Date().timeIntervalSince(date)

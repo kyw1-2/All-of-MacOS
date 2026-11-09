@@ -1243,18 +1243,3 @@ enum AOMUndo {
 }
 
 // MARK: - Search tokens
-
-/// A search token for `.searchable(text:tokens:token:)` (HIG Search fields:
-/// tokens for common filters, paired with suggestions): "Kind: Image",
-/// "App: Safari".
-struct AOMSearchToken: Identifiable, Hashable {
-    let id: String
-    let title: String
-    var symbol: String?
-
-    init(_ id: String, title: String, symbol: String? = nil) {
-        self.id = id
-        self.title = title
-        self.symbol = symbol
-    }
-}

@@ -1,3 +1,13 @@
+## [3.4.36] - 2026-11-09
+
+### Removed
+- **Legacy UI from earlier layouts (1,596 lines, no behaviour change)**: `TriggerListPanel`, `TriggerCategoryTabBar`, `TriggerRow`, `DoubleClickHandler`, `DoubleClickView`, `EditTriggerSheet`, `ConfigurationPanel`, `GestureConsoleView`, `UpdateBadgeView`, `AboutSettingsView`, `GeneralSettingsView`, `CaptureHistoryView`, `HistoryCell`, `CompactHUDView`, `TriggerLabel`.
+- **Unused design-system styles**: `AOMHeading`, `AOMCardFooter`, `AOMFloatingIconButtonStyle` (+body), `AOMActionTile`, `AOMToolbarButtonStyle` (+body), `AOMSearchToken`, `AOMCardButtonStyle`, `AOMChip`, `AOMFilledButtonStyle`, `AOMGlassTileButtonStyle`, `AOMIconBadge`, `AOMPressableBody`, `AOMWindowCanvas`, `ClickHintsPreviewHook`, `CutoutMaskShape`, `SnapPosition`.
+- **Unreferenced private members**: `AudioOutputService.muteProperty`, `ClipboardStore.indexingQueue`, `ScreenRecordingService.keyExpires`, `CaptureSettingsView.keystrokeModifiersRaw`, `MediaHistoryOverlay.iconForKind`, `SwishModifierRolesSection` raw storage, `AddTriggerSheet.systemEventAppName`.
+
+### Notes
+Every removed symbol had zero references across the app, the test target, the extension targets and the helper scripts (verified by whole-repository symbol counts plus per-file syntax checks). Preset compatibility is untouched: the trigger schema (`pressCount`, `mouseButton`), `ActionType` raw values and all `CodingKeys` stay as they were, so existing `master_preset.json` files keep decoding.
+
 ## [3.4.35] - 2026-11-08
 
 ### Fixed

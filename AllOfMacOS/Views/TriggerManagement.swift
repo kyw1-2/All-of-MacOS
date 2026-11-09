@@ -11,26 +11,6 @@ final class TriggerClipboard: ObservableObject {
     }
 }
 
-enum TriggerLabel {
-    static let names = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Gray"]
-    static func color(_ label: String) -> Color {
-        switch label {
-        case "Red": return .red
-        case "Orange": return .orange
-        case "Yellow": return .yellow
-        case "Green": return .green
-        case "Blue": return .blue
-        case "Purple": return .purple
-        default:
-            if label.hasPrefix("#"), label.count == 7, let value = UInt32(label.dropFirst(), radix: 16) {
-                return Color(red: Double((value >> 16) & 255) / 255,
-                             green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
-            }
-            return .gray
-        }
-    }
-}
-
 enum GestureSensitivity {
     static let globalVelocityKey = "AOMGlobalSwipeMinVelocity"
     static func velocity(for gesture: TrackpadGesture, defaults: UserDefaults = .standard) -> Double {
