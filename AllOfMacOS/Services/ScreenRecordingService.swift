@@ -73,7 +73,6 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var keyMonitor: Any?
     private var localKeyMonitor: Any?
     private var keyImage: CIImage?
-    private var keyExpires = Date.distantPast
     private let ciContext = CIContext()
     private let recordingQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording", qos: .userInitiated)
     private let audioQueue = DispatchQueue(label: "com.kyw.allofmacos.screen-recording-audio", qos: .userInitiated)

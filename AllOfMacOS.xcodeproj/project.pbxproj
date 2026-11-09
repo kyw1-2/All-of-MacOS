@@ -26,7 +26,6 @@
 		33FCC018B9AE94C154755A8D /* SystemActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FCEEB7AF60A8092E74B523A /* SystemActionTests.swift */; };
 		D61665AAE3D2DD7162F4F4DF /* AudioOutputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A77753837B1730979B10C9E /* AudioOutputService.swift */; };
 		019B9C7BA352AFC84AD954BB /* TrackpadPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1205874DEC0ED25A5E28FD /* TrackpadPipelineTests.swift */; };
-		047BD176EA8475D2CB843670 /* GestureConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 835804504535BFFF0A615239 /* GestureConsoleView.swift */; };
 		085BDE863012A0C9B909B12F /* SerializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1386A246B233DDEA04412DD /* SerializationTests.swift */; };
 		19F61F782EE805CF7F5F3014 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E1C96664AFA27E00FA324A5 /* AppState.swift */; };
 		1E6638C7E5B56166D088EDF8 /* LiveTouchStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8227FAB56F6241BC254B8F39 /* LiveTouchStateTests.swift */; };
@@ -40,7 +39,6 @@
 		5CFF9E4308528010D641FB27 /* LogSidePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 455785A555FBE4C61B590D01 /* LogSidePanel.swift */; };
 		603D6FCF4F48391C35B93546 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF557E7C62CB384D2603CF41 /* AppDelegate.swift */; };
 		6230CBEEB77C284A731579F3 /* UpdateCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C612017BFB150EB1A6D167 /* UpdateCheckerTests.swift */; };
-		6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */; };
 		71277C1FBC48775A8A72FD72 /* ModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A2593070526ABC2E757364 /* ModelTests.swift */; };
 		8F56617241408E093C881A1A /* GestureLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 591388447B863AB1271B38FE /* GestureLog.swift */; };
 		903BFC8E7D8AD82702A59CE0 /* Trigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = F80BACC55ACE7DF1BF21705C /* Trigger.swift */; };
@@ -158,7 +156,6 @@
 		7DC1E20528882B20DA9398F5 /* PresetManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetManager.swift; sourceTree = "<group>"; };
 		7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatisticsView.swift; sourceTree = "<group>"; };
 		8227FAB56F6241BC254B8F39 /* LiveTouchStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchStateTests.swift; sourceTree = "<group>"; };
-		835804504535BFFF0A615239 /* GestureConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureConsoleView.swift; sourceTree = "<group>"; };
 		86395DA53EC150134A65426C /* AppTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTarget.swift; sourceTree = "<group>"; };
 		9277918E0700B4DF497CC63A /* TrackpadMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadMonitor.swift; sourceTree = "<group>"; };
 		95AF6CD7F63515AC7907609D /* ConfigurationPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationPanel.swift; sourceTree = "<group>"; };
@@ -169,7 +166,6 @@
 		BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTouchView.swift; sourceTree = "<group>"; };
 		BE0D11D3DF027F5FA85DFF70 /* AllOfMacOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AllOfMacOS.entitlements; sourceTree = "<group>"; };
 		BFBEC8838C761C0A2C708534 /* AllOfMacOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AllOfMacOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateBadgeView.swift; sourceTree = "<group>"; };
 		CDB2F47B2A8F6BC6D885F30A /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
 		CF557E7C62CB384D2603CF41 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		F1386A246B233DDEA04412DD /* SerializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SerializationTests.swift; sourceTree = "<group>"; };
@@ -266,7 +262,6 @@
 				B6AF0ADA1620D8A2021D60F5 /* ActionListPanel.swift */,
 				506189193F0CED5175427042 /* AppSidebar.swift */,
 				95AF6CD7F63515AC7907609D /* ConfigurationPanel.swift */,
-				835804504535BFFF0A615239 /* GestureConsoleView.swift */,
 				20C08CE86620F4B0C189D972 /* GesturePreviewView.swift */,
 				BAC5C0798FDA46AF8AA0B5D4 /* LiveTouchView.swift */,
 				455785A555FBE4C61B590D01 /* LogSidePanel.swift */,
@@ -275,7 +270,6 @@
 				7E8C1FB2419A3A14EB6F995F /* StatisticsView.swift */,
 				3F9AA128B0872E58AF518488 /* TriggerListPanel.swift */,
 				4928C96FA781BE1A45EEAAC5 /* TutorialView.swift */,
-				C0FE18BAF9F9FEC05A40B6F2 /* UpdateBadgeView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -523,7 +517,6 @@
 				19F61F782EE805CF7F5F3014 /* AppState.swift in Sources */,
 				4FCDFEF6108186D33C545E18 /* AppTarget.swift in Sources */,
 				E4D58A8D6926A8E4B601C460 /* ConfigurationPanel.swift in Sources */,
-				047BD176EA8475D2CB843670 /* GestureConsoleView.swift in Sources */,
 				8F56617241408E093C881A1A /* GestureLog.swift in Sources */,
 				29047DB47C87A598D5B2C7AA /* GesturePreviewView.swift in Sources */,
 				292988165B087AE2F13D8FBF /* GestureStatistics.swift in Sources */,
@@ -549,7 +542,6 @@
 				55F610E7C9360B6C61D064E4 /* TriggerListPanel.swift in Sources */,
 				93A2106594D8B52D8E09F752 /* TriggerType.swift in Sources */,
 				98A7452625E0A2FF61355E95 /* TutorialView.swift in Sources */,
-				6E8E724EA25EF3B1D485E62D /* UpdateBadgeView.swift in Sources */,
 				BAB8ACAE12BE2DA856CBFD4E /* UpdateChecker.swift in Sources */,
 				5A8F422110A23E9ED97A3EF4 /* WindowManager.swift in Sources */,
 				D61665AAE3D2DD7162F4F4DF /* AudioOutputService.swift in Sources */,

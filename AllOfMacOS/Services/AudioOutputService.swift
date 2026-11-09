@@ -89,16 +89,6 @@ final class AudioOutputService {
         }
         return nil
     }
-    /// Some CoreAudio devices expose a writable mute switch. When macOS reaches
-    /// 0% it may flip this switch on; setting volume alone then reads back as 0.
-    private static func muteProperty(_ device: AudioDeviceID) -> AudioObjectPropertyAddress? {
-        for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {
-            var property = address(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput)
-            property.mElement = element
-            if AudioObjectHasProperty(device, &property) { return property }
-        }
-        return nil
-    }
     private static func outputMuteProperties(_ device: AudioDeviceID) -> [AudioObjectPropertyAddress] {
         var result: [AudioObjectPropertyAddress] = []
         for element: AudioObjectPropertyElement in [kAudioObjectPropertyElementMain, 1, 2] {

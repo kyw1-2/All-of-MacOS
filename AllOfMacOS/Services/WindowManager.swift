@@ -1,8 +1,6 @@
 import AppKit
 import Combine
 
-enum SnapPosition { case left, right, topLeft, topRight, bottomLeft, bottomRight }
-
 /// A total time budget for a run of Accessibility requests made on main
 /// (3.3.2 review): each request waits at most `perRequest` and never past the
 /// deadline, so one slow app cannot stall the trackpad frames queued behind
@@ -288,7 +286,6 @@ final class WindowManager: ObservableObject {
         }
         step(0)
     }
-
 
     func captureTarget(pid: pid_t? = nil) -> Target? {
         guard let pid = pid ?? NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }

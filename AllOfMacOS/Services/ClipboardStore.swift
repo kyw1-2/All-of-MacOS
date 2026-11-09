@@ -178,7 +178,6 @@ final class ClipboardStore: ObservableObject {
     private var deletionHistory: [DeletionBatch] = []
     private var indexingTask: Task<Void, Never>?
     private var attemptedImages: Set<UUID> = []
-    private let indexingQueue = DispatchQueue(label: "com.kyw.allofmacos.clipboard-ocr", qos: .utility)
     @Published var lastError: String?
     /// Whether the archive can currently be read and written. A transient
     /// failure is retried automatically; an unreadable archive waits for the

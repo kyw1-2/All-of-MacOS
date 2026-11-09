@@ -1,47 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct ConfigurationPanel: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            AOMSectionTitle("Configuration")
-                .padding(.horizontal, AOMSpace.x3)
-                .padding(.vertical, AOMSpace.x2)
-
-            AOMDivider()
-
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: AOMSpace.x4) {
-                    // The editors are groups inside one card (AOMSection hides
-                    // the first group's hairline).
-                    if let action = appState.selectedAction, let trigger = appState.selectedTrigger {
-                        AOMSection {
-                            ActionConfigView(keyboardMonitor: appState.keyboardMonitor, trigger: trigger, action: action)
-                                .id(action.id)
-                        }
-                    } else if let trigger = appState.selectedTrigger {
-                        AOMSection {
-                            TriggerConfigView(trigger: trigger).id(trigger.id)
-                        }
-                    } else {
-                        emptyState
-                    }
-                }
-                .padding(AOMSpace.x4)
-            }
-        }
-        .background(AOMColor.canvas)
-    }
-
-    private var emptyState: some View {
-        AOMEmptyState("Nothing Selected", systemImage: "slider.horizontal.3",
-                      message: "Select a trigger or action to configure.")
-    }
-}
-
 /// One collapsible group in the trigger inspector.
 ///
 /// BTT shows a short list of named sections rather than every control at once.

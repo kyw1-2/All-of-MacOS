@@ -156,61 +156,6 @@ struct ActionCardView: View {
     }
 }
 
-/// An action as a list row (the shared `AOMListRow`).
-struct ActionRow: View {
-    let action: TriggerAction
-
-    var body: some View {
-        AOMListRow(action.displayName, detail: detail, dimmed: !action.isEnabled) {
-            Image(systemName: action.actionType.iconName)
-        } trailing: {
-            if !action.isEnabled {
-                Image(systemName: "eye.slash")
-                    .font(AOMFont.caption)
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .accessibilityLabel("Disabled")
-            }
-        }
-    }
-
-    private var detail: String? {
-        var parts: [String] = []
-        if (action.parameters.repeatCount ?? 1) > 1 || !(action.parameters.onlyAppBundleID ?? "").isEmpty {
-            parts.append("Repeat ×\(action.parameters.repeatCount ?? 1)\((action.parameters.onlyAppBundleID ?? "").isEmpty ? "" : " · conditional")")
-        }
-        if let actionDetail { parts.append(actionDetail) }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private var actionDetail: String? {
-        switch action.actionType {
-        case .actionGroup: return "\(action.parameters.children?.count ?? 0) actions"
-        case .ifElse: return "THEN \(action.parameters.children?.count ?? 0) / ELSE \(action.parameters.elseChildren?.count ?? 0)"
-        case .setVariable: return "\(action.parameters.variableName ?? "") = \(action.parameters.variableValue ?? "")"
-        case .customSnapWindow: return "\(Int((action.parameters.snapWidth ?? 0.5) * 100))% × \(Int((action.parameters.snapHeight ?? 1) * 100))%"
-        case .wait: return "\(action.parameters.waitMs ?? 250) ms"
-        case .typeText: return "\(action.parameters.text?.count ?? 0) characters"
-        case .runAppleScript, .runShellScript: return "\(action.parameters.scriptContent?.utf8.count ?? 0) bytes · timeout \(action.parameters.scriptTimeoutSeconds ?? 30)s"
-        case .launchApplication, .quitApplication, .forceQuitApplication, .hideApplication, .toggleApplication:
-            return action.parameters.applicationName
-        case .openURL: return action.parameters.url
-        case .captureArea: return "drag a region"
-        case .captureFullscreen: return "pointer display"
-        case .captureWindow: return "choose from list"
-        case .captureWindowUnderCursor: return "window under pointer"
-        case .capturePreviousArea: return CaptureSettings.lastArea.map { "\(Int($0.width)) × \(Int($0.height))" } ?? "no previous area"
-        case .captureScrolling: return "stitch a scrolling region"
-        case .captureAllDisplays: return "every display"
-        case .captureText, .captureTextWithLineBreaks, .captureTextWithoutLineBreaks: return "OCR to clipboard"
-        case .captureSelfTimer: return "\(action.parameters.selfTimerSeconds ?? 5) s delay"
-        case .annotateLastCapture, .pinLastCapture, .copyLastCapture, .saveLastCapture,
-             .ocrLastCapture, .openCaptureHistory, .unpinAllCaptures, .toggleCaptureOverlay:
-            return CaptureHistory.shared.mostRecent?.displayName ?? "no capture yet"
-        default: return ActionSummary.detail(action)
-        }
-    }
-}
-
 struct AddActionSheet: View {
     var parentID: UUID? = nil
     var toElse = false

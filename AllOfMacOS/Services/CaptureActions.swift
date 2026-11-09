@@ -162,113 +162,11 @@ final class CaptureHistoryWindowController {
     static let shared = CaptureHistoryWindowController()
     private init() {}
 
-    private var window: NSWindow?
-
     func present() {
         MediaHistoryOverlayController.shared.toggle()
     }
 
     func toggle() {
         MediaHistoryOverlayController.shared.toggle()
-    }
-}
-
-private struct CaptureHistoryView: View {
-    @ObservedObject private var history = CaptureHistory.shared
-
-    var body: some View {
-        Group {
-            if history.entries.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 40)).foregroundStyle(.secondary)
-                    Text("No captures yet").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
-                        ForEach(history.entries) { entry in
-                            HistoryCell(entry: entry)
-                        }
-                    }
-                    .padding(14)
-                }
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button("Clear All") { CaptureHistory.shared.removeAll() }
-                    .disabled(history.entries.isEmpty)
-            }
-        }
-        .frame(minWidth: 520, minHeight: 380)
-    }
-}
-
-private struct HistoryCell: View {
-    let entry: CaptureHistoryEntry
-    @State private var isHovering = false
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(nsImage: entry.thumbnail)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(height: 110)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12), lineWidth: 1))
-
-            Text(entry.displayName)
-                .font(.caption).fontWeight(.medium)
-                .lineLimit(1).truncationMode(.middle)
-            Text(entry.capturedAt, style: .time)
-                .font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(8)
-        .background(isHovering ? Color.accentColor.opacity(0.1) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 10))
-        .onHover { isHovering = $0 }
-        .contextMenu {
-            if entry.kind == .videoRecording {
-                Button("Copy MP4 File") {
-                    guard let url = entry.playableVideoURL,
-                          ScreenCaptureService.shared.copyFileToClipboard(url) else {
-                        GestureHUD.shared.show(title: "Copy Failed", detail: "The recording file is unavailable.")
-                        return
-                    }
-                    GestureHUD.shared.show(title: "Copied", detail: "MP4 file copied.")
-                }
-                if let url = entry.playableVideoURL {
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
-            } else {
-                Button("Copy Image") {
-                    let result = CaptureResult(image: entry.image, globalRect: .zero, scale: entry.scale,
-                                               kind: entry.kind, windowTitle: entry.windowTitle,
-                                               capturedAt: entry.capturedAt)
-                    // Encode off the main thread; the HUD reports the same
-                    // failure only after the pasteboard write has been attempted.
-                    Task { @MainActor in
-                        do {
-                            try await ScreenCaptureService.shared.copyToClipboardAsync(result)
-                        } catch {
-                            GestureHUD.shared.show(title: "Copy Failed", detail: error.localizedDescription)
-                        }
-                    }
-                }
-                Button("Annotate") {
-                    AnnotationEditorController.shared.open(capture: entry, url: entry.fileURL)
-                }
-                Button("Pin to Screen") {
-                    PinnedScreenshotController.shared.pin(entry: entry, url: entry.fileURL)
-                }
-            }
-            Divider()
-            Button("Remove from History", role: .destructive) { CaptureHistory.shared.remove(entry) }
-        }
-        .accessibilityLabel("Capture \(entry.displayName)")
     }
 }

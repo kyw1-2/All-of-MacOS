@@ -53,26 +53,7 @@ struct TranslucentWindow: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) { (view as? WindowProbe)?.configure() }
 }
 
-/// macOS 26+ owns the sidebar's Liquid Glass. Older systems get one AppKit
-/// material; accessibility settings substitute an opaque surface.
-private struct AOMSidebarMaterial: ViewModifier {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
-    @ViewBuilder func body(content: Content) -> some View {
-        if reduceTransparency || contrast == .increased {
-            content.scrollContentBackground(.hidden).background(Color(nsColor: .windowBackgroundColor))
-        } else if #available(macOS 26, *) {
-            content
-        } else {
-            content.scrollContentBackground(.hidden).background {
-                VisualEffectBackground(material: .sidebar).ignoresSafeArea()
-            }
-        }
-    }
-}
-
 extension View {
-    func aomSidebarMaterial() -> some View { modifier(AOMSidebarMaterial()) }
 
     /// Gives a pane the System Settings treatment: a real behind-window blur
     /// with the window itself made non-opaque so the blur is visible.

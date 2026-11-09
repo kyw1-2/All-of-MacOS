@@ -33,50 +33,9 @@ struct AOMWorkspaceBackground: View {
     }
 }
 
-private struct AOMHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
-
 // MARK: - Surfaces
 
-/// Shared card surface; `highlighted` draws an accent outline.
-struct AOMSurface: ViewModifier {
-    var radius: CGFloat = AOMDesign.surfaceRadius
-    var padding: CGFloat? = AOMSpace.cardPadding
-    var highlighted = false
-
-    func body(content: Content) -> some View {
-        content
-            .aomCardStyle(.paper, radius: radius, padding: padding)
-            .overlay {
-                if highlighted {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(AOMColor.accent.opacity(0.85), lineWidth: 1.5)
-                        .allowsHitTesting(false)
-                }
-            }
-    }
-}
-
 extension View {
-    func aomSurface(radius: CGFloat = AOMDesign.surfaceRadius, padding: CGFloat? = AOMSpace.cardPadding,
-                    highlighted: Bool = false) -> some View {
-        modifier(AOMSurface(radius: radius, padding: padding, highlighted: highlighted))
-    }
-
-    /// Reports this view's laid-out height, so a page can size its sheet to
-    /// end exactly at the bottom margin below a header of any height.
-    func aomReadHeight(_ height: Binding<CGFloat>) -> some View {
-        background {
-            GeometryReader { proxy in
-                Color.clear.preference(key: AOMHeightPreferenceKey.self, value: proxy.size.height)
-            }
-        }
-        .onPreferenceChange(AOMHeightPreferenceKey.self) { value in
-            if abs(height.wrappedValue - value) > 0.5 { height.wrappedValue = value }
-        }
-    }
 
     /// Bottom floating confirmation shared by every page: a glass capsule
     /// (floating chrome), announced to VoiceOver.
@@ -172,34 +131,6 @@ private struct AOMToastLabelStyle: LabelStyle {
             configuration.icon.foregroundStyle(AOMColor.success)
             configuration.title.foregroundStyle(AOMColor.text)
         }
-    }
-}
-
-/// Toolbar-style bordered button (kept for older call sites).
-struct AOMToolbarButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        AOMToolbarButtonBody(configuration: configuration)
-    }
-}
-
-private struct AOMToolbarButtonBody: View {
-    let configuration: ButtonStyle.Configuration
-    @State private var hovering = false
-    @Environment(\.isEnabled) private var isEnabled
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
-        configuration.label
-            .font(AOMFont.body.weight(.medium))
-            .foregroundStyle(AOMTheme.text)
-            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
-            .frame(height: AOMIcon.hitArea)
-            .background(configuration.isPressed ? AOMColor.track : (hovering ? AOMColor.sunken : .clear), in: shape)
-            .overlay(shape.strokeBorder(AOMColor.hairline, lineWidth: 0.5))
-            .contentShape(shape)
-            .opacity(isEnabled ? 1 : 0.45)
-            .aomAnimation(.quick, value: configuration.isPressed)
-            .onHover { hovering = $0 }
     }
 }
 
@@ -317,36 +248,6 @@ private struct AOMStatCell: View {
     }
 }
 
-// MARK: - Quick action tile
-
-/// A launch tile: glyph, title, hint. Large hit target, hover wash, press dim,
-/// standard focus ring.
-struct AOMActionTile: View {
-    let title: String
-    let systemImage: String
-    var tint: Color = .accentColor
-    var subtitle: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: AOMSpace.x3) {
-                AOMIconBadge(systemImage: systemImage, tint: tint, size: AOMIcon.tileBadge, filled: true)
-                VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                    Text(title).font(AOMType.bodyEmphasis).foregroundStyle(AOMTheme.text).lineLimit(1)
-                    if let subtitle {
-                        Text(subtitle).font(AOMType.caption).foregroundStyle(AOMTheme.textSecondary).lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-        }
-        .buttonStyle(AOMCardTileButtonStyle(style: .paper, radius: AOMDesign.tileRadius, padding: AOMSpace.cardPadding))
-        .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
-    }
-}
-
 // MARK: - Empty state
 
 /// Native `ContentUnavailableView` that fills the space it is given (e.5):
@@ -439,13 +340,5 @@ enum AOMRelativeTime {
     static func string(_ date: Date, now: Date = Date()) -> String {
         if now.timeIntervalSince(date) < 60 { return String(localized: "Just now") }
         return formatter.localizedString(for: min(date, now), relativeTo: now)
-    }
-}
-
-extension Color {
-    /// A darker shade for gradients (macOS 14 has no `Color.mix`).
-    func aomDarker(_ amount: CGFloat) -> Color {
-        let base = NSColor(self).usingColorSpace(.deviceRGB) ?? .gray
-        return Color(nsColor: base.blended(withFraction: amount, of: .black) ?? base)
     }
 }
