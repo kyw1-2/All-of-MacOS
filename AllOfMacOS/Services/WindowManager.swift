@@ -193,10 +193,6 @@ final class WindowManager: ObservableObject {
         }
         return result
     }
-    func diagnosticTargets(pid: pid_t) -> [Target] {
-        guard NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.kyw.allofmacos.gesture-test" else { return [] }
-        return visibleWindows().filter { $0.0.pid == pid }.map { $0.0 }
-    }
     /// Accessible, unminimized standard windows of visible apps, for the bulk
     /// window actions (gather, side by side).
     func standardWindowTargets() -> [Target] { visibleWindows().map(\.0) }

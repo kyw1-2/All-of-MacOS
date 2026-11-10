@@ -19,14 +19,14 @@ class PresetManager {
         NSClassFromString("XCTestCase") != nil
     }
 
-    static var previewDirectory: URL? {
+    static let previewDirectory: URL? = {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "--aom-ui-preview"), args.indices.contains(index + 1) else { return nil }
         let directory = URL(fileURLWithPath: args[index + 1]).resolvingSymlinksInPath().standardizedFileURL
         let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         return directory.path.hasPrefix(temporary) ? directory : nil
-    }
-    static var isUIPreview: Bool { previewDirectory != nil }
+    }()
+    static let isUIPreview = previewDirectory != nil
     /// `--aom-preview-size 1280x800` sizes the main window of an isolated UI
     /// preview, so screens are compared at fixed sizes without driving the
     /// window through Accessibility.
@@ -114,10 +114,6 @@ class PresetManager {
         }
     }
 
-    static var presetFilePath: String {
-        (isolatedDirectory ?? defaultDirectory).appendingPathComponent("master_preset.json").path
-    }
-
     private let persistenceQueue = DispatchQueue(label: "com.kyw.allofmacos.preset-io", qos: .utility)
     private let pendingLock = NSLock()
     private var pendingSave: (preset: Preset, backup: Bool)?
@@ -146,7 +142,6 @@ class PresetManager {
             self.presetsDirectory = Self.defaultDirectory
         }
     }
-
 
     // MARK: - Backup
 
@@ -331,12 +326,6 @@ class PresetManager {
         return reasons
     }()
 
-    /// Families of settings keyed by app or device that are not backed up.
-    static let settingPrefixesNotBackedUp: [String: String] = [
-        "AOMShortcutConflictDismissed_": "dismissed hints",
-        "AOMPermissionOpen_": "window layout"
-    ]
-
     /// Writes one backup file and prunes old ones. `reason` marks a safety
     /// snapshot ("before-import", "before-restore") with its own retention.
     /// `protecting` is never pruned by this save (the backup being restored).
@@ -414,9 +403,6 @@ class PresetManager {
         }
         return (values, unset.sorted())
     }
-
-    /// Internal for the backup-scope test (@testable).
-    static var backedUpSettingKeys: [String] { userDefaultsKeys }
 
     static let settingsBackupFileName = "settings_backup.plist"
     /// Settings keyed by app or device. A settings file holds each family

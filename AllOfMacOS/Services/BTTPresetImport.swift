@@ -70,7 +70,6 @@ enum BTTPresetImport {
 
         func entries(in group: Entry.Group) -> [Entry] { entries.filter { $0.group == group } }
         var reviewCount: Int { entries.filter(\.needsReview).count }
-        var enabledCount: Int { triggers.filter(\.isEnabled).count }
         var triggerEntryCount: (imported: Int, approximate: Int, skipped: Int) {
             let triggers = entries.filter { $0.kind == .trigger }
             return (triggers.filter { $0.group == .imported }.count,
@@ -80,23 +79,6 @@ enum BTTPresetImport {
         var summary: String {
             let counts = triggerEntryCount
             return "\(counts.imported) imported, \(counts.approximate) mapped approximately, \(counts.skipped) skipped of \(candidateCount) BTT \(candidateCount == 1 ? "trigger" : "triggers")."
-        }
-        var reviewText: String {
-            var lines = [summary,
-                         "Exact matches keep their BTT enabled state. Approximate matches and every script step are added disabled for review.",
-                         "Named-trigger calls keep their names. Review missing targets and duplicate names before enabling.",
-                         "Nothing is executed during import. Your current preset is kept."]
-            for group in Entry.Group.allCases {
-                let items = entries(in: group)
-                guard !items.isEmpty else { continue }
-                lines += ["", "\(group.rawValue) (\(items.count))"]
-                for item in items {
-                    lines.append("• \(item.title) — BTT \(item.bttName) [\(item.bttID)] · \(item.scope)\(item.detail.isEmpty ? "" : " · " + item.detail)")
-                    lines += item.reasons.map { "    – \($0)" }
-                }
-            }
-            if !skipped.isEmpty { lines += ["", "Skipped whole triggers: \(skipped.count)"] }
-            return lines.joined(separator: "\n")
         }
     }
 

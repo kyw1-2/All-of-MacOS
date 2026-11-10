@@ -142,14 +142,6 @@ class LiveTouchState: ObservableObject {
         }
     }
 
-    nonisolated func setPressed(_ pressed: Bool) {
-        if Thread.isMainThread {
-            MainActor.assumeIsolated { if isPressed != pressed { isPressed = pressed } }
-        } else {
-            Task { @MainActor in if self.isPressed != pressed { self.isPressed = pressed } }
-        }
-    }
-
     nonisolated func flashTrigger(_ id: UUID) {
         Task { @MainActor in
             self.lastFiredTriggerID = id

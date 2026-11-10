@@ -115,11 +115,6 @@ final class TrackpadUtilityGestures: ObservableObject {
     var dockApp: () -> NSRunningApplication? = { TrackpadUtilityGestures.shared.dockAppUnderCursor() }
     /// Test seam for the menu-bar band check.
     var cursorInTopBand: (CGPoint) -> Bool = { TrackpadUtilityGestures.cursorInTopBand($0) }
-    /// Test seam: the "not inside our own app" guard (host-app test runs
-    /// would otherwise depend on whatever happens to be frontmost).
-    var isOutsideOwnApp: () -> Bool = {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
-    }
     /// The shared pause check (master switch, timed/indefinite pause, per-app
     /// pause, held modifiers, palm rejection). Injectable for tests.
     var isAllowed: () -> Bool = { AutomationGate.allows(.trackpad) }

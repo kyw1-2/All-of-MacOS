@@ -11,13 +11,6 @@ import AppKit
 /// caption lines, and dependent options indented and disabled under their
 /// parent instead of hidden.
 struct CaptureSettingsView: View {
-    /// Section anchors; isolated previews can open one with
-    /// `--aom-preview-capture-section <raw value>` (AudioCapturePreviewHooks).
-    enum Section: String, CaseIterable {
-        case format, capture, selecting, recording, pointer, clicks, camera, keystrokes, during,
-             after, naming, overlay, closing, text, pinned
-    }
-
     @AppStorage("AOMCaptureFormat") private var formatRaw = CaptureFormat.png.rawValue
     @AppStorage("AOMCaptureQuality") private var quality = 0.9
     @AppStorage("AOMCaptureShowsCursor") private var showsCursor = false
@@ -107,29 +100,23 @@ struct CaptureSettingsView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            AOMPage(maxWidth: AOMSize.readableWidth) {
-                if !permissionGranted { permissionNotice }
-                formatGroup.id(Section.format)
-                captureGroup.id(Section.capture)
-                selectingGroup.id(Section.selecting)
-                recordingGroup.id(Section.recording)
-                pointerGroup.id(Section.pointer)
-                clicksGroup.id(Section.clicks)
-                cameraAudioGroup.id(Section.camera)
-                keystrokesGroup.id(Section.keystrokes)
-                whileRecordingGroup.id(Section.during)
-                afterCaptureGroup.id(Section.after)
-                namingGroup.id(Section.naming)
-                overlayGroup.id(Section.overlay)
-                closingGroup.id(Section.closing)
-                textRecognitionGroup.id(Section.text)
-                pinnedGroup.id(Section.pinned)
-            }
-            .onAppear {
-                guard let section = AudioCapturePreviewHooks.captureSection.flatMap(Section.init(rawValue:)) else { return }
-                DispatchQueue.main.async { proxy.scrollTo(section, anchor: .top) }
-            }
+        AOMPage(maxWidth: AOMSize.readableWidth) {
+            if !permissionGranted { permissionNotice }
+            formatGroup
+            captureGroup
+            selectingGroup
+            recordingGroup
+            pointerGroup
+            clicksGroup
+            cameraAudioGroup
+            keystrokesGroup
+            whileRecordingGroup
+            afterCaptureGroup
+            namingGroup
+            overlayGroup
+            closingGroup
+            textRecognitionGroup
+            pinnedGroup
         }
         .onAppear {
             permissionGranted = ScreenCaptureService.hasPermission

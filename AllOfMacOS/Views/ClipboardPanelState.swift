@@ -206,8 +206,6 @@ final class ClipboardPanelState: ObservableObject {
         keyboardScrollTarget = next.id
     }
 
-    func finishPendingSearch() async { await searchTask?.value }
-
     /// Moves the suggested entries to the front, in suggestion order.
     static func promoting(_ ids: [UUID], in entries: [ClipboardEntry]) -> [ClipboardEntry] {
         let picked = ids.compactMap { id in entries.first { $0.id == id } }

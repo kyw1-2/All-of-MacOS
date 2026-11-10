@@ -173,8 +173,6 @@ final class ContinuousValueSink {
         if retry { schedule(max(minimumInterval, Self.retryDelay)) { [weak self] in self?.flush(target) } }
     }
 
-    /// Forgets what was written, so the next value is written even if equal.
-    func forgetLastWritten() { lock.lock(); lastWritten.removeAll(); lock.unlock() }
 }
 
 // MARK: - Engine

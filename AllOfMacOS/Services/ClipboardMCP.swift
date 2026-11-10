@@ -168,8 +168,6 @@ final class ClipboardMCPServer {
         if settings.enabled && !settings.tools.isEmpty && !PresetManager.isRunningTests { start() } else { stop() }
     }
 
-    var isListening: Bool { listenFD >= 0 }
-
     func stopForTermination() { stop() }
     private func start() {
         guard listenFD < 0 else { return }
@@ -455,9 +453,6 @@ final class ClipboardMCPServer {
         private func finish() {
             DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.close() } }
         }
-
-        /// Test seam: runs `body` after every queued send has been attempted.
-        func afterPendingWrites(_ body: @escaping () -> Void) { queue.async(execute: body) }
 
         func close() {
             guard !closed else { return }

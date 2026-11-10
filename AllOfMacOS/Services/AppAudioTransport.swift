@@ -87,11 +87,6 @@ final class AppAudioTransport {
         pending.store(consumer)
     }
 
-    /// The consumer that pulls now, and completed / forced hand-overs.
-    var handoverState: (owner: UInt64, pending: UInt64, completed: UInt64, takeovers: UInt64) {
-        (owner.load(), pending.load(), handovers.load(), handoverTakeovers.load())
-    }
-
     init(sampleRate: Double, bufferedForAirPlay: Bool = false) {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)

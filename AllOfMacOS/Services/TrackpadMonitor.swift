@@ -13,8 +13,6 @@ class TrackpadMonitor {
     private var suspended = false
     private var lastRecovery: TimeInterval = 0
     private var lastDeviceScan: TimeInterval = 0
-    private var diagnosticSignals: [DispatchSourceSignal] = []
-    private var diagnosticTarget: String?
     private var hardwareFourFingerFrames = 0
     private var hardwareDetections: [String] = []
     private var recoveries = 0
@@ -257,17 +255,6 @@ class TrackpadMonitor {
                 self.startHardware(reason: "wake/session active")
             })
         }
-        if ProcessInfo.processInfo.arguments.contains("--aom-diagnostics") {
-            for number in [SIGUSR1, SIGUSR2] {
-                signal(number, SIG_IGN)
-                let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-                source.setEventHandler { [weak self] in
-                    if number == SIGUSR1 { self?.startHardware(reason: "diagnostic recovery") }
-                    else { self?.replayDiagnosticContacts() }
-                }
-                source.resume(); diagnosticSignals.append(source)
-            }
-        }
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkHardwareHealth() }
         healthTimer = timer
         RunLoop.main.add(timer, forMode: .common)
@@ -313,55 +300,11 @@ class TrackpadMonitor {
          "error": source.error ?? ""]
     }
 
-    /// Opt-in installation check. Actions are guarded again on the main queue;
-    /// only the disposable receiver may receive them, never the user's active app.
-    private func replayDiagnosticContacts() {
-        let receiver = "com.kyw.allofmacos.gesture-test"
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == receiver else { return }
-        diagnosticTarget = receiver
-        defer { diagnosticTarget = nil }
-        let start = ProcessInfo.processInfo.systemUptime
-        func frame(_ y: Float, _ time: Double, state: Int32 = 4) {
-            let points = (0..<4).map { TouchPoint(id: $0, x: 0.2 + Float($0) * 0.15, y: y, size: 0.4) }
-            let bytes = GestureReplaySuite.rawFrame(points, state: state)
-            guard let decoded = bytes.withUnsafeBytes({ TouchFrameDecoder.decode($0, count: 4) }) else { return }
-            processTouchFrame(decoded.contacts, count: decoded.contacts.count, timestamp: time,
-                              pressedButtons: 0, deviceID: UInt64.max)
-        }
-        frame(0.7, start); frame(0.7, start + 0.1, state: 7)
-        frame(0.7, start + 0.2); frame(0.58, start + 0.3)
-        frame(0.58, start + 0.4, state: 7)
-        sessions.removeValue(forKey: UInt64.max)
-    }
-
     private func writeDiagnostics() {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: "--aom-diagnostics"), args.indices.contains(index + 1),
               let data = try? JSONSerialization.data(withJSONObject: diagnosticSnapshot(), options: [.prettyPrinted, .sortedKeys]) else { return }
         try? data.write(to: URL(fileURLWithPath: args[index + 1]), options: .atomic)
-    }
-
-    /// Raw-buffer entry point shared by replay tests and the hardware decoder.
-    func handleMultitouchFrame(rawTouches: UnsafeMutableRawPointer?, numTouches: Int, timestamp: Double) {
-        guard (0...32).contains(numTouches) else { return }
-        let frame: TouchFrameDecoder.Frame?
-        if let rawTouches {
-            frame = TouchFrameDecoder.decode(UnsafeRawBufferPointer(start: rawTouches, count: numTouches * TouchFrameDecoder.stride), count: numTouches)
-        } else if numTouches == 0 {
-            frame = TouchFrameDecoder.Frame(contacts: [], rawCount: 0, states: [])
-        } else if !systemMonitoringEnabled {
-            // Legacy count-only tests; production never fabricates contacts.
-            frame = TouchFrameDecoder.Frame(contacts: (0..<numTouches).map {
-                TouchPoint(id: $0, x: 0.2 + Float($0) * 0.1, y: 0.5, size: 0.1)
-            }, rawCount: numTouches, states: Array(repeating: 4, count: numTouches))
-        } else { frame = nil }
-        guard let frame else { return }
-        frameLock.lock(); let generation = registrationGeneration; frameLock.unlock()
-        let apply = { [weak self] in
-            guard let self, self.registrationGeneration == generation else { return }
-            self.processTouchFrame(frame.contacts, count: frame.contacts.count, timestamp: timestamp, pressedButtons: 0)
-        }
-        if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
     }
 
     func processTouchFrame(_ points: [TouchPoint], count: Int, timestamp: Double,
@@ -681,7 +624,6 @@ class TrackpadMonitor {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
-
     }
 
     private func stopSuppressingMouse() {
@@ -1000,11 +942,6 @@ class TrackpadMonitor {
         positionClickFired = true
         pendingPositionClickChecks = 0
         queueGesture(gesture)
-    }
-
-    /// Test seam: the same judgement the click paths use.
-    func clickGestureForTesting(x: Float, y: Float) -> TrackpadGesture? {
-        clickGesture(at: (x: x, y: y))
     }
 
     /// The one place that decides which gesture a click is, so the fire path
@@ -1423,11 +1360,8 @@ class TrackpadMonitor {
             // the page. App-specific overrides and the suppression switch apply.
             tipTapShield.arm(device: deviceID ?? lastContactDevice, now: ProcessInfo.processInfo.systemUptime)
         }
-        let requiredReceiver = diagnosticTarget
         DispatchQueue.main.async { [weak self] in
             guard let self, self.registrationGeneration == generation else { return }
-            if let requiredReceiver,
-               NSWorkspace.shared.frontmostApplication?.bundleIdentifier != requiredReceiver { return }
             self.fireGesture(gesture, targets: targets)
         }
     }
@@ -1495,11 +1429,6 @@ class TrackpadMonitor {
         MainActor.assumeIsolated { TrackpadUtilityGestures.shared.triggerEngineTookTouch() }
     }
 
-    /// Test-only: directly fire a gesture through the normal pipeline
-    func fireGestureForTest(_ gesture: TrackpadGesture) {
-        fireGesture(gesture)
-    }
-
     /// Test seam: answers in place of the shared utility layer whether a Dock,
     /// menu-bar or Mission Control gesture owns the touch (N333-08).
     var utilityClaimsOverride: ((TrackpadGesture) -> Bool)?
@@ -1513,17 +1442,6 @@ class TrackpadMonitor {
         guard systemMonitoringEnabled, !suspended, source.running else { return false }
         return MainActor.assumeIsolated { TrackpadUtilityGestures.shared.claimsNow(gesture) }
     }
-
-    /// Test-only: the shared corner/middle zone map.
-    func positionClickGestureForTest(x: Float, y: Float) -> TrackpadGesture? {
-        positionClickGesture(at: (x: x, y: y))
-    }
-
-    /// Test-only: which detector families have a bound trigger.
-    var isSuppressingMouseForTest: Bool { circleDrawingActive }
-    var hasCircleTriggerForTest: Bool { hasCircleTrigger }
-    var hasTriangleTriggerForTest: Bool { hasTriangleTrigger }
-    var hasEdgeSlideTriggerForTest: Bool { hasEdgeSlideTrigger }
 
     private func invalidateRecognition() {
         source.invalidatePendingFrames()
@@ -1543,7 +1461,6 @@ class TrackpadMonitor {
         tearDownClickSuppressionTap()
         monitors.forEach(NSEvent.removeMonitor); monitors.removeAll()
         healthTimer?.invalidate(); healthTimer = nil
-        diagnosticSignals.forEach { $0.cancel() }; diagnosticSignals.removeAll()
         lifecycleObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         lifecycleObservers.removeAll()
     }

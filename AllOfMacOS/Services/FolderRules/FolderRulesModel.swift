@@ -324,9 +324,6 @@ struct FolderRuleCondition: Codable, Equatable, Identifiable {
     static func name(_ comparison: FolderRuleComparison, _ values: [String]) -> FolderRuleCondition {
         FolderRuleCondition(attribute: .name, comparison: comparison, values: values)
     }
-    static func namePattern(_ pattern: String) -> FolderRuleCondition {
-        FolderRuleCondition(attribute: .name, comparison: .matchesRegex, pattern: pattern)
-    }
     static func fileExtension(_ comparison: FolderRuleComparison = .is, _ values: [String]) -> FolderRuleCondition {
         FolderRuleCondition(attribute: .fileExtension, comparison: comparison, values: values)
     }

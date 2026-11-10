@@ -1082,14 +1082,7 @@ private struct QuickAccessOverlayView: View {
     let accessibilityActions: [(String, () -> Void)]
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovered = QuickAccessOverlayView.takePreviewHover()
-    private static var previewHoverUsed = false
-    /// Preview-only: the first card starts hovered so the curtain can be inspected.
-    private static func takePreviewHover() -> Bool {
-        guard CaptureUIPreview.forcesHover, !previewHoverUsed else { return false }
-        previewHoverUsed = true
-        return true
-    }
+    @State private var hovered = false
     private var side: CGFloat { CaptureSettings.overlaySize.thumbnailSide }
     private var width: CGFloat { CaptureSettings.overlaySize.panelWidth }
     private var isVideo: Bool { entry.kind == .videoRecording }

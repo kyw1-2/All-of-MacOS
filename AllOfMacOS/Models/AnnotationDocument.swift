@@ -144,13 +144,6 @@ enum AnnotationKind: String, CaseIterable, Identifiable, Codable {
     /// Freehand tools collect a point path instead of a rect.
     var isFreehand: Bool { self == .draw || self == .drawHighlight }
 
-    /// The tools shown in the toolbar, in order.
-    static var toolbarOrder: [AnnotationKind] {
-        [.move, .crop, .arrow, .line, .rectangle, .filledRectangle, .ellipse,
-         .text, .highlighter, .draw, .drawHighlight, .pixelate, .blur, .secureBlur, .redact, .spotlight,
-         .counter, .cursor, .eraser, .image]
-    }
-
     /// Privacy kinds (the Redact tool's styles).
     var isRedaction: Bool { self == .pixelate || self == .blur || self == .secureBlur || self == .redact }
 

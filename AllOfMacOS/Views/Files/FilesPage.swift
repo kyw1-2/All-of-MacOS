@@ -55,10 +55,6 @@ struct FilesPage: View {
         .aomToast(toast)
         .quickLookPreview($quickLookURL, in: quickLookItems)
         .task {
-            if PresetManager.isUIPreview {
-                FilesPreviewData.seed()
-                AOMFeaturePreview.applyPanelAppearance()
-            }
             FilesModule.publishStatus()
             await refreshFinderPermission()
         }

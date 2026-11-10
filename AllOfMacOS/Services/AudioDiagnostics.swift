@@ -58,8 +58,6 @@ enum AudioEventKind: UInt64, CaseIterable {
 
     var name: String { String(describing: self) }
 
-    /// The limiter's and the leveler's episodes (their `extra` is an `AudioDynamicsReading`).
-    var isDynamics: Bool { self == .limiterEngaged || self == .limiterReleased || self == .levelerEngaged || self == .levelerReleased }
 }
 
 /// 3.3.4 (N334): what a limiter or leveler event carries besides its

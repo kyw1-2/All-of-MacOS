@@ -24,12 +24,6 @@ enum AudioOutputRestore {
         !(UserDefaults.standard.string(forKey: appliedKey) ?? "").isEmpty
     }
 
-    static var pendingRestoreName: String? {
-        guard let uid = UserDefaults.standard.string(forKey: previousKey), !uid.isEmpty,
-              let id = deviceID(forUID: uid) else { return nil }
-        return name(of: id)
-    }
-
     /// Called after a successful output switch. `previousUID` is the device that
     /// was default before we touched it.
     static func record(previousUID: String?, appliedUID: String) {

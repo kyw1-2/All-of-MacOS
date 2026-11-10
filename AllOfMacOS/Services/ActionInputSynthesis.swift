@@ -219,9 +219,6 @@ enum ActionPermissions {
         }
     }
 
-    /// Tests that replace a check call this so the cache cannot leak.
-    static func resetCache() { lock.lock(); cached = nil; lock.unlock() }
-
     static let postEventsDenied = "AOM needs the Accessibility permission to send keys and clicks (System Settings › Privacy & Security › Accessibility)."
     static let screenRecordingDeniedMessage = "AOM needs the Screen Recording permission to record (System Settings › Privacy & Security › Screen & System Audio Recording)."
 }

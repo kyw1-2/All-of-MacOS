@@ -184,42 +184,6 @@ enum SystemTriggerKind: Codable, Hashable {
         }
     }
 
-    var symbolName: String {
-        switch self {
-        case .midiMessage: return "pianokeys"
-        case .forceTouchStage(let stage): return stage == 2 ? "hand.tap.fill" : "hand.tap"
-        case .gamepadButton: return "gamecontroller"
-        case .hidInput: return "cable.connector"
-        case .daily, .weekly: return "clock"
-        case .everyMinutes, .everyMinutesInWindow: return "timer"
-        case .displayChanged: return "display"
-        case .appLaunched: return "app.badge.checkmark"
-        case .appQuit: return "app.badge"
-        case .powerSourceChanged: return "bolt"
-        case .screenLocked: return "lock"
-        case .screenUnlocked: return "lock.open"
-        case .systemWillSleep: return "moon.zzz"
-        case .systemDidWake: return "sun.max"
-        case .appActivated: return "app.badge.checkmark"
-        case .appDeactivated: return "app.dashed"
-        case .screensaverStarted, .screensaverStopped: return "display.and.arrow.down"
-        case .activeSpaceChanged: return "rectangle.3.group"
-        case .batteryBelow: return "battery.25"
-        case .batteryAbove: return "battery.100"
-        case .wifiConnected: return "wifi"
-        case .wifiDisconnected: return "wifi.slash"
-        case .usbConnected, .usbDisconnected: return "cable.connector"
-        case .bluetoothConnected, .bluetoothDisconnected: return "dot.radiowaves.left.and.right"
-        case .inputSourceChanged: return "globe"
-        case .audioOutputChanged: return "speaker.wave.2"
-        case .clipboardChanged: return "doc.on.clipboard"
-        case .fileDidChange: return "doc.badge.gearshape"
-        case .screenCornerHover: return "rectangle.inset.topleft.filled"
-        case .screenEdgeHover: return "rectangle.topthird.inset.filled"
-        case .variableChanged: return "character.cursor.ibeam"
-        }
-    }
-
     static func weekdayNames(_ days: [Int]) -> String {
         let symbols = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         let sorted = days.filter { (1...7).contains($0) }.sorted()
@@ -419,7 +383,6 @@ struct Trigger: Identifiable, Codable, Hashable {
     }
 }
 
-
 enum TriggerSortMode: String, CaseIterable { case manual = "Manual", alphabetical = "Alphabetical" }
 
 enum TriggerListQuery {
@@ -487,23 +450,5 @@ enum TriggerListQuery {
             if comparison != .orderedSame { return comparison == .orderedAscending }
             return $0.id.uuidString < $1.id.uuidString
         }
-    }
-}
-
-struct TriggerConflictKey: Hashable {
-    let input: TriggerInput
-    let app: String?
-    let group: UUID?
-    let modifiers: UInt?
-    let phase: KeyboardPhase?
-    init(_ trigger: Trigger) {
-        input = trigger.input; group = trigger.activationGroupID
-        app = group == nil ? trigger.appBundleID : nil
-        modifiers = trigger.requiredModifiers.map { $0 & TriggerResolver.modifierMask }
-        if case .keyboardShortcut = trigger.input { phase = trigger.keyboardPhase } else { phase = nil }
-    }
-    static func counts(_ triggers: [Trigger]) -> [UUID: Int] {
-        let groups = Dictionary(grouping: triggers, by: TriggerConflictKey.init)
-        return Dictionary(uniqueKeysWithValues: triggers.map { ($0.id, max(0, (groups[TriggerConflictKey($0)]?.count ?? 1) - 1)) })
     }
 }

@@ -193,15 +193,6 @@ final class FocusSessionController: ObservableObject {
         process(timer.start(plan: plan ?? settings.settings.plan, at: now), userInitiated: userInitiated)
     }
 
-    /// Isolated previews only: a fresh focus phase that began `elapsed` seconds ago.
-    func startForPreview(elapsed: TimeInterval) {
-        guard PresetManager.isUIPreview else { return }
-        timer = FocusTimer(plan: settings.settings.plan)
-        effects = Effects()
-        process(timer.start(plan: settings.settings.plan, at: clock().addingTimeInterval(-elapsed)), userInitiated: false,
-                announces: false)
-    }
-
     func pause() { process(timer.pause(at: clock()), userInitiated: false) }
     func resume() {
         let now = clock()

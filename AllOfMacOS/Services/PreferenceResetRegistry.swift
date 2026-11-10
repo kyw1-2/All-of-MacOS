@@ -97,26 +97,6 @@ enum PreferenceResetRegistry {
         "AOMAudioInputUnmute_": "the volume AOM brings back when it unmutes a microphone without a mute switch"
     ]
 
-    /// Left out of backups (`PresetManager.settingsNotBackedUp`) yet reset,
-    /// and why: preferences that only make sense on this Mac or in one view.
-    static let resetThoughNotBackedUp: [String: String] = {
-        let layout = "how a window or view is laid out: back to its default"
-        var pairs = ["AOMAllInOneLastRatio", "AOMAutomationListWidth", "AOMAutomationTableWidth",
-                     "AOMAutomationViewMode", "AOMAudioWorkspaceSection", "AOMSidebarVisible", "AOMInsightsPeriod",
-                     "AOMGroupTriggersByFolder", "AOMShowLog", "AOMShowTouchVisualizer", "AOMAudioShowAllApps",
-                     "AOMAnnotationBackgroundPanelOpen", "AOMAnnotationBackgroundPrevious",
-                     // 3.4.0 list widths, the inspector, folded sidebar sections,
-                     // the last page and the mixer's effects row.
-                     "AOMClipboardListWidth", "AOMFolderRulesListWidth", "AOMFolderRulesInspector",
-                     "AOMTextActionsListWidth", "AOMSidebarCollapsed", "AOMLastPage",
-                     "AOMAudioMixerShowsOutputEffects"].map { ($0, layout) }
-        for key in ["AOMCaptureSaveDirectory", CaptureSettings.RecordingKey.cameraID,
-                    CaptureSettings.RecordingKey.microphoneID] {
-            pairs.append((key, "a choice for this Mac (the save folder, the camera, the microphone): back to the default"))
-        }
-        return Dictionary(pairs, uniquingKeysWith: { first, _ in first })
-    }()
-
     /// Whether `key` is one of AOM's settings at all.
     static func isAOMKey(_ key: String) -> Bool {
         key.hasPrefix("AOM") || key.hasPrefix("aom.") || unprefixedPreferenceKeys.contains(key)
@@ -130,13 +110,6 @@ enum PreferenceResetRegistry {
 
     static func resets(_ key: String) -> Bool {
         isAOMKey(key) && preservationReason(for: key) == nil
-    }
-
-    /// The preferences the backup list and this registry name, as a reset
-    /// treats them: the backed-up settings it clears and the ones it clears
-    /// although no backup holds them. Any other AOM key is reset too.
-    static var knownPreferenceKeys: [String] {
-        Set(PresetManager.backedUpSettingKeys + Array(resetThoughNotBackedUp.keys)).filter(resets).sorted()
     }
 
     /// The AOM preferences `defaults` holds that a reset clears.

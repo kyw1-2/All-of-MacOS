@@ -24,18 +24,8 @@ enum AOMTheme {
     /// Cards for discrete items: the one opaque surface.
     static let paper = AOMColor.surface
     static let card = paper
-    static let solidCard = paper
-    /// Quiet inset fill inside a card: wells, hovered rows, thumbnails.
-    static let cardAlt = AOMColor.sunken
     /// Segmented tracks and pressed wells.
     static let track = AOMColor.track
-    /// Dark emphasis surface (kept for older call sites; toasts are chrome now).
-    static let ink = Color.aomDynamic(
-        light: NSColor(srgbRed: 0.098, green: 0.122, blue: 0.157, alpha: 1),
-        dark: NSColor(srgbRed: 0.188, green: 0.196, blue: 0.220, alpha: 1)
-    )
-    /// Retired frosted-card tint (cards are opaque now); kept for source compatibility.
-    static let cardGlassTint = Color.clear
     /// Edges of cards and controls.
     static let hairline = AOMColor.hairline
 
@@ -60,12 +50,6 @@ enum AOMTheme {
     static let cyan = Color(nsColor: .systemTeal)
     static let purple = Color(nsColor: .systemPurple)
     static let orange = Color(nsColor: .systemOrange)
-    /// The product mark.
-    static var heroGradient: LinearGradient {
-        LinearGradient(colors: [heroStart, heroEnd], startPoint: .top, endPoint: .bottom)
-    }
-    static let heroStart = Color(nsColor: NSColor(srgbRed: 0.290, green: 0.584, blue: 0.976, alpha: 1))
-    static let heroEnd = Color(nsColor: NSColor(srgbRed: 0.169, green: 0.443, blue: 0.918, alpha: 1))
 
     /// Label colour for text and glyphs on an accent fill. Light accents
     /// (yellow, orange, cyan, green) get near-black; the rest keep white.
@@ -88,25 +72,12 @@ enum AOMTheme {
     // MARK: Geometry
 
     static let cardRadius: CGFloat = AOMRadius.card
-    static let windowContentRadius: CGFloat = AOMRadius.panel
     static let controlRadius: CGFloat = AOMRadius.control
     /// Page margin and the gap between page sections.
     static let pagePadding: CGFloat = AOMSpace.pageMargin
     static let sectionSpacing: CGFloat = AOMSpace.sectionGap
 
     // MARK: Depth
-
-    static var cardShadow: Color { Color.black.opacity(0.03) }
-
-    /// Edge for chrome: a neutral hairline that reads the same in light and dark.
-    static func rim(hovering: Bool = false, contrast: ColorSchemeContrast = .standard) -> LinearGradient {
-        if contrast == .increased {
-            return LinearGradient(colors: [AOMColor.strongLine, AOMColor.strongLine], startPoint: .top, endPoint: .bottom)
-        }
-        return LinearGradient(colors: [Color.primary.opacity(hovering ? 0.16 : 0.10), Color.primary.opacity(hovering ? 0.10 : 0.06)],
-                              startPoint: .top, endPoint: .bottom)
-    }
-    static let rimWidth: CGFloat = 0.5
 
     /// The response shared by pressable surfaces (the `quick` motion token).
     static let press = AOMMotion.quickCurve
@@ -117,8 +88,6 @@ enum AOMTheme {
 /// The 3.x type names, mapped onto the macOS text-style ramp in `AOMFont`.
 /// Section pages take their title from the toolbar; content never repeats it.
 enum AOMType {
-    /// The name of the thing being edited (17 pt semibold).
-    static let title1 = AOMFont.title
     /// An empty state or a sheet's heading (15 pt semibold).
     static let title2 = AOMFont.pageStatus
     /// A group heading inside a page (13 pt semibold).
@@ -128,18 +97,11 @@ enum AOMType {
     /// Badges, key hints and tertiary metadata (never body text).
     static let micro = AOMFont.badge
     static let pageTitle = AOMFont.title
-    static let pageTracking: CGFloat = 0
-    /// The Workspace hero sentence (17 pt semibold; never Large Title).
-    static let heroTitle = AOMFont.heroSentence
-    static let heroTracking: CGFloat = 0
     static let subtitle = AOMFont.body
     /// Small group labels inside a card: sentence case, no tracking (c.2).
     static let sectionCaps = AOMFont.caption.weight(.semibold)
-    static let capsTracking: CGFloat = 0
     /// Section titles above cards.
     static let sectionTitle = AOMFont.section
-    static let cardTitle = AOMFont.headline
-    static let tileTitle = AOMFont.headline
     /// First line of a list row.
     static let rowTitle = AOMFont.body
     static let body = AOMFont.body

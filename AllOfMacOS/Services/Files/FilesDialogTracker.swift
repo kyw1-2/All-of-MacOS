@@ -91,8 +91,6 @@ final class FilesDialogTracker: @unchecked Sendable {
         }
     }
 
-    func requestEvaluation() { queue.async { self.schedule(after: 0.02) } }
-
     fileprivate func noteNotification(_ name: String) {
         queue.async {
             let moved = name == (kAXWindowMovedNotification as String) || name == (kAXMovedNotification as String)

@@ -180,7 +180,6 @@ enum TrackpadGesture: String, CaseIterable, Identifiable, Codable {
         default: return nil
         }
     }
-    var isTouchStart: Bool { [.oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart].contains(self) }
     var isLongTouch: Bool { [.oneFingerLongTouch, .twoFingerLongTouch, .threeFingerLongTouch, .fourFingerLongTouch, .fiveFingerLongTouch].contains(self) }
     static func touchStart(fingers: Int) -> TrackpadGesture? {
         [nil, .oneFingerTouchStart, .twoFingerTouchStart, .threeFingerTouchStart, .fourFingerTouchStart, .fiveFingerTouchStart][safe: fingers] ?? nil
@@ -319,7 +318,6 @@ enum MIDIMessageType: Int, CaseIterable, Identifiable {
     case programChange = 0xC0, channelPressure = 0xD0, pitchBend = 0xE0
 
     static let anyNumber = -1
-    static let pitchBendCentre = 8192
 
     var id: Int { rawValue }
     var title: String {

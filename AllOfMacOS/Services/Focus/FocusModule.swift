@@ -24,7 +24,7 @@ final class FocusEnvironment {
     private init() {
         isolated = PresetManager.isRunningTests || PresetManager.isUIPreview
         directory = FocusStorage.defaultDirectory
-        let system: FocusSystem = FocusPreviewSystem.isRequested ? FocusPreviewSystem() : FocusLiveSystem(isolated: isolated)
+        let system: FocusSystem = FocusLiveSystem(isolated: isolated)
         self.system = system
         settings = FocusSettingsStore(defaults: TriggerSuppression.defaultsForCurrentProcess(tag: "Focus"))
         lists = FocusListsStore(directory: directory)

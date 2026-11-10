@@ -464,15 +464,4 @@ final class FocusIdleAppsController: ObservableObject {
     /// Memory freed today by quits that finished.
     var freedToday: UInt64 { activity.freedToday(now: clock()) }
 
-    /// Replaces the sample state in isolated previews only.
-    func setPreviewState(memory: [pid_t: UInt64], pressure: FocusMemoryPressure, swap: UInt64?, idleSince: [String: Date]) {
-        guard PresetManager.isUIPreview else { return }
-        self.memory = memory
-        self.pressure = pressure
-        self.swapUsedBytes = swap
-        isActive = true
-        var tracker = FocusIdleTracker(startedAt: clock().addingTimeInterval(-6 * 3600), frontmost: system.frontmostBundleID)
-        for (bundleID, date) in idleSince { tracker.launched(bundleID, at: date) }
-        self.tracker = tracker
-    }
 }

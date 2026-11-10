@@ -262,43 +262,6 @@ final class AirPlayOutputRenderer {
         if first { GestureLog.shared.logFromAnyThread(message, level: .error) }
     }
 
-    /// How often AOM may ask again for its IO size (crackle audit 3.3.2,
-    /// follow-up). Until then it asked at most `maximumBufferRequests` times
-    /// per output and otherwise accepted whatever size the device fell back
-    /// to (128 frames on a HomePod: HAL overloads, each a click) for the rest
-    /// of the session.
-    static let ioRerequestInterval: TimeInterval = 30
-    /// The longest wait between two re-requests: a device that keeps AOM
-    /// below its size is asked less and less often (each accepted set
-    /// reconfigures AOM's IO, one possible gap).
-    static let ioRerequestMaximumInterval: TimeInterval = 600
-    /// A device that ignored this many re-requests is not asked again by
-    /// this output (3.4.0 audit, HomePod crackle): the HomePod answers 0 and
-    /// keeps 128-frame IO, and every set on its running IO may restart that
-    /// IO (a gap, heard as a click). Until 3.4.0 it was asked every 10
-    /// minutes for as long as the output lived, 6 times an hour.
-    static let maximumUnheededIORequests = 2
-
-    /// The wait before the next re-request after `attempts` that did not
-    /// stick: 30 s, then doubling up to 10 minutes.
-    static func ioRerequestDelay(afterUnheededRequests attempts: Int) -> TimeInterval {
-        let doubled = ioRerequestInterval * pow(2, Double(min(max(0, attempts), 16)))
-        return min(ioRerequestMaximumInterval, doubled)
-    }
-
-    /// Whether the periodic health check asks for the IO size again: only
-    /// while the device runs AOM below the size it wants (3.3.2 review: a
-    /// cycle gap alone asked again every 30 s even at 1024 frames, and a HAL
-    /// that restarts IO on a same-size set turned one gap into a click every
-    /// 30 s). `cycleGapsGrew` is kept for callers and no longer decides.
-    static func shouldRerequestIOBuffer(configured: UInt32, preferred: UInt32, cycleGapsGrew: Bool,
-                                        secondsSinceLastRequest: TimeInterval,
-                                        unheededRequests: Int = 0) -> Bool {
-        guard configured < preferred else { return false }
-        guard unheededRequests < maximumUnheededIORequests else { return false }
-        return secondsSinceLastRequest >= ioRerequestDelay(afterUnheededRequests: unheededRequests)
-    }
-
     // No periodic IO-size property writes on a running HomePod. The static
     // legacy policy above is retained for test/documentation compatibility,
     // but no control path invokes it after AudioOutputUnitStart.
@@ -541,7 +504,6 @@ final class AirPlayOutputRenderer {
         // Health polling correlates sustained faults; one notification must
         // not schedule an immediate output/tap teardown.
     }
-    static let maximumBufferRequests = 4
 
     private func configurationChanged(confirmed: Bool = false) {
         guard !stopped, !failureDelivered, let unit else { return }
@@ -1197,10 +1159,6 @@ enum AirPlayMixScheduling {
         /// the host clamps the process at all, independently of the mix code.
         var maximumPriority: Int32 = -1
 
-        /// The priority ceiling is the throttled band (darwin background or a
-        /// background QoS clamp). One signal only: a suppressed process keeps
-        /// the ceiling at 63, so `AirPlayHostDiagnosis` judges the host (N01).
-        var hostClamped: Bool { maximumPriority >= 0 && maximumPriority <= 4 }
     }
 
     /// The scheduler's view of the calling thread; nil if the kernel does not
@@ -1244,90 +1202,6 @@ enum AirPlayMixScheduling {
         guard state == 1 || state == 2 else { return nil }
         return Reading(realtime: state == 1, priority: Int32(word >> 8 & 0xFF) - 1,
                        maximumPriority: Int32(word >> 16 & 0xFF) - 1)
-    }
-}
-
-/// Audit N01: what the host lets this process do, read on an ordinary thread
-/// (never the mix thread) from independent signals. The priority ceiling
-/// alone (`Reading.hostClamped`) catches a darwin-background or QoS-clamped
-/// process, whose ceiling drops to 4, but not a suppressed one: the 3.3.1
-/// re-audit's default remote environment kept the ceiling at 63 while the
-/// threads ran timeshare at priority 4 and woke about 200 ms late
-/// (work/reaudit-331-20261028/audio-host-*.log). Under the application
-/// policy (`taskpolicy -a`) the same build runs the mix thread realtime.
-struct AirPlayHostDiagnosis: Equatable {
-    /// An ordinary thread's scheduler reading (nil when the kernel did not answer).
-    var ordinaryThread: AirPlayMixScheduling.Reading?
-    /// `getpriority(PRIO_DARWIN_PROCESS)`: the process runs darwin background.
-    var darwinBackground: Bool
-    /// The worst lateness of short timed waits on an ordinary thread, in
-    /// nanoseconds; nil when not measured.
-    var worstTimerLateness: UInt64?
-
-    /// Why the host keeps this process out of realtime scheduling; empty when
-    /// no signal says so.
-    var throttleReasons: [String] {
-        var reasons: [String] = []
-        if darwinBackground { reasons.append("the process runs darwin background (PRIO_DARWIN_BG)") }
-        if let thread = ordinaryThread {
-            if thread.maximumPriority >= 0 && thread.maximumPriority <= 4 {
-                reasons.append("threads may run at most at priority \(thread.maximumPriority) (background clamp)")
-            }
-            if !thread.realtime && thread.priority >= 0 && thread.priority <= 4 {
-                reasons.append("ordinary threads run at priority \(thread.priority) (throttled or suppressed process)")
-            }
-        }
-        if let late = worstTimerLateness, late > AirPlayMixTimeline.lateWakeNanoseconds {
-            reasons.append(String(format: "2 ms timed waits wake %.0f ms late (timer coalescing)", Double(late) / 1e6))
-        }
-        return reasons
-    }
-
-    var throttled: Bool { !throttleReasons.isEmpty }
-
-    /// Reads the host from the calling thread, which must be an ordinary
-    /// one. `probeTimers` adds ten 2 ms waits (about 20 ms on a healthy
-    /// host, longer on a throttled one), so keep it off hot paths.
-    static func measure(probeTimers: Bool = true) -> AirPlayHostDiagnosis {
-        var worst: UInt64?
-        if probeTimers {
-            var timebase = mach_timebase_info_data_t()
-            mach_timebase_info(&timebase)
-            let numer = UInt64(max(1, timebase.numer)), denom = UInt64(max(1, timebase.denom))
-            var late: UInt64 = 0
-            for _ in 0..<10 {
-                let target = mach_absolute_time() + 2_000_000 * denom / numer
-                mach_wait_until(target)
-                let now = mach_absolute_time()
-                if now > target { late = max(late, (now - target) * numer / denom) }
-            }
-            worst = late
-        }
-        return AirPlayHostDiagnosis(ordinaryThread: AirPlayMixScheduling.current(),
-                                    darwinBackground: getpriority(PRIO_DARWIN_PROCESS, 0) == 1,
-                                    worstTimerLateness: worst)
-    }
-}
-
-/// The mix clock's scheduling verdict, kept apart from the host diagnosis so
-/// a broken promotion is never mistaken for a throttled host (audit N01): a
-/// non-realtime mix thread on a host that allows realtime is a defect.
-enum AirPlayMixVerdict: Equatable {
-    /// The scheduler runs the mix thread in the realtime band.
-    case realtime
-    /// The host keeps the whole process out of realtime; the reasons say how.
-    case hostThrottled(reasons: [String])
-    /// The host allows realtime, yet the mix thread does not get it.
-    case promotionFailed(detail: String)
-
-    static func judge(host: AirPlayHostDiagnosis, mix: AirPlayMixScheduling.Reading?,
-                      promotionAccepted: Bool) -> AirPlayMixVerdict {
-        if let mix, mix.realtime { return .realtime }
-        if host.throttled { return .hostThrottled(reasons: host.throttleReasons) }
-        let observed = mix.map { "timeshare at priority \($0.priority)" } ?? "unread"
-        return .promotionFailed(detail: promotionAccepted
-            ? "the realtime promotion was accepted but the scheduler runs the mix thread \(observed)"
-            : "the realtime promotion was refused (mix thread \(observed))")
     }
 }
 

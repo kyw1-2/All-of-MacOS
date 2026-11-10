@@ -171,34 +171,3 @@ struct BTTImportReportView: View {
         }
     }
 }
-
-/// `--aom-preview-btt-report` (isolated previews only): the report for a
-/// small fixture in BTT's documented JSON shape, in a window the size of the
-/// import alert, so the layout can be reviewed without importing anything.
-@MainActor
-enum BTTImportReportPreview {
-    private static var window: NSWindow?
-
-    static func open() {
-        guard PresetManager.isUIPreview else { return }
-        let fixture: [[String: Any]] = [
-            ["BTTTriggerClass": "BTTTriggerTypeTouchpadAll", "BTTTriggerType": 102, "BTTActionsToExecute": [["BTTPredefinedActionType": 5]]],
-            ["BTTTriggerClass": "BTTTriggerTypeKeyboardShortcut", "BTTTriggerType": 0, "BTTShortcutKeyCode": 8,
-             "BTTShortcutModifierKeys": 1_048_576, "BTTTriggerOnDown": 1, "BTTActionsToExecute": [["BTTPredefinedActionType": 22]]],
-            ["BTTTriggerClass": "BTTTriggerTypeTouchpadAll", "BTTTriggerType": 110,
-             "BTTActionsToExecute": [["BTTPredefinedActionType": 195, "BTTInlineAppleScript": "display dialog \"Hello\""]]],
-            ["BTTTriggerClass": "BTTTriggerTypeOtherTriggers", "BTTTriggerType": 99_999, "BTTActionsToExecute": [["BTTPredefinedActionType": 5]]],
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: fixture),
-              let report = try? BTTPresetImport.parse(data) else { return }
-        let host = NSHostingView(rootView: BTTImportReportView(report: report).padding(AOMSpace.x5))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Review BetterTouchTool Import"
-        window.isReleasedWhenClosed = false
-        window.contentView = host
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
-    }
-}

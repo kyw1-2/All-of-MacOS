@@ -48,8 +48,6 @@ final class PinnedWindowCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         super.init()
     }
 
-    func waitUntilSettled() async { await worker?.value }
-
     func request(_ configuration: Configuration?) {
         guard !isClosed else { return }
         guard desired != configuration else { return }

@@ -108,11 +108,6 @@ struct AudioEQ: Equatable {
         return result
     }
 
-    /// The cascade's magnitude in dB at `frequency` (control thread).
-    func responseDB(at frequency: Double) -> Double {
-        Self.magnitudeDB(of: sections, at: frequency, sampleRate: sampleRate)
-    }
-
     static func magnitudeDB(of sections: [Coefficients], at frequency: Double, sampleRate: Double) -> Double {
         var magnitude = 1.0
         let w = 2 * Double.pi * frequency / sampleRate
@@ -238,8 +233,6 @@ final class AudioEQProcessor {
     }
 
     deinit { coefficients.deallocate(); state.deallocate() }
-
-    var isIdentity: Bool { sectionCount == 0 }
 
     func reset() { for i in 0..<(max(1, sectionCount) * 4) { state[i] = 0 } }
 

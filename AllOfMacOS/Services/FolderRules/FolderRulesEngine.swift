@@ -622,25 +622,7 @@ final class FolderRulesEngine: ObservableObject {
         refreshStatus()
     }
 
-    // MARK: Previews
-
-    /// Sample state for isolated UI previews (`FolderRulesPreviewSamples`).
-    func replaceForPreview(config: FolderRulesConfig, activity: [FolderRuleActivity]) {
-        guard PresetManager.isUIPreview else { return }
-        self.config = config
-        self.activity = activity
-        saveConfig(immediately: true)
-        saveActivity()
-        refreshStatus()
-    }
-
-    func addPreviewApproval(_ request: FolderRuleApprovalRequest) {
-        guard PresetManager.isUIPreview else { return }
-        addApprovals([request], now: runner.environment.now())
-        refreshStatus()
-    }
-
-    // MARK: Saving
+// MARK: Saving
 
     private func saveConfig(immediately: Bool = false) {
         configSave?.cancel()
@@ -673,15 +655,6 @@ final class FolderRulesEngine: ObservableObject {
         saveQueue.async { try? store.save(activity: snapshot) }
     }
 
-    /// Writes what is pending now (tests, and before quitting).
-    func flushSaves() {
-        if configSave != nil {
-            configSave?.cancel()
-            writeConfigNow()
-        }
-        saveQueue.sync {}
-    }
-
     // MARK: Status
 
     /// Successful runs today.
@@ -689,13 +662,6 @@ final class FolderRulesEngine: ObservableObject {
         let calendar = Calendar.current
         let now = runner.environment.now()
         return activity.filter { $0.result == .succeeded && calendar.isDate($0.date, inSameDayAs: now) }.count
-    }
-
-    /// Activity lines per day, newest day first.
-    var activityByDay: [(day: Date, count: Int)] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: activity.filter { $0.result == .succeeded }) { calendar.startOfDay(for: $0.date) }
-        return grouped.map { ($0.key, $0.value.count) }.sorted { $0.day > $1.day }
     }
 
     var waitingCount: Int { approvals.reduce(0) { $0 + $1.requests.count } }

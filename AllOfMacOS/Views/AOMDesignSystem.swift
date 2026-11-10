@@ -9,10 +9,6 @@ enum AOMDesign {
     /// Outer page margin and the gap between sections.
     static let pagePadding: CGFloat = AOMSpace.pageMargin
     static let sectionSpacing: CGFloat = AOMSpace.sectionGap
-    static let gridSpacing: CGFloat = AOMSpace.tileGap
-    /// Continuous corner radii: large surfaces, tiles/cards, small controls.
-    static let surfaceRadius: CGFloat = AOMRadius.card
-    static let tileRadius: CGFloat = AOMRadius.card
     static let controlRadius: CGFloat = AOMRadius.control
 
     static var reduceMotion: Bool { AOMMotion.systemReduceMotion }

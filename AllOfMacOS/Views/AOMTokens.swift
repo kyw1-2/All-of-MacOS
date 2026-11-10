@@ -56,9 +56,6 @@ enum AOMSpace {
     /// Divider inset for rows with a leading 20 pt symbol: 12 + 20 + 8.
     static let rowSymbolInset = rowInset + AOMIcon.row + x2
 
-    // 3.2 names, remapped onto the grid (c.1 migration table).
-    /// was 4
-    static let xxs = x1
     /// was 7
     static let xs = x2
     /// was 10
@@ -67,8 +64,6 @@ enum AOMSpace {
     static let m = x3
     /// was 18 (14 in 3.3.5)
     static let l = x4
-    /// was 24 (24 until 3.3.4)
-    static let xl = x5
 }
 
 // MARK: - Layout sizes (c.1)
@@ -78,10 +73,6 @@ enum AOMSize {
     static let sidebarMin: CGFloat = 200
     static let sidebarIdeal: CGFloat = 220
     static let sidebarMax: CGFloat = 280
-    /// Row heights: dense list or table (the system table row), a grouped-form
-    /// row with a regular control, and a title over a one-line description
-    /// (System Settings).
-    static let rowDense: CGFloat = 24
     static let rowStandard: CGFloat = 36
     static let rowDetail: CGFloat = 48
     /// Legacy one- and two-line list rows (AOMListRow).
@@ -284,7 +275,6 @@ enum AOMColor {
     /// Selected rows in custom lists: the system selection, grey while the
     /// window is inactive.
     static let selection = Color(nsColor: .selectedContentBackgroundColor)
-    static let selectionInactive = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
     /// Row hover and press fills (the same values `AOMRowButtonStyle` draws).
     static let rowHover = Color(nsColor: .tertiarySystemFill).opacity(0.7)
     static let rowPressed = Color(nsColor: .tertiarySystemFill)
@@ -542,7 +532,6 @@ enum AOMIcon {
     static let tileGlyph: CGFloat = 16
     /// Page-header squircle, glyph 20 pt.
     static let headerBadge: CGFloat = 40
-    static let headerGlyph: CGFloat = 20
     /// Workspace status squircle and its glyph.
     static let hero: CGFloat = 40
     static let heroGlyph: CGFloat = 22

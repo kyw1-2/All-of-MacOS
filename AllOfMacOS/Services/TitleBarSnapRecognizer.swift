@@ -705,7 +705,6 @@ final class TitleBarSnapRecognizer {
         restartTurn(startX, startY)
     }
 
-
     /// A lift soon after landing that never travelled `tapTravel` is a tap.
     /// Once a swipe has engaged (its preview is up) a lift is a tap only if
     /// the fingers moved less than `min(tapTravel, engagedTapShare × engage)`
@@ -841,7 +840,7 @@ final class TitleBarSnapRecognizer {
     /// the right and y toward the BOTTOM of the pad, like the screen, so dy > 0
     /// is a swipe down. TouchPoint's y grows toward the top of the pad (the
     /// MultitouchSupport and NSTouch convention, which `LiveTouchView`, the
-    /// gesture engine and `GestureReplaySuite` all use: a swipe up is +y), so
+    /// gesture engine uses: a swipe up is +y), so
     /// it is flipped here. Until 3.3.2 it was not, and every vertical title-bar
     /// swipe ran the other way on a real trackpad: a swipe down maximized or
     /// went to the top quarter, so a window at the top never reached a bottom

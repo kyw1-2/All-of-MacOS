@@ -26,7 +26,4 @@ enum MetalHUD {
         return number != 0
     }
 
-    static func processValue() -> String? {
-        getenv(variable).map { String(cString: $0) }
-    }
 }

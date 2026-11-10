@@ -61,8 +61,6 @@ final class FolderRulesWatcher {
         paths = []
     }
 
-    var isWatching: Bool { stream != nil }
-
     private func received(_ changed: [String], flags: [FSEventStreamEventFlags]) {
         var hits: Set<String> = []
         for path in changed {

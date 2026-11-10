@@ -94,8 +94,6 @@ final class AudioMagicBoost {
     /// 3.3.4 (N334): a block whose peak stays under this (−60 dBFS) releases
     /// like digital silence (a hundredth of the rate), so noise is not lifted.
     static let nearSilence: Float = 0.001
-    /// SoundSource's output is a parallel blend: (dry + (gain - 0.15) * dry) / 2.
-    static func outputGain(_ gain: Float) -> Float { makeup * (gain + 0.85) * 0.5 }
 
     private let rateScale: Float
     private let fadeStep: Float
@@ -872,7 +870,6 @@ final class AudioUnitEffectHost {
     private var frames = 0
     /// Render calls that failed (the block then passes dry).
     private let failures = AudioAtomicCounter()
-    var failedRenders: UInt64 { failures.load() }
 
     /// The effects installed on this Mac (control thread).
     static func installedEffects() -> [Choice] {

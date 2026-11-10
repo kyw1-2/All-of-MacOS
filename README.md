@@ -257,10 +257,11 @@ On macOS with Xcode:
 
 ```bash
 brew list webp >/dev/null 2>&1 || brew install webp
-swift test --scratch-path "$HOME/.cache/aom-build"
 ALLOFMACOS_SCRATCH_PATH="$HOME/.cache/aom-build" ALLOFMACOS_SKIP_AUTO_RELEASE=1 ./build-and-sign.sh
 codesign --verify --deep --strict "build/All of MacOS.app"
 ```
+
+Optional core regression checks (6 files covering input, audio queues, backup/restore, encrypted history and automation access): `scripts/run-tests.sh -j 2`.
 
 Create a local Keychain Access **Self Signed Root / Code Signing** identity named `AOM Dev` before a local release build. CI can use `ALLOFMACOS_SIGN_ID=-` to build an ad-hoc signed artifact for private testing only; it must never be confused with the local stable-signed DMG.
 

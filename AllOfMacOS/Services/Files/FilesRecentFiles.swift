@@ -130,16 +130,6 @@ final class FilesRecentModel: ObservableObject {
         screenshotFolder = home.appendingPathComponent("Desktop", isDirectory: true)
     }
 
-    /// Preview sample folders (UI previews only).
-    func usePreviewFolders(downloads: URL, screenshots: URL) {
-        guard PresetManager.isUIPreview else { return }
-        downloadsFolder = downloads
-        screenshotFolder = screenshots
-        previewFolders = true
-        refresh()
-    }
-    private var previewFolders = false
-
     /// Starts watching while a view shows the lists; balanced by `endWatching`.
     func beginWatching() {
         watching += 1
@@ -159,10 +149,8 @@ final class FilesRecentModel: ObservableObject {
 
     func refresh() {
         refreshTask?.cancel()
-        if !previewFolders {
-            screenshotFolder = FilesRecentScanner.screenshotFolder(store: CFPreferenceStore(),
-                                                                   home: FileManager.default.homeDirectoryForCurrentUser)
-        }
+        screenshotFolder = FilesRecentScanner.screenshotFolder(store: CFPreferenceStore(),
+                                                               home: FileManager.default.homeDirectoryForCurrentUser)
         let downloadsURL = downloadsFolder
         let shotsURL = screenshotFolder
         let downloadLimit = Self.downloadLimit

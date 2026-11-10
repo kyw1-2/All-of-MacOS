@@ -876,12 +876,6 @@ struct ModernWindowSnappingView: View {
     static let hotkeysHelp = "⌃⌥ and one of four keys acts like a swipe that way on the front window, chaining from where it is. Add the Screen modifier (⌘) to move it to the display that way, or the Secondary modifier (⇧) for the 3 × 2 grid. A shortcut you bound to the same keys wins; paused, or in a password field, the keys go to the app."
     static let centerKeyHelp = "With ⌃⌥, centers the front window or puts it back to its size from before the snap."
 
-    /// Isolated previews can open Advanced expanded for review
-    /// (`--aom-preview-expand-advanced`).
-    static var previewExpandsAdvanced: Bool {
-        PresetManager.isUIPreview && ProcessInfo.processInfo.arguments.contains("--aom-preview-expand-advanced")
-    }
-
     /// The preset a stored value stands for (a slider's 1.2500000000000002
     /// is Quick), or nil for a value between them.
     static func preset(_ value: Double, in presets: [PickerPreset]) -> PickerPreset? {

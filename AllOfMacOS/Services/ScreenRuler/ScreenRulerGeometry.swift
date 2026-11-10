@@ -135,10 +135,6 @@ enum ScreenRulerGeometry {
         CGPoint(x: point.x, y: primaryHeight - point.y)
     }
 
-    static func appKitPoint(fromGlobal point: CGPoint, primaryHeight: CGFloat) -> CGPoint {
-        CGPoint(x: point.x, y: primaryHeight - point.y)
-    }
-
     /// An `NSScreen.frame` (bottom-left origin) as a global top-left frame.
     static func globalRect(fromAppKit rect: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)

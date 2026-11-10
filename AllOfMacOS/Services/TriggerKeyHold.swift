@@ -8,7 +8,6 @@ enum TriggerTimingSettings {
     static let keyboardLongPressKey = "AOMKeyboardLongPressMs"
     static let keyboardQuickReleaseKey = "AOMKeyboardQuickReleaseMaxMs"
     static let mouseLongPressKey = "AOMMouseLongPressMs"
-    static let mouseQuickReleaseKey = "AOMMouseQuickReleaseMaxMs"
     static let mouseDragThresholdKey = "AOMMouseDragThresholdPx"
     static let mouseMultiClickKey = "AOMMouseMultiClickIntervalMs"
 
@@ -20,7 +19,6 @@ enum TriggerTimingSettings {
     static let defaultKeyboardLongPressMs = 500
     static let defaultKeyboardQuickReleaseMs = 250
     static let defaultMouseLongPressMs = 500
-    static let defaultMouseQuickReleaseMs = 250
     static let defaultMouseDragThresholdPx = 40
     static let longPressRangeMs = 100...5000
     static let quickReleaseRangeMs = 50...2000

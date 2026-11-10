@@ -17,19 +17,10 @@ struct FocusPage: View {
     init() {}
 
     var body: some View {
-        ScrollViewReader { scroller in
-            page
-                .task {
-                    FocusPreviewSystem.seed(FocusModule.environment)
-                    session.tick()
-                    session.refreshStats()
-                    idle.refreshPressure()
-                    // Isolated previews: `--aom-preview-focus-scroll during|idle|memory`.
-                    if let section = FocusPreviewSystem.requestedSection {
-                        try? await Task.sleep(for: .milliseconds(600))
-                        scroller.scrollTo("focus.\(section)", anchor: .top)
-                    }
-                }
+        page.task {
+            session.tick()
+            session.refreshStats()
+            idle.refreshPressure()
         }
     }
 

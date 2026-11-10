@@ -66,11 +66,7 @@ struct FolderRulesPage: View {
         .aomToast(model.toast)
         .onDeleteCommand { model.removeSelection(undoManager: undoManager) }
         .task {
-            FolderRulesPreviewSamples.prepare(engine: engine, model: model)
             model.selectDefault()
-            if PresetManager.isUIPreview, ProcessInfo.processInfo.arguments.contains("--aom-preview-folder-rules-inspector") {
-                showsInspector = true
-            }
         }
     }
 

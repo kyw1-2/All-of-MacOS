@@ -32,7 +32,6 @@ class AppState: ObservableObject {
     @Published var isRecordingShortcut: Bool = false
     @Published var showingAddTrigger: Bool = false
     @Published var showingAddAction: Bool = false
-    @Published var showingAddApp: Bool = false
     /// The command palette over the main window (View ▸ Search…, sidebar search).
     @Published var showingCommandPalette = false
     @Published var selectedMainTab: AOMMainTab = .home {
@@ -87,7 +86,6 @@ class AppState: ObservableObject {
     private let snapZoneMonitor = CustomSnapZoneMonitor()
     private let drawingMonitor = DrawingGestureMonitor()
     private let systemTriggerMonitor = SystemTriggerMonitor()
-    let updateChecker = UpdateChecker()
     private let permissionWatchdog = PermissionWatchdog()
 
     init() {
@@ -188,15 +186,8 @@ class AppState: ObservableObject {
                                        groupID: selectedActivationGroupID,
                                        category: category)
     }
-    var currentTriggers: [Trigger] { triggers(in: selectedTriggerCategory) }
 
     var isSearchingTriggers: Bool { !triggerSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    var displayedTriggers: [Trigger] {
-        let source = isSearchingTriggers ? currentPreset.triggers.filter {
-            TriggerListQuery.matches($0, query: triggerSearch, preset: currentPreset)
-        } : currentTriggers
-        return TriggerListQuery.sorted(source, mode: triggerSortMode)
-    }
     func canMoveTrigger(_ trigger: Trigger, offset: Int) -> Bool {
         !isSearchingTriggers && triggerSortMode == .manual && currentPreset.canMoveTrigger(trigger.id, offset: offset)
     }

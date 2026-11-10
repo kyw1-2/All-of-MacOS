@@ -19,8 +19,6 @@ final class FilesDialogHotKeys {
     private var handler: EventHandlerRef?
     private var references: [EventHotKeyRef] = []
 
-    var isRegistered: Bool { !references.isEmpty }
-
     /// Registers ⌘⌥1…⌘⌥`count` (at most nine).
     func register(count: Int) {
         unregister()

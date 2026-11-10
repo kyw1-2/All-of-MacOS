@@ -494,8 +494,6 @@ enum IntegratedCaptureMode: String, CaseIterable {
         }
     }
 
-    /// Modes that act on a dragged rectangle.
-    var usesArea: Bool { self != .fullscreen && self != .window }
 }
 
 /// CleanShot X style selection modes: drag rectangle area or press Space to select a window.

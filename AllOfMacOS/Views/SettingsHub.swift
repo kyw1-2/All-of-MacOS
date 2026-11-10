@@ -53,18 +53,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     /// rather than a list of rows; their rows still answer search.
     var isDashboard: Bool { self == .shortcuts || self == .permissions }
 
-    var blurb: String {
-        switch self {
-        case .general: "Startup, appearance and feedback"
-        case .capture: "Screenshot and recording defaults"
-        case .clipboard: "History and pasting behavior"
-        case .automation: "Gestures, triggers and presets"
-        case .shortcuts: "Keyboard shortcuts for every capture tool"
-        case .permissions: "What macOS lets AOM do, and how to fix what's missing"
-        case .data: "Backups, export and reset"
-        case .about: "Version and help"
-        }
-    }
 }
 
 // MARK: - Search

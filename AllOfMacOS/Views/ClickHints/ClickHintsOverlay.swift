@@ -114,8 +114,6 @@ final class ClickHintsOverlayView: NSView {
         CATransaction.commit()
     }
 
-    var pillCount: Int { pills.count }
-    var visiblePillCount: Int { pills.values.filter { !$0.isHidden }.count }
 }
 
 /// The search capsule: "Search  sav  · 3", drawn like a pill.
@@ -416,8 +414,4 @@ final class ClickHintsSession {
         ])
     }
 
-    // MARK: Test and render access
-
-    var visibleTargets: [Int] { state.matches }
-    var panelCount: Int { panels.count }
 }

@@ -29,13 +29,6 @@ struct CFPreferenceStore: SystemPreferenceStore {
     }
 }
 
-final class MemoryPreferenceStore: SystemPreferenceStore {
-    private(set) var values: [String: Any] = [:]
-    init(_ values: [String: Any] = [:]) { self.values = values }
-    func value(_ key: String, domain: String) -> Any? { values["\(domain)/\(key)"] }
-    func set(_ value: Any?, key: String, domain: String) throws { values["\(domain)/\(key)"] = value }
-}
-
 /// A hidden preference (TinkerTool / OnyX style) with its current value
 /// readable, so the tile shows the state before and after a click.
 struct SystemTweak: Equatable, Identifiable {

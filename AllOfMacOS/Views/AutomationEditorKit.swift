@@ -249,6 +249,4 @@ enum AOMEditorSize {
     static let groupsList: CGFloat = AOMSize.sidebarIdeal
     /// The category menu beside the action library's search field.
     static let libraryCategory: CGFloat = 240
-    /// The one-line gesture console.
-    static let console: ClosedRange<CGFloat> = 350...550
 }

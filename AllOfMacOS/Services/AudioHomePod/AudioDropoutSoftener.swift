@@ -20,7 +20,6 @@ final class AudioDropoutSoftener {
     static let minimumRun = 32
     static let maximumHoleSeconds = 0.085
     static let fadeSeconds = 0.002
-    static let audible: Float = 0.001
     /// Audible step discontinuity threshold that causes clicks (~ -34 dBFS).
     /// Natural speech pauses, musical decays, and silence padding taper smoothly
     /// below this level and must not trigger destructive false-dropout shaping.

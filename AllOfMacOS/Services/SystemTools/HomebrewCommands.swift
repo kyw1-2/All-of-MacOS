@@ -338,14 +338,6 @@ enum Homebrew {
         /// Only `brew update` updates Homebrew itself.
         var autoUpdate: Bool { self == .update }
 
-        /// Changes the Mac (the log is kept and the lists refresh after it).
-        var changesPackages: Bool {
-            switch self {
-            case .update, .upgradeAll, .upgrade, .cleanup, .uninstall, .install, .service: return true
-            default: return false
-            }
-        }
-
         var title: String {
             switch self {
             case .version: return "Checking Homebrew"

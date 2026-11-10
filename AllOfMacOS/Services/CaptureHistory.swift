@@ -99,8 +99,6 @@ final class CaptureHistoryEntry: Identifiable {
         return loaded
     }
 
-    var isResident: Bool { residentImage != nil }
-
     /// A resident bitmap may be dropped only when the managed PNG already holds
     /// the current pixels; otherwise dropping it would lose an unsaved capture.
     var canEvictResidentImage: Bool { residentImage != nil && cacheIsCurrent && cacheURL != nil }
@@ -334,8 +332,6 @@ final class CaptureHistory: ObservableObject {
     /// while pins stay durable.
     private let residentByteBudget: Int
     /// Cache writes still awaiting their managed PNG and main-actor completion.
-    private var pendingCacheCompletions = 0
-    private var cacheCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
     private struct Record: Codable {
         let id: UUID
@@ -486,7 +482,6 @@ final class CaptureHistory: ObservableObject {
     private func cacheImage(_ image: CGImage, id: UUID) {
         let directory = directory, url = imageURL(for: id)
         let generation = entries.first(where: { $0.id == id })?.beginCacheWrite() ?? 0
-        pendingCacheCompletions += 1
         captureHistoryIOQueue.async { [weak self] in
             var wrote = false
             do {
@@ -504,30 +499,6 @@ final class CaptureHistory: ObservableObject {
                     stored.markCacheCurrent(url: url, generation: generation)
                     self.trim()
                 }
-                self.cacheDidComplete()
-            }
-        }
-    }
-
-    private func cacheDidComplete() {
-        pendingCacheCompletions = max(0, pendingCacheCompletions - 1)
-        guard pendingCacheCompletions == 0, !cacheCompletionWaiters.isEmpty else { return }
-        let waiters = cacheCompletionWaiters
-        cacheCompletionWaiters = []
-        waiters.forEach { $0.resume() }
-    }
-
-    /// Testing seam: waits until every queued managed-PNG write has finished
-    /// and its main-actor completion has run.
-    func flushPendingCacheWrites() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            captureHistoryIOQueue.async { continuation.resume() }
-        }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            if pendingCacheCompletions == 0 {
-                continuation.resume()
-            } else {
-                cacheCompletionWaiters.append(continuation)
             }
         }
     }

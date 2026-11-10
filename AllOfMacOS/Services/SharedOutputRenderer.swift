@@ -121,7 +121,6 @@ final class SharedOutputRenderer {
     nonisolated static let idleGraphReleaseDelay: TimeInterval = 15
     private var graphs: [String: DeviceGraph] = [:]
     private var airPlayOutputs: [String: AirPlayOutputRenderer] = [:]
-    var activeDeviceUIDs: [String] { Array(Set(graphs.keys).union(airPlayOutputs.keys)) }
 
     /// Start asynchronously before creating a muting process tap. A real HAL
     /// render callback must arrive before this returns ready.
@@ -671,23 +670,6 @@ final class AppAudioRenderBus {
         effectFadeRemaining = Self.effectFadeFrames
     }
 
-    /// Test support (N333-02): the hosts the render thread runs (bits; 0:
-    /// none) and the crossfade frames left. Render-thread state: read it on
-    /// that thread (from the hook) or after it stopped.
-    var effectRenderState: (current: UInt64, previous: UInt64, fadeRemaining: Int) {
-        (effectBits, previousEffectBits, effectFadeRemaining)
-    }
-
-    /// Test support (N333-02): the hazards a scan reads, in its order.
-    var effectHazards: (candidate: UInt64, current: UInt64, previous: UInt64) {
-        (effectCandidate.load(), effectInUse.load(), effectPreviousInUse.load())
-    }
-
-    /// The bits `setEffect` publishes for `host`, for comparing only.
-    static func effectBitPattern(of host: AudioUnitEffectHost) -> UInt64 {
-        UInt64(UInt(bitPattern: Unmanaged.passUnretained(host).toOpaque()))
-    }
-
     /// Render thread. `bits` is named by a hazard (`adoptEffect`), so the
     /// host is alive: borrowed without a retain or release.
     @inline(__always)
@@ -787,17 +769,13 @@ final class AppAudioRenderBus {
     static func limiterRelease(base: Double, preset: AudioBoostPreset) -> Double {
         max(base, preset.limiterRelease ?? base)
     }
-    var boostPresetIndex: Int { boost.presetIndex }
     private let baseRelease: Double
     /// The limiter release coefficient wanted (Float bits; 0: unchanged) and,
     /// render thread only, the one in use.
     private let limiterReleaseBits = AudioAtomicCounter()
     private var appliedReleaseBits: UInt64 = 0
-    var limiterCeiling: Float { limiter.ceiling }
     /// 3.3.4: whether this bus levels before its limiter (a network bus).
     var levels: Bool { leveler != nil }
-    /// Delay of the output's dynamics (Magic Boost's lookahead, the leveler's, the limiter's), frames.
-    var dynamicsLatencyFrames: Int { boost.latencyFrames + (leveler?.latencyFrames ?? 0) + limiter.latencyFrames }
     init(ceiling: Float = AppAudioRenderBus.ceiling, truePeak: Bool = false, releaseSeconds: Double = 0.025,
          leveling: Bool = false) {
         baseRelease = releaseSeconds.isFinite ? min(2, max(0.005, releaseSeconds)) : 0.025

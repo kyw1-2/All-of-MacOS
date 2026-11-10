@@ -13,9 +13,6 @@ enum ScreenRulerModule {
     /// Set while the displays are being captured, so a second press waits.
     private(set) static var isStarting = false
 
-    /// A measuring session is on screen.
-    static var isMeasuring: Bool { ScreenRulerOverlayController.isActive }
-
     /// Starts measuring on every display, or ends the session already on
     /// screen (the hotkey toggles).
     static func measure() {

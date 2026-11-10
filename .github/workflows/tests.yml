@@ -31,24 +31,15 @@ jobs:
       - name: Verify independent identifiers
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'AllOfMacOS/App/Info.plist')" = 'com.kyw.allofmacos'
-      # The hosted macOS runner has no interactive OCR image-reader service.
-      # These 17 end-to-end image-recognition cases consistently fail with
-      # TextRecognition.CRImageReaderError 9 in CI, while compiling successfully.
-      # Do NOT disable these tests in local/interactive macOS testing. The other
-      # OCR unit tests and all remaining application tests still run here.
-      - name: Test (headless runner; 17 OCR integration cases excluded)
-        run: |
-          brew list webp >/dev/null 2>&1 || brew install webp
-          echo "CI limitation: skipping 17 OCR tests requiring an interactive macOS text-recognition service."
-          swift test -j 2 \
-            --skip 'AOM121PerformanceTests/(testEnglishCaptureUsesSinglePass|testFastPathCanBeTurnedOff|testKoreanUnderEnglishFirstSystemStaysFast)' \
-            --skip 'TextCaptureInstantTests/(testCaptureLatencyComparison|testEnglishCaptureUsesOneVisionPass|testKoreanCaptureUsesOnlyLiveTextAndPreservesSpacing)' \
-            --skip 'TextSniperParityTests/(testChineseRecognition|testDarkModeWhiteOnBlack|testEnglishRecognitionKeepsLines|testJapaneseRecognition|testJoinLinesModeReflowsParagraph|testKoreanRecognition|testLegacyAPIStillWorks|testMixedScriptRecognition|testTinyTextIsUpscaled)' \
-            --skip 'Clipboard333Tests/(testImagesIndexedBeforeBoxesGetThemWhenPreviewed|testIndexingKeepsLineBoxesAndRegionsReadOnlyTheirText)'
+      - name: Core regression checks
+        run: swift test -j 2
+
       - name: Build test application
         env:
           ALLOFMACOS_SIGN_ID: '-'
-        run: ./build-and-sign.sh
+        run: |
+          brew list webp >/dev/null 2>&1 || brew install webp
+          ./build-and-sign.sh
       - name: Verify application identity
         run: |
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' 'build/All of MacOS.app/Contents/Info.plist')" = 'com.kyw.allofmacos'

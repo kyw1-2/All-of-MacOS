@@ -31,11 +31,6 @@ enum AOMFeatureSize {
     static let swatchRing: CGFloat = 2
     /// Usage bars in lists (Insights › Most used): 6 pt, readable beside 13 pt text.
     static let meter: CGFloat = 6
-    /// A preview pane beside a list (Clipboard): shown from this page width,
-    /// sized 42% of it within this range.
-    static let previewPaneMinimumWidth: CGFloat = 640
-    static let previewPane: ClosedRange<CGFloat> = 320...460
-    static let previewPaneShare: CGFloat = 0.42
     /// The picture area of a gallery card (Clipboard › Gallery).
     static let galleryPreview: CGFloat = 144
     /// Finder file icons in previews and cards.
@@ -121,8 +116,6 @@ enum AOMFeatureSize {
     static let windowPickerThumbnail: CGFloat = 96
     /// The welcome overlay.
     static let welcomeWidth: CGFloat = 580
-    /// Capture's mode buttons (Area, Window, Record…) in the launchpad grid.
-    static let modeButtonMin: CGFloat = 112
     /// Small round badges on a capture thumbnail (Video, Pinned).
     static let thumbnailBadge: CGFloat = 20
 }

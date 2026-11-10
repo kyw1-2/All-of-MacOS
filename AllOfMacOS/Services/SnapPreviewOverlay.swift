@@ -150,8 +150,6 @@ private final class SnapPreviewView: NSView {
     private var restoring = false
     private let outline = CAShapeLayer()
 
-    override var wantsUpdateLayer: Bool { true }
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
