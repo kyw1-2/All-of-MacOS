@@ -112,7 +112,6 @@ class UpdateChecker: ObservableObject {
     private let session: NetworkSession
     private let currentVersion: String
     private let currentBuild: String?
-    private var checkTimer: Timer?
 
     static let releaseURL = URL(string: "https://api.github.com/repos/kyw1-2/All-of-MacOS/releases/latest")!
     static let releasesPage = URL(string: "https://github.com/kyw1-2/All-of-MacOS/releases")!
@@ -194,14 +193,4 @@ class UpdateChecker: ObservableObject {
         }
     }
 
-    // MARK: - Periodic checks (Disabled for local custom build)
-
-    func startPeriodicChecks(interval: TimeInterval = 3600) {
-        // Disabled: do not poll GitHub in background
-    }
-
-    func stopPeriodicChecks() {
-        checkTimer?.invalidate()
-        checkTimer = nil
-    }
 }

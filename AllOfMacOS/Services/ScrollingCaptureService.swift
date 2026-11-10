@@ -219,15 +219,4 @@ final class ScrollingCaptureService {
         return (0..<height).map { row in Array(buffer[(row * width)..<((row + 1) * width)]) }
     }
 
-    nonisolated private static func meanAbsoluteDifference(_ a: [[UInt8]], _ b: [[UInt8]]) -> Int {
-        guard a.count == b.count, let width = a.first?.count, width > 0 else { return Int.max }
-        var total = 0
-        for row in 0..<a.count {
-            let ra = a[row], rb = b[row]
-            for column in 0..<width {
-                total += abs(Int(ra[column]) - Int(rb[column]))
-            }
-        }
-        return total / (a.count * width)
-    }
 }

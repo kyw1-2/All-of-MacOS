@@ -48,30 +48,6 @@ enum PowerTools {
         "NoIdleSleepAssertion", "NoDisplaySleepAssertion", "PreventDiskIdle"
     ]
 
-    /// `pmset -g assertions` "Listed by owning process" lines:
-    /// `pid 1343(Google Chrome): [0x…] 00:08:06 NoIdleSleepAssertion named: "Playing audio"`.
-    /// Only sleep-preventing types are returned; UserIsActive and the like
-    /// don't keep a Mac awake once the user stops.
-    static func parseAssertions(_ text: String) -> [Assertion] {
-        var result: [Assertion] = []
-        for raw in text.split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("pid "), let open = line.firstIndex(of: "("),
-                  let close = line.range(of: "):")?.lowerBound, open < close,
-                  let pid = pid_t(line[line.index(line.startIndex, offsetBy: 4)..<open]) else { continue }
-            let process = String(line[line.index(after: open)..<close])
-            let rest = line[line.index(close, offsetBy: 2)...].split(separator: " ", omittingEmptySubsequences: true)
-            // [0x…] hh:mm:ss Type named: "…"
-            guard let typeIndex = rest.firstIndex(where: { sleepPreventingTypes.contains(String($0)) }) else { continue }
-            var name = ""
-            if let named = line.range(of: "named: \"") {
-                name = String(line[named.upperBound...].prefix { $0 != "\"" })
-            }
-            result.append(Assertion(pid: pid, process: process, type: String(rest[typeIndex]), name: name))
-        }
-        return result
-    }
-
     /// Public IOKit query: no helper process, privilege prompt or text parsing.
     /// A read failure is reported, never presented as an empty assertion list.
     static func activeAssertions() throws -> [Assertion] {

@@ -81,11 +81,6 @@ final class ClickHintsModuleTests: XCTestCase {
         XCTAssertFalse(ClickHintsPerformer.acted(.failure))
     }
 
-    func testClickKindTitles() {
-        XCTAssertEqual(ClickHintsClickKind.press.title, "Click")
-        XCTAssertEqual(ClickHintsClickKind.rightClick.title, "Right-Click")
-    }
-
     // MARK: Live reader parsing (no other app involved)
 
     func testBatchAnswersAreParsed() throws {

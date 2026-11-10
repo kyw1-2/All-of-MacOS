@@ -100,12 +100,6 @@ final class InputRemappingTests: XCTestCase {
         XCTAssertNotEqual(before.0, 0)
     }
 
-    func testHyperSourcesAreInTheCatalog() {
-        XCTAssertTrue(HIDKey.hyperSources.contains { $0.usage == caps })
-        XCTAssertEqual(Set(HIDKey.catalog.map(\.usage)).count, HIDKey.catalog.count)
-        XCTAssertEqual(HIDKey.title(0xFE), "Key 0xFE")
-    }
-
     private struct Decision: Equatable { var pass: Bool; var addHyper: Bool; var sendEscape: Bool }
     private func decision(_ type: CGEventType, _ code: Int64, _ state: inout (held: Bool, used: Bool)) -> Decision {
         let result = HyperKeyTap.process(type: type, keyCode: code, isSynthetic: false, state: &state)

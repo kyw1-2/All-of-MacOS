@@ -638,20 +638,6 @@ extension SwishSnap {
     /// The hotkeys' modifiers: ⌃⌥ (Control-Option), nothing else.
     static let hotkeyModifiers: NSEvent.ModifierFlags = [.control, .option]
 
-    /// The swipe a key press stands for, or nil. Arrow keys carry the
-    /// function and numeric-pad flags, so those are ignored; ⌘ or ⇧ never match.
-    static func hotkeyDirection(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, scheme: HotkeyScheme) -> Direction? {
-        guard let keys = scheme.keyCodes,
-              modifiers.intersection([.command, .option, .control, .shift]) == hotkeyModifiers else { return nil }
-        switch keyCode {
-        case keys.left: return .left
-        case keys.right: return .right
-        case keys.up: return .up
-        case keys.down: return .down
-        default: return nil
-        }
-    }
-
     // MARK: Preview animation (Swish "tooltipAnimationTime")
 
     enum AnimationSpeed: String, CaseIterable {

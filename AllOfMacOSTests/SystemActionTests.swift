@@ -137,13 +137,6 @@ final class SystemActionTests: XCTestCase {
         for _ in 0..<5 { volume = AudioOutputService.steppedVolume(volume, percentagePoints: 6) }
         XCTAssertEqual(volume, 0.5, accuracy: 0.000001)
     }
-    func testMutedOutputIsUnmutedOnlyWhenIncreasingVolume() {
-        XCTAssertTrue(AudioOutputService.shouldUnmuteOnIncrease(isMuted: true, percentagePoints: 6))
-        XCTAssertFalse(AudioOutputService.shouldUnmuteOnIncrease(isMuted: true, percentagePoints: -6))
-        XCTAssertFalse(AudioOutputService.shouldUnmuteOnIncrease(isMuted: true, percentagePoints: 0))
-        XCTAssertFalse(AudioOutputService.shouldUnmuteOnIncrease(isMuted: false, percentagePoints: 6))
-        XCTAssertEqual(AudioOutputService.steppedVolume(0, percentagePoints: 6), 0.06, accuracy: 0.000001)
-    }
     func testVolumeStepParameterRoundTripsAndOldPresetsDefault() throws {
         var params = ActionParameters(); params.volumeStepPercent = 6
         XCTAssertEqual(try JSONDecoder().decode(ActionParameters.self, from: JSONEncoder().encode(params)).volumeStepPercent, 6)

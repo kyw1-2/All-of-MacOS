@@ -84,22 +84,6 @@ enum QuickAccessPolicy {
     }
     static let maximumRestoreHistory = 20
 
-    static func visibleAfterAdding<T>(_ items: [T], new item: T) -> (visible: [T], displaced: [T]) {
-        let candidates = items + [item]
-        guard candidates.count > maximumVisible else { return (candidates, []) }
-        return (Array(candidates.suffix(maximumVisible)),
-                Array(candidates.prefix(candidates.count - maximumVisible)))
-    }
-
-    static func shouldDismissForSwipe(_ translation: CGFloat, predicted: CGFloat, isLeftCorner: Bool) -> Bool {
-        let sign: CGFloat = isLeftCorner ? -1 : 1
-        return translation * sign > 55 || predicted * sign > 140
-    }
-
-    static func elapsedForAutoClose(_ elapsed: TimeInterval, hovered: Bool, dragging: Bool) -> TimeInterval {
-        (hovered || dragging) ? 0 : max(0, elapsed)
-    }
-
     static func effectiveInterval(mode: OverlayAutoClose, configured: Int, forced: TimeInterval?) -> TimeInterval? {
         if let forced { return forced > 0 ? forced : nil }
         return mode == .afterInterval ? TimeInterval(max(1, configured)) : nil

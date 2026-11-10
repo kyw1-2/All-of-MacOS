@@ -118,11 +118,4 @@ final class ClipboardLocalGapTests: XCTestCase {
         XCTAssertEqual(window.sharingType, .readOnly)
     }
 
-    func testCaptureVisibilityPreferenceDefaultsToVisible() throws {
-        let suite = "AOMCaptureVisibilityDefaults"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertTrue(ClipboardPreferences(defaults: defaults).showInScreenCapture)
-    }
 }

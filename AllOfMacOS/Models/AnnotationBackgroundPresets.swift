@@ -65,11 +65,6 @@ struct AnnotationBackgroundPresetStore: Equatable {
         if autoApplyID == id { autoApplyID = nil }
     }
 
-    mutating func notePrevious(_ background: AnnotationBackground) {
-        guard background.isExpanded, background.isValid else { return }
-        previous = background
-    }
-
     // MARK: - Persistence
 
     static func load(_ defaults: UserDefaults = .standard) -> AnnotationBackgroundPresetStore {

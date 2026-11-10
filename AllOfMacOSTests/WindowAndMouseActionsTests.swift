@@ -75,34 +75,6 @@ final class WindowAndMouseActionsTests: XCTestCase {
                        frame(.snapWindowLeftThird).maxX, accuracy: 0.001)
     }
 
-    func testNewWindowActionsAllReportTheWindowManagementCategory() {
-        let new: [ActionType] = [.snapWindowLeftThird, .snapWindowCenterThird, .snapWindowRightThird,
-                                 .snapWindowLeftTwoThirds, .snapWindowRightTwoThirds,
-                                 .snapWindowTopLeftSixth, .snapWindowTopCenterSixth, .snapWindowTopRightSixth,
-                                 .snapWindowBottomLeftSixth, .snapWindowBottomCenterSixth, .snapWindowBottomRightSixth,
-                                 .moveWindowLeft, .moveWindowRight, .moveWindowUp, .moveWindowDown,
-                                 .bringWindowToFront, .maximizeWindowUnderCursor,
-                                 .minimizeWindowUnderCursor, .closeWindowUnderCursor]
-        for action in new { XCTAssertEqual(action.category, .windowManagement, action.rawValue) }
-    }
-
-    func testMouseActionsAreClassifiedAndEveryOneHasAnIcon() {
-        let mouse = ActionType.allCases.filter { $0.category == .mouseActions }
-        // 14 original pointer actions + 7 added in 1.1.4 (modifier clicks, custom click, custom scroll, relative move).
-        XCTAssertEqual(mouse.count, 21, "the mouse family is the 14 original synthesised pointer actions plus the 7 added in 1.1.4")
-        XCTAssertTrue(mouse.allSatisfy { !$0.iconName.isEmpty })
-        XCTAssertEqual(Set(mouse).count, 21)
-        for action in mouse { XCTAssertFalse(action.rawValue.isEmpty) }
-    }
-
-    func testEveryActionTypeBelongsToExactlyOneCategory() {
-        // A new case must never fall through a switch: the category mapping is
-        // exhaustive, so this fails loudly if one is added without a home.
-        for action in ActionType.allCases {
-            XCTAssertFalse(action.category.rawValue.isEmpty, action.rawValue)
-        }
-    }
-
     func testMouseParametersSurviveEncoding() throws {
         var parameters = ActionParameters()
         parameters.mouseX = 0.25

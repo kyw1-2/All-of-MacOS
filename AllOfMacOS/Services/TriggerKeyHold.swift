@@ -86,6 +86,4 @@ enum TriggerKeyHold {
         }
     }
 
-    /// Phases whose trigger may use `repeatWhileHeld` (needs a live key-down).
-    static func supportsRepeat(_ phase: KeyboardPhase) -> Bool { phase == .keyDown }
 }

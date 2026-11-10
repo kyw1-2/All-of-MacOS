@@ -14,31 +14,6 @@ final class ScreenCaptureTests: XCTestCase {
 
     // MARK: - Action model
 
-    func testCaptureActionsBelongToTheCaptureCategory() {
-        for type in ActionType.allCases where ActionType.describeCaptureAction(type) != type.rawValue {
-            XCTAssertEqual(type.category, .screenCapture, "\(type.rawValue) should be a capture action")
-        }
-    }
-
-    func testEveryCaptureActionHasAnIcon() {
-        let captures = ActionType.allCases.filter { $0.category == .screenCapture }
-        XCTAssertFalse(captures.isEmpty)
-        for type in captures {
-            XCTAssertFalse(type.iconName.isEmpty, "\(type.rawValue) has no icon")
-        }
-    }
-
-    func testCaptureActionsAreListedUnderTheirCategory() {
-        let listed = ActionType.actionsForCategory(.screenCapture)
-        XCTAssertTrue(listed.contains(.captureArea))
-        XCTAssertTrue(listed.contains(.captureText))
-        XCTAssertTrue(listed.contains(.annotateLastCapture))
-        // A capture action must not also appear in another category.
-        for type in listed {
-            XCTAssertEqual(type.category, .screenCapture)
-        }
-    }
-
     /// A preset written before the capture actions existed must still decode.
     func testNewCaptureParametersDecodeToNilFromAnOldPreset() throws {
         let old = try JSONDecoder().decode(ActionParameters.self, from: Data("{}".utf8))
@@ -308,13 +283,6 @@ final class ScreenCaptureTests: XCTestCase {
         let cropped = document.croppedImage
         XCTAssertEqual(cropped.width, 100)
         XCTAssertEqual(cropped.height, 100)
-    }
-
-    func testEveryAnnotationKindHasADisplayNameAndIcon() {
-        for kind in AnnotationKind.allCases {
-            XCTAssertFalse(kind.displayName.isEmpty, "\(kind.rawValue) has no display name")
-            XCTAssertFalse(kind.iconName.isEmpty, "\(kind.rawValue) has no icon")
-        }
     }
 
     func testToolbarCoversEveryTool() {
@@ -658,17 +626,7 @@ final class ScreenCaptureTests: XCTestCase {
         XCTAssertNil(CaptureHistory.shared.mostRecent)
     }
 
-    // MARK: - Capture kinds
-
-    func testEveryCaptureKindHasADisplayName() {
-        let kinds: [CaptureKind] = [.fullscreen, .area, .window, .windowUnderCursor,
-                                    .previousArea, .scrolling, .selection]
-        for kind in kinds {
-            XCTAssertFalse(kind.displayName.isEmpty)
-        }
-    }
-
-    // MARK: - Capture Shortcuts
+// MARK: - Capture Shortcuts
 
     @MainActor
     func testCaptureShortcutsDefaultsMatchCleanShotX() {

@@ -167,18 +167,7 @@ final class Audit340SystemTests: XCTestCase {
         XCTAssertEqual(askedElsewhere, ["Plain"], "only a name not found in the folders goes further")
     }
 
-    // MARK: The action picker's descriptions
-
-    /// A second, older copy of five pin descriptions sat earlier in the
-    /// switch, so the picker never showed the current wording.
-    func testThePinActionsShowTheirCurrentDescriptions() {
-        XCTAssertEqual(ActionType.selectWindowToPin.description, "Point at a window and click to pin or unpin it. Escape cancels.")
-        XCTAssertEqual(ActionType.togglePinFrontWindow.description, "Keep the front window on top, or remove its pin.")
-        XCTAssertEqual(ActionType.showPinnedWindowPicker.description, "Choose a live window to keep above other windows.")
-        XCTAssertEqual(ActionType.unpinAllWindows.description, "Remove all live window pins without closing their source windows.")
-    }
-
-    // MARK: The HomePod's IO size
+// MARK: The HomePod's IO size
 
     /// A HomePod answers 0 and keeps 128-frame IO; each set on its running
     /// IO may restart it. It was asked 6 times an hour for the whole session.

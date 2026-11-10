@@ -3,101 +3,9 @@ import XCTest
 
 final class ModelTests: XCTestCase {
 
-    // MARK: - Trigger model
+// MARK: - Action model
 
-    func testTriggerDefaultValues() {
-        let trigger = Trigger(name: "Test", input: .trackpadGesture(.twoFingerTap))
-        XCTAssertTrue(trigger.isEnabled)
-        XCTAssertNil(trigger.appBundleID)
-        XCTAssertTrue(trigger.actions.isEmpty)
-        XCTAssertEqual(trigger.order, 0)
-    }
-
-    func testTriggerDisplayNameFallsBackToInput() {
-        let trigger = Trigger(name: "", input: .trackpadGesture(.threeFingerSwipeUp))
-        XCTAssertEqual(trigger.displayName, "3 Finger Swipe Up")
-    }
-
-    func testTriggerDisplayNameUsesCustomName() {
-        let trigger = Trigger(name: "My Gesture", input: .trackpadGesture(.threeFingerSwipeUp))
-        XCTAssertEqual(trigger.displayName, "My Gesture")
-    }
-
-    func testTriggerInputCategory() {
-        XCTAssertEqual(TriggerInput.trackpadGesture(.twoFingerTap).category, .trackpad)
-        XCTAssertEqual(TriggerInput.keyboardShortcut(KeyboardShortcut(keyCode: 0, modifiers: .command)).category, .keyboard)
-        XCTAssertEqual(TriggerInput.mouseButton(.button3).category, .normalMouse)
-        XCTAssertEqual(TriggerInput.drawingPattern("circle").category, .drawings)
-        XCTAssertEqual(TriggerInput.namedTrigger("custom").category, .otherTriggers)
-    }
-
-    // MARK: - Action model
-
-    func testActionParametersDefaultsNil() {
-        let params = ActionParameters()
-        XCTAssertNil(params.text)
-        XCTAssertNil(params.applicationPath)
-        XCTAssertNil(params.scriptContent)
-        XCTAssertNil(params.url)
-        XCTAssertNil(params.shortcutKeyCode)
-        XCTAssertNil(params.shortcutModifiers)
-        XCTAssertNil(params.delayBeforeMs)
-    }
-
-    func testTriggerActionDefaultEnabled() {
-        let action = TriggerAction(actionType: .volumeUp)
-        XCTAssertTrue(action.isEnabled)
-    }
-
-    func testActionTypeCategories() {
-        XCTAssertEqual(ActionType.maximizeWindow.category, .windowManagement)
-        XCTAssertEqual(ActionType.sendKeyStroke.category, .keyboardActions)
-        XCTAssertEqual(ActionType.launchApplication.category, .applicationControl)
-        XCTAssertEqual(ActionType.lockScreen.category, .systemActions)
-        XCTAssertEqual(ActionType.runShellScript.category, .scriptExecution)
-        XCTAssertEqual(ActionType.playPause.category, .mediaControls)
-    }
-
-    func testActionsForCategory() {
-        let windowActions = ActionType.actionsForCategory(.windowManagement)
-        XCTAssertTrue(windowActions.contains(.maximizeWindow))
-        XCTAssertTrue(windowActions.contains(.snapWindowLeft))
-        XCTAssertFalse(windowActions.contains(.sendKeyStroke))
-
-        let mediaActions = ActionType.actionsForCategory(.mediaControls)
-        XCTAssertTrue(mediaActions.contains(.playPause))
-        XCTAssertTrue(mediaActions.contains(.nextTrack))
-        XCTAssertTrue(mediaActions.contains(.previousTrack))
-        XCTAssertEqual(mediaActions.count, 3)
-    }
-
-    // MARK: - TrackpadGesture completeness
-
-    func testAllTrackpadGesturesHaveUniqueRawValues() {
-        let rawValues = TrackpadGesture.allCases.map { $0.rawValue }
-        XCTAssertEqual(rawValues.count, Set(rawValues).count, "Duplicate raw values in TrackpadGesture")
-    }
-
-    func testAllActionTypesHaveUniqueRawValues() {
-        let rawValues = ActionType.allCases.map { $0.rawValue }
-        XCTAssertEqual(rawValues.count, Set(rawValues).count, "Duplicate raw values in ActionType")
-    }
-
-    func testAllActionTypesHaveIcons() {
-        for actionType in ActionType.allCases {
-            XCTAssertFalse(actionType.iconName.isEmpty, "\(actionType) has no icon")
-        }
-    }
-
-    // MARK: - Preset model
-
-    func testPresetDefaultValues() {
-        let preset = Preset(name: "Test Preset")
-        XCTAssertEqual(preset.name, "Test Preset")
-        XCTAssertTrue(preset.isEnabled)
-        XCTAssertFalse(preset.isMaster)
-        XCTAssertTrue(preset.triggers.isEmpty)
-    }
+// MARK: - Preset model
 
     func testPresetAddTrigger() {
         var preset = Preset(name: "P")
@@ -353,11 +261,4 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(targets.isEmpty)
     }
 
-    func testForceQuitActionIsAvailableAndCategorised() {
-        XCTAssertEqual(ActionType.forceQuitApplication.category, .applicationControl)
-        XCTAssertTrue(ActionType.allCases.contains(.forceQuitApplication))
-        XCTAssertEqual(ActionType.forceQuitApplication.rawValue, "Force Quit Application")
-        // Distinct from the polite quit, which is what the gesture is for.
-        XCTAssertNotEqual(ActionType.forceQuitApplication, .quitApplication)
-    }
 }

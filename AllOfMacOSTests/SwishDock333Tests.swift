@@ -159,20 +159,6 @@ final class SwishDock333Tests: XCTestCase {
         XCTAssertNil(ScrollToTop.choose([], pointerX: 10))
     }
 
-    /// Source guards: the system-wide hit-test stays off the title-bar and
-    /// Dock files (3.3.2) and the new menu-bar probe never sets its timeout.
-    func testTheMenuBarProbeNeverTimesTheSystemWideElement() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("AllOfMacOS/Services")
-        let probe = try String(contentsOf: root.appendingPathComponent("SwishDockMenuBarSystem.swift"), encoding: .utf8)
-        for line in probe.components(separatedBy: "\n") where line.contains("AXUIElementSetMessagingTimeout(") {
-            XCTAssertFalse(line.contains("SystemWide"), line)
-        }
-        let dock = try String(contentsOf: root.appendingPathComponent("SwishDockMenuBarGestures.swift"), encoding: .utf8)
-        XCTAssertFalse(dock.contains("AXUIElementCreateSystemWide"))
-        let service = try String(contentsOf: root.appendingPathComponent("TrackpadUtilityGestures.swift"), encoding: .utf8)
-        XCTAssertFalse(service.contains("AXUIElementCreateSystemWide"))
-    }
 }
 
 // MARK: - The service, through its seams

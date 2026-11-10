@@ -296,40 +296,7 @@ final class SwishSnapGridTests: XCTestCase {
                                        grid: .twoByTwo, almost: true), .almostMaximize)
     }
 
-    // MARK: Keyboard hotkeys
-
-    func testHotkeysMapTheirKeysToSwipes() {
-        let chord: NSEvent.ModifierFlags = [.control, .option]
-        func direction(_ key: UInt16, _ scheme: SwishSnap.HotkeyScheme,
-                       _ flags: NSEvent.ModifierFlags = [.control, .option]) -> SwishSnap.Direction? {
-            SwishSnap.hotkeyDirection(keyCode: key, modifiers: flags, scheme: scheme)
-        }
-        XCTAssertEqual(direction(123, .arrows), .left)
-        XCTAssertEqual(direction(124, .arrows), .right)
-        XCTAssertEqual(direction(126, .arrows), .up)
-        XCTAssertEqual(direction(125, .arrows), .down)
-        XCTAssertEqual(direction(125, .arrows, chord.union([.function, .numericPad])), .down, "arrow keys carry fn")
-        XCTAssertEqual(direction(13, .wasd), .up)
-        XCTAssertEqual(direction(0, .wasd), .left)
-        XCTAssertEqual(direction(1, .wasd), .down)
-        XCTAssertEqual(direction(2, .wasd), .right)
-        XCTAssertEqual(direction(34, .ijkl), .up)
-        XCTAssertEqual(direction(38, .ijkl), .left)
-        XCTAssertEqual(direction(40, .ijkl), .down)
-        XCTAssertEqual(direction(37, .ijkl), .right)
-        XCTAssertEqual(direction(4, .hjkl), .left)
-        XCTAssertEqual(direction(38, .hjkl), .down)
-        XCTAssertEqual(direction(40, .hjkl), .up)
-        XCTAssertEqual(direction(37, .hjkl), .right)
-        XCTAssertNil(direction(123, .off))
-        XCTAssertNil(direction(123, .wasd), "another scheme's key")
-        XCTAssertNil(direction(123, .arrows, [.control]), "⌃ alone is Mission Control's")
-        XCTAssertNil(direction(123, .arrows, [.control, .option, .command]))
-        XCTAssertNil(direction(123, .arrows, [.control, .option, .shift]))
-        XCTAssertNil(direction(31, .arrows))
-    }
-
-    // MARK: Drag to unsnap
+// MARK: Drag to unsnap
 
     func testDragToUnsnapRestoresTheSizeUnderThePointer() {
         let snapped = CGRect(x: 720, y: 25, width: 720, height: 875)            // right half

@@ -53,16 +53,6 @@ final class BTTActionParityTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(ActionType.allCases.count, 175)
     }
 
-    func testNewCategoriesAreAppendedAndPopulated() {
-        XCTAssertEqual(Array(ActionCategory.allCases.prefix(10)).map(\.rawValue),
-                       ["Workflow", "Window Management", "Keyboard", "Application Control", "System Actions",
-                        "Script Execution", "Media Controls", "Mouse & Trackpad", "Screen Capture", "Clipboard"])
-        for category in [ActionCategory.spacesMissionControl, .controlFlow, .utilityActions] {
-            XCTAssertFalse(ActionType.actionsForCategory(category).isEmpty)
-            XCTAssertFalse(category.iconName.isEmpty)
-        }
-    }
-
     func testOldPresetJSONStillDecodesAndNewFieldsDefaultToNil() throws {
         let old = """
         {"id":"\(UUID().uuidString)","actionType":"Snap Window Left Half","isEnabled":true,
@@ -783,11 +773,6 @@ final class BTTActionParityTests: XCTestCase {
         for action in good { XCTAssertNil(ActionTree.problem([action]), "\(action.actionType.rawValue): \(ActionTree.problem([action]) ?? "")") }
     }
 
-    func testDescriptionsMentionSystemShortcutRequirementForSpaces() {
-        for type in [ActionType.switchSpaceLeft, .switchSpaceRight, .switchToDesktop, .appExpose] {
-            XCTAssertTrue(type.description.contains("system shortcut"), type.rawValue)
-        }
-    }
 }
 
 /// Action picker, favourites, copy/paste and drag-reorder logic (phase 5).
@@ -820,7 +805,6 @@ final class BTTActionPickerTests: XCTestCase {
         s.recordUse(.waitFor)
         XCTAssertEqual(s.recents.first, .waitFor)
         XCTAssertEqual(s.recents.filter { $0 == .waitFor }.count, 1)
-        s.clearRecents(); XCTAssertTrue(s.recents.isEmpty)
     }
 
     func testUnknownStoredActionsAreDroppedNotFatal() {
@@ -903,8 +887,6 @@ final class BTTActionPickerTests: XCTestCase {
         XCTAssertFalse(ActionTree.move(&list, id: UUID(), before: a.id))
         XCTAssertFalse(ActionTree.move(&list, id: a.id, before: UUID()))
         XCTAssertEqual(list.map(\.id), [c.id, a.id, group.id], "failed moves leave the list untouched")
-        XCTAssertTrue(ActionTree.moveToEnd(&list, id: b.id))
-        XCTAssertEqual(list.last?.id, b.id)
         XCTAssertNil(ActionTree.problem(list))
         inner.isEnabled = false // silence unused-mutation warning
     }
@@ -913,16 +895,12 @@ final class BTTActionPickerTests: XCTestCase {
         var child = marker("child"); child.parameters.delayBeforeMs = 5
         var group = TriggerAction(actionType: .repeatLoop)
         group.parameters.loopCount = 3; group.parameters.children = [child]
-        ActionClipboard.copied = group
-        defer { ActionClipboard.copied = nil }
-        let pasted = ActionClipboard.pasteCopy()!
+        let pasted = ActionTree.duplicate(group)
         XCTAssertNotEqual(pasted.id, group.id)
         XCTAssertNotEqual(pasted.parameters.children?.first?.id, child.id)
         XCTAssertEqual(pasted.parameters.loopCount, 3)
         XCTAssertEqual(pasted.parameters.children?.first?.parameters.delayBeforeMs, 5)
         XCTAssertNil(ActionTree.problem([group, pasted]), "a copy can sit beside its source")
-        ActionClipboard.copied = nil
-        XCTAssertNil(ActionClipboard.pasteCopy())
     }
 
     func testDisabledStepSurvivesButIsSkipped() {

@@ -30,25 +30,3 @@ struct VisualEffectBackground: NSViewRepresentable {
         if view.isEmphasized != isEmphasized { view.isEmphasized = isEmphasized }
     }
 }
-
-/// Clears the hosting window so a behind-window blur has something to show.
-///
-/// A window is opaque by default, and an opaque window is exactly what makes a
-/// `.behindWindow` material render as flat grey. This walks up to the window and
-/// turns that off when its host actually joins a window, including reattachment.
-struct TranslucentWindow: NSViewRepresentable {
-    private final class WindowProbe: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            configure()
-        }
-        func configure() {
-            guard let window else { return }
-            if window.isOpaque { window.isOpaque = false }
-            if window.backgroundColor != .clear { window.backgroundColor = .clear }
-            if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
-        }
-    }
-    func makeNSView(context: Context) -> NSView { WindowProbe(frame: .zero) }
-    func updateNSView(_ view: NSView, context: Context) { (view as? WindowProbe)?.configure() }
-}

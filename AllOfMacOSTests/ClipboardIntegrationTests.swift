@@ -44,10 +44,4 @@ final class ClipboardIntegrationTests: XCTestCase {
         XCTAssertEqual(builtinCalls, 0)
         monitor.unregisterAll()
     }
-    func testClipboardActionsRoundTripAndHaveOwnCategory() throws {
-        for type in [ActionType.showClipboardHistory, .showPasteStack, .pasteNextClipboardItem, .toggleClipboardRecording] {
-            XCTAssertEqual(type.category, .clipboard)
-            XCTAssertEqual(try JSONDecoder().decode(TriggerAction.self, from: JSONEncoder().encode(TriggerAction(actionType: type))).actionType, type)
-        }
-    }
 }

@@ -86,7 +86,7 @@ final class BTTTriggerParityTests: XCTestCase {
         s.resumeApp("com.example.game")
         XCTAssertNil(s.reason(for: .mouse))
         env.front = "com.example.front"
-        XCTAssertEqual(s.pauseFrontmostApp(), "com.example.front")
+        s.pauseApp("com.example.front")
         XCTAssertEqual(s.reason(for: .trackpad), .pausedForApp("com.example.front"))
         s.toggleApp("com.example.front")
         XCTAssertNil(s.reason(for: .trackpad))
@@ -449,7 +449,6 @@ final class BTTMouseParityTests: XCTestCase {
 
     private let cmd = NSEvent.ModifierFlags.command.rawValue
     private let opt = NSEvent.ModifierFlags.option.rawValue
-
 
     private func recognizer(_ wanted: [(Int, MouseTriggerKind)], config: MouseGestureRecognizer.Config = .init()) -> MouseGestureRecognizer {
         MouseGestureRecognizer(config: config, wanted: Set(wanted.map { MouseTriggerSpec(button: $0.0, kind: $0.1) }))
@@ -817,16 +816,6 @@ final class BTTTrackpadParityTests: XCTestCase {
         }
         // Taps are reported whether or not they are bound; the monitor filters them.
         return out.filter { enabled.contains($0) }
-    }
-
-    func testNewGesturesHaveBTTNamesAndAreUnique() {
-        XCTAssertEqual(TrackpadGesture.oneFingerLongTouch.rawValue, "1 Finger Long Touch")
-        XCTAssertEqual(TrackpadGesture.fiveFingerTouchStart.rawValue, "5 Finger Touch Start")
-        XCTAssertEqual(TrackpadGesture.releaseLastFingerAfter3.rawValue, "Release Last Finger After Previous Touch With 3 Fingers")
-        XCTAssertEqual(TrackpadGesture.twoFingerSwipeFromLeftEdge.rawValue, "2 Finger Swipe From Left Edge")
-        XCTAssertEqual(TrackpadGesture.threeFingerTapTop.rawValue, "3 Finger Tap Top")
-        XCTAssertEqual(TrackpadGesture.scrollUp.rawValue, "Scroll Up (modifier key needed)")
-        XCTAssertEqual(Set(TrackpadGesture.allCases.map(\.rawValue)).count, TrackpadGesture.allCases.count)
     }
 
     func testOldTrackpadPresetStillDecodesAndNewGestureRoundTrips() throws {

@@ -102,9 +102,6 @@ final class AudioOutputService {
         return result
     }
 
-    static func shouldUnmuteOnIncrease(isMuted: Bool, percentagePoints: Double) -> Bool {
-        isMuted && percentagePoints > 0
-    }
     private static func clearMuteForVolumeIncrease(device: AudioDeviceID, delta: Double) -> Bool {
         guard delta > 0 else { return true }
         for var p in outputMuteProperties(device) {

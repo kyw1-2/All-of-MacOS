@@ -100,20 +100,4 @@ final class BTTPresetImportTests: XCTestCase {
         XCTAssertTrue(excessive.triggers.isEmpty)
     }
 
-    func testAddingReviewedTriggersKeepsCurrentPresetAndAlwaysDisablesNewTriggers() throws {
-        let state = AppState()
-        state.currentPreset = Preset(name: "Existing")
-        let existing = Trigger(name: "Keep me", input: .namedTrigger("Keep me"))
-        state.currentPreset.addTrigger(existing)
-        let originalID = state.currentPreset.id
-        var staged = try XCTUnwrap(BTTPresetImport.parse(data(keyboard([action(21)]))).triggers.first)
-        staged.isEnabled = true // The legacy merge boundary enforces disabled staging.
-        state.addDisabledBTTTriggers([staged])
-        XCTAssertEqual(state.currentPreset.id, originalID)
-        XCTAssertEqual(state.currentPreset.name, "Existing")
-        XCTAssertEqual(state.currentPreset.triggers.first, existing)
-        XCTAssertEqual(state.currentPreset.triggers.count, 2)
-        XCTAssertFalse(state.currentPreset.triggers[1].isEnabled)
-        state.flushPendingWrites()
-    }
 }

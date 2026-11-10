@@ -244,12 +244,6 @@ final class TriggerSuppression: ObservableObject {
     func toggleApp(_ bundleID: String) {
         if pause.appBundleIDs.contains(bundleID) { resumeApp(bundleID) } else { pauseApp(bundleID) }
     }
-    /// "Disable BTT For Active App".
-    @discardableResult
-    func pauseFrontmostApp() -> String? {
-        guard let id = frontmostBundleID() else { return nil }
-        pauseApp(id); return id
-    }
 
     /// Drops an expired timed pause so published state is current.
     func refresh() {

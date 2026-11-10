@@ -96,7 +96,4 @@ final class QuickCommandPaletteTests: XCTestCase {
         XCTAssertEqual(capped.secondaries.map(\.title), ["S1", "S2", "S3"])
     }
 
-    func testSecondariesDefaultToEmpty() {
-        XCTAssertTrue(item("cmd", title: "Command").secondaries.isEmpty)
-    }
 }

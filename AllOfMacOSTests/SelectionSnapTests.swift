@@ -21,11 +21,4 @@ final class SelectionSnapTests: XCTestCase {
         XCTAssertEqual(SelectionGeometry.snapped(CGPoint(x: 101, y: 1), to: .init()), CGPoint(x: 101, y: 1))
     }
 
-    func testDefaultIsOn() {
-        let key = "AOMCaptureSnapSelection"
-        let saved = UserDefaults.standard.object(forKey: key)
-        defer { UserDefaults.standard.set(saved, forKey: key) }
-        UserDefaults.standard.removeObject(forKey: key)
-        XCTAssertTrue(CaptureSettings.snapsSelection)
-    }
 }

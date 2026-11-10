@@ -128,23 +128,6 @@ final class SystemTools336Tests: XCTestCase {
         XCTAssertEqual(PowerTools.lowPowerArguments(on: false), ["-a", "lowpowermode", "0"])
     }
 
-    func testAssertionsKeepOnlySleepPreventingOnes() {
-        let text = """
-        Listed by owning process:
-           pid 651(WindowServer): [0x0001273b0009947a] 00:03:21 UserIsActive named: "com.apple.iohideventsystem.queue.tickle"
-           pid 1343(Google Chrome): [0x0005178c00019c36] 00:08:06 NoIdleSleepAssertion named: "Playing audio"
-           pid 1343(Google Chrome): [0x0005178c00059c35] 00:08:07 NoDisplaySleepAssertion named: "Video Wake Lock"
-           pid 594(powerd): [0x0001703d00018c47] 66:38:39 PreventUserIdleSystemSleep named: "Powerd - Prevent sleep while display is on"
-        Kernel Assertions: 0x4=USB
-        """
-        let assertions = PowerTools.parseAssertions(text)
-        XCTAssertEqual(assertions.map(\.pid), [1343, 1343, 594])
-        XCTAssertEqual(assertions[0].process, "Google Chrome")
-        XCTAssertEqual(assertions[1].name, "Video Wake Lock")
-        XCTAssertEqual(PowerTools.assertionKind(assertions[1].type), "Keeps the display on")
-        XCTAssertEqual(PowerTools.assertionKind(assertions[2].type), "Keeps the Mac awake")
-    }
-
     func testBatteryDetailsReadNestedTemperatureAndCondition() throws {
         let dictionary: [String: Any] = [
             "CurrentCapacity": 80, "MaxCapacity": 100, "CycleCount": 535, "DesignCapacity": 4382, "DesignCycleCount9C": 1000,

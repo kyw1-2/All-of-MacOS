@@ -412,20 +412,6 @@ struct MinimizedWindowStack {
         return mine.map(\.window).filter(isMinimized)
     }
 
-    /// The menu bar's swipe up: the newest menu-bar batch that still has a
-    /// minimized window on `screen` (nil: on any screen), those windows only,
-    /// taken off the stack. Batches the user restored another way are skipped.
-    mutating func takeMenuBarBatch(on screen: CGRect?, isMinimized: (GestureWindow) -> Bool) -> [GestureWindow] {
-        func here(_ entry: Entry) -> Bool { entry.source == .menuBar && (screen == nil || entry.screen == screen) }
-        while let batch = entries.first(where: here)?.batch {
-            let chosen = entries.filter { here($0) && $0.batch == batch }
-            entries.removeAll { here($0) && $0.batch == batch }
-            let windows = chosen.map(\.window).filter(isMinimized)
-            if !windows.isEmpty { return windows }
-        }
-        return []
-    }
-
     mutating func forget(_ window: GestureWindow) {
         entries.removeAll { $0.window == window }
     }

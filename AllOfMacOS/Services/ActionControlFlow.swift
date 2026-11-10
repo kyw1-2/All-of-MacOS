@@ -78,16 +78,6 @@ enum TriggerSelector {
     }
 }
 
-extension AppState {
-    /// Applies an Enable / Disable Trigger request. Returns how many triggers changed.
-    @discardableResult
-    func applyTriggerEnableRequest(selector: String, enabled: Bool) -> Int {
-        let ids = currentPreset.triggers.filter { TriggerSelector.matches(selector, trigger: $0) && $0.isEnabled != enabled }.map(\.id)
-        ids.forEach { setTriggerEnabled(enabled, triggerID: $0) }
-        return ids.count
-    }
-}
-
 /// Environment a Wait For… poll reads. Replaced in tests.
 struct WaitProbe {
     var runningBundleIDs: () -> Set<String>

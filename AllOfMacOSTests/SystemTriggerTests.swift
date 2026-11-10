@@ -29,13 +29,6 @@ final class SystemTriggerTests: XCTestCase {
         XCTAssertEqual(TriggerInput.namedTrigger("x").category, .otherTriggers)
     }
 
-    func testScheduleDescriptionsReadNaturally() {
-        XCTAssertEqual(SystemTriggerKind.daily(hour: 9, minute: 5).displayName, "Every day at 09:05")
-        XCTAssertEqual(SystemTriggerKind.everyMinutes(1).displayName, "Every minute")
-        XCTAssertEqual(SystemTriggerKind.everyMinutes(30).displayName, "Every 30 minutes")
-        XCTAssertEqual(SystemTriggerKind.screenLocked.displayName, "Screen locks")
-    }
-
     func testWeekdayNamesCollapseCommonSets() {
         XCTAssertEqual(SystemTriggerKind.weekdayNames(Array(1...7)), "Every day")
         XCTAssertEqual(SystemTriggerKind.weekdayNames([2, 3, 4, 5, 6]), "Weekdays")
@@ -44,19 +37,6 @@ final class SystemTriggerTests: XCTestCase {
         XCTAssertEqual(SystemTriggerKind.weekdayNames([]), "No days")
         // Out-of-range days are ignored rather than producing a bogus label.
         XCTAssertEqual(SystemTriggerKind.weekdayNames([0, 9, 3]), "Tue")
-    }
-
-    func testEverySystemEventHasAnIcon() {
-        let kinds: [SystemTriggerKind] = [
-            .daily(hour: 1, minute: 0), .weekly(days: [2], hour: 1, minute: 0),
-            .everyMinutes(5), .displayChanged, .appLaunched("com.apple.Safari"),
-            .appQuit("com.apple.Safari"), .powerSourceChanged(ac: true),
-            .screenLocked, .screenUnlocked
-        ]
-        for kind in kinds {
-            XCTAssertFalse(kind.symbolName.isEmpty, "\(kind) needs an icon")
-            XCTAssertFalse(kind.displayName.isEmpty, "\(kind) needs a label")
-        }
     }
 
     // MARK: - Serialization

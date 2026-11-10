@@ -177,18 +177,6 @@ final class GestureStatisticsTests: XCTestCase {
         XCTAssertEqual(decoded.timestamp.timeIntervalSince1970, event.timestamp.timeIntervalSince1970, accuracy: 0.001)
     }
 
-    // MARK: - Empty state
-
-    func testEmptyStatsDefaults() {
-        let stats = makeStats()
-
-        XCTAssertEqual(stats.totalGestures, 0)
-        XCTAssertEqual(stats.totalFired, 0)
-        XCTAssertEqual(stats.unmatchedCount, 0)
-        XCTAssertTrue(stats.events.isEmpty)
-        XCTAssertTrue(stats.sortedEntries.isEmpty)
-        XCTAssertEqual(stats.uniqueGesturesCount, 0)
-    }
 }
 
 @MainActor

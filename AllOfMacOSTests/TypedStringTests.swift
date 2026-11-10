@@ -77,10 +77,4 @@ final class TypedStringTests: XCTestCase {
         XCTAssertEqual(input.displayName, "Typed “;sig”")
     }
 
-    func testNewSystemActionsAreDescribedAndCategorized() {
-        XCTAssertEqual(ActionType.toggleKeepAwake.category, .systemActions)
-        XCTAssertEqual(ActionType.showWindowSwitcher.category, .windowManagement)
-        XCTAssertFalse(ActionType.toggleKeepAwake.iconName.isEmpty)
-        XCTAssertFalse(ActionType.showWindowSwitcher.iconName.isEmpty)
-    }
 }

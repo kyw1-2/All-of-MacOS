@@ -1153,9 +1153,6 @@ final class AppAudioEngine {
         Self.destroy(session)
     }
 
-    /// All live sessions (for master-EQ fan-out).
-    func sessionsAll() -> [Session] { Array(sessions.values) }
-
     /// Bounded recovery of just the affected AirPlay receiver. Never flip the
     /// persistent master toggle (or revive it after the user turned it off),
     /// and do not disrupt unrelated local and remote audio outputs.

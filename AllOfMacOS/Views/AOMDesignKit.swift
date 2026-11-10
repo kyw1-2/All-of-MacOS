@@ -100,16 +100,6 @@ extension View {
         modifier(AOMChromeSurface(radius: radius, interactive: interactive, role: role, inWindow: inWindow))
     }
 
-    /// Inner thumbnails and buttons: concentric with the card on macOS 26+,
-    /// the fixed `control` radius before.
-    @ViewBuilder func aomInnerClip() -> some View {
-        if #available(macOS 26.0, *) {
-            clipShape(ConcentricRectangle(corners: .concentric(minimum: .fixed(AOMRadius.control)), isUniform: true))
-        } else {
-            clipShape(RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous))
-        }
-    }
-
     /// Primary action: the system prominent style (Liquid Glass tinted on
     /// macOS 26). Use for the one action a page or sheet exists for.
     @ViewBuilder func aomPrimaryButton() -> some View {
@@ -124,16 +114,6 @@ extension View {
             if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
         } else {
             if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
-        }
-    }
-
-    /// Groups nearby custom glass so it samples and morphs as one surface.
-    /// Keep `spacing` at or below the stack spacing (R46).
-    @ViewBuilder func aomGlassGroup(spacing: CGFloat = AOMSpace.x2) -> some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: spacing) { self }
-        } else {
-            self
         }
     }
 

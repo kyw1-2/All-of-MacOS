@@ -224,26 +224,7 @@ class AppState: ObservableObject {
         }
     }
 
-    // MARK: - App Target Management
-
-    func addAppTarget(_ app: AppTarget) {
-        if !currentPreset.appTargets.contains(where: { $0.bundleID == app.bundleID }) {
-            currentPreset.appTargets.append(app)
-            save()
-        }
-    }
-
-    func removeAppTarget(_ app: AppTarget) {
-        guard !app.isGlobal else { return }
-        currentPreset.appTargets.removeAll { $0.id == app.id }
-        currentPreset.triggers.removeAll { $0.appBundleID == app.bundleID }
-        if selectedAppTarget.id == app.id {
-            selectedAppTarget = .allApps
-        }
-        save()
-    }
-
-    // MARK: - Conditional Activation Groups
+// MARK: - Conditional Activation Groups
 
     func addActivationGroup(name: String) -> UUID {
         let group = ActivationGroup(name: name)
@@ -297,12 +278,6 @@ class AppState: ObservableObject {
             currentPreset.snappingShowsPreview = showsPreview
         }
         currentPreset.snappingEnabled = enabled
-        save()
-    }
-    func updateSnapZones(_ zones: [CustomSnapZone]) {
-        guard zones.count <= 32, Set(zones.map(\.id)).count == zones.count,
-              zones.allSatisfy(\.isValid) else { return }
-        currentPreset.customSnapZones = zones
         save()
     }
 
@@ -412,24 +387,6 @@ class AppState: ObservableObject {
             if list.indices.contains(destination) { list.swapAt(i, destination) }
         }
         updateTrigger(updated)
-    }
-
-    func reparentAction(in trigger: Trigger, action: TriggerAction, parentID: UUID?) {
-        if let parentID, ActionTree.rows([action]).contains(where: { $0.id == parentID }) { return }
-        var updated = latest(trigger)
-        guard ActionTree.edit(&updated.actions, id: action.id, change: { list, i in list.remove(at: i) }) else { return }
-        if let parentID {
-            guard ActionTree.edit(&updated.actions, id: parentID, change: { list, i in
-                guard list[i].actionType.canContainChildren else { return }
-                list[i].parameters.children = (list[i].parameters.children ?? []) + [action]
-            }) else { return }
-        } else { updated.actions.append(action) }
-        guard ActionTree.problem(updated.actions) == nil else { return }
-        updateTrigger(updated); selectedAction = action
-    }
-
-    func moveActions(in trigger: Trigger, from source: IndexSet, to destination: Int) {
-        var updated = latest(trigger); updated.actions.move(fromOffsets: source, toOffset: destination); updateTrigger(updated)
     }
 
     // MARK: - Monitor Registration

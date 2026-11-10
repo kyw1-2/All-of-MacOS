@@ -57,7 +57,4 @@ enum AnnotationObjectClipboard {
         return valid ? payload.objects : nil
     }
 
-    static func hasObjects(on pasteboard: NSPasteboard = .general) -> Bool {
-        pasteboard.availableType(from: [pasteboardType]) != nil
-    }
 }

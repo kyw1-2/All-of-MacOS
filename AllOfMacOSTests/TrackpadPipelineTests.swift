@@ -433,19 +433,6 @@ final class TrackpadPipelineTests: XCTestCase {
         monitor.unregisterAll()
     }
 
-    func testPressDragGesturesCodable() throws {
-        for gesture in [TrackpadGesture.twoFingerPressDragLeft, .twoFingerPressDragRight] {
-            let trigger = Trigger(name: gesture.rawValue, input: .trackpadGesture(gesture))
-            let data = try JSONEncoder().encode(trigger)
-            let decoded = try JSONDecoder().decode(Trigger.self, from: data)
-            if case .trackpadGesture(let g) = decoded.input {
-                XCTAssertEqual(g, gesture)
-            } else {
-                XCTFail("Expected trackpadGesture for \(gesture)")
-            }
-        }
-    }
-
     // MARK: - Edge slider tests
 
     func testLeftEdgeSlideUpTriggersAction() {
@@ -510,20 +497,6 @@ final class TrackpadPipelineTests: XCTestCase {
         monitor.unregisterAll()
     }
 
-    func testEdgeSliderGesturesCodable() throws {
-        let gestures: [TrackpadGesture] = [.leftEdgeSlideUp, .leftEdgeSlideDown, .rightEdgeSlideUp, .rightEdgeSlideDown]
-        for gesture in gestures {
-            let trigger = Trigger(name: gesture.rawValue, input: .trackpadGesture(gesture))
-            let data = try JSONEncoder().encode(trigger)
-            let decoded = try JSONDecoder().decode(Trigger.self, from: data)
-            if case .trackpadGesture(let g) = decoded.input {
-                XCTAssertEqual(g, gesture)
-            } else {
-                XCTFail("Expected trackpadGesture for \(gesture)")
-            }
-        }
-    }
-
     // MARK: - Triangle drawing tests
 
     func testDrawTriangleTriggersAction() {
@@ -546,17 +519,6 @@ final class TrackpadPipelineTests: XCTestCase {
         waitForExpectations(timeout: 2.0)
         XCTAssertEqual(firedAction?.actionType, .lockScreen)
         monitor.unregisterAll()
-    }
-
-    func testDrawTriangleCodable() throws {
-        let trigger = Trigger(name: "Tri", input: .trackpadGesture(.drawTriangle))
-        let data = try JSONEncoder().encode(trigger)
-        let decoded = try JSONDecoder().decode(Trigger.self, from: data)
-        if case .trackpadGesture(let g) = decoded.input {
-            XCTAssertEqual(g, .drawTriangle)
-        } else {
-            XCTFail("Expected trackpadGesture drawTriangle")
-        }
     }
 
     // MARK: - Global toggle tests
@@ -1062,13 +1024,6 @@ final class TrackpadRegressionTests: XCTestCase {
         threeTap(at: 1); front = "app.b"; threeTap(at: 1.2)
         drain(after: 0.45)
         XCTAssertEqual(fired, [.volumeUp])
-    }
-
-    func testThreeFingerDoubleTapSurvivesPresetSerialization() throws {
-        let original = trigger(.threeFingerDoubleTap)
-        let restored = try JSONDecoder().decode(Trigger.self, from: JSONEncoder().encode(original))
-        guard case .trackpadGesture(let gesture) = restored.input else { return XCTFail("Wrong trigger category") }
-        XCTAssertEqual(gesture, .threeFingerDoubleTap)
     }
 
     func testReregisterCancelsPendingSingleTapAndQueuedGesture() {

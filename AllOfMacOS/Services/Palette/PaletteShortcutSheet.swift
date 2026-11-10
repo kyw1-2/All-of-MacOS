@@ -91,10 +91,6 @@ final class PaletteShortcutSheet {
         if enabled { start() } else { uninstall() }
     }
 
-    func setHoldSeconds(_ seconds: Double) {
-        UserDefaults.standard.set(min(Self.holdRange.upperBound, max(Self.holdRange.lowerBound, seconds)), forKey: Self.holdKey)
-    }
-
     private func install() {
         let global = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown,
                                                                   .otherMouseDown, .scrollWheel]) { [weak self] event in

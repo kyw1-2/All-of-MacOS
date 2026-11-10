@@ -39,15 +39,6 @@ final class QuickAccessParityTests: XCTestCase {
         XCTAssertTrue(QuickAccessPolicy.restoredIDs([], present: []).isEmpty)
     }
 
-    func testThreeOverlayStackDisplacesOldestInOrder() {
-        let first = QuickAccessPolicy.visibleAfterAdding([1, 2], new: 3)
-        XCTAssertEqual(first.visible, [1, 2, 3])
-        XCTAssertTrue(first.displaced.isEmpty)
-        let overflow = QuickAccessPolicy.visibleAfterAdding([1, 2, 3], new: 4)
-        XCTAssertEqual(overflow.visible, [2, 3, 4])
-        XCTAssertEqual(overflow.displaced, [1])
-    }
-
     func testDraggingNeverHidesUntilDropIsSuccessful() {
         XCTAssertFalse(QuickAccessPolicy.shouldCloseAfterDrag(mode: .afterDrag,
                           separateToggle: true, succeeded: false))
@@ -105,23 +96,13 @@ final class QuickAccessParityTests: XCTestCase {
         XCTAssertEqual(CaptureSettings.overlayIntervalSeconds, 600)
     }
 
-    func testHoverPausesAutoCloseAndIntervalModes() {
+    func testAutoCloseIntervalModes() {
         XCTAssertEqual(QuickAccessPolicy.effectiveInterval(mode: .afterInterval,
                        configured: 7, forced: nil), 7)
         XCTAssertNil(QuickAccessPolicy.effectiveInterval(mode: .never,
                      configured: 7, forced: nil))
         XCTAssertEqual(QuickAccessPolicy.effectiveInterval(mode: .never,
                        configured: 3, forced: 10), 10)
-        XCTAssertEqual(QuickAccessPolicy.elapsedForAutoClose(4, hovered: true, dragging: false), 0)
-        XCTAssertEqual(QuickAccessPolicy.elapsedForAutoClose(4, hovered: false, dragging: true), 0)
-        XCTAssertEqual(QuickAccessPolicy.elapsedForAutoClose(4, hovered: false, dragging: false), 4)
-    }
-
-    func testSwipeDirectionRespectsChosenScreenCorner() {
-        XCTAssertTrue(QuickAccessPolicy.shouldDismissForSwipe(75, predicted: 80, isLeftCorner: false))
-        XCTAssertFalse(QuickAccessPolicy.shouldDismissForSwipe(-75, predicted: -80, isLeftCorner: false))
-        XCTAssertTrue(QuickAccessPolicy.shouldDismissForSwipe(-75, predicted: -80, isLeftCorner: true))
-        XCTAssertFalse(QuickAccessPolicy.shouldDismissForSwipe(75, predicted: 80, isLeftCorner: true))
     }
 
     func testAllFiveOverlaySizesFitImageWithinCard() {

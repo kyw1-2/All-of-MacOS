@@ -73,12 +73,6 @@ enum WindowGeometry {
                height: visible.height * normalized.height)
     }
 
-    static func normalizedDropPoint(_ cursor: CGPoint, in visible: CGRect) -> CGPoint? {
-        guard visible.width > 0, visible.height > 0,
-              visible.contains(cursor) else { return nil }
-        return CGPoint(x: (cursor.x - visible.minX) / visible.width,
-                       y: (visible.maxY - cursor.y) / visible.height)
-    }
     static func windowActuallyMoved(from before: CGRect, to after: CGRect) -> Bool {
         abs(before.width - after.width) <= 4 && abs(before.height - after.height) <= 4 &&
         abs(before.minX - after.minX) + abs(before.minY - after.minY) >= 6

@@ -909,15 +909,6 @@ enum ActionTree {
         actions = copy
         return true
     }
-    /// Moves `id` to the end of the top-level list.
-    @discardableResult
-    static func moveToEnd(_ actions: inout [TriggerAction], id: UUID) -> Bool {
-        guard let moving = rows(actions).first(where: { $0.id == id })?.action else { return false }
-        var copy = actions
-        guard edit(&copy, id: id, change: { list, i in list.remove(at: i) }) else { return false }
-        copy.append(moving); actions = copy
-        return true
-    }
 
     static func problem(_ actions: [TriggerAction]) -> String? {
         var ids = Set<UUID>(); var count = 0

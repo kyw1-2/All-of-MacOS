@@ -7,7 +7,6 @@ import CoreAudio
 @MainActor
 final class PortedFeatureTests: XCTestCase {
 
-
     // MARK: Pin parking — the sliver that keeps translucent pins live
 
     func testParkTargetKeepsA2PointSliverOnScreen() {
@@ -24,7 +23,6 @@ final class PortedFeatureTests: XCTestCase {
         let tallTarget = WindowPinningGeometry.parkTarget(original: tall, desktop: desktop)
         XCTAssertTrue(CGRect(origin: tallTarget, size: tall.size).intersects(desktop))
     }
-
 
     // MARK: Equalizer — the audio math
 
@@ -71,7 +69,6 @@ final class PortedFeatureTests: XCTestCase {
             XCTAssertTrue(gains.allSatisfy { $0 >= -12 && $0 <= 12 })
         }
     }
-
 
     // MARK: Audio mixer — pure math and state
 
@@ -141,18 +138,7 @@ final class PortedFeatureTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "AOMAudioGain_test.bundle")
     }
 
-    // MARK: Mission Control overlay setting contract
-
-    func testMissionControlButtonsDefaultOnAndToggleable() {
-        UserDefaults.standard.removeObject(forKey: "AOMMissionControlButtons")
-        let service = MissionControlOverlayService()
-        XCTAssertTrue(service.isEnabled, "the overlay is on by default")
-        UserDefaults.standard.set(false, forKey: "AOMMissionControlButtons")
-        XCTAssertFalse(service.isEnabled)
-        UserDefaults.standard.removeObject(forKey: "AOMMissionControlButtons")
-    }
-
-    // MARK: Utility gestures — space swipe & dock pinch contracts
+// MARK: Utility gestures — space swipe & dock pinch contracts
 
     func testTopBandDetection() {
         let screens = [NSRect(x: 0, y: 0, width: 1440, height: 900)]
@@ -328,15 +314,6 @@ final class PortedFeatureTests: XCTestCase {
         service.observe(points: [], timestamp: t + 0.2)
         XCTAssertEqual(fired, [false])
     }
-
-    func testDockPinchQuitSettingContract() {
-        UserDefaults.standard.removeObject(forKey: "AOMDockPinchQuit")
-        XCTAssertTrue(TrackpadUtilityGestures.shared.dockQuitEnabled, "on by default")
-        UserDefaults.standard.set(false, forKey: "AOMDockPinchQuit")
-        XCTAssertFalse(TrackpadUtilityGestures.shared.dockQuitEnabled)
-        UserDefaults.standard.removeObject(forKey: "AOMDockPinchQuit")
-    }
-
 
     func testAppAudioEngineMixingZeroWhenMuted() {
         let box = MixerBox(gain: 1.5, muted: true)

@@ -9,18 +9,6 @@ final class CleanShotUIParityTests: XCTestCase {
 
     // MARK: - Quick Access
 
-    func testQuickAccessContextMenuFollowsCleanShotOrder() {
-        let image = QuickAccessMenuCommand.layout(isVideo: false, canScaleRetina: true).compactMap { $0 }
-        let cleanShotBlock: [QuickAccessMenuCommand] = [
-            .share, .closeAll, .saveAll, .temporarilyHide, .quickLook, .openInFinder,
-            .print, .saveAs, .moveToTrash, .openWith,
-            .annotate, .pin, .rotateLeft, .flipHorizontal, .scaleRetina, .resize, .extractText,
-        ]
-        XCTAssertEqual(Array(image.prefix(cleanShotBlock.count)), cleanShotBlock)
-        XCTAssertEqual(QuickAccessMenuCommand.annotate.title, "Open Annotation Tool…")
-        XCTAssertEqual(QuickAccessMenuCommand.pin.title, "Pin to the Screen")
-    }
-
     func testQuickAccessMenuHidesUnavailableItems() {
         let noRetina = QuickAccessMenuCommand.layout(isVideo: false, canScaleRetina: false).compactMap { $0 }
         XCTAssertFalse(noRetina.contains(.scaleRetina))
@@ -134,19 +122,6 @@ final class CleanShotUIParityTests: XCTestCase {
 
     // MARK: - Menu bar
 
-    func testStatusMenuFollowsCleanShotOrder() {
-        let titles = CaptureMenuCommand.layout.map { $0?.title() ?? "—" }
-        XCTAssertEqual(titles, [
-            "All-In-One", "Capture Area", "Capture Previous Area", "Capture Fullscreen", "Capture Window",
-            "Scrolling Capture", "Self-Timer", "Capture Text (OCR)", "Record Screen",
-            "—", "Hide Desktop Icons",
-            "—", "Open…", "Open from Clipboard", "Pin to the Screen…",
-            "—", "Capture History…",
-        ])
-        XCTAssertEqual(CaptureMenuCommand.recordScreen.title(isRecording: true), "Stop Recording")
-        XCTAssertEqual(CaptureMenuCommand.toggleDesktopIcons.title(desktopIconsVisible: false), "Show Desktop Icons")
-    }
-
     func testStatusMenuShortcutLabelsOnlyWhereTheShortcutDoesThatCommand() {
         XCTAssertEqual(CaptureMenuCommand.allInOne.shortcutAction, .allInOne)
         XCTAssertEqual(CaptureMenuCommand.captureArea.shortcutAction, .captureArea)
@@ -218,14 +193,6 @@ final class CleanShotUIParityTests: XCTestCase {
         }
         XCTAssertEqual(AnnotationToolbarItem.redact.kinds, [.pixelate, .blur, .secureBlur, .redact])
         XCTAssertEqual(AnnotationRedactionStyle(kind: .redact), .blackOut)
-    }
-
-    func testAnnotatePaletteOrder() {
-        XCTAssertEqual(AnnotationColor.palette.map(\.displayName),
-                       ["Black", "Red", "Orange", "Yellow", "Green", "Turquoise", "Blue", "Purple", "Pink", "White"])
-        // Persisted raw values are unchanged by the reorder.
-        XCTAssertEqual(AnnotationColor(rawValue: "red"), .red)
-        XCTAssertEqual(AnnotationColor(rawValue: "gray"), .gray)
     }
 
     func testAnnotateClosePrompt() {

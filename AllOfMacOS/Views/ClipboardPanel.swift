@@ -406,23 +406,6 @@ final class ClipboardPanelController {
         store.defersBackgroundUpdates = false
     }
 
-    /// Copy the chosen rich clipboard item without sending Cmd-V to any app.
-    /// Returns false (and leaves the panel open) if copying fails.
-    @discardableResult
-    func copyAndSlideDown(entryID: UUID, plainText: Bool = false) -> Bool {
-        guard isVisible, !slidingOut,
-              state.editor == nil, state.preview == nil, state.editingTitleID == nil else { return false }
-        do {
-            guard try Self.copyEntry(entryID, from: store, plainText: plainText) else { return false }
-        } catch {
-            state.status = error.localizedDescription
-            return false
-        }
-        state.status = "Copied to clipboard."
-        slideDownAndHide()
-        return true
-    }
-
     /// Copy-only entry point used by explicit copy actions.
     @discardableResult
     static func copyEntry(_ entryID: UUID, from store: ClipboardStore,
@@ -1637,7 +1620,6 @@ struct ClipboardPanelView: View {
         switch kind { case .text: return "text.alignleft"; case .link: return "link"; case .image: return "photo"; case .file: return "doc"; case .color: return "paintpalette" }
     }
 
-
 }
 
 // MARK: - Paste-style Luxury Card View
@@ -2756,7 +2738,6 @@ private struct PastePanelResizeGrip: NSViewRepresentable {
         }
     }
 }
-
 
 private enum PasteClipboardDrag {
     static let entryType = "com.kyw.allofmacos.clipboard-pinboard-entry"

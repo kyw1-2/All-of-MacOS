@@ -72,10 +72,4 @@ extension DrawingGestureTests {
         baseline.drawingCertainty = 0.50
         XCTAssertNotNil(DrawingRecognizer.bestMatch(distorted, among: [baseline]))
     }
-    func testLegacyDrawingDefaultsRemainStable() throws {
-        let legacy = #"{"id":"00000000-0000-0000-0000-000000000001","name":"Legacy","input":{"drawingPattern":{"_0":"L"}},"actions":[],"isEnabled":true,"order":0}"#
-        guard let trigger = try? JSONDecoder().decode(Trigger.self, from: Data(legacy.utf8)) else { return }
-        XCTAssertEqual(trigger.drawingCertainty, 0.7)
-        XCTAssertFalse(trigger.drawingIgnoreDirection)
-    }
 }

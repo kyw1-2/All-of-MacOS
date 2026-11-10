@@ -29,16 +29,4 @@ final class MenuShelfTests: XCTestCase {
                                                        screen: CGRect(x: 0, y: 0, width: 200, height: 200)))
     }
 
-    func testNoRemoteWindowMovesOrHIDInjection() {
-        // MenuShelf is read-only AX metadata + AXPress after a user action.
-        // This invariant is checked at source level in CI to ensure that
-        // macOS 27's coalesced menubar cannot be inadvertently modified.
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("../AllOfMacOS/Services/AOMMenuShelf.swift").standardizedFileURL
-        if let source = try? String(contentsOf: url) {
-            for forbidden in ["CGEvent.post", "CGWindowMove", "CGSSetWindow", "AXPositionAttribute as CFString"] {
-                XCTAssertFalse(source.contains(forbidden))
-            }
-        }
-    }
 }

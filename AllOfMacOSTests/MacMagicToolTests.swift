@@ -33,16 +33,6 @@ final class MacMagicToolTests: XCTestCase {
         XCTAssertEqual(renamed[2].lastPathComponent, "shot-3-three.jpg")
     }
 
-    func testForceDeleteClearsTheLockFlagFirst() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("aom-locked-\(UUID().uuidString).txt")
-        try "locked".write(to: url, atomically: true, encoding: .utf8)
-        try MacMagicSystemToolService.shared.setFileLocked(url: url, locked: true)
-        // A plain remove would fail with EPERM; forceDelete must succeed.
-        try MacMagicSystemToolService.shared.forceDelete(url: url)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
-    }
-
     func testCombinePDFsMergesPagesInOrder() throws {
         let service = MacMagicSystemToolService.shared
         func makePDF(_ text: String) throws -> URL {

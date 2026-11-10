@@ -209,22 +209,7 @@ extension SwishParityTests {
         minimized = ["1:a", "1:b"]
         stack.push([(a, nil), (b, nil)], source: .dock)
         XCTAssertEqual(stack.takeAll(of: 1) { minimized.contains($0.id) }, [b, a])
-        // The menu bar's batches: the newest batch with windows on this screen, then any.
-        let left = CGRect(x: 0, y: 0, width: 1440, height: 900), right = CGRect(x: 1440, y: 0, width: 1920, height: 1080)
-        var menu = MinimizedWindowStack()
-        let w1 = GestureWindow(id: "5:1", pid: 5), w2 = GestureWindow(id: "5:2", pid: 5), w3 = GestureWindow(id: "6:3", pid: 6)
-        let all: Set<String> = ["5:1", "5:2", "6:3"]
-        menu.push([(w1, left), (w2, left)], source: .menuBar)
-        menu.push([(w3, right)], source: .menuBar)
-        menu.push([(GestureWindow(id: "7:9", pid: 7), left)], source: .dock)
-        XCTAssertEqual(Set(menu.takeMenuBarBatch(on: left) { all.contains($0.id) }.map(\.id)), ["5:1", "5:2"])
-        XCTAssertEqual(menu.takeMenuBarBatch(on: left) { all.contains($0.id) }, [], "the Dock's own are not the menu bar's")
-        XCTAssertEqual(menu.takeMenuBarBatch(on: nil) { all.contains($0.id) }, [w3])
-        // A batch the user already restored is passed over.
-        var stale = MinimizedWindowStack()
-        stale.push([(w1, left)], source: .menuBar)
-        stale.push([(w2, left)], source: .menuBar)
-        XCTAssertEqual(stale.takeMenuBarBatch(on: left) { $0.id == "5:1" }, [w1])
+
     }
 
     func testTheMenuBarAppWalkGoesBackThroughRecentApps() {

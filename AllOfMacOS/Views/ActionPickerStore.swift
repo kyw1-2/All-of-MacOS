@@ -40,7 +40,6 @@ struct ActionPickerStore {
         write(Array(list.prefix(Self.maxRecents)), Self.recentsKey)
     }
 
-    func clearRecents() { defaults.removeObject(forKey: Self.recentsKey) }
 }
 
 /// Ranks actions for a search query. Every whitespace-separated word must appear
@@ -74,8 +73,6 @@ enum ActionSearch {
 /// copying an action never pollutes clipboard history.
 enum ActionClipboard {
     static var copied: TriggerAction?
-    /// A paste always gets fresh ids so it can sit next to its source.
-    static func pasteCopy() -> TriggerAction? { copied.map(ActionTree.duplicate) }
 }
 
 /// One-line summary under an action's name in the sequence list (new actions).

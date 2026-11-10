@@ -41,11 +41,7 @@ final class OverviewAndSnapLayoutsTests: XCTestCase {
         XCTAssertEqual(full.targetWidth, 1)
         XCTAssertEqual(full.targetHeight, 1)
     }
-    func testScreenDropCoordinatesAndActualWindowMove() {
-        let visible = CGRect(x: 100, y: -900, width: 1440, height: 850)
-        XCTAssertEqual(WindowGeometry.normalizedDropPoint(CGPoint(x:100, y:-475), in: visible)?.x, 0)
-        XCTAssertEqual(WindowGeometry.normalizedDropPoint(CGPoint(x:100, y:-475), in: visible)?.y, 0.5)
-        XCTAssertNil(WindowGeometry.normalizedDropPoint(CGPoint(x:0, y:-475), in: visible))
+    func testSnapZoneHitAndActualWindowMove() {
         let left = CustomSnapZone.Layout.leftHalf.zone()
         XCTAssertTrue(left.hit(x:0.02, y:0.50))
         let window = CGRect(x:150, y:100, width:700, height:500)

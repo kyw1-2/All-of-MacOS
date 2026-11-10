@@ -215,7 +215,6 @@ final class CleanShotGapTests: XCTestCase {
         XCTAssertLessThan(png.width, 200, "PNG is cropped to the object")
         XCTAssertTrue(AnnotationObjectClipboard.write([arrow, text], image: png, scale: 1, to: pasteboard))
         XCTAssertNotNil(pasteboard.data(forType: .png))
-        XCTAssertTrue(AnnotationObjectClipboard.hasObjects(on: pasteboard))
 
         let read = try XCTUnwrap(AnnotationObjectClipboard.read(from: pasteboard))
         XCTAssertEqual(read, [arrow, text])
@@ -429,14 +428,12 @@ final class CleanShotGapTests: XCTestCase {
         background.padding = 64
         XCTAssertTrue(store.update(id, with: background))
         store.autoApplyID = id
-        store.notePrevious(background)
         store.save(defaults)
 
         let reloaded = AnnotationBackgroundPresetStore.load(defaults)
         XCTAssertEqual(reloaded, store)
         XCTAssertEqual(reloaded.autoApplyPreset?.name, "Blog")
         XCTAssertEqual(AnnotationBackgroundPresetStore.automaticBackground(defaults)?.padding, 64)
-        XCTAssertEqual(reloaded.previous?.gradientPreset, .aurora)
         // Stored as JSON under AOM keys.
         let raw = try XCTUnwrap(defaults.data(forKey: AnnotationBackgroundPresetStore.presetsKey))
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: raw))
@@ -451,10 +448,6 @@ final class CleanShotGapTests: XCTestCase {
         AnnotationBackgroundPresetStore.rememberPrevious(used, defaults)
         AnnotationBackgroundPresetStore.rememberPrevious(AnnotationBackground(), defaults)
         XCTAssertEqual(AnnotationBackgroundPresetStore.load(defaults).previous, used)
-        // "None" backgrounds are not recorded as previous settings.
-        store.previous = nil
-        store.notePrevious(AnnotationBackground())
-        XCTAssertNil(store.previous)
     }
 
     // MARK: - 7. Colour library

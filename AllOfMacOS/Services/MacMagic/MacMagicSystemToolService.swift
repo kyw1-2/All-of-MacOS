@@ -431,15 +431,6 @@ final class MacMagicSystemToolService {
         return total
     }
 
-    /// Turns the primary Wi-Fi interface off (MacMagic's disconnectwifi).
-    func disconnectWiFi() async throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/networksetup")
-        process.arguments = ["-setairportpower", "en0", "off"]
-        try process.run()
-        process.waitUntilExit()
-    }
-
     // MARK: - File Management
 
     /// Plain-text batch rename with an optional sequential token "{n}".
@@ -477,13 +468,6 @@ final class MacMagicSystemToolService {
             try FileManager.default.moveItem(at: source, to: target)
         }
         return renamed
-    }
-
-    /// Force-deletes a stubborn file: clears the immutable flag first, then
-    /// removes it (MacMagic's forcedelete).
-    func forceDelete(url: URL) throws {
-        try? setFileLocked(url: url, locked: false)
-        try FileManager.default.removeItem(at: url)
     }
 
     /// Empties the user Trash directory and reports what it deleted and what

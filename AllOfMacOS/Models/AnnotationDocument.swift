@@ -649,13 +649,6 @@ struct AnnotationDocument {
         cropRect = rect
     }
 
-    /// Appends a screenshot below the cropped image without shifting annotations.
-    /// Undo restores both the previous base image and crop.
-    @discardableResult
-    mutating func appendScreenshot(_ image: CGImage, scale: CGFloat) -> Bool {
-        combine(image, placement: .bottom, scale: scale)
-    }
-
     /// Changes the image's physical pixel dimensions. Unlike a crop, resize
     /// resamples the bitmap, preserving editable annotations unless flattening
     /// is explicitly requested. All source validation happens before beginChange,

@@ -1450,12 +1450,4 @@ extension AppState {
         save()
     }
 
-    func addDisabledBTTTriggers(_ triggers: [Trigger]) {
-        for var trigger in triggers {
-            trigger.isEnabled = false
-            currentPreset.addTrigger(trigger)
-        }
-        selectedTrigger = nil; selectedAction = nil
-        save()
-    }
 }
