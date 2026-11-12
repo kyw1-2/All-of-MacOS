@@ -81,6 +81,7 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
     private var monitor: Any?
     private var refreshTimer: Timer?
     private var audioObserver: NSObjectProtocol?
+    private var applicationObservers: [NSObjectProtocol] = []
     @Published private(set) var lastError: String?
     @Published private(set) var competingMixer: NSRunningApplication?
     private var muteSnapshot: [String: Bool]?
@@ -111,6 +112,13 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
             _eqGains = Published(initialValue: AudioEQ(gains: saved.map(Float.init)).gains)
         }
         super.init()
+        updateCompetingMixer()
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            applicationObservers.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateCompetingMixer() }
+            })
+        }
         audioObserver = NotificationCenter.default.addObserver(forName: NSNotification.Name("AOMAudioAppsChanged"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 if #available(macOS 14.2, *) {
@@ -151,8 +159,6 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         let engine = AppAudioEngine.shared
         let updated = engine.runningAudioApps()
         if apps != updated { apps = updated }
-        let competitor = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.rogueamoeba.soundsource" }
-        if competingMixer?.processIdentifier != competitor?.processIdentifier { competingMixer = competitor }
         let error = updated.compactMap(\.error).first
         if lastError != error { lastError = error }
         if airPlayBypassed != engine.airPlayBypassed { airPlayBypassed = engine.airPlayBypassed }
@@ -161,6 +167,13 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
         if airPlayRecovering != engine.airPlayRecovering { airPlayRecovering = engine.airPlayRecovering }
         let now = Date()
         for app in updated where app.isPlaying { lastActive[app.bundleID] = now }
+    }
+
+    /// Process existence changes on workspace events, not on every playback
+    /// edge. Keep this system lookup out of the audio synchronization loop.
+    private func updateCompetingMixer() {
+        let competitor = NSRunningApplication.runningApplications(withBundleIdentifier: "com.rogueamoeba.soundsource").first
+        if competingMixer?.processIdentifier != competitor?.processIdentifier { competingMixer = competitor }
     }
 
     // MARK: SoundSource-style application list

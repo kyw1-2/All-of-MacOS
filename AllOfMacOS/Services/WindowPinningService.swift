@@ -512,7 +512,7 @@ private struct WindowPinSnapshot: Sendable {
         let interval = AOMPerformance.begin("WindowPin.snapshot")
         defer { AOMPerformance.end("WindowPin.snapshot", interval) }
         guard !ScreenLock.isLocked, CGPreflightScreenCaptureAccess(),
-              let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+              let info = WindowInfoQuery.descriptions(for: ids)
         else { return Self(available: false, windows: [:]) }
         var windows: [CGWindowID: Window] = [:]
         for item in info {

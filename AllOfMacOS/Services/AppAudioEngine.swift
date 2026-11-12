@@ -435,8 +435,10 @@ final class AppAudioEngine {
                 SharedOutputRenderer.shared.shutdownAirPlayOutputs()
             }
         }
-        updatePlaybackListeners()
-        let objectsByOwner = Self.processObjectsByOwner()
+        // Use one HAL membership snapshot for listeners and owner resolution.
+        let processObjects = Self.readProcessObjectList()
+        updatePlaybackListeners(objects: processObjects)
+        let objectsByOwner = Self.processObjectsByOwner(objects: processObjects ?? [])
         refreshPlaybackActivity(objectsByOwner)
         // Some apps become regular only after their launch notification.
         // A newly playing owner must not wait for the metadata TTL to appear.
@@ -621,14 +623,9 @@ final class AppAudioEngine {
         }
     }
 
-    private func updatePlaybackListeners() {
-        var listAddress = AudioOutputService.address(kAudioHardwarePropertyProcessObjectList)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &size) == noErr else { return }
-        var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        if !objects.isEmpty {
-            guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &size, &objects) == noErr else { return }
-        }
+    private func updatePlaybackListeners(objects: [AudioObjectID]?) {
+        // A failed read is not an empty process list: retain existing listeners.
+        guard let objects else { return }
         let live = Set(objects)
         var playingAddress = AudioOutputService.address(kAudioProcessPropertyIsRunningOutput)
         for id in Array(processListeners.keys) where !live.contains(id) {
@@ -854,18 +851,23 @@ final class AppAudioEngine {
         return unsafeBitCast(symbol, to: ResponsiblePID.self)
     }()
 
-    private static func mainApp(for pid: pid_t) -> NSRunningApplication? {
-        if let app = NSRunningApplication(processIdentifier: pid), app.activationPolicy == .regular {
+    private static func mainApp(for pid: pid_t,
+                                lookup: AudioOwnerLookup<NSRunningApplication> = AudioOwnerLookup { pid in
+                                    guard let app = NSRunningApplication(processIdentifier: pid),
+                                          app.activationPolicy == .regular else { return nil }
+                                    return app
+                                }) -> NSRunningApplication? {
+        if let app = lookup.value(for: pid) {
             return app
         }
         if let responsible = responsiblePID?(pid), responsible > 1, responsible != pid,
-           let app = NSRunningApplication(processIdentifier: responsible), app.activationPolicy == .regular {
+           let app = lookup.value(for: responsible) {
             return app
         }
         var current = pid
         for _ in 0..<12 {
             guard let ppid = parentPID(of: current), ppid > 1 else { break }
-            if let app = NSRunningApplication(processIdentifier: ppid), app.activationPolicy == .regular {
+            if let app = lookup.value(for: ppid) {
                 return app
             }
             current = ppid
@@ -878,17 +880,17 @@ final class AppAudioEngine {
     /// within a sweep without changing behaviour when an app really does change.
     private nonisolated(unsafe) static var ownerResolutionCache: [pid_t: (app: NSRunningApplication?, at: TimeInterval)] = [:]
 
-    private static func owner(of object: AudioObjectID, pid: pid_t, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
+    private static func owner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
         let now = ProcessInfo.processInfo.systemUptime
         if let hit = ownerResolutionCache[pid], now - hit.at < 5 { return hit.app }
-        let app = resolveOwner(of: object, pid: pid, fallback: fallback)
+        let app = resolveOwner(of: object, pid: pid, lookup: lookup, fallback: fallback)
         if ownerResolutionCache.count > 512 { ownerResolutionCache.removeAll(keepingCapacity: true) }
         ownerResolutionCache[pid] = (app, now)
         return app
     }
 
-    private static func resolveOwner(of object: AudioObjectID, pid: pid_t, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
-        if let app = mainApp(for: pid) { return app }
+    private static func resolveOwner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
+        if let app = mainApp(for: pid, lookup: lookup) { return app }
         let bundleID = AudioOutputService.string(object, kAudioProcessPropertyBundleID)
         let processURL = NSRunningApplication(processIdentifier: pid)?.bundleURL?.standardizedFileURL.path
         guard let ownerPID = AudioOwnerIdentity.uniqueOwner(bundleID: bundleID, processPath: processURL,
@@ -903,29 +905,40 @@ final class AppAudioEngine {
     /// One pass over the process-object list with owner resolution memoised.
     /// Callers used to re-read the whole list, and re-scan every running app, once
     /// per pid, which is what made the once-a-second sweep expensive.
-    static func processObjectsByOwner() -> [pid_t: [AudioObjectID]] {
+    static func processObjectsByOwner(objects: [AudioObjectID]? = nil) -> [pid_t: [AudioObjectID]] {
         let interval = AOMPerformance.begin("Audio.processOwners")
         defer { AOMPerformance.end("Audio.processOwners", interval) }
         var map: [pid_t: [AudioObjectID]] = [:]
         var ownerCache: [pid_t: pid_t] = [:]
+        // Helpers often share a responsible process and parent chain. Resolve
+        // each PID's activation policy once per sweep, including negative hits.
+        let lookup = AudioOwnerLookup<NSRunningApplication> { pid in
+            guard let app = NSRunningApplication(processIdentifier: pid),
+                  app.activationPolicy == .regular else { return nil }
+            return app
+        }
         var fallbackSnapshot: [AudioOwnerIdentity]?
         func fallback() -> [AudioOwnerIdentity] {
             if let fallbackSnapshot { return fallbackSnapshot }
             let apps = NSWorkspace.shared.runningApplications.compactMap { app -> AudioOwnerIdentity? in
-                guard app.activationPolicy == .regular, let id = app.bundleIdentifier, !id.isEmpty else { return nil }
+                // Workspace already supplied this object; do not construct a
+                // second NSRunningApplication just to check its policy.
+                guard lookup.value(for: app.processIdentifier, orLoad: {
+                    app.activationPolicy == .regular ? app : nil
+                }) != nil, let id = app.bundleIdentifier, !id.isEmpty else { return nil }
                 return AudioOwnerIdentity(pid: app.processIdentifier, bundleID: id,
                     bundlePath: app.bundleURL?.standardizedFileURL.path)
             }
             fallbackSnapshot = apps
             return apps
         }
-        for obj in processObjectList() {
+        for obj in objects ?? processObjectList() {
             guard let rawPID = property(obj, selector: kAudioProcessPropertyPID, as: pid_t.self), rawPID > 0,
                   rawPID != ProcessInfo.processInfo.processIdentifier else { continue }
             let ownerPID: pid_t
             if let cached = ownerCache[rawPID] { ownerPID = cached }
             else {
-                let resolved = owner(of: obj, pid: rawPID, fallback: fallback)?.processIdentifier ?? rawPID
+                let resolved = owner(of: obj, pid: rawPID, lookup: lookup, fallback: fallback)?.processIdentifier ?? rawPID
                 ownerCache[rawPID] = resolved
                 ownerPID = resolved
             }
@@ -935,11 +948,16 @@ final class AppAudioEngine {
     }
 
     private static func processObjectList() -> [AudioObjectID] {
+        readProcessObjectList() ?? []
+    }
+
+    private static func readProcessObjectList() -> [AudioObjectID]? {
         var address = AudioOutputService.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
+        guard size > 0 else { return [] }
         var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.stride)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return [] }
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objects) == noErr else { return nil }
         return objects
     }
 
