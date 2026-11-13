@@ -28,6 +28,9 @@ class GestureStatistics: ObservableObject {
     private let defaults: UserDefaults?
     private var scheduledSave: DispatchWorkItem?
     private let ioQueue = DispatchQueue(label: "com.kyw.allofmacos.statistics", qos: .utility)
+    /// The newest snapshot handed out; a queued write that is no longer newest
+    /// is skipped, so a later synchronous flush can never be overwritten.
+    private let writeGeneration = GestureStatisticsWriteGeneration()
     private let snapshotKey = "AOMGestureStatistics.v2"
 
     private struct Snapshot: Codable {
@@ -118,22 +121,34 @@ class GestureStatistics: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
+    private var currentSnapshot: Snapshot {
+        Snapshot(total: totalGestures, fired: totalFired, start: sessionStart, recentEvents: events, summary: summary)
+    }
+
     private func persistSnapshot() {
         guard let defaults else { return }
-        let snapshot = Snapshot(total: totalGestures, fired: totalFired, start: sessionStart,
-                                recentEvents: events, summary: summary)
+        let snapshot = currentSnapshot
         let key = snapshotKey
+        let generation = writeGeneration.next()
+        let latest = writeGeneration
         ioQueue.async {
+            guard latest.isCurrent(generation) else { return }
             if let data = try? JSONEncoder().encode(snapshot) { defaults.set(data, forKey: key) }
         }
     }
 
-    /// Used at orderly termination and by persistence tests.
+    /// Used at orderly termination and by persistence tests. Writes on the
+    /// calling (main) thread and never waits for `ioQueue`: `defaults.set`
+    /// there posts `UserDefaults.didChangeNotification`, and observers added
+    /// with `queue: .main` make that post wait for the main thread. 3.4.42
+    /// hung in `applicationWillTerminate` on exactly that (`ioQueue.sync {}`),
+    /// so Quit and NSRunningApplication.terminate() never finished.
     func flushPendingWrites() {
         scheduledSave?.cancel()
         scheduledSave = nil
-        persistSnapshot()
-        ioQueue.sync {}
+        guard let defaults else { return }
+        _ = writeGeneration.next()
+        if let data = try? JSONEncoder().encode(currentSnapshot) { defaults.set(data, forKey: snapshotKey) }
     }
 
     private func load() {
@@ -158,5 +173,22 @@ class GestureStatistics: ObservableObject {
         totalFired = defaults.integer(forKey: "AOMGestureStatistics_fired")
         let ts = defaults.double(forKey: "AOMSessionStart")
         sessionStart = ts > 0 ? Date(timeIntervalSince1970: ts) : Date()
+    }
+}
+
+/// Monotonic write ticket shared with the statistics I/O queue.
+final class GestureStatisticsWriteGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        value += 1
+        return value
+    }
+
+    func isCurrent(_ generation: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return value == generation
     }
 }

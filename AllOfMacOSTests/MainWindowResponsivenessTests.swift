@@ -20,6 +20,26 @@ final class MainWindowResponsivenessTests: XCTestCase {
         XCTAssertEqual(AudioOutputService.resolvedSoftwareGain(0) { false }, 1)
     }
 
+    /// 3.4.43: 3.4.42 deadlocked in applicationWillTerminate. The flush waited
+    /// for its I/O queue while that queue's `defaults.set` posted a change
+    /// notification to a `queue: .main` observer, which waited for main.
+    func testFlushWithMainQueueDefaultsObserverCompletesAndPersists() throws {
+        let suite = "com.kyw.allofmacos.tests.statistics.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var changes = 0
+        let observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
+                                                              object: defaults, queue: .main) { _ in changes += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let stats = GestureStatistics(defaults: defaults)
+        stats.recordFire("swipe")
+        stats.flushPendingWrites()
+        stats.recordFire("swipe")
+        stats.flushPendingWrites()
+        XCTAssertGreaterThan(changes, 0)
+        XCTAssertEqual(GestureStatistics(defaults: defaults).totalFired, 2)
+    }
+
     func testDetectionBurstDoesNotInvalidateDashboardButFireAndEvictionDo() {
         let stats = GestureStatistics(defaults: nil)
         let projection = WorkspaceValueProjection(statistics: stats)
