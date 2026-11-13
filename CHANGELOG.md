@@ -1,3 +1,13 @@
+## [3.4.42] - 2026-11-13
+
+### Performance
+- Avoid unnecessary CoreAudio hardware queries for unchanged default software gain and reuse each output's gain result during one app-audio synchronization.
+- Move idle Mission Control lock checks, system-status sampling, and Workspace app/shortcut lookup off the main thread, discarding stale results when the view closes.
+- Restrict Workspace observations to executed gestures and relevant audio display state; cache weekly activity aggregation and suppress redundant chart updates.
+
+### Validation
+- 69 tests passed in the source audit, including seven newly added responsiveness regression tests. Post-install scrolling, window navigation, and HomePod/audio operation still require live validation.
+
 ## [3.4.36] - 2026-11-08
 
 ### Performance
