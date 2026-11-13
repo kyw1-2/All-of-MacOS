@@ -11,7 +11,7 @@ enum SystemStatus {
     // MARK: CPU
 
     /// Cumulative CPU ticks (user, system, idle, nice) from HOST_CPU_LOAD_INFO.
-    struct CPUTicks: Equatable {
+    struct CPUTicks: Equatable, Sendable {
         var user: UInt64, system: UInt64, idle: UInt64, nice: UInt64
         var busy: UInt64 { user + system + nice }
         var total: UInt64 { busy + idle }
@@ -39,7 +39,7 @@ enum SystemStatus {
 
     // MARK: Memory
 
-    struct Memory: Equatable {
+    struct Memory: Equatable, Sendable {
         let used: UInt64
         let total: UInt64
         /// kern.memorystatus_vm_pressure_level: 1 normal, 2 warning, 4 critical.
@@ -89,7 +89,7 @@ enum SystemStatus {
 
     // MARK: Disk
 
-    struct Disk: Equatable { let available: Int64; let total: Int64 }
+    struct Disk: Equatable, Sendable { let available: Int64; let total: Int64 }
 
     static func startupDisk() -> Disk? {
         let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
@@ -101,7 +101,7 @@ enum SystemStatus {
 
     // MARK: Battery
 
-    struct Battery: Equatable {
+    struct Battery: Equatable, Sendable {
         /// Charge, 0–100.
         let percent: Int
         let isCharging: Bool
@@ -187,7 +187,7 @@ enum SystemStatus {
         }
     }
 
-    struct InterfaceAddress: Equatable { let interface: String; let address: String }
+    struct InterfaceAddress: Equatable, Sendable { let interface: String; let address: String }
 
     /// The IPv4 address to show: Wi-Fi/Ethernet (en*) first, then any other
     /// up, non-loopback interface; link-local 169.254.x is skipped.
@@ -237,7 +237,7 @@ enum SystemStatus {
 /// Samples the strip every couple of seconds while the page is on screen.
 @MainActor
 final class SystemStatusMonitor: ObservableObject {
-    struct Snapshot: Equatable {
+    struct Snapshot: Equatable, Sendable {
         var cpuPercent: Double?
         var memory: SystemStatus.Memory?
         var disk: SystemStatus.Disk?
@@ -267,6 +267,20 @@ final class SystemStatusMonitor: ObservableObject {
     private var lastTicks: SystemStatus.CPUTicks?
     private var sampleCount = 0
     private var timer: Timer?
+    private var generation: UInt64 = 0
+    private var samplingTask: Task<Void, Never>?
+    private let read: @Sendable (Snapshot, Bool) -> Reading
+
+    struct Reading: Sendable {
+        var snapshot: Snapshot
+        let ticks: SystemStatus.CPUTicks?
+    }
+
+    init(read: @escaping @Sendable (Snapshot, Bool) -> Reading = { previous, slow in
+        SystemStatusMonitor.readSystem(previous, slow)
+    }) {
+        self.read = read
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -285,31 +299,59 @@ final class SystemStatusMonitor: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        generation &+= 1
         lastTicks = nil
         sampleCount = 0
     }
 
-    func sample() {
+    /// At most one blocking read is in flight. Stop/reopen invalidates its
+    /// result without starting overlapping disk or network requests.
+    @discardableResult
+    func sample() -> Task<Void, Never> {
+        if let samplingTask { return samplingTask }
+        let requestedGeneration = generation
+        let previous = snapshot
+        let includeSlow = sampleCount == 0
+        let read = self.read
+        let task = Task { [weak self] in
+            let reading = await Task.detached(priority: .utility) {
+                read(previous, includeSlow)
+            }.value
+            guard let self else { return }
+            self.samplingTask = nil
+            guard self.generation == requestedGeneration else {
+                if self.timer != nil { self.sample() }
+                return
+            }
+            var next = reading.snapshot
+            if let ticks = reading.ticks {
+                if let lastTicks = self.lastTicks {
+                    next.cpuPercent = SystemStatus.cpuUsage(from: lastTicks, to: ticks) ?? next.cpuPercent
+                }
+                self.lastTicks = ticks
+            }
+            self.sampleCount = (self.sampleCount + 1) % 5
+            self.publish(next)
+        }
+        samplingTask = task
+        return task
+    }
+
+    nonisolated static func readSystem(_ previous: Snapshot, _ includeSlow: Bool) -> Reading {
         let interval = AOMPerformance.begin("SystemStatus.sample")
         defer { AOMPerformance.end("SystemStatus.sample", interval) }
-        var next = snapshot
-        if let ticks = SystemStatus.cpuTicks() {
-            if let lastTicks { next.cpuPercent = SystemStatus.cpuUsage(from: lastTicks, to: ticks) ?? next.cpuPercent }
-            lastTicks = ticks
-        }
+        var next = previous
+        let ticks = SystemStatus.cpuTicks()
         next.memory = SystemStatus.memory()
         next.uptime = SystemStatus.secondsSinceBoot() ?? ProcessInfo.processInfo.systemUptime
         next.thermal = ProcessInfo.processInfo.thermalState
-        // Storage, power and network inventory change much less often than
-        // CPU load. Refresh them together every 10 s and on each reopening.
-        if sampleCount == 0 {
+        if includeSlow {
             next.disk = SystemStatus.startupDisk()
             next.battery = SystemStatus.battery()
             next.hasBattery = next.battery != nil
             next.address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
             next.volumes = DiskTools.volumes()
         }
-        sampleCount = (sampleCount + 1) % 5
-        publish(next)
+        return Reading(snapshot: next, ticks: ticks)
     }
 }

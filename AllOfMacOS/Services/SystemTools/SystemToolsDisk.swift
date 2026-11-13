@@ -4,7 +4,7 @@ import AppKit
 /// read-only `diskutil verifyVolume`, Time Machine status and local
 /// snapshots through `tmutil`. Output parsers are pure and unit tested.
 enum DiskTools {
-    struct Volume: Equatable, Identifiable {
+    struct Volume: Equatable, Identifiable, Sendable {
         var id: String { url.path }
         let url: URL
         let name: String

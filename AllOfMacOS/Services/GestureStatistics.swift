@@ -1,6 +1,6 @@
 import Foundation
 
-struct GestureEvent: Codable {
+struct GestureEvent: Codable, Equatable {
     let gesture: String
     let timestamp: Date
     let fired: Bool

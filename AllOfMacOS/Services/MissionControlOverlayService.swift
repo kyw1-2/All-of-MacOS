@@ -47,10 +47,10 @@ final class MissionControlOverlayService: ObservableObject {
         (buttons || hotkeys) && automationOn && !paused && !locked()
     }
 
-    private func mayProbe() -> Bool {
+    private func mayProbe(checkLock: Bool = true) -> Bool {
         Self.shouldProbe(buttons: isEnabled, hotkeys: MissionControlHotKeyHandler.isEnabled,
                          automationOn: AutomationGate.isOn, paused: TriggerSuppression.shared.isPaused,
-                         locked: ScreenLock.isLocked)
+                         locked: checkLock && ScreenLock.isLocked)
     }
 
     /// Whether the poller runs, so `isMissionControlActive` is current.
@@ -185,7 +185,7 @@ final class MissionControlOverlayService: ObservableObject {
     // MARK: - Poll
 
     private func poll() {
-        guard mayProbe() else {
+        guard mayProbe(checkLock: false) else {
             generation += 1
             if isMissionControlActive || !tiles.isEmpty { teardown() }
             return
@@ -194,11 +194,15 @@ final class MissionControlOverlayService: ObservableObject {
         probeInFlight = true
         let requestGeneration = generation
         probeQueue.async { [weak self] in
-            let snapshot = Snapshot(thumbnails: MissionControlWindows.liveThumbnails())
+            // Idle polling must not block event delivery on WindowServer IPC.
+            let snapshot = Snapshot(thumbnails: ScreenLock.isLocked ? nil : MissionControlWindows.liveThumbnails())
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.probeInFlight = false
-                guard self.pollTimer != nil, self.generation == requestGeneration, self.mayProbe() else { return }
+                // Recheck the lock synchronously before showing any content.
+                // An empty probe only tears down overlays, so needs no IPC.
+                guard self.pollTimer != nil, self.generation == requestGeneration,
+                      self.mayProbe(checkLock: snapshot.thumbnails != nil) else { return }
                 if let thumbnails = snapshot.thumbnails {
                     if !self.isMissionControlActive { self.isMissionControlActive = true }
                     // The keys alone need to know Mission Control shows; the

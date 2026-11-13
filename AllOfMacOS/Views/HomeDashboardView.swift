@@ -27,11 +27,16 @@ import SwiftUI
 struct AOMHomeView: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
-    @ObservedObject private var stats = GestureStatistics.shared
+    private let stats = GestureStatistics.shared
+    @StateObject private var activity = WorkspaceValueProjection(statistics: GestureStatistics.shared)
+    @State private var hasFired = GestureStatistics.shared.totalFired > 0
+    @State private var windowVisible = false
+    @State private var weekCache = WorkspaceWeekCache()
     @ObservedObject private var clipboard = ClipboardStore.shared
     @ObservedObject private var history = CaptureHistory.shared
     @ObservedObject private var recording = ScreenRecordingService.shared
-    @ObservedObject private var audio = AppAudioMixerService.shared
+    private let audio = AppAudioMixerService.shared
+    @StateObject private var audioDisplay = WorkspaceValueProjection(audio: AppAudioMixerService.shared)
     @ObservedObject private var keepAwake = KeepAwakeService.shared
     @StateObject private var toast = AOMToastModel()
     @State private var permissions: [(AOMPermission, AOMPermissionStatus)] = []
@@ -71,7 +76,7 @@ struct AOMHomeView: View {
     /// their display name (the unnamed trigger's input name) when they fire.
     private var lastRuns: [UUID: Date] {
         var latestByInput: [String: Date] = [:]
-        for event in stats.events where event.fired {
+        for event in activity.value {
             if (latestByInput[event.gesture] ?? .distantPast) < event.timestamp { latestByInput[event.gesture] = event.timestamp }
         }
         var result: [UUID: Date] = [:]
@@ -146,12 +151,15 @@ struct AOMHomeView: View {
         .focusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
             search: { appState.selectedMainTab = .gestures },
             newTrigger: newAutomation))
-        .task {
+        .onReceive(stats.$totalFired.map { $0 > 0 }.removeDuplicates()) { hasFired = $0 }
+        .aomOnWindowVisibilityChange { windowVisible = $0 }
+        .task(id: windowVisible) {
+            guard windowVisible else { return }
             // Isolated previews only (`--aom-preview-panel-appearance`).
             AOMFeaturePreview.applyPanelAppearance()
             while !Task.isCancelled {
-                refreshStatus()
-                try? await Task.sleep(for: .seconds(4))
+                await refreshStatus()
+                do { try await Task.sleep(for: .seconds(4)) } catch { break }
             }
         }
         .aomToast(toast)
@@ -159,11 +167,21 @@ struct AOMHomeView: View {
 
     /// Polled state that nothing publishes (permissions, Paste's shortcut,
     /// the timed pause, the title-bar snap switch, the output device).
-    private func refreshStatus() {
+    private func refreshStatus() async {
         let current = AOMPermission.required.map { ($0, $0.status) }
         if current.map(\.0) != permissions.map(\.0) || current.map(\.1) != permissions.map(\.1) { permissions = current }
-        let conflict = ShortcutConflicts.clipboardHistoryConflict()
-        if conflict != shortcutConflict { shortcutConflict = conflict }
+        let shortcut = ClipboardShortcuts.shared.shortcut(for: .history)
+        // LaunchServices, other apps' preferences and HAL reads can block.
+        // Snapshot the MainActor-only shortcut before dispatching the reads.
+        let external = await Task.detached(priority: .utility) {
+            let conflict = ShortcutConflicts.clipboardHistoryConflict(shortcut: shortcut)
+            let currentID = AudioOutputService.currentDeviceID()
+            let device = AudioOutputService.devices().first { $0.id == currentID }?.name
+            return (conflict, device)
+        }.value
+        guard !Task.isCancelled else { return }
+        if external.0 != shortcutConflict { shortcutConflict = external.0 }
+        if external.1 != outputDevice { outputDevice = external.1 }
         let suppression = TriggerSuppression.shared
         let paused = suppression.isPaused
         if paused != suppressionPaused { suppressionPaused = paused }
@@ -171,9 +189,6 @@ struct AOMHomeView: View {
         if description != suppressionDescription { suppressionDescription = description }
         let titleBar = UserDefaults.standard.bool(forKey: TitleBarWindowSnap.enabledKey)
         if titleBar != titleBarSnapOn { titleBarSnapOn = titleBar }
-        let currentID = AudioOutputService.currentDeviceID()
-        let device = AudioOutputService.devices().first { $0.id == currentID }?.name
-        if device != outputDevice { outputDevice = device }
         var attention: [AOMModule: String] = [:]
         for status in AOMModuleStatusBoard.all {
             if let text = status.attention, !text.isEmpty { attention[status.module] = text }
@@ -591,7 +606,7 @@ struct AOMHomeView: View {
                 tileMenu(.clipboard)
             }
         case .audio:
-            let custom = audio.apps.filter(audio.hasCustomSettings).count
+            let custom = audioDisplay.value.customApps
             let detail = [outputDevice.map { "Output: \($0)" }, audio.eqEnabled ? "EQ \(audio.eqPreset)" : nil].compactMap { $0 }
             AOMModuleTile(.audio,
                           metric: audio.soundEnabled ? "\(custom)" : "Off",
@@ -602,7 +617,7 @@ struct AOMHomeView: View {
                           statusTone: audio.soundEnabled ? nil : .neutral,
                           active: audio.soundEnabled,
                           open: openAudio) {
-                Toggle("App Audio", isOn: $audio.soundEnabled)
+                Toggle("App Audio", isOn: Binding(get: { audio.soundEnabled }, set: { audio.soundEnabled = $0 }))
                     .disabled(!audio.isSupported)
                     .help(audio.soundEnabled ? "Turn off per-app volume and effects" : "Turn on per-app volume and effects")
             } menu: {
@@ -894,21 +909,9 @@ struct AOMHomeView: View {
     /// (GestureStatistics), captures (CaptureHistory) and copies
     /// (ClipboardStore), for today and each of the last seven days.
     fileprivate func week(now: Date = Date()) -> [WorkspaceDay] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: now)
-        let days = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0 - 6, to: today) }
-        guard let start = days.first else { return [] }
-        func bucket(_ dates: [Date]) -> [Date: Int] {
-            var counts: [Date: Int] = [:]
-            for date in dates where date >= start { counts[calendar.startOfDay(for: date), default: 0] += 1 }
-            return counts
-        }
-        let actions = bucket(stats.events.filter(\.fired).map(\.timestamp))
-        let captures = bucket(history.entries.map(\.capturedAt))
-        let copies = bucket(clipboard.entries.map(\.lastCopiedAt))
-        return days.map { day in
-            WorkspaceDay(date: day, actions: actions[day] ?? 0, captures: captures[day] ?? 0, copies: copies[day] ?? 0)
-        }
+        weekCache.days(actions: activity.value.map(\.timestamp),
+                       captures: history.entries.map(\.capturedAt),
+                       copies: clipboard.entries.map(\.lastCopiedAt), now: now)
     }
 
     private var todayCard: some View {
@@ -930,6 +933,7 @@ struct AOMHomeView: View {
                         .foregroundStyle(AOMColor.textSecondary)
                         .monospacedDigit()
                     WorkspaceWeekChart(days: days)
+                        .equatable()
                         .frame(height: 96)
                 }
             }
@@ -947,7 +951,7 @@ struct AOMHomeView: View {
     fileprivate func recentEvents() -> [WorkspaceActivity] {
         var events: [WorkspaceActivity] = []
         let byInput = Dictionary(triggers.map { ($0.input.displayName, $0) }, uniquingKeysWith: { first, _ in first })
-        for (offset, event) in stats.events.suffix(64).reversed().enumerated() where event.fired {
+        for (offset, event) in activity.value.suffix(Self.recentLimit).reversed().enumerated() {
             let trigger = byInput[event.gesture]
             let title = trigger.map { "Ran “\($0.displayName)”" } ?? "Ran \(event.gesture)"
             var menu: [(String, () -> Void)] = []
@@ -997,7 +1001,7 @@ struct AOMHomeView: View {
     fileprivate var isPaused: Bool { !appState.globalEnabled || suppressionPaused }
     fileprivate var pauseDetail: String? { suppressionDescription }
     fileprivate var isFreshSetup: Bool {
-        !setupSkipped && triggers.isEmpty && history.entries.isEmpty && stats.totalFired == 0
+        !setupSkipped && triggers.isEmpty && history.entries.isEmpty && !hasFired
     }
     fileprivate var moduleOnCount: Int {
         toolsOnCount + AOMModuleStatusBoard.all.filter { $0.isOn == true }.count
@@ -1868,7 +1872,7 @@ private struct WorkspaceFigure: View {
 /// Seven stacked bars (actions, captures, copies), starting at zero with
 /// weekday labels and at most three grid lines (HIG Charts); today's label
 /// is bold. A quiet sentence replaces the empty plot.
-private struct WorkspaceWeekChart: View {
+private struct WorkspaceWeekChart: View, Equatable {
     let days: [WorkspaceDay]
 
     var body: some View {
@@ -1930,8 +1934,6 @@ private struct WorkspaceWeekChart: View {
 private struct WorkspaceSystemCard: View {
     let openTools: () -> Void
     @StateObject private var system = SystemStatusMonitor()
-    @Environment(\.scenePhase) private var scenePhase
-
     var body: some View {
         AOMSectionCard("This Mac", fillsHeight: true, contentPadding: 0, accessory: {
             AOMCardLink("System Tools", action: openTools)
@@ -1967,11 +1969,10 @@ private struct WorkspaceSystemCard: View {
             .padding(.vertical, AOMSpace.x1)
         }
         .accessibilityLabel("This Mac")
-        .onAppear { if scenePhase == .active { system.start() } }
-        .onDisappear { system.stop() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { system.start() } else { system.stop() }
+        .aomOnWindowVisibilityChange { visible in
+            if visible { system.start() } else { system.stop() }
         }
+        .onDisappear { system.stop() }
     }
 }
 

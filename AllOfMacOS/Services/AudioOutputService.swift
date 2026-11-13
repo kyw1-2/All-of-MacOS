@@ -158,10 +158,19 @@ final class AudioOutputService {
     }
 
     static func softwareGain(uid: String) -> Float {
-        guard let device = devices().first(where: { $0.uid == uid }),
-              supportsSoftwareVolume(device.id), volumeProperty(device.id) == nil else { return 1 }
         let value = UserDefaults.standard.object(forKey: "AOMAudioDeviceGain_\(uid)") as? Double ?? 1
-        return value.isFinite ? Float(min(1, max(0, value))) : 1
+        return resolvedSoftwareGain(value) {
+            guard let device = devices().first(where: { $0.uid == uid }) else { return false }
+            return supportsSoftwareVolume(device.id) && volumeProperty(device.id) == nil
+        }
+    }
+
+    /// Unity is the result for every device when no software attenuation is
+    /// configured. Avoid synchronous HAL capability IPC on that common path.
+    static func resolvedSoftwareGain(_ configured: Double, supports: () -> Bool) -> Float {
+        let gain = configured.isFinite ? Float(min(1, max(0, configured))) : 1
+        guard gain != 1 else { return 1 }
+        return supports() ? gain : 1
     }
 
     private var changingVolume = false

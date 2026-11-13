@@ -516,6 +516,7 @@ final class AppAudioEngine {
         errors = errors.filter { livePIDs.contains($0.key) }
         retryAfter = retryAfter.filter { livePIDs.contains($0.key) }
         failedProcessIDs = failedProcessIDs.filter { livePIDs.contains($0.key) }
+        var deviceGains: [String: Float] = [:]
         for app in apps where app.pid > 0 && app.pid != ProcessInfo.processInfo.processIdentifier {
             if let session = sessions[app.pid], session.bundleID != app.bundleID { stop(pid: app.pid) }
             let ids = objectsByOwner[app.pid] ?? []
@@ -604,7 +605,9 @@ final class AppAudioEngine {
                         }
                     }
                 }
-                mixer.deviceGain = AudioOutputService.softwareGain(uid: uid)
+                let deviceGain = deviceGains[uid] ?? AudioOutputService.softwareGain(uid: uid)
+                deviceGains[uid] = deviceGain
+                mixer.deviceGain = deviceGain
                 continue
             }
             guard needsProcessing(app.bundleID) else {
