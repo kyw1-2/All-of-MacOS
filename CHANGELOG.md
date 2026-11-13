@@ -1,3 +1,14 @@
+## [3.4.43] - 2026-11-13
+
+### Performance
+- Window pins (every 0.15 s) and the idle Mission Control probe (every 0.5 s) now read the screen-lock state from a cache updated by the system lock/unlock notifications, with a 3 s re-check; a 3.4.42 sample showed them spending more time in the WindowServer session query than in their own work. Anything that types or acts on input still asks WindowServer directly.
+- Cache the Dock and WindowManager process IDs for the Mission Control probe; a cached pid that exits drops the cache at once. Previously every probe made two LaunchServices round trips.
+- Keep resolved audio-process owners for 30 s instead of 5 s (launch, termination and newly regular apps still clear them), so the fallback that asked LaunchServices once per running app no longer runs every 5 s during playback.
+- Opt-in audio diagnostics write `audio-health.json` at most every 5 s (a counter reset still writes at once) and skip collecting statistics between writes.
+
+### Validation
+- 73 tests passed, including four new cache and throttle regression tests.
+
 ## [3.4.42] - 2026-11-13
 
 ### Performance

@@ -6,8 +6,64 @@ import Carbon
 /// that types — least of all a stored password — may run then.
 enum ScreenLock {
     /// `CGSSessionScreenIsLocked` is present (and true) only while locked.
+    /// A synchronous WindowServer round trip: anything that types or acts on
+    /// input must ask this, never the polling cache.
     static var isLocked: Bool {
         (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+
+    /// For pollers only (window pins at ~7 Hz, the Mission Control probe at
+    /// 2 Hz). 3.4.43: a sample of 3.4.42 showed those two spending more time
+    /// in `CGSessionCopyCurrentDictionary` than in their own work. The lock
+    /// and unlock notifications update the cache at once; the TTL re-asks
+    /// WindowServer in case a notification is missed.
+    static var isLockedForPolling: Bool { pollingCache.value() }
+
+    private static let pollingCache: ScreenLockPollingCache = {
+        let cache = ScreenLockPollingCache(ttl: 3, query: { isLocked })
+        let center = DistributedNotificationCenter.default()
+        for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            _ = center.addObserver(forName: Notification.Name(name), object: nil, queue: nil) { _ in
+                cache.store(locked)
+            }
+        }
+        return cache
+    }()
+}
+
+/// Thread-safe lock state with a short lifetime; pure apart from `query`.
+final class ScreenLockPollingCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private let ttl: TimeInterval
+    private let query: () -> Bool
+    private let now: () -> TimeInterval
+    private var cached: (locked: Bool, at: TimeInterval)?
+
+    init(ttl: TimeInterval, query: @escaping () -> Bool,
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.ttl = ttl
+        self.query = query
+        self.now = now
+    }
+
+    func value() -> Bool {
+        let time = now()
+        lock.lock()
+        if let cached, time - cached.at < ttl { lock.unlock(); return cached.locked }
+        lock.unlock()
+        let locked = query()
+        store(locked, at: time)
+        return locked
+    }
+
+    func store(_ locked: Bool) { store(locked, at: now()) }
+
+    private func store(_ locked: Bool, at time: TimeInterval) {
+        lock.lock()
+        defer { lock.unlock() }
+        // A notification that landed while a query was in flight is newer.
+        if let cached, cached.at > time { return }
+        cached = (locked, time)
     }
 }
 

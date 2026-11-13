@@ -402,7 +402,7 @@ final class AppAudioEngine {
         lastSyncAt = ProcessInfo.processInfo.systemUptime
         defer {
             syncing = false
-            if UserDefaults.standard.bool(forKey: "AOMAudioDiagnostics") {
+            if UserDefaults.standard.bool(forKey: "AOMAudioDiagnostics"), AudioDiagnostics.isWriteDue {
                 let capture = Dictionary(uniqueKeysWithValues: sessions.values.compactMap { session -> (String, [String: Any])? in
                     guard let transport = session.transport else { return nil }
                     var stats = transport.statistics
@@ -445,7 +445,11 @@ final class AppAudioEngine {
         let knownPIDs = Set(appIdentitySnapshot.map(\.pid))
         if playingPIDs.subtracting(knownPIDs).contains(where: {
             NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular
-        }) { appIdentitySnapshotAt = -.infinity }
+        }) {
+            appIdentitySnapshotAt = -.infinity
+            // Its helpers may have been resolved while it was not yet regular.
+            Self.ownerResolutionCache.removeAll(keepingCapacity: true)
+        }
         let apps = runningAudioApps()
         // Nothing playing and nothing captured: enumerating devices and rebinding
         // renderers for an empty session list is pure overhead.
@@ -881,11 +885,16 @@ final class AppAudioEngine {
     /// Resolving an owner scans every running app, and the sweep used to do that
     /// once per process object. Short-lived memoisation keeps the answer stable
     /// within a sweep without changing behaviour when an app really does change.
+    /// 3.4.43: a process's owner is fixed when it starts, and launch, terminate
+    /// and newly regular owners clear the cache, so the TTL is only a backstop.
+    /// At 5 s, every expiry re-ran the fallback, which asks LaunchServices once
+    /// per running app (`-[NSRunningApplication processIdentifier]`).
+    static let ownerResolutionTTL: TimeInterval = 30
     private nonisolated(unsafe) static var ownerResolutionCache: [pid_t: (app: NSRunningApplication?, at: TimeInterval)] = [:]
 
     private static func owner(of object: AudioObjectID, pid: pid_t, lookup: AudioOwnerLookup<NSRunningApplication>, fallback: () -> [AudioOwnerIdentity]) -> NSRunningApplication? {
         let now = ProcessInfo.processInfo.systemUptime
-        if let hit = ownerResolutionCache[pid], now - hit.at < 5 { return hit.app }
+        if let hit = ownerResolutionCache[pid], now - hit.at < ownerResolutionTTL { return hit.app }
         let app = resolveOwner(of: object, pid: pid, lookup: lookup, fallback: fallback)
         if ownerResolutionCache.count > 512 { ownerResolutionCache.removeAll(keepingCapacity: true) }
         ownerResolutionCache[pid] = (app, now)

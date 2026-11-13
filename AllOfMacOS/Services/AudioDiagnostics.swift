@@ -26,9 +26,29 @@ enum AudioDiagnostics {
                                "counters": snapshot.sinceReset]]
     }
 
+    /// 3.4.43: the sync runs every second while audio is captured, and each
+    /// write serialised up to 200 events and replaced the file with an fsync.
+    /// A reset request still writes at once.
+    static let minimumWriteInterval: TimeInterval = 5
+    private nonisolated(unsafe) static var lastWriteAt: TimeInterval = -.infinity
+
+    static func shouldWrite(now: TimeInterval, lastWrite: TimeInterval, resetRequested: Bool) -> Bool {
+        resetRequested || now - lastWrite >= minimumWriteInterval
+    }
+
+    /// Lets the caller skip collecting statistics nobody will write.
+    static var isWriteDue: Bool {
+        shouldWrite(now: ProcessInfo.processInfo.systemUptime, lastWrite: lastWriteAt,
+                    resetRequested: UserDefaults.standard.double(forKey: resetRequestKey) > appliedResetRequest)
+    }
+
     static func write(captures: [String: [String: Any]], outputs: [String: [String: Any]]) {
         let request = UserDefaults.standard.double(forKey: resetRequestKey)
-        if request > appliedResetRequest {
+        let resetRequested = request > appliedResetRequest
+        let now = ProcessInfo.processInfo.systemUptime
+        guard shouldWrite(now: now, lastWrite: lastWriteAt, resetRequested: resetRequested) else { return }
+        lastWriteAt = now
+        if resetRequested {
             appliedResetRequest = request
             AudioEventLog.shared.resetCounters()
         }

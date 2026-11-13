@@ -56,4 +56,51 @@ final class RuntimePerformanceTests: XCTestCase {
         await fulfillment(of: [applied], timeout: 2)
         XCTAssertFalse(poller.inFlight)
     }
+
+    // 3.4.43: pollers share one lock reading; notifications override it.
+    func testScreenLockPollingCacheQueriesOncePerTTLAndTakesNotifications() {
+        var clock: TimeInterval = 100
+        var queries = 0
+        var locked = false
+        let cache = ScreenLockPollingCache(ttl: 3, query: { queries += 1; return locked }, now: { clock })
+        for _ in 0..<20 { XCTAssertFalse(cache.value()) }
+        XCTAssertEqual(queries, 1)
+        cache.store(true)
+        XCTAssertTrue(cache.value())
+        XCTAssertEqual(queries, 1, "a lock notification must apply without a WindowServer call")
+        clock += 3
+        locked = false
+        XCTAssertFalse(cache.value())
+        XCTAssertEqual(queries, 2, "the TTL re-asks in case a notification was missed")
+    }
+
+    func testProcessIDCacheDropsOnExitAndExpires() {
+        var clock: TimeInterval = 0
+        var resolves = 0
+        var alive: Set<pid_t> = [10, 20]
+        let cache = ProcessIDCache(ttl: 15, isAlive: { alive.contains($0) }, now: { clock }) {
+            resolves += 1
+            return Array(alive).sorted()
+        }
+        for _ in 0..<10 { XCTAssertEqual(cache.value(), [10, 20]) }
+        XCTAssertEqual(resolves, 1)
+        alive = [11, 20]  // the Dock restarted
+        XCTAssertEqual(cache.value(), [11, 20])
+        XCTAssertEqual(resolves, 2)
+        clock = 15
+        _ = cache.value()
+        XCTAssertEqual(resolves, 3)
+    }
+
+    func testAudioDiagnosticsWritesAreThrottledUnlessResetIsRequested() {
+        XCTAssertTrue(AudioDiagnostics.shouldWrite(now: 0, lastWrite: -.infinity, resetRequested: false))
+        XCTAssertFalse(AudioDiagnostics.shouldWrite(now: 4.9, lastWrite: 0, resetRequested: false))
+        XCTAssertTrue(AudioDiagnostics.shouldWrite(now: 4.9, lastWrite: 0, resetRequested: true))
+        XCTAssertTrue(AudioDiagnostics.shouldWrite(now: 5, lastWrite: 0, resetRequested: false))
+    }
+
+    @available(macOS 14.2, *)
+    func testOwnerResolutionTTLIsABackstopNotASweepCadence() {
+        XCTAssertGreaterThanOrEqual(AppAudioEngine.ownerResolutionTTL, 30)
+    }
 }

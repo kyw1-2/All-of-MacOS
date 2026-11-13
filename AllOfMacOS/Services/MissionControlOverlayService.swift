@@ -195,7 +195,7 @@ final class MissionControlOverlayService: ObservableObject {
         let requestGeneration = generation
         probeQueue.async { [weak self] in
             // Idle polling must not block event delivery on WindowServer IPC.
-            let snapshot = Snapshot(thumbnails: ScreenLock.isLocked ? nil : MissionControlWindows.liveThumbnails())
+            let snapshot = Snapshot(thumbnails: ScreenLock.isLockedForPolling ? nil : MissionControlWindows.liveThumbnails())
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.probeInFlight = false

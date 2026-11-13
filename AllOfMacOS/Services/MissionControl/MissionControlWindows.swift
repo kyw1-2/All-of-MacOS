@@ -99,7 +99,13 @@ enum MissionControlWindows {
     // MARK: Live (bounded Accessibility)
 
     /// The processes that draw Mission Control: WindowManager (macOS 27), then the Dock.
-    static func ownerPIDs() -> [pid_t] {
+    /// 3.4.43: each lookup was two LaunchServices round trips on every idle
+    /// probe. The Dock and WindowManager live for the whole session; a pid
+    /// that exits (a Dock restart) drops the cache at once, and the TTL picks
+    /// up a process that started later.
+    static func ownerPIDs() -> [pid_t] { ownerPIDCache.value() }
+
+    private static let ownerPIDCache = ProcessIDCache(ttl: 15) {
         ["com.apple.WindowManager", "com.apple.dock"].compactMap {
             NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.processIdentifier
         }
@@ -277,5 +283,40 @@ enum MissionControlWindows {
         let ax = value as! AXValue
         var size = CGSize.zero
         return AXValueGetType(ax) == .cgSize && AXValueGetValue(ax, .cgSize, &size) ? size : nil
+    }
+}
+
+/// Process IDs that stay valid while every one of them is alive; thread-safe.
+final class ProcessIDCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private let ttl: TimeInterval
+    private let resolve: () -> [pid_t]
+    private let isAlive: (pid_t) -> Bool
+    private let now: () -> TimeInterval
+    private var cached: (pids: [pid_t], at: TimeInterval)?
+
+    init(ttl: TimeInterval,
+         isAlive: @escaping (pid_t) -> Bool = { kill($0, 0) == 0 || errno == EPERM },
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         resolve: @escaping () -> [pid_t]) {
+        self.ttl = ttl
+        self.isAlive = isAlive
+        self.now = now
+        self.resolve = resolve
+    }
+
+    func value() -> [pid_t] {
+        let time = now()
+        lock.lock()
+        if let cached, time - cached.at < ttl, cached.pids.allSatisfy(isAlive) {
+            lock.unlock()
+            return cached.pids
+        }
+        lock.unlock()
+        let pids = resolve()
+        lock.lock()
+        cached = (pids, time)
+        lock.unlock()
+        return pids
     }
 }
