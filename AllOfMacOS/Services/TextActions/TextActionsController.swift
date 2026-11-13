@@ -57,6 +57,7 @@ final class TextActionsController {
     private var anchorBox: TextSelectionAnchorBox?
     private var cancellables: Set<AnyCancellable> = []
     private var observers: [NSObjectProtocol] = []
+    private var gateObservation: NSKeyValueObservation?
     private var automationOn = AutomationGate.isOn
 
     init(preferences: TextActionsPreferences? = nil) {
@@ -89,14 +90,11 @@ final class TextActionsController {
             }
             .store(in: &cancellables)
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: UserDefaults.didChangeNotification, object: UserDefaults.standard,
-                                            queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, AutomationGate.isOn != self.automationOn else { return }
-                self.automationOn = AutomationGate.isOn
-                self.environmentChanged()
-            }
-        })
+        gateObservation = AutomationGate.observe { [weak self] in
+            guard let self, AutomationGate.isOn != self.automationOn else { return }
+            self.automationOn = AutomationGate.isOn
+            self.environmentChanged()
+        }
         for name in [PermissionWatchdog.accessibilityLost, PermissionWatchdog.accessibilityRecovered] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.environmentChanged() }

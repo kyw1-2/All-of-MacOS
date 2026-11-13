@@ -87,12 +87,13 @@ final class MissionControlOverlayService: ObservableObject {
     private var suspensions: Set<Suspension> = []
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var spaceObserver: NSObjectProtocol?
-    private var fastUntil: Date = .distantPast
+    /// Monotonic (`systemUptime`): a wall-clock jump must not stretch or skip a burst.
+    private var fastUntil: TimeInterval = 0
 
     static func pollInterval(burst: Bool) -> TimeInterval { burst ? burstInterval : idleInterval }
 
     private var currentInterval: TimeInterval {
-        Date() < fastUntil ? Self.burstInterval : Self.idleInterval
+        ProcessInfo.processInfo.systemUptime < fastUntil ? Self.burstInterval : Self.idleInterval
     }
 
     func start() {
@@ -133,7 +134,7 @@ final class MissionControlOverlayService: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.pollTimer != nil else { return }
-                self.fastUntil = Date().addingTimeInterval(Self.burstDuration)
+                self.fastUntil = ProcessInfo.processInfo.systemUptime + Self.burstDuration
                 if abs(self.currentInterval - (self.pollTimer?.timeInterval ?? 0)) > 0.01 {
                     self.scheduleTimer()
                 }
@@ -162,7 +163,7 @@ final class MissionControlOverlayService: ObservableObject {
         if suspended { suspensions.insert(reason) } else { suspensions.remove(reason) }
         guard isStarted else { return }
         generation += 1
-        if !suspensions.isEmpty { fastUntil = .distantPast; teardown() }
+        if !suspensions.isEmpty { fastUntil = 0; teardown() }
         scheduleTimer()
     }
 
@@ -177,7 +178,7 @@ final class MissionControlOverlayService: ObservableObject {
             DistributedNotificationCenter.default().removeObserver(spaceObserver)
             self.spaceObserver = nil
         }
-        fastUntil = .distantPast
+        fastUntil = 0
         generation += 1
         teardown()
     }

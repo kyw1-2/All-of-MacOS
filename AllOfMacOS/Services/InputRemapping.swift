@@ -178,7 +178,20 @@ enum InputRemapSettings {
 final class InputRemapService {
     static let shared = InputRemapService()
     private let queue = DispatchQueue(label: "com.kyw.allofmacos.key-remap")
+    private let runHidutil: ([String]) -> String?
+    private let loadOwned: () -> [HIDMappingPair]
+    private let saveOwned: ([HIDMappingPair]) -> Void
     private(set) var lastError: String?
+
+    /// The hidutil runner and the owned-pairs store are injectable so the
+    /// quit path can be tested without touching the real HID mapping.
+    init(hidutil: @escaping ([String]) -> String? = InputRemapService.hidutil,
+         loadOwned: @escaping () -> [HIDMappingPair] = { InputRemapSettings.ownedPairs },
+         saveOwned: @escaping ([HIDMappingPair]) -> Void = { InputRemapSettings.ownedPairs = $0 }) {
+        self.runHidutil = hidutil
+        self.loadOwned = loadOwned
+        self.saveOwned = saveOwned
+    }
 
     /// Launch, settings change, wake. Does nothing at all for a user who never
     /// turned remapping on and has nothing left over from an earlier run.
@@ -187,7 +200,7 @@ final class InputRemapService {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
         let desired = HIDKeyMapping.desired(remaps: InputRemapSettings.remaps,
                                             hyperSource: InputRemapSettings.hyperEnabled ? InputRemapSettings.hyperSource : nil)
-        let owned = InputRemapSettings.ownedPairs
+        let owned = loadOwned()
         let hyper = InputRemapSettings.hyperEnabled
         let escape = InputRemapSettings.hyperTapEscape
         let wheel = InputRemapSettings.reverseMouseWheel
@@ -202,34 +215,57 @@ final class InputRemapService {
             PointerAcceleration.shared.setEnabled(linear)
         }
         guard !desired.isEmpty || !owned.isEmpty else { return }
-        queue.async { self.write(desired: desired, owned: owned) }
+        queue.async { if self.write(desired: desired, owned: owned) { self.saveOwned(desired) } }
     }
 
     /// Quit: give back exactly the pairs AOM owns; other mappings stay.
     func removeOwnedMappingsNow() {
         guard !PresetManager.isUIPreview, !PresetManager.isRunningTests else { return }
-        let owned = InputRemapSettings.ownedPairs
         HyperKeyTap.shared.setEnabled(false, tapEscape: false)
         ScrollWheelReverser.shared.stopAll()
         MouseWheelInterceptor.shared.stop()
         PointerAcceleration.shared.setEnabled(false)
-        guard !owned.isEmpty else { return }
-        queue.sync { self.write(desired: [], owned: owned) }
+        giveBackOwnedMappings()
     }
 
-    private func write(desired: [HIDMappingPair], owned: [HIDMappingPair]) {
-        guard let current = Self.hidutil(["property", "--get", "UserKeyMapping"]) else {
-            lastError = "hidutil could not read the current key mapping."; return
+    /// 3.4.44: the quit path used to run `queue.sync { write }`, and `write`
+    /// stored the owned pairs with `UserDefaults.set` on that queue. The set
+    /// posts `didChangeNotification` to `queue: .main` observers, which wait
+    /// for the main thread the caller was blocking: the 3.4.42 quit hang
+    /// again, for anyone with a key remap. Now only hidutil runs on the queue,
+    /// the caller stores the result, and the wait is bounded.
+    @discardableResult
+    func giveBackOwnedMappings(timeout: TimeInterval = 3) -> Bool {
+        let owned = loadOwned()
+        guard !owned.isEmpty else { return true }
+        let finished = DispatchSemaphore(value: 0)
+        let succeeded = RemapFlag()
+        queue.async {
+            succeeded.value = self.write(desired: [], owned: owned)
+            finished.signal()
+        }
+        guard finished.wait(timeout: .now() + timeout) == .success else {
+            NSLog("[AOM] Key remap give-back did not finish within %.1f s", timeout)
+            return false
+        }
+        if succeeded.value { saveOwned([]) }
+        return succeeded.value
+    }
+
+    /// Runs hidutil only; storing the owned pairs is the caller's job.
+    private func write(desired: [HIDMappingPair], owned: [HIDMappingPair]) -> Bool {
+        guard let current = runHidutil(["property", "--get", "UserKeyMapping"]) else {
+            lastError = "hidutil could not read the current key mapping."; return false
         }
         let merged = HIDKeyMapping.merged(current: HIDKeyMapping.parse(current), previouslyOwned: owned, desired: desired)
-        guard Self.hidutil(["property", "--set", HIDKeyMapping.json(merged)]) != nil else {
-            lastError = "hidutil could not apply the key mapping."; return
+        guard runHidutil(["property", "--set", HIDKeyMapping.json(merged)]) != nil else {
+            lastError = "hidutil could not apply the key mapping."; return false
         }
         lastError = nil
-        InputRemapSettings.ownedPairs = desired
+        return true
     }
 
-    private static func hidutil(_ arguments: [String]) -> String? {
+    static func hidutil(_ arguments: [String]) -> String? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
         task.arguments = arguments
@@ -240,6 +276,15 @@ final class InputRemapService {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         return task.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }
+}
+
+private final class RemapFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
     }
 }
 

@@ -92,7 +92,9 @@ final class SecureInputHotKeys {
     private let handle: (KeyboardShortcut, Bool) -> Void
     private let cancel: () -> Void
     private var timer: Timer?
+    private var activation: NSObjectProtocol?
     private var handler: EventHandlerRef?
+    static let pollInterval: TimeInterval = 0.5
     private var registrations: [UInt32: Registration] = [:]
     private var requested = Set<KeyboardShortcut>()
     private var held = Set<UInt32>()
@@ -158,8 +160,15 @@ final class SecureInputHotKeys {
         }, types.count, &types, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard status == noErr else { return }
         refresh()
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in self?.refresh() }
-        timer.tolerance = 0.05
+        // 3.4.44: an app switch refreshes at once; the timer now only notices
+        // secure input turning on inside the same app (a password field
+        // taking focus), so it runs at 2 Hz instead of 4 Hz.
+        activation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.refresh()
+            }
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in self?.refresh() }
+        timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -225,6 +234,7 @@ final class SecureInputHotKeys {
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation); self.activation = nil }
         unregister()
         held.removeAll()
         if let handler { RemoveEventHandler(handler); self.handler = nil }

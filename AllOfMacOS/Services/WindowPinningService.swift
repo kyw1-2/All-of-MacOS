@@ -22,11 +22,12 @@ final class WindowPinningService: NSObject, ObservableObject {
     private let snapshotPoller = WindowPinSnapshotPoller<WindowPinSnapshot>()
     private var observers: [NSObjectProtocol] = []
     private var activePinID: CGWindowID?
-    private var activationDeadline = Date.distantPast
+    /// Monotonic (`systemUptime`): a wall-clock change must not move these deadlines.
+    private var activationDeadline: TimeInterval = 0
     private var pendingIDs = Set<CGWindowID>()
     private var epoch = 0
     private var sleeping = false
-    private var spaceTransitionUntil = Date.distantPast
+    private var spaceTransitionUntil: TimeInterval = 0
     private var selection: SelectionOverlayController?
 
     nonisolated static let actionTypes: Set<ActionType> = [.showPinnedWindowPicker, .selectWindowToPin,
@@ -210,7 +211,7 @@ final class WindowPinningService: NSObject, ObservableObject {
             report("The source window could not be activated."); return
         }
         activePinID = pin.id
-        activationDeadline = Date().addingTimeInterval(0.5)
+        activationDeadline = ProcessInfo.processInfo.systemUptime + 0.5
         pin.wasMouseInside = true
         pin.update(frame: pin.frame, options: options, visible: true, interacting: true, ducked: false)
         tick()
@@ -319,7 +320,7 @@ final class WindowPinningService: NSObject, ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.activePinID = nil
-                self.spaceTransitionUntil = Date().addingTimeInterval(0.5)
+                self.spaceTransitionUntil = ProcessInfo.processInfo.systemUptime + 0.5
                 self.tick()
             }
         })
@@ -335,14 +336,14 @@ final class WindowPinningService: NSObject, ObservableObject {
 
     private func tick() {
         guard !pins.isEmpty else { return }
-        guard !sleeping, Date() >= spaceTransitionUntil else {
+        guard !sleeping, ProcessInfo.processInfo.systemUptime >= spaceTransitionUntil else {
             snapshotPoller.invalidate()
             hidePins()
             return
         }
         let ids = Set(pins.map(\.id))
         snapshotPoller.request(read: { WindowPinSnapshot.read(ids) }) { [weak self] snapshot in
-            guard let self, !self.pins.isEmpty, !self.sleeping, Date() >= self.spaceTransitionUntil else { return }
+            guard let self, !self.pins.isEmpty, !self.sleeping, ProcessInfo.processInfo.systemUptime >= self.spaceTransitionUntil else { return }
             self.apply(snapshot)
         }
     }
@@ -362,7 +363,7 @@ final class WindowPinningService: NSObject, ObservableObject {
             let focused = WindowManager.shared.captureTarget(pid: active.target.pid)
             let lostFocus = NSWorkspace.shared.frontmostApplication?.processIdentifier != active.target.pid ||
                 (focused.map { !CFEqual($0.window, active.target.window) } ?? true)
-            if !active.frame.contains(mouse) || (Date() > activationDeadline && lostFocus) { activePinID = nil }
+            if !active.frame.contains(mouse) || (ProcessInfo.processInfo.systemUptime > activationDeadline && lostFocus) { activePinID = nil }
         }
         let activeFrame = pins.first(where: { $0.id == activePinID })?.frame
         for pin in pins {

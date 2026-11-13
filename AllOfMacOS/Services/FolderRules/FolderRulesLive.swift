@@ -31,9 +31,17 @@ enum FolderRulesLive {
                 done.signal()
             }
         }
-        if Thread.isMainThread { return true }
+        // Main cannot wait for the completion: it may need main, and a 30 s
+        // stall is worse. 3.4.44: instead of reporting success blindly, check
+        // that the app is still there to open the file with.
+        if Thread.isMainThread { return isLaunchableApp(app) }
         guard done.wait(timeout: .now() + 30) == .success else { return false }
         return opened.value
+    }
+
+    static func isLaunchableApp(_ app: URL) -> Bool {
+        guard let bundle = Bundle(url: app) else { return false }
+        return bundle.bundleIdentifier != nil && bundle.executableURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true
     }
 
     static func isRunning(_ app: URL) -> Bool {

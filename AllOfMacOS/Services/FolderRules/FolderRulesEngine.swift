@@ -70,6 +70,7 @@ final class FolderRulesEngine: ObservableObject {
     private var deferredWhilePaused = false
     private var lastGate = true
     private var observers: [NSObjectProtocol] = []
+    private var gateObservation: NSKeyValueObservation?
     private var cancellables: Set<AnyCancellable> = []
     private var configSave: DispatchWorkItem?
 
@@ -100,10 +101,7 @@ final class FolderRulesEngine: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.gateMayHaveChanged() } }
             .store(in: &cancellables)
-        observers.append(NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
-                                                                queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.gateMayHaveChanged() }
-        })
+        gateObservation = AutomationGate.observe { [weak self] in self?.gateMayHaveChanged() }
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil,
                                                                           queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.schedulePass(nil, after: 10) }

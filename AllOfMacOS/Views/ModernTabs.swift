@@ -137,18 +137,42 @@ final class AOMScrollChromePolicy {
 
     func start() {
         guard notificationTokens.isEmpty else { return }
-        for name in [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResizeNotification] {
             notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 let window = note.object as? NSWindow
                 MainActor.assumeIsolated {
-                    // Per-event updates only matter for the window being used;
-                    // background windows refresh when they become key again.
-                    guard let window, name != NSWindow.didUpdateNotification || window.isKeyWindow else { return }
-                    self?.scheduleRefresh(window)
+                    guard let self, let window else { return }
+                    if name == NSWindow.didBecomeKeyNotification { self.followUpdates(of: window) }
+                    self.scheduleRefresh(window)
                 }
             })
         }
+        if let key = NSApp.keyWindow { followUpdates(of: key) }
         for window in NSApp.windows where Self.isManaged(window) { refresh(window) }
+    }
+
+    /// Per-event updates only matter for the window being used; background
+    /// windows refresh when they become key again. 3.4.44: `didUpdate` is
+    /// observed for the managed key window alone instead of every window, so
+    /// events in panels and HUDs no longer run this block at all.
+    private var updateToken: NSObjectProtocol?
+    private weak var updateWindow: NSWindow?
+
+    private func followUpdates(of window: NSWindow) {
+        let target: NSWindow? = Self.isManaged(window) ? window : nil
+        guard target !== updateWindow || (target != nil && updateToken == nil) else { return }
+        if let updateToken { NotificationCenter.default.removeObserver(updateToken) }
+        updateToken = nil
+        updateWindow = target
+        guard let target else { return }
+        updateToken = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification, object: target,
+                                                             queue: .main) { [weak self] note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                guard let window, window.isKeyWindow else { return }
+                self?.scheduleRefresh(window)
+            }
+        }
     }
 
     /// Titled app windows only. Floating, non-activating panels (clipboard

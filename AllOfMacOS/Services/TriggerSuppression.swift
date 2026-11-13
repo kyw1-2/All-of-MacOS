@@ -48,6 +48,24 @@ enum AutomationGate {
     }
 }
 
+extension UserDefaults {
+    /// KVO handle for `AutomationGate.masterSwitchKey`; the name must equal the key.
+    @objc dynamic var AOMGlobalEnabled: Bool { AutomationGate.isOn(self) }
+}
+
+extension AutomationGate {
+    /// Calls `change` on main, asynchronously, when the master switch is written.
+    /// 3.4.44: replaces `UserDefaults.didChangeNotification` observers on
+    /// `queue: .main`, which woke on every defaults write in the app and made
+    /// any background writer wait for the main thread (the 3.4.42 quit hang).
+    static func observe(_ defaults: UserDefaults = .standard,
+                        change: @escaping @MainActor () -> Void) -> NSKeyValueObservation {
+        defaults.observe(\.AOMGlobalEnabled, options: []) { _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { change() } }
+        }
+    }
+}
+
 /// Persisted suppression options (AOM counterpart of BTT's General →
 /// "Disable BetterTouchTool while holding …" and Trackpad → "Disable trackpad
 /// gestures after hitting a keyboard key").

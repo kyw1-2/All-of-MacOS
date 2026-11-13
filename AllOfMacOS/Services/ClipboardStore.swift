@@ -311,11 +311,13 @@ final class ClipboardStore: ObservableObject {
         schedulePolling()
     }
 
-    /// How often the pasteboard is sampled: every 75 ms while the history
+    /// How often the pasteboard is sampled: every 150 ms while the history
     /// records, once a minute (the retention trim) while it is off or
     /// paused. 3.4.0 audit: with Clipboard History off or paused the store
-    /// still woke 13 times a second, for nothing it would keep.
-    static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.075 : 60 }
+    /// still woke 13 times a second, for nothing it would keep. 3.4.44: the
+    /// recording rate halves too (75 → 150 ms); each sample is a pasteboard
+    /// server round trip, and 150 ms is still shorter than a copy-then-open.
+    static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.15 : 60 }
 
     /// The running poller's interval; nil while stopped (tests).
     var pollingInterval: TimeInterval? { timer?.timeInterval }

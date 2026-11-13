@@ -19,6 +19,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kyw.allofmacos
+        # Not the app version: SwiftPM builds and every release script read
+        # CFBundleShortVersionString from AllOfMacOS/App/Info.plist.
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         INFOPLIST_FILE: AllOfMacOS/App/Info.plist

@@ -1,3 +1,20 @@
+## [3.4.44] - 2026-11-14
+
+### Fixed
+- **Quit could still hang with a key remap**: giving back AOM's hidutil pairs at quit ran `queue.sync` on main while that queue stored the owned pairs with `UserDefaults.set`, whose change notification waited for `queue: .main` observers (the 3.4.42 hang shape). hidutil now runs on the queue, main stores the result afterwards, and the wait is capped at 3 s; on timeout the owned pairs stay recorded for the next launch.
+- Folder Rules "open with app" no longer reports success on the main thread when the app is missing or not launchable.
+- Window pins and the Mission Control burst use monotonic time, so a wall-clock jump no longer stretches or skips their 0.5 s windows.
+
+### Performance
+- Folder Rules and Text Actions observe only the master switch (key-value observation, delivered to main asynchronously) instead of every `UserDefaults` write in the app.
+- Secure-input hot keys refresh on app activation and poll at 2 Hz instead of 4 Hz.
+- Clipboard History samples the pasteboard every 150 ms instead of 75 ms while recording.
+- The scroll-chrome policy observes `didUpdate` for the managed key window only.
+- The launch-time preset backup is written on the persistence queue instead of the main thread.
+
+### Validation
+- 79 tests passed (74 existing, 5 new: key-remap give-back on main and bounded, master-switch observation, poller budgets, Folder Rules missing app). Live checks still needed: quit with a key remap, idle CPU sample before and after.
+
 ## [3.4.43] - 2026-11-13
 
 ### Fixed

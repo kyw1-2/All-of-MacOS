@@ -40,6 +40,90 @@ final class MainWindowResponsivenessTests: XCTestCase {
         XCTAssertEqual(GestureStatistics(defaults: defaults).totalFired, 2)
     }
 
+    /// 3.4.44: the key-remap give-back at quit stored the owned pairs with
+    /// `UserDefaults.set` on its own queue while main waited in `queue.sync`,
+    /// the same shape as the 3.4.42 hang. The store must now run on main,
+    /// after hidutil, with a `queue: .main` defaults observer present.
+    func testKeyRemapGiveBackStoresOnMainWithMainQueueObserver() throws {
+        let suite = "com.kyw.allofmacos.tests.remap.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var changes = 0
+        let observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
+                                                              object: defaults, queue: .main) { _ in changes += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        var owned = [HIDKeyMapping.pair(0x39, 0x6D)]
+        var storedOnMain = true
+        var calls: [String] = []
+        let service = InputRemapService(hidutil: { arguments in
+            calls.append(arguments[1]); return arguments[1] == "--get" ? "" : "ok"
+        }, loadOwned: { owned }, saveOwned: { pairs in
+            storedOnMain = storedOnMain && Thread.isMainThread
+            owned = pairs
+            defaults.set(try? JSONEncoder().encode(pairs), forKey: "AOMKeyRemapOwnedPairs")
+        })
+        let started = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(service.giveBackOwnedMappings(timeout: 2))
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 1)
+        XCTAssertTrue(storedOnMain)
+        XCTAssertEqual(owned, [])
+        XCTAssertEqual(calls, ["--get", "--set"])
+        XCTAssertGreaterThan(changes, 0)
+    }
+
+    /// A hidutil that never returns must not keep Quit waiting, and the owned
+    /// pairs stay recorded so the next launch can still take them back.
+    func testKeyRemapGiveBackIsBoundedAndKeepsOwnedPairsOnTimeout() {
+        let pairs = [HIDKeyMapping.pair(0x39, 0x6D)]
+        var owned = pairs
+        let service = InputRemapService(hidutil: { _ in Thread.sleep(forTimeInterval: 1); return "" },
+                                        loadOwned: { owned }, saveOwned: { owned = $0 })
+        let started = ProcessInfo.processInfo.systemUptime
+        XCTAssertFalse(service.giveBackOwnedMappings(timeout: 0.2))
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 0.8)
+        XCTAssertEqual(owned, pairs)
+    }
+
+    /// 3.4.44: idle wake-up budgets for the two always-on pollers.
+    func testAlwaysOnPollersStayWithinWakeBudget() {
+        XCTAssertGreaterThanOrEqual(ClipboardStore.pollInterval(recording: true), 0.15)
+        XCTAssertLessThanOrEqual(ClipboardStore.pollInterval(recording: true), 0.2)
+        XCTAssertEqual(ClipboardStore.pollInterval(recording: false), 60)
+        XCTAssertGreaterThanOrEqual(SecureInputHotKeys.pollInterval, 0.5)
+    }
+
+    /// 3.4.44: the master-switch observation fires for its own key only and
+    /// delivers on main asynchronously, so a background writer never waits.
+    func testAutomationGateObservationIgnoresOtherKeysAndDeliversOnMain() throws {
+        let suite = "com.kyw.allofmacos.tests.gate.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var calls = 0
+        var onMain = true
+        let observation = AutomationGate.observe(defaults) { calls += 1; onMain = onMain && Thread.isMainThread }
+        defer { observation.invalidate() }
+        let written = expectation(description: "background write returns")
+        DispatchQueue.global().async {
+            defaults.set(1, forKey: "AOMUnrelatedKey")
+            defaults.set(false, forKey: AutomationGate.masterSwitchKey)
+            written.fulfill()
+        }
+        wait(for: [written], timeout: 1)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(onMain)
+    }
+
+    /// 3.4.44: opening with a missing app on the main thread used to report success.
+    func testFolderRulesOpenWithMissingAppFailsOnMain() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("aom-open-\(UUID().uuidString).txt")
+        try Data("x".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let missing = URL(fileURLWithPath: "/Applications/AOM Missing \(UUID().uuidString).app")
+        XCTAssertFalse(FolderRulesLive.open(file, with: missing))
+        XCTAssertTrue(FolderRulesLive.isLaunchableApp(URL(fileURLWithPath: "/System/Applications/TextEdit.app")))
+    }
+
     func testDetectionBurstDoesNotInvalidateDashboardButFireAndEvictionDo() {
         let stats = GestureStatistics(defaults: nil)
         let projection = WorkspaceValueProjection(statistics: stats)

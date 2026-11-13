@@ -106,7 +106,7 @@ class AppState: ObservableObject {
         }
         // Create a backup on startup so there's always a recent copy
         if preset.triggers.count > 0 {
-            presetManager.save(preset)
+            presetManager.saveInBackground(preset)
         }
         // Isolated UI previews can open on a given page (`--aom-preview-tab <1-12>`,
         // sidebar order), so screens are reviewed without driving the window with key events.

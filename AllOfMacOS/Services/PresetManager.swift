@@ -786,6 +786,22 @@ class PresetManager {
         persistenceQueue.sync { persist(preset, createBackup: createBackup) }
     }
 
+    /// The same write as `save`, queued on the serial persistence worker so
+    /// the caller does not wait for encoding, SQLite and the rolling backup.
+    /// Order with later saves and flushes is kept by the serial queue.
+    /// 3.4.44: launch used `save` on the main thread for its startup backup.
+    func saveInBackground(_ preset: Preset, createBackup: Bool = true) {
+        pendingLock.lock()
+        let pending = pendingSave
+        pendingSave = nil
+        saveGeneration += 1
+        pendingLock.unlock()
+        persistenceQueue.async { [self] in
+            if let pending { persist(pending.preset, createBackup: pending.backup) }
+            persist(preset, createBackup: createBackup)
+        }
+    }
+
     /// The last save failure, cleared by the next successful save; read by
     /// callers that must not report "saved" for a write that failed.
     private let persistErrorLock = NSLock()
