@@ -225,7 +225,7 @@ struct AOMListDetail<ListContent: View, Detail: View, InspectorContent: View>: V
             detail
                 .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
     }
 }
 
@@ -322,7 +322,7 @@ struct AOMInspector<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .controlSize(.small)
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
     }
 }
 
@@ -683,16 +683,20 @@ struct AOMStatusHeader<Actions: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: AOMSpace.x4) {
-            ZStack {
-                if let progress {
+            // The ring only while something is in progress (a Focus
+            // session); otherwise the big figure stands alone.
+            if let progress {
+                ZStack {
                     AOMProgressRing(progress: progress, tint: active ? module.hue : AOMColor.paused,
                                     label: "\(title) progress")
-                        .frame(width: AOMIcon.statusRing, height: AOMIcon.statusRing)
+                    Image(systemName: module.symbol)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
+                        .symbolEffect(.pulse, options: .repeating, isActive: active && !reduceMotion)
+                        .accessibilityHidden(true)
                 }
-                AOMModuleBadge(module, size: AOMIcon.statusBadge, active: active)
-                    .symbolEffect(.pulse, options: .repeating, isActive: active && progress != nil && !reduceMotion)
+                .frame(width: AOMIcon.statusRing, height: AOMIcon.statusRing)
             }
-            .frame(width: AOMIcon.statusRing, height: AOMIcon.statusRing)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(spacing: AOMSpace.x2) {
                     Text(title)
@@ -729,7 +733,7 @@ struct AOMStatusHeader<Actions: View>: View {
                 .controlSize(.large)
                 .fixedSize()
         }
-        .frame(minHeight: AOMIcon.statusRing + AOMSpace.x2)
+        .frame(minHeight: progress == nil ? nil : AOMIcon.statusRing + AOMSpace.x2)
         .accessibilityElement(children: .contain)
     }
 }
@@ -1014,8 +1018,8 @@ struct AOMTipCard: View {
                 }
             }
             .padding(AOMSpace.x3)
-            .background(AOMColor.accent.opacity(contrast == .increased ? 0.14 : 0.07), in: shape)
-            .overlay { shape.strokeBorder(AOMColor.accent.opacity(contrast == .increased ? 0.8 : 0.22), lineWidth: contrast == .increased ? 1 : 0.5) }
+            .background(AOMColor.surface, in: shape)
+            .overlay { if contrast == .increased { shape.strokeBorder(AOMColor.accent.opacity(0.8), lineWidth: 1) } }
             .transition(.opacity)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Tip: \(title)")

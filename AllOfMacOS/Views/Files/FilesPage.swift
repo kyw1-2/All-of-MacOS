@@ -12,7 +12,7 @@ struct FilesPage: View {
     @StateObject private var toast = AOMToastModel()
     @StateObject private var tools = FileToolsModel()
     @AppStorage("AOMDiskImageTrashOnSuccess") private var trashInstalledDMG = false
-    @State private var accessibilityTrusted = AXIsProcessTrusted()
+    @State private var accessibilityTrusted = AOMPermissionCache.accessibilityTrusted
     @State private var finderPermission: FilesFinder.Permission?
     @State private var quickLookURL: URL?
     @State private var quickLookItems: [URL] = []
@@ -23,7 +23,7 @@ struct FilesPage: View {
 
     var body: some View {
         AOMPage {
-            AOMPageHeader("Files", module: .files, subtitle: AOMMainTab.files.subtitle,
+            AOMPageHeader("Files", subtitle: AOMMainTab.files.subtitle,
                           status: isOn ? AOMStatus("On", tone: .success) : AOMStatus("Off", tone: .neutral),
                           help: "Files puts folders one click away in every Open and Save dialog, holds dragged files on a shelf while you switch apps, and lists the newest downloads and screenshots.",
                           active: isOn) {

@@ -40,7 +40,7 @@ struct SystemToolsView: View {
 
     var body: some View {
         AOMPage {
-            AOMPageHeader("System Tools", module: .systemTools, subtitle: subtitle)
+            AOMPageHeader("System Tools", subtitle: subtitle)
                 .help(model.lastResult?.message ?? "")
             if showsStrip {
                 VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
@@ -140,8 +140,8 @@ struct SystemToolsView: View {
     // MARK: - Pieces
 
     private func grid(_ tools: [SystemToolInfo]) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.tileMinimumWidth), spacing: AOMSpace.tileGap)],
-                  alignment: .leading, spacing: AOMSpace.tileGap) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: Self.tileMinimumWidth), spacing: AOMSpace.x1)],
+                  alignment: .leading, spacing: 0) {
             ForEach(tools) { info in
                 SystemToolTile(info: info, state: model.states[info.id], isRunning: model.running.contains(info.id),
                                isFavorite: model.isFavorite(info.id), run: { model.run(info.id) },
@@ -149,6 +149,8 @@ struct SystemToolsView: View {
                                dropApp: info.id == .uninstall ? { model.reviewUninstall($0) } : nil)
             }
         }
+        .padding(AOMSpace.x1)
+        .aomCard(padding: 0)
     }
 
     private func toggleGrid(_ tools: [SystemToolInfo]) -> some View {

@@ -91,8 +91,10 @@ enum AOMSize {
     /// Workspace module tiles: three columns from 3 × 240 + 2 × 12 pt.
     static let tileMin: CGFloat = 240
     static let tileMax: CGFloat = 420
-    /// A Workspace tile: the squircle row (name over status) and the count line.
-    static let tileHeight: CGFloat = 116
+    /// A Workspace module row: name over status beside the figure and switch.
+    static let moduleRowHeight: CGFloat = 52
+    /// A text or link preview in the clipboard detail pane.
+    static let textPreviewMinHeight: CGFloat = 116
     /// The ⌘K palette.
     static let paletteWidth: CGFloat = 600
     /// Inline help popover width.
@@ -109,12 +111,13 @@ enum AOMSize {
         CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
 
     // New names only; the values above stay.
-    /// Workspace module tiles: three per row from 3 × 224 + 2 × 12 = 696 pt,
-    /// so a 1000 pt window still shows three columns.
-    static let moduleTileMin: CGFloat = 224
-    /// Quick-action tiles: five per row down to a 700 pt column; the tile
-    /// stacks its glyph over the name when the row is narrow.
+    /// The ⌘K palette's empty-state column.
     static let quickActionMin: CGFloat = 132
+    /// Workspace quick actions: a round glass button over its name.
+    static let quickActionButton: CGFloat = 48
+    static let quickActionCell: CGFloat = 92
+    /// A capture mode button's round glass face.
+    static let modeButton: CGFloat = 40
     /// A section title row: a 20 pt ⓘ or link with 1 pt above and below.
     static let sectionTitleHeight: CGFloat = AOMIcon.row + 2
     /// List + detail pages (Folder Rules, Text Actions, Files): the list
@@ -146,6 +149,9 @@ enum AOMFont {
     static let heroSentence = Font.title2.weight(.semibold)
     /// Title 3 (15) semibold: onboarding steps, editor and sheet titles.
     static let title = Font.title3.weight(.semibold)
+    /// Title (22) bold: the page header's status sentence and the Workspace
+    /// header — the one large line on a page.
+    static let pageTitle = Font.title.weight(.bold)
     /// Title 3 (15) semibold: the module page header sentence.
     static let pageStatus = Font.title3.weight(.semibold)
     /// Headline (13 bold): section titles ("Needs attention", "Rules").
@@ -183,13 +189,13 @@ enum AOMRadius {
     /// Keycaps, tiny chips.
     static let keycap: CGFloat = 5
     /// Thumbnails and wells inside cards; minimum concentric radius.
-    static let control: CGFloat = 6
-    /// Layout diagrams and previews inside cards, row hover and selection fills.
-    static let well: CGFloat = 8
-    /// Cards, Workspace tiles, section groups.
-    static let card: CGFloat = 12
-    /// ⌘K palette, large HUDs, quick-access overlay, floating panels.
-    static let panel: CGFloat = 18
+    static let control: CGFloat = 7
+    /// Layout diagrams and previews inside panes, row hover and selection fills.
+    static let well: CGFloat = 10
+    /// Panes (groups of rows), section groups.
+    static let card: CGFloat = 16
+    /// ⌘K palette, the Workspace glass header, large HUDs, floating panels.
+    static let panel: CGFloat = 22
 
     /// HUDs, toasts and the recording bar (was 16).
     static let hud = panel
@@ -221,18 +227,23 @@ enum AOMColor {
     /// #1E1E1E dark), the grouped-content canvas of System Settings.
     static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1),
                                          dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1))
-    /// Cards, tiles, section groups: white (#FFFFFF) in light mode, #2A2A2A in
-    /// dark mode — one step above the canvas, never a coloured tint.
-    static let surface = Color.aomDynamic(light: .white,
-                                          dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
+    /// Main-window pages: clear, so the window's glass backdrop
+    /// (`AOMWorkspaceBackground`) shows through. Sheets and panels keep the
+    /// opaque `canvas`.
+    static let pageBackground = Color.clear
+    /// Groups of rows and content blocks: a frosted pane over the glass
+    /// backdrop — translucent white in light mode, a faint lift in dark mode —
+    /// with no edge. Over an opaque sheet it reads as a lighter surface.
+    static let surface = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.62),
+                                          dark: NSColor(white: 1, alpha: 0.075),
                                           highContrastLight: .white,
                                           highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
-    /// A card under the pointer: the fill shifts one small step.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.980, green: 0.980, blue: 0.984, alpha: 1),
-                                               dark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
-    /// Pressed tiles and cards.
-    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.945, blue: 0.953, alpha: 1),
-                                                 dark: NSColor(srgbRed: 0.220, green: 0.220, blue: 0.220, alpha: 1))
+    /// A pane under the pointer.
+    static let surfaceHover = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.80),
+                                               dark: NSColor(white: 1, alpha: 0.11))
+    /// Pressed panes.
+    static let surfacePressed = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.45),
+                                                 dark: NSColor(white: 1, alpha: 0.05))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.

@@ -163,7 +163,7 @@ struct StatisticsView: View {
         }
         var context = ["Counting since \(stats.sessionStart.formatted(date: .abbreviated, time: .omitted))"]
         if figures.detected > 0 { context.append("\(figures.matchRate) of inputs ran an automation") }
-        return AOMPageHeader(title, symbol: "chart.bar.xaxis", subtitle: context.joined(separator: " · "),
+        return AOMPageHeader(title, subtitle: context.joined(separator: " · "),
                              help: "Insights counts the inputs AOM recognizes on this Mac and the automations they run. The last 24 hours and last 7 days come from the most recent \(GestureStatistics.recentEventLimit.formatted()) inputs; All Time uses running totals. Nothing leaves your Mac.")
     }
 

@@ -10,7 +10,7 @@ struct TextActionsStatusNotices: View {
     let isOn: Bool
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var suppression = TriggerSuppression.shared
-    @State private var trusted = AXIsProcessTrusted()
+    @State private var trusted = AOMPermissionCache.accessibilityTrusted
 
     var body: some View {
         Group {
@@ -52,8 +52,7 @@ struct TextActionsBarDetail: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader(settings.isOn ? "Text Actions is on" : "Text Actions is off", module: .textActions,
-                          subtitle: "Actions over the text you select in any app",
+            AOMPageHeader(settings.isOn ? "Text Actions is on" : "Text Actions is off", subtitle: "Actions over the text you select in any app",
                           help: "Select text in any app and a bar appears above it: copy, search, translate, look up, calculate and more. It never takes the keyboard, and it stays out of password fields and the apps you exclude.",
                           active: settings.isOn) {
                 Toggle("Text Actions", isOn: $settings.isOn)
@@ -145,8 +144,7 @@ struct TextActionsExcludedAppsDetail: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader("Excluded Apps", symbol: "hand.raised.fill",
-                          subtitle: settings.excludedApps.isEmpty ? "The bar can appear in every app"
+            AOMPageHeader("Excluded Apps", subtitle: settings.excludedApps.isEmpty ? "The bar can appear in every app"
                                                                   : "The bar never appears in \(Self.count(settings.excludedApps.count))")
             AOMSection("Apps", footer: "Password managers start on the list. In every app the bar also stays out of password fields and secure keyboard entry, and while AOM is paused.") {
                 TextActionsAppList(bundleIDs: $settings.excludedApps)
@@ -170,7 +168,7 @@ struct TextActionDetail: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader(id.title, symbol: id.symbol, subtitle: id.detail, active: settings.isOn(id)) {
+            AOMPageHeader(id.title, subtitle: id.detail, active: settings.isOn(id)) {
                 Toggle(id.title, isOn: isOn)
                     .labelsHidden()
                     .toggleStyle(.switch)

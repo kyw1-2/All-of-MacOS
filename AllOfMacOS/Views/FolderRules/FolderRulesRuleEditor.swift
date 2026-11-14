@@ -14,8 +14,7 @@ struct FolderRulesRuleEditor: View {
     var body: some View {
         if let rule = model.draft {
             AOMPage(maxWidth: AOMSize.readableWidth) {
-                AOMPageHeader(rule.name.isEmpty ? "Untitled rule" : rule.name, module: .folderRules,
-                              subtitle: subtitle(rule), status: status(rule), active: savedEnabled(rule)) {
+                AOMPageHeader(rule.name.isEmpty ? "Untitled rule" : rule.name, subtitle: subtitle(rule), status: status(rule), active: savedEnabled(rule)) {
                     Button("Preview", action: showPreview)
                         .help("Shows which items the rule would act on now, without changing anything (⌥⌘I)")
                     Toggle("Rule", isOn: Binding(get: { savedEnabled(rule) }, set: { model.setEnabled($0) }))

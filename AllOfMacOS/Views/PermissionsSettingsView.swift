@@ -64,7 +64,6 @@ struct PermissionsSettingsView: View {
         let missing = requiredPermissions.count - requiredGranted
         return AOMPageHeader(missing == 0 ? "All required permissions are allowed"
                              : "\(missing) required permission\(missing == 1 ? " needs" : "s need") setup",
-                             symbol: missing == 0 ? "checkmark.shield.fill" : "shield.lefthalf.filled",
                              subtitle: "Checked \(refreshDate.formatted(date: .omitted, time: .shortened)) · updates automatically",
                              help: "This dashboard reads the permissions of the signed All of MacOS app every few seconds and when you return to it. AOM never changes access itself; you allow it in System Settings › Privacy & Security.") {
             Button {

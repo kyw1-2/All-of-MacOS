@@ -12,13 +12,12 @@ enum AOMDesign {
     }
 }
 
-/// The shell's one canvas: every page sits on the same opaque neutral grey
-/// (`AOMColor.canvas`), edge to edge under the toolbar, so the system draws
-/// the toolbar glass and scroll-edge effect over it. No translucent window,
-/// no behind-window material (c.4).
+/// The main window's backdrop: a behind-window blur of the desktop (the
+/// glass the sidebar is made of) under every page, so pages and their
+/// frosted panes float on it. Reduce Transparency turns it opaque by itself.
 struct AOMWorkspaceBackground: View {
     var body: some View {
-        AOMColor.canvas
+        VisualEffectBackground(material: .sidebar, blendingMode: .behindWindow, state: .followsWindowActiveState)
             .ignoresSafeArea()
             .accessibilityHidden(true)
     }

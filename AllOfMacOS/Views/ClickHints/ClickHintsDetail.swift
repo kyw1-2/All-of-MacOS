@@ -16,7 +16,7 @@ struct ClickHintsDetail: View {
     @StateObject private var apps = ClickHintsAppLists()
     @ObservedObject private var shortcuts = CaptureShortcuts.shared
     @ObservedObject private var suppression = TriggerSuppression.shared
-    @State private var trusted = AXIsProcessTrusted()
+    @State private var trusted = AOMPermissionCache.accessibilityTrusted
     @State private var tryPending = false
     @Environment(\.openSettings) private var openSettings
 
@@ -39,8 +39,7 @@ struct ClickHintsDetail: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader("Click Hints", symbol: ClickHintsModule.symbol,
-                          subtitle: "Click buttons and links by typing the letters on them",
+            AOMPageHeader("Click Hints", subtitle: "Click buttons and links by typing the letters on them",
                           help: "Press the shortcut and every button, link, field, tab and row in the front window gets a one- or two-letter label. Type a label to click it. Hints read the window through Accessibility, stay out of password fields and excluded apps, and cost nothing while they are off.") {
                 Button(tryPending ? "Starting…" : "Try It") { tryIt() }
                     .disabled(tryPending)

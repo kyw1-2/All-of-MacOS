@@ -81,7 +81,7 @@ struct FolderRulesPage: View {
             AOMDivider()
             columns
         }
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
     }
 
     /// b.2's list + detail + inspector as plain columns. Below this page
@@ -108,7 +108,7 @@ struct FolderRulesPage: View {
                 .accessibilityLabel("Inspector")
             }
         }
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
     }
 
     /// "3 of 5 rules on"; with no rules the header alone says so.
@@ -163,8 +163,7 @@ struct FolderRulesHeader: View {
 
     var body: some View {
         let on = engine.config.isEnabled
-        AOMPageHeader(on ? "Folder Rules is on" : "Folder Rules is off", module: .folderRules,
-                      subtitle: engine.statusDetail, status: status,
+        AOMPageHeader(on ? "Folder Rules is on" : "Folder Rules is off", subtitle: engine.statusDetail, status: status,
                       help: "Folder Rules watches the folders on the left. Each new or changed item goes to the first rule that matches it, and that rule's actions run in order. Moves, renames and the Trash can be undone from the activity.",
                       active: on) {
             Button("Run Now") { engine.runNow() }

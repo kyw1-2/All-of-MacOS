@@ -130,8 +130,7 @@ struct FolderRulesActivityView: View {
 
     var body: some View {
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader("Activity", module: .folderRules,
-                          subtitle: "\(engine.filesToday) \(engine.filesToday == 1 ? "file" : "files") handled today",
+            AOMPageHeader("Activity", subtitle: "\(engine.filesToday) \(engine.filesToday == 1 ? "file" : "files") handled today",
                           active: engine.config.isEnabled) {
                 if !engine.activity.isEmpty {
                     Button("Clear") { model.clearActivity(undoManager: undoManager) }
@@ -290,7 +289,7 @@ struct FolderRulesFolderView: View {
     var body: some View {
         let rules = engine.config.rules(in: folder.id)
         AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader(folder.name, module: .folderRules, subtitle: FolderRulesSafety.display(folder.url),
+            AOMPageHeader(folder.name, subtitle: FolderRulesSafety.display(folder.url),
                           status: state, active: engine.config.isEnabled && rules.contains(where: \.isEnabled)) {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder.url]) }
             }

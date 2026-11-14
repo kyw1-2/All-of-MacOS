@@ -75,8 +75,7 @@ struct ShortcutsSettingsView: View {
     // MARK: - Header
 
     private var headerBanner: some View {
-        AOMPageHeader("Capture shortcuts", symbol: "command",
-                      subtitle: "Trigger screenshots and tools instantly from anywhere on your Mac",
+        AOMPageHeader("Capture shortcuts", subtitle: "Trigger screenshots and tools instantly from anywhere on your Mac",
                       help: "Click a shortcut, then press the new keys with at least one modifier. Escape cancels, and Delete clears the shortcut.")
     }
 

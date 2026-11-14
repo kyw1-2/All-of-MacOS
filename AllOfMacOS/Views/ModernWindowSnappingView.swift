@@ -99,12 +99,15 @@ struct ModernWindowSnappingView: View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= 900
             ScrollView {
-                VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                // Lazy stacks: only the sections on screen are built, so the
+                // page no longer creates every switch and pop-up (AppKit
+                // controls) of all eleven sections each time it opens.
+                LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                     header
                     quickZonesBar
                     if wide {
                         HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
-                            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                            LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                                 titleBarSection
                                 gesturesSection
                                 SwishModifierRolesSection(snapOn: trackpadSnapOn)
@@ -115,7 +118,7 @@ struct ModernWindowSnappingView: View {
                                 readinessSection
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
-                            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                            LazyVStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                                 dragSection
                                 gallerySection(compact: true)
                                 WindowPinningCard()
@@ -147,11 +150,12 @@ struct ModernWindowSnappingView: View {
                 .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
+            .scrollIndicators(.never)
             .defaultScrollAnchor(PreviewScrollAnchor.current)
             .aomScrollEdge()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
         .navigationTitle("Window Tiling")
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
@@ -226,7 +230,7 @@ struct ModernWindowSnappingView: View {
         let paused = !appState.globalEnabled
         let title = paused ? "Window Tiling is paused" : (on ? "Window Tiling is on" : "Window Tiling is off")
         let subtitle = "Drag to Snap \(drag ? "on" : "off") · Title-bar snap \(trackpadSnapOn ? "on" : "off")"
-        return AOMPageHeader(title, module: .tiling, subtitle: subtitle,
+        return AOMPageHeader(title, subtitle: subtitle,
                              status: headerStatus(paused: paused, drag: drag),
                              help: "Drag a window to a screen edge, corner or snap zone to fill that part of the screen, or swipe two fingers on its title bar. Tile the front window moves the front window right away.",
                              active: on && !paused)
@@ -242,7 +246,7 @@ struct ModernWindowSnappingView: View {
     }
 
     private var quickZonesBar: some View {
-        HStack(spacing: AOMSpace.tileGap) {
+        HStack(spacing: AOMSpace.x2) {
             quickZoneButton(
                 title: "Edit Snap Zones",
                 subtitle: "\(appState.effectiveSnapZones.filter(\.isEnabled).count) active zones",
@@ -274,29 +278,16 @@ struct ModernWindowSnappingView: View {
         }
     }
 
+    /// A capsule button (glass on macOS 26) with the subtitle as its tooltip,
+    /// instead of a boxed card per tool.
     private func quickZoneButton(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: AOMSpace.x2) {
-                AOMModuleBadge(symbol: symbol, size: AOMIcon.hitArea)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(AOMFont.bodyEmphasis)
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(AOMFont.caption)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: AOMSpace.x1)
-                Image(systemName: "chevron.right")
-                    .font(AOMFont.caption.weight(.semibold))
-                    .foregroundStyle(AOMColor.textTertiary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            Label(title, systemImage: symbol)
+                .padding(.horizontal, AOMSpace.x1)
         }
-        .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .help("\(title) — \(subtitle)")
     }
 

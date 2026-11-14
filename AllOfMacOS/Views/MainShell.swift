@@ -23,7 +23,6 @@ struct AOMMainShell<Content: View>: View {
     /// The sidebar is collapsible (toolbar button, View ▸ Hide Sidebar) and
     /// remembers its state.
     @AppStorage("AOMSidebarVisible") private var sidebarVisible = true
-    @ObservedObject private var history = AOMNavigationHistory.shared
 
     init(showingCommandPalette: Binding<Bool>,
          showLog: Binding<Bool>,
@@ -44,10 +43,15 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
-            AOMSidebar(showingCommandPalette: $showingCommandPalette)
+            AOMSidebar(appState: appState,
+                       selected: appState.selectedMainTab,
+                       engineOn: appState.globalEnabled,
+                       snappingOn: appState.currentPreset.snappingEnabled,
+                       paletteKeys: AOMPaletteShortcut.current(appState.currentPreset).displayString,
+                       showingCommandPalette: $showingCommandPalette)
+                .equatable()
                 .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
                                                 max: AOMSize.sidebarMax)
-                .tutorialAnchor(.sidebar)
         } detail: {
             GeometryReader { geometry in
                 let drawerOpen = showLog || showTouchVisualizer
@@ -67,7 +71,7 @@ struct AOMMainShell<Content: View>: View {
                         AOMDivider(axis: .vertical)
                         DiagnosticDrawerView(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
                             .frame(width: drawerWidth)
-                            .background(AOMColor.canvas)
+                            .background(AOMColor.pageBackground)
                             .font(AOMFont.body)
                     }
                 }
@@ -92,16 +96,7 @@ struct AOMMainShell<Content: View>: View {
             // menu; design-3.4.0 b.3, #228–#229, #233).
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
-                    Button { history.goBack(appState) } label: {
-                        Label("Back", systemImage: "chevron.left")
-                    }
-                    .disabled(!history.canGoBack)
-                    .help(history.backTarget.map { "Back to \($0.title) (⌘[)" } ?? "Back (⌘[)")
-                    Button { history.goForward(appState) } label: {
-                        Label("Forward", systemImage: "chevron.right")
-                    }
-                    .disabled(!history.canGoForward)
-                    .help(history.forwardTarget.map { "Forward to \($0.title) (⌘])" } ?? "Forward (⌘])")
+                    AOMHistoryButtons(appState: appState)
                 }
             }
         }
@@ -119,12 +114,26 @@ struct AOMMainShell<Content: View>: View {
 /// states that aren't normal ("Paused", "Rec", "Off", a count to fix). No
 /// footer: Pause lives in the Workspace header, the menu-bar extra and
 /// Controls › Pause AOM; the drawers in the Window menu; Settings at ⌘,.
-struct AOMSidebar: View {
-    @EnvironmentObject var appState: AppState
+///
+/// It takes the few values it draws instead of observing AppState, and
+/// `==` compares them, so selecting an automation, typing a search or any
+/// other app-state change no longer reconfigures every sidebar row.
+struct AOMSidebar: View, Equatable {
+    /// Not observed: only written to (selection, menu toggles).
+    let appState: AppState
+    let selected: AOMMainTab
+    let engineOn: Bool
+    let snappingOn: Bool
+    let paletteKeys: String
     @Binding var showingCommandPalette: Bool
 
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.selected == rhs.selected && lhs.engineOn == rhs.engineOn
+            && lhs.snappingOn == rhs.snappingOn && lhs.paletteKeys == rhs.paletteKeys
+    }
+
     private var selection: Binding<AOMMainTab?> {
-        Binding(get: { appState.selectedMainTab },
+        Binding(get: { selected },
                 set: { if let tab = $0, tab != appState.selectedMainTab { appState.selectedMainTab = tab } })
     }
 
@@ -168,7 +177,7 @@ struct AOMSidebar: View {
         // Row height, text and glyph size follow the sidebar size chosen in
         // System Settings › Appearance (HIG Sidebars), so no override here.
         .safeAreaInset(edge: .top, spacing: 0) {
-            AOMSidebarSearchButton(showingCommandPalette: $showingCommandPalette)
+            AOMSidebarSearchButton(keys: paletteKeys, showingCommandPalette: $showingCommandPalette)
         }
         .accessibilityElement(children: .contain)
     }
@@ -178,7 +187,7 @@ struct AOMSidebar: View {
         switch tab {
         case .home: AOMWorkspaceSidebarBadge()
         case .gestures:
-            if !appState.globalEnabled { AOMSidebarStatusBadge(text: "Paused", tone: .neutral) }
+            if !engineOn { AOMSidebarStatusBadge(text: "Paused", tone: .neutral) }
         case .capture: AOMRecordingSidebarBadge()
         case .clipboard: AOMClipboardSidebarBadge()
         case .audio: AOMAudioSidebarBadge()
@@ -197,12 +206,12 @@ struct AOMSidebar: View {
         Button("Open \(tab.title)") { appState.selectedMainTab = tab }
         switch tab {
         case .gestures:
-            Toggle("Automation", isOn: Binding(get: { appState.globalEnabled },
+            Toggle("Automation", isOn: Binding(get: { engineOn },
                                                set: { if $0 != appState.globalEnabled { appState.toggleGlobalEnabled() } }))
         case .snapping:
-            Toggle("Drag to Snap", isOn: Binding(get: { appState.currentPreset.snappingEnabled },
+            Toggle("Drag to Snap", isOn: Binding(get: { snappingOn },
                                                  set: { appState.setSnappingEnabled($0) }))
-                .disabled(!appState.globalEnabled)
+                .disabled(!engineOn)
         case .clipboard:
             Toggle("Clipboard History", isOn: Binding(get: { !ClipboardStore.shared.paused },
                                                       set: { $0 ? ClipboardStore.shared.resume() : ClipboardStore.shared.pause() }))
@@ -252,6 +261,26 @@ struct AOMSidebar: View {
 
 // MARK: - Navigation history
 
+/// Back and Forward in the toolbar. Only these two buttons observe the
+/// history, so recording a page change redraws them, not the shell.
+private struct AOMHistoryButtons: View {
+    let appState: AppState
+    @ObservedObject private var history = AOMNavigationHistory.shared
+
+    var body: some View {
+        Button { history.goBack(appState) } label: {
+            Label("Back", systemImage: "chevron.left")
+        }
+        .disabled(!history.canGoBack)
+        .help(history.backTarget.map { "Back to \($0.title) (⌘[)" } ?? "Back (⌘[)")
+        Button { history.goForward(appState) } label: {
+            Label("Forward", systemImage: "chevron.right")
+        }
+        .disabled(!history.canGoForward)
+        .help(history.forwardTarget.map { "Forward to \($0.title) (⌘])" } ?? "Forward (⌘])")
+    }
+}
+
 /// Back and Forward through the pages (Finder's Go menu, System Settings'
 /// View menu): every page change is recorded, at most 50, and ⌘[ / ⌘] and
 /// the toolbar chevrons walk it. A change made by Back or Forward itself is
@@ -279,9 +308,12 @@ final class AOMNavigationHistory: ObservableObject {
             return
         }
         pending = nil
-        backStack.append(old)
-        if backStack.count > Self.limit { backStack.removeFirst(backStack.count - Self.limit) }
-        forwardStack.removeAll()
+        var back = backStack
+        back.append(old)
+        if back.count > Self.limit { back.removeFirst(back.count - Self.limit) }
+        backStack = back
+        // Assigning an empty array still publishes; skip it when already empty.
+        if !forwardStack.isEmpty { forwardStack.removeAll() }
     }
 
     /// The next page change to `tab` is not a visit (launch restore).
@@ -316,7 +348,7 @@ final class AOMNavigationHistory: ObservableObject {
 /// aligned with the selection inset of the rows below. Its own view, so
 /// hovering never re-evaluates the sidebar list.
 private struct AOMSidebarSearchButton: View {
-    @EnvironmentObject var appState: AppState
+    let keys: String
     @Binding var showingCommandPalette: Bool
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var hovering = false
@@ -329,7 +361,7 @@ private struct AOMSidebarSearchButton: View {
                         .imageScale(.medium)
                     Text("Search").font(AOMFont.callout)
                     Spacer(minLength: AOMSpace.x1)
-                    AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
+                    AOMKeycap(text: keys)
                 }
                 .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
                 .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
@@ -506,7 +538,7 @@ private struct AOMWorkspaceSidebarBadge: View {
         }
         .task {
             while !Task.isCancelled {
-                let count = AOMPermission.required.filter { [.denied, .notDetermined].contains($0.status) }.count
+                let count = AOMPermission.required.filter { [.denied, .notDetermined].contains(AOMPermissionCache.status($0)) }.count
                 if count != missing { missing = count }
                 try? await Task.sleep(for: .seconds(5))
             }

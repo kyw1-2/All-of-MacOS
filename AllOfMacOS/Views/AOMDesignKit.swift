@@ -117,6 +117,28 @@ extension View {
         }
     }
 
+    /// A round Liquid Glass button face (Workspace quick actions): system
+    /// glass on macOS 26+, tinted when the action is live; a frosted circle
+    /// before.
+    @ViewBuilder func aomRoundGlass(tint: Color? = nil) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffect(tint.map { Glass.regular.tint($0).interactive() } ?? Glass.regular.interactive(), in: Circle())
+        } else {
+            background(tint ?? AOMColor.surface, in: Circle())
+        }
+    }
+
+    /// A large Liquid Glass pane for the one hero area of a page (the
+    /// Workspace header): system glass on macOS 26+, a frosted pane before.
+    @ViewBuilder func aomGlassPanel(radius: CGFloat = AOMRadius.panel) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        if #available(macOS 26.0, *) {
+            glassEffect(.regular, in: shape)
+        } else {
+            background(AOMColor.surface, in: shape)
+        }
+    }
+
     /// The one top-edge treatment for every page: the automatic scroll edge
     /// effect under the toolbar (macOS 26+).
     @ViewBuilder func aomScrollEdge() -> some View {
@@ -285,50 +307,32 @@ struct AOMModeButton: View {
                 .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard - 2)
                 .contentShape(Rectangle())
             } else {
+                // The Workspace quick-action face: a round glass button with
+                // the name and its shortcut under it, no box around.
                 VStack(spacing: AOMSpace.x1) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: AOMRadius.squircle(28), style: .continuous)
-                            .fill(tint.opacity(0.14))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: AOMRadius.squircle(28), style: .continuous)
-                                    .strokeBorder(tint.opacity(0.24), lineWidth: 0.6)
-                            }
-                            .frame(width: 28, height: 28)
-                        Image(systemName: symbol)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundStyle(tint)
-                    }
+                    Image(systemName: symbol)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(tint)
+                        .frame(width: AOMSize.modeButton, height: AOMSize.modeButton)
+                        .aomRoundGlass()
                     Text(title)
-                        .font(AOMFont.caption.weight(.semibold))
+                        .font(AOMFont.caption.weight(.medium))
                         .foregroundStyle(AOMTheme.text)
                         .lineLimit(1)
                         .minimumScaleFactor(0.92)
                         .truncationMode(.tail)
                     Text(shortcut ?? " ")
                         .font(AOMFont.badge)
-                        .foregroundStyle(AOMTheme.textSecondary)
+                        .foregroundStyle(AOMTheme.textTertiary)
                         .lineLimit(1)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(AOMColor.track, in: RoundedRectangle(cornerRadius: AOMRadius.keycap, style: .continuous))
                         .opacity(shortcut == nil ? 0 : 1)
                 }
-                .padding(.horizontal, AOMSpace.x1)
-                .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
+                .padding(.vertical, AOMSpace.x1)
                 .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
-                        .fill(AOMColor.sunken.opacity(0.45))
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous)
-                        .strokeBorder(AOMColor.hairline.opacity(0.65), lineWidth: 0.5)
-                }
                 .contentShape(Rectangle())
             }
         }
-        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
+        .buttonStyle(.plain)
         .help(help ?? (shortcut.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(shortcut.map { "Shortcut \($0)" } ?? "")
@@ -568,5 +572,20 @@ struct AOMLayoutDiagram: View {
         .aspectRatio(16 / 10, contentMode: .fit)
         .aomAnimation(.quick, value: highlighted)
         .accessibilityHidden(true)
+    }
+}
+
+/// Groups sibling glass shapes so the system renders them as one layer
+/// (and lets them blend) instead of one glass pass each.
+struct AOMGlassGroup<Content: View>: View {
+    var spacing: CGFloat = AOMSpace.x4
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
     }
 }

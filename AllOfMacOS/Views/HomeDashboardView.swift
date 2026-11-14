@@ -123,9 +123,10 @@ struct AOMHomeView: View {
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.never)
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
         .navigationTitle("Workspace")
         .toolbar {
             // View options, then the page's one primary action (b.3).
@@ -168,7 +169,7 @@ struct AOMHomeView: View {
     /// Polled state that nothing publishes (permissions, Paste's shortcut,
     /// the timed pause, the title-bar snap switch, the output device).
     private func refreshStatus() async {
-        let current = AOMPermission.required.map { ($0, $0.status) }
+        let current = AOMPermission.required.map { ($0, AOMPermissionCache.status($0)) }
         if current.map(\.0) != permissions.map(\.0) || current.map(\.1) != permissions.map(\.1) { permissions = current }
         let shortcut = ClipboardShortcuts.shared.shortcut(for: .history)
         // LaunchServices, other apps' preferences and HAL reads can block.
@@ -425,20 +426,14 @@ struct AOMHomeView: View {
     static let toolModuleList: [AOMModule] = [.automation, .tiling, .capture, .clipboard, .audio, .systemTools]
     static let productivityModuleList: [AOMModule] = [.folderRules, .textActions, .files, .focus]
 
-    /// The most columns of `AOMSize.moduleTileMin` that fit, preferring a
-    /// count that divides the tiles evenly so no row is half empty (6 → 3 or
-    /// 2, 4 → 4 or 2; design-3.4.0 b.2).
-    static func gridColumns(count: Int, width: CGFloat, preferred: [Int],
-                            minimum: CGFloat = AOMSize.moduleTileMin) -> Int {
-        let fit = max(1, Int((width + AOMSpace.tileGap) / (minimum + AOMSpace.tileGap)))
-        if let even = preferred.first(where: { $0 <= fit && count > 0 && count % $0 == 0 }) { return even }
-        return max(1, min(fit, count))
-    }
-
-    private func moduleGrid<Content: View>(columns: Int, @ViewBuilder content: () -> Content) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top),
-                                 count: columns),
-                  alignment: .leading, spacing: AOMSpace.tileGap, content: content)
+    /// Module rows in one frosted pane, two columns when there is room.
+    private func moduleGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        let columns = contentWidth >= 720 ? 2 : 1
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1, alignment: .top),
+                                        count: columns),
+                         alignment: .leading, spacing: 0, content: content)
+            .padding(AOMSpace.x1)
+            .aomCard(padding: 0)
     }
 
     private func toolModules(_ snapshot: WorkspaceSnapshot) -> some View {
@@ -448,7 +443,7 @@ struct AOMHomeView: View {
             if shown.isEmpty {
                 hiddenTilesRow("Every Tools tile is hidden.")
             } else {
-                moduleGrid(columns: Self.gridColumns(count: shown.count, width: contentWidth, preferred: [3, 2])) {
+                moduleGrid {
                     ForEach(shown) { module in
                         tile(module, snapshot)
                     }
@@ -468,7 +463,7 @@ struct AOMHomeView: View {
             if shown.isEmpty {
                 hiddenTilesRow("Every Productivity tile is hidden.")
             } else {
-                moduleGrid(columns: Self.gridColumns(count: shown.count, width: contentWidth, preferred: [4, 2])) {
+                moduleGrid {
                     ForEach(shown) { module in
                         if let status = AOMModuleStatusBoard.status(for: module) {
                             AOMModuleStatusTile(status: status, open: { appState.selectedMainTab = module.tab }) {
@@ -656,11 +651,6 @@ struct AOMHomeView: View {
 
     // MARK: Quick actions
 
-    /// Five columns of `AOMSize.quickActionMin` or wider (two rows of the
-    /// ten built-in actions at 1000 and 1320 pt windows).
-    private var quickActionColumns: Int {
-        max(1, min(5, Int((contentWidth + AOMSpace.tileGap) / (AOMSize.quickActionMin + AOMSpace.tileGap))))
-    }
 
     /// Launch tiles (Shortcuts gallery, Control Center): the built-in actions
     /// in the order chosen in Customize Workspace, then the automations you
@@ -675,9 +665,10 @@ struct AOMHomeView: View {
             if kinds.isEmpty && pinned.isEmpty {
                 hiddenTilesRow("Every quick action is hidden.")
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top),
-                                         count: quickActionColumns),
-                          alignment: .leading, spacing: AOMSpace.tileGap) {
+                // Round buttons straight on the glass, Control Center style.
+                AOMGlassGroup {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.quickActionCell), spacing: AOMSpace.x2, alignment: .top)],
+                          alignment: .leading, spacing: AOMSpace.x4) {
                     ForEach(kinds) { kind in
                         quickActionTile(kind)
                     }
@@ -697,6 +688,7 @@ struct AOMHomeView: View {
                             Button("Unpin from Workspace") { appState.toggleFavorite(trigger) }
                         }
                     }
+                }
                 }
             }
         }
@@ -1141,7 +1133,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
                         HStack(alignment: .center, spacing: AOMSpace.x2) {
                             statusDot
                             Text(state.sentence)
-                                .font(AOMFont.heroSentence)
+                                .font(AOMFont.pageTitle)
                                 .foregroundStyle(AOMColor.text)
                                 .lineLimit(1)
                                 .accessibilityAddTraits(.isHeader)
@@ -1155,7 +1147,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.leading, AOMSpace.x2 + AOMSpace.x2)
+                            .padding(.leading, AOMSpace.x2 + AOMSpace.x2 + AOMSpace.x0_5)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1167,8 +1159,10 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
             }
             strip
         }
-        .padding(.horizontal, AOMSpace.x0_5)
+        .padding(.horizontal, AOMSpace.x5)
+        .padding(.vertical, AOMSpace.x4 + AOMSpace.x0_5)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .aomGlassPanel()
         .aomAnimation(.standard, value: state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status: \(state.sentence)")
@@ -1531,58 +1525,46 @@ private struct WorkspaceQuickAction: View {
 
     var body: some View {
         Button(action: action) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: AOMSpace.x3) {
-                    badge
-                    VStack(alignment: .leading, spacing: 1) {
-                        name
-                        shortcut
-                    }
-                    .fixedSize()
-                    Spacer(minLength: 0)
+            VStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
+                badge
+                Text(title)
+                    .font(AOMFont.caption.weight(.medium))
+                    .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let keys {
+                    Text(keys)
+                        .font(AOMFont.badge)
+                        .foregroundStyle(AOMColor.textTertiary)
+                        .lineLimit(1)
                 }
-                VStack(alignment: .leading, spacing: AOMSpace.x1 + AOMSpace.x0_5) {
-                    badge
-                    VStack(alignment: .leading, spacing: 1) {
-                        name
-                        shortcut
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
+        .buttonStyle(.plain)
         .help(help.map { keys == nil ? $0 : "\($0) (\(keys!))" } ?? (keys.map { "\(title) (\($0))" } ?? title))
         .accessibilityLabel(title)
         .accessibilityHint(keys.map { "Shortcut \($0)" } ?? "")
         .accessibilityAddTraits(live ? .updatesFrequently : [])
     }
 
+    /// The round glass button: system Liquid Glass on macOS 26+, a frosted
+    /// pane before. A running action (recording, focus) fills with the accent.
     private var badge: some View {
         ZStack {
             if running {
                 ProgressView().controlSize(.small)
             } else {
-                AOMModuleBadge(symbol: symbol, size: AOMIcon.hitArea, active: active)
+                Image(systemName: symbol)
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(live ? Color.white : (active ? AOMColor.text : AOMColor.textTertiary))
                     .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion)
             }
         }
-        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-    }
-
-    private var name: some View {
-        Text(title)
-            .font(AOMFont.body.weight(.medium))
-            .foregroundStyle(AOMColor.text)
-            .lineLimit(1)
-            .truncationMode(.tail)
-    }
-
-    private var shortcut: some View {
-        Text(keys ?? "No shortcut")
-            .font(AOMFont.caption)
-            .foregroundStyle(keys == nil ? AOMColor.textTertiary : AOMColor.textSecondary)
-            .lineLimit(1)
+        .frame(width: AOMSize.quickActionButton, height: AOMSize.quickActionButton)
+        .aomRoundGlass(tint: live ? AOMColor.accent : nil)
     }
 }
 

@@ -7,18 +7,23 @@ import SwiftUI
 /// canvas, one level deep, never inside another card.
 struct SystemTileButtonStyle: ButtonStyle {
     var radius: CGFloat = AOMRadius.well
-    @State private var hovering = false
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
 
     func makeBody(configuration: Configuration) -> some View {
+        SystemTileButtonBody(configuration: configuration, radius: radius)
+    }
+}
+
+/// A frosted tile without an edge (Control Center modules); hover and press
+/// shift the fill. The hover state lives in a view, where `@State` works.
+private struct SystemTileButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let radius: CGFloat
+    @State private var hovering = false
+
+    var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         configuration.label
             .background(configuration.isPressed ? AOMColor.surfacePressed : hovering ? AOMColor.surfaceHover : AOMColor.surface, in: shape)
-            .overlay {
-                shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
-                                   lineWidth: contrast == .increased ? 1 : 0.5)
-            }
             .contentShape(shape)
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
@@ -28,7 +33,8 @@ struct SystemTileButtonStyle: ButtonStyle {
 // MARK: - Tool tiles
 
 /// A compact command: a monochrome glyph, the name, the value when
-/// there is one, and a chevron for tools that open a sheet. One row tall.
+/// there is one, and a chevron for tools that open a sheet. One row tall, a
+/// row of its section's frosted pane rather than a box of its own.
 struct SystemToolTile: View {
     let info: SystemToolInfo
     let state: SystemToolState?
@@ -71,7 +77,7 @@ struct SystemToolTile: View {
             .padding(.horizontal, AOMSpace.rowInset)
             .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard, alignment: .leading)
         }
-        .buttonStyle(SystemTileButtonStyle())
+        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
         .disabled(isRunning)
         .help(info.help)
         .contextMenu {

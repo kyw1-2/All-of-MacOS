@@ -92,7 +92,6 @@ struct ClipboardSettingsView: View {
     private var header: some View {
         AOMPageHeader(!store.settings.enabled ? "Clipboard history is off"
                       : (store.paused ? "Clipboard history is paused" : "Clipboard history is on"),
-                      module: .clipboard,
                       subtitle: "Text, links, images, files and pinboards, encrypted on this Mac",
                       active: store.settings.enabled && !store.paused) {
             // The Clipboard page's toolbar names the same panel "Open Shelf".

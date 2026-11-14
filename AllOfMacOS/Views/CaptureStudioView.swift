@@ -129,7 +129,7 @@ struct CaptureStudioView: View {
             : (textCapture.additiveClipboard ? AOMStatus("Copy Text Adds", tone: .info, symbol: "text.append") : nil)
         return AOMPageHeader(recordingService.isRecording ? "Recording the screen"
                              : (count == 0 ? "No captures yet" : "\(count) capture\(count == 1 ? "" : "s") in history"),
-                             module: .capture, subtitle: subtitle,
+                             subtitle: subtitle,
                              status: status,
                              help: "Capture takes screenshots, recordings and text from any app and measures the screen. Each capture opens in Quick Access to copy, save, annotate or drag, and stays in history until you remove it.")
     }

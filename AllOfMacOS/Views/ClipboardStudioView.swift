@@ -125,7 +125,7 @@ struct ClipboardStudioView: View {
     /// switch as the Workspace tile (off pauses until resumed).
     private var header: some View {
         AOMPageHeader(store.paused ? "Clipboard history is paused" : "Clipboard history is on",
-                      module: .clipboard, subtitle: subtitle,
+                      subtitle: subtitle,
                       help: "AOM keeps what you copy, encrypted on this Mac, so you can search it and paste it again. Pinboards keep items past the history limit. Open the shelf with \(ClipboardShortcuts.shared.shortcut(for: .history)?.displayString ?? "its shortcut") to paste without leaving your app.",
                       active: !store.paused) {
             Toggle("Save clipboard history", isOn: Binding(get: { !store.paused },
@@ -265,7 +265,7 @@ struct ClipboardStudioView: View {
                     .padding(.horizontal, AOMSpace.pageMargin)
                     .padding(.vertical, AOMSpace.x4)
                 }
-                .background(AOMColor.canvas)
+                .background(AOMColor.pageBackground)
             } else {
                 // The list + detail template (b.2) without `AOMListDetail`: its
                 // `.inspector` gives the panes a toolbar inset, which blurred the
@@ -317,7 +317,7 @@ struct ClipboardStudioView: View {
                     }
                     .frame(minWidth: AOMSize.detailMinimum, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .background(AOMColor.canvas)
+                .background(AOMColor.pageBackground)
                 // The detail always shows the highlighted row: the first item
                 // is selected until another one is (and after a delete).
                 .onAppear { selectFirstIfNeeded(entries) }
@@ -424,7 +424,7 @@ struct ClipboardStudioView: View {
                 detailHeader(entry)
                 ClipboardStudioCard.Preview(entry: entry, large: true)
                     .frame(maxWidth: .infinity,
-                           minHeight: entry.kind == .text || entry.kind == .link ? AOMSize.tileHeight : AOMSize.tileMin,
+                           minHeight: entry.kind == .text || entry.kind == .link ? AOMSize.textPreviewMinHeight : AOMSize.tileMin,
                            alignment: .topLeading)
                     .padding(entry.kind == .image || entry.kind == .color ? 0 : AOMSpace.x4)
                     .background(AOMColor.surface, in: RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous))
@@ -442,7 +442,7 @@ struct ClipboardStudioView: View {
             .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(AOMColor.canvas)
+        .background(AOMColor.pageBackground)
         .id(entry.id)
         .task(id: entry.contentVersion) {
             let content = await ClipboardPreviewCache.shared.content(for: entry)

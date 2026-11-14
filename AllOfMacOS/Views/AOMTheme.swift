@@ -122,10 +122,13 @@ struct AOMCardSurface: ViewModifier {
                 .background {
                     shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
                 }
+                // Frosted panes have no edge; only Increase Contrast and Show
+                // Borders draw one.
                 .overlay {
-                    shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
-                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
-                        .allowsHitTesting(false)
+                    if contrast == .increased || showBorders {
+                        shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
                 }
                 .containerShape(shape)
         case .well:
@@ -133,9 +136,9 @@ struct AOMCardSurface: ViewModifier {
                 .padding(padding ?? 0)
                 .background(AOMColor.sunken, in: shape)
                 .overlay {
-                    shape.strokeBorder(contrast == .increased || showBorders ? AOMColor.strongLine : AOMColor.hairline.opacity(0.65),
-                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
-                        .allowsHitTesting(false)
+                    if contrast == .increased || showBorders {
+                        shape.strokeBorder(AOMColor.strongLine, lineWidth: 1).allowsHitTesting(false)
+                    }
                 }
         case .glass:
             content

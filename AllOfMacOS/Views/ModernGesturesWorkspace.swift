@@ -319,16 +319,25 @@ struct ModernGesturesWorkspace: View {
     }
 
     private var list: some View {
-        List(selection: selection) {
+        let selectedID = appState.selectedTrigger?.id
+        return List(selection: selection) {
             ForEach(rows) { trigger in
-                AOMAutomationRow(trigger: trigger, rendersSelection: true)
+                AOMAutomationRow(trigger: trigger, isSelected: selectedID == trigger.id,
+                                 setEnabled: { appState.setTriggerEnabled($0, triggerID: trigger.id) })
+                    .equatable()
                     .modifier(FiredFlash(triggerID: trigger.id))
                     .tag(trigger.id)
-                    .contextMenu { triggerMenu(trigger) }
+            }
+        }
+        // One menu for the list instead of a context menu on every row.
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if let id = ids.first, let trigger = appState.currentPreset.triggers.first(where: { $0.id == id }) {
+                triggerMenu(trigger)
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: false))
         .scrollContentBackground(.hidden)
+        .scrollIndicators(.never)
         .environment(\.defaultMinListRowHeight, AOMSize.listRowDouble)
         .accessibilityLabel("Automations")
     }
@@ -501,8 +510,9 @@ struct ModernGesturesWorkspace: View {
                 .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.never)
             .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
-            .background(AOMColor.canvas)
+            .background(AOMColor.pageBackground)
             .id(current.id)
         } else {
             AOMEmptyState("No Automation Selected", systemImage: "bolt",

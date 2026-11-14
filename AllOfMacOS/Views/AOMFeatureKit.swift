@@ -235,18 +235,14 @@ struct AOMFilterChip: View {
             .frame(height: AOMFeatureSize.chip)
             .background {
                 if selected {
-                    Capsule().fill(Color.accentColor.gradient)
+                    Capsule().fill(Color.accentColor)
                 } else {
                     Capsule().fill(restingFill)
                 }
             }
             .overlay {
-                Capsule().strokeBorder(
-                    outlined ? Color.primary : (selected ? Color.white.opacity(0.25) : AOMColor.hairline),
-                    lineWidth: outlined ? 1.2 : 0.65
-                )
+                if outlined { Capsule().strokeBorder(Color.primary, lineWidth: 1.2) }
             }
-            .shadow(color: selected ? Color.accentColor.opacity(0.22) : .clear, radius: 3, x: 0, y: 1)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
