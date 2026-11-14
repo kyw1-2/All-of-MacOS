@@ -237,12 +237,6 @@ extension SwishSnap {
         }
     }
 
-    /// Any cell finer than halves: three columns or three rows.
-    static func isThird(_ place: Place) -> Bool {
-        if case .grid(let cell) = place { return cell.columns == 3 || cell.rows == 3 }
-        return false
-    }
-
     // MARK: Chaining
 
     /// Swish-style chaining on a grid: a swipe moves the window on from the

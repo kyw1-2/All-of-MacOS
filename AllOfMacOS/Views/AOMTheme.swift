@@ -13,19 +13,11 @@ import SwiftUI
 enum AOMTheme {
     // MARK: Canvas & surfaces
 
-    /// The page canvas behind every page (opaque, #FFFFFF / #282828).
-    static let canvas = AOMColor.canvas
-    static let canvasNSColor = AOMColor.canvasNSColor
-    /// A content pane (lists, editors, drawers): the same opaque canvas, so the
+    /// A content pane (lists, editors, drawers): the opaque canvas, so the
     /// background never shifts between pages.
     static let pane = AOMColor.canvas
     /// The work surface underneath documents and workflow steps.
     static let workspace = AOMColor.canvas
-    /// Cards for discrete items: the one opaque surface.
-    static let paper = AOMColor.surface
-    static let card = paper
-    /// Segmented tracks and pressed wells.
-    static let track = AOMColor.track
     /// Edges of cards and controls.
     static let hairline = AOMColor.hairline
 
@@ -47,7 +39,6 @@ enum AOMTheme {
     static let danger = AOMColor.danger
     /// Category hues for small glyphs only, never large fills.
     static let indigo = Color(nsColor: .systemIndigo)
-    static let cyan = Color(nsColor: .systemTeal)
     static let purple = Color(nsColor: .systemPurple)
     static let orange = Color(nsColor: .systemOrange)
 
@@ -72,45 +63,19 @@ enum AOMTheme {
     // MARK: Geometry
 
     static let cardRadius: CGFloat = AOMRadius.card
-    static let controlRadius: CGFloat = AOMRadius.control
-    /// Page margin and the gap between page sections.
-    static let pagePadding: CGFloat = AOMSpace.pageMargin
-    static let sectionSpacing: CGFloat = AOMSpace.sectionGap
-
-    // MARK: Depth
-
-    /// The response shared by pressable surfaces (the `quick` motion token).
-    static let press = AOMMotion.quickCurve
 }
 
 // MARK: - Typography
 
-/// The 3.x type names, mapped onto the macOS text-style ramp in `AOMFont`.
-/// Section pages take their title from the toolbar; content never repeats it.
+/// Type roles on the macOS text-style ramp in `AOMFont`.
 enum AOMType {
-    /// An empty state or a sheet's heading (15 pt semibold).
-    static let title2 = AOMFont.pageStatus
-    /// A group heading inside a page (13 pt semibold).
-    static let title3 = AOMFont.section
-    /// Card titles and emphasised row titles (13 pt bold).
-    static let headline = AOMFont.headline
-    /// Badges, key hints and tertiary metadata (never body text).
-    static let micro = AOMFont.badge
-    static let pageTitle = AOMFont.title
-    static let subtitle = AOMFont.body
-    /// Small group labels inside a card: sentence case, no tracking (c.2).
+    /// Small group labels inside a card: sentence case, no tracking.
     static let sectionCaps = AOMFont.caption.weight(.semibold)
-    /// Section titles above cards.
-    static let sectionTitle = AOMFont.section
     /// First line of a list row.
     static let rowTitle = AOMFont.body
     static let body = AOMFont.body
-    static let bodyEmphasis = AOMFont.bodyEmphasis
     /// Second line of a row, captions, timestamps (11 pt).
     static let caption = AOMFont.caption
-    static let meta = caption
-    /// Figures: Metric for tiles, Metric Large for summary strips.
-    static func metric(_ size: CGFloat = 22) -> Font { size >= 20 ? AOMFont.metricLarge : AOMFont.metric }
 }
 
 extension View {

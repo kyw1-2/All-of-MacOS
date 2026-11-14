@@ -160,8 +160,6 @@ enum ClickHintsSearchBadge {
 @MainActor
 final class ClickHintsSession {
     private(set) static var active: ClickHintsSession?
-    static var isActive: Bool { active != nil }
-
     private let targets: [ClickHintsTarget]
     private let labels: [String]
     private let pid: pid_t

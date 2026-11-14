@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
 
-// AOM design tokens. 3.3.6 (docs/design-3.3.6.md) returns to the macOS text
-// styles (13 pt body) and regular controls after the fixed 12 pt / small
-// controls of 3.3.5 read too small, and spaces pages on an 8 pt rhythm.
+// AOM design tokens: the macOS text styles (13 pt body) and regular controls,
+// on an 8 pt page rhythm.
 //
 // This is the one file allowed raw numbers and colours. Views use the roles
 // below (`AOMSpace.pageMargin`, `AOMFont.section`, `AOMColor.surface`,
@@ -23,7 +22,7 @@ import SwiftUI
 // - Motion confirms, it never decorates; Reduce Motion turns movement into a
 //   short crossfade.
 
-// MARK: - Spacing (c.1: 4 pt grid, 8 pt rhythm)
+// MARK: - Spacing (4 pt grid, 8 pt rhythm)
 
 enum AOMSpace {
     /// Badge offsets and hairline nudges only.
@@ -45,8 +44,8 @@ enum AOMSpace {
     static let x10: CGFloat = 40
     static let x12: CGFloat = 48
 
-    // 3.3.6 (design-3.3.6 b.2): 24 pt margins and section gaps, 16 pt inside
-    // cards, 12 pt between tiles (HIG: ~12 pt around bezeled elements).
+    // 24 pt margins and section gaps, 16 pt inside cards, 12 pt between tiles
+    // (HIG: ~12 pt around bezeled elements).
     static let pageMargin = x6
     static let sectionGap = x6
     static let titleGap = x2
@@ -56,17 +55,13 @@ enum AOMSpace {
     /// Divider inset for rows with a leading 20 pt symbol: 12 + 20 + 8.
     static let rowSymbolInset = rowInset + AOMIcon.row + x2
 
-    /// was 7
     static let xs = x2
-    /// was 10
     static let s = x3
-    /// was 13 (10 in 3.3.5)
     static let m = x3
-    /// was 18 (14 in 3.3.5)
     static let l = x4
 }
 
-// MARK: - Layout sizes (c.1)
+// MARK: - Layout sizes
 
 enum AOMSize {
     /// Global sidebar, sized for the system's medium sidebar rows.
@@ -113,7 +108,7 @@ enum AOMSize {
     static let drawerSideBySideMinimum: CGFloat =
         CGFloat(listColumnRange.lowerBound) + editorMinimum + drawerWidth.upperBound + 1
 
-    // 3.4 (design-3.4.0 b.10). New names only; the values above stay.
+    // New names only; the values above stay.
     /// Workspace module tiles: three per row from 3 × 224 + 2 × 12 = 696 pt,
     /// so a 1000 pt window still shows three columns.
     static let moduleTileMin: CGFloat = 224
@@ -138,7 +133,7 @@ enum AOMSize {
     static let toastMaxWidth: CGFloat = 520
 }
 
-// MARK: - Type ramp (design-3.3.6 b.1: macOS text styles)
+// MARK: - Type ramp (macOS text styles)
 
 /// The macOS built-in text styles (HIG Typography): Body 13, Callout 12,
 /// Subheadline 11, Headline 13 bold, Title 3 15, Title 2 17, Title 22. Styles,
@@ -173,7 +168,6 @@ enum AOMFont {
     /// Title (22) semibold: tile counts and summary figures (Workspace, Insights).
     static let metricLarge = Font.title.weight(.semibold).monospacedDigit()
 
-    // 3.4 (design-3.4.0 b.9)
     /// Large Title (26) semibold, monospaced digits: the one big figure of a
     /// status header (a Focus timer, files tidied today). Never a sentence.
     static let display = Font.largeTitle.weight(.semibold).monospacedDigit()
@@ -183,7 +177,7 @@ enum AOMFont {
     static let token = Font.callout
 }
 
-// MARK: - Corner radii (c.3: continuous corners everywhere)
+// MARK: - Corner radii (continuous corners everywhere)
 
 enum AOMRadius {
     /// Keycaps, tiny chips.
@@ -197,7 +191,6 @@ enum AOMRadius {
     /// ⌘K palette, large HUDs, quick-access overlay, floating panels.
     static let panel: CGFloat = 18
 
-    // 3.2 names (c.3 migration).
     /// HUDs, toasts and the recording bar (was 16).
     static let hud = panel
     /// Control strips floating over the screen (was 14).
@@ -212,7 +205,7 @@ enum AOMRadius {
     static func concentric(_ outer: CGFloat, inset: CGFloat) -> CGFloat { max(control, outer - inset) }
 }
 
-// MARK: - Colour roles (c.5)
+// MARK: - Colour roles
 
 enum AOMColor {
     // Interaction
@@ -269,7 +262,7 @@ enum AOMColor {
     static let warningText = Color.aomDynamic(light: NSColor(srgbRed: 0.698, green: 0.314, blue: 0, alpha: 1), dark: .systemOrange)
     static let dangerText = Color.aomDynamic(light: NSColor(srgbRed: 0.769, green: 0.086, blue: 0.110, alpha: 1), dark: .systemRed)
 
-    // Interaction layer (3.4, design-3.4.0 b.4)
+    // Interaction layer
     /// Keyboard focus ring for custom focusable views (the system colour).
     static let focusRing = Color(nsColor: .keyboardFocusIndicatorColor)
     /// Selected rows in custom lists: the system selection, grey while the
@@ -311,7 +304,7 @@ enum AOMTone: Equatable {
         }
     }
 
-    /// The tone's default glyph (c.8 status glyphs).
+    /// The tone's default glyph.
     var symbol: String {
         switch self {
         case .success: return "checkmark.circle.fill"
@@ -327,7 +320,7 @@ enum AOMTone: Equatable {
     func wash(increasedContrast: Bool) -> Color { color.opacity(increasedContrast ? 0.22 : 0.12) }
 }
 
-// MARK: - Modules (c.5 identity hues, c.8 symbols)
+// MARK: - Modules (identity hues and symbols)
 
 /// The six tools plus the two places without a hue. Module hues appear only
 /// in content badges (tiles, page headers), never in the sidebar, on buttons
@@ -369,7 +362,7 @@ enum AOMModule: String, CaseIterable, Identifiable {
         }
     }
 
-    /// White glyphs on these reach ≥3.1:1 in both modes (measured, c.5).
+    /// White glyphs on these reach ≥3.1:1 in both modes (measured).
     var hue: Color {
         switch self {
         case .automation: return Color(nsColor: .systemIndigo)
@@ -380,7 +373,7 @@ enum AOMModule: String, CaseIterable, Identifiable {
         case .audio: return Color(nsColor: .systemPink)
         case .systemTools: return Color.aomDynamic(light: NSColor(srgbRed: 0.051, green: 0.580, blue: 0.533, alpha: 1), // #0D9488
                                                    dark: NSColor(srgbRed: 0.078, green: 0.722, blue: 0.651, alpha: 1))  // #14B8A6
-        // 3.4 hues (design-3.4.0 b.8): green, amber, blue and tangerine sit
+        // Green, amber, blue and tangerine sit
         // between the six existing hues; none is the danger red, so a running
         // Focus session never reads as an error or a recording. White glyphs
         // keep ≥ 3:1 (computed WCAG ratios in the comments).
@@ -415,7 +408,7 @@ enum AOMModule: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Elevation (c.6: tone first, shadow second)
+// MARK: - Elevation (tone first, shadow second)
 
 enum AOMElevation {
     case raised, overlay
@@ -451,7 +444,7 @@ extension View {
     }
 }
 
-// MARK: - Motion (c.7)
+// MARK: - Motion
 
 enum AOMMotion {
     static let quickCurve = Animation.snappy(duration: 0.2)
@@ -485,8 +478,6 @@ enum AOMMotion {
     static var success: Animation? { systemReduceMotion ? nil : successCurve }
     /// Following the pointer; removed under Reduce Motion.
     static var drag: Animation? { systemReduceMotion ? nil : dragCurve }
-    /// Landing after a drag.
-    static var settle: Animation { resolve(settleCurve, reduceMotion: systemReduceMotion) }
 }
 
 /// Motion token names for `aomAnimation(_:value:)`.
@@ -522,7 +513,7 @@ extension View {
     }
 }
 
-// MARK: - Icons (c.8)
+// MARK: - Icons
 
 enum AOMIcon {
     /// Row icon frame at Body (13 pt text); the glyph takes the row's text style.
@@ -542,7 +533,6 @@ enum AOMIcon {
     /// Status dot inside pills and badges.
     static let dot: CGFloat = 6
 
-    // 3.4 (design-3.4.0 b.9)
     /// Large status header (Focus timer, Folder Rules today): the squircle
     /// and the progress ring around it.
     static let statusBadge: CGFloat = 48

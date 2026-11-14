@@ -24,9 +24,6 @@ enum ClickHintsModule {
 
     /// A scan is running; a second press waits for it.
     private(set) static var isScanning = false
-    /// Hints are on screen.
-    static var isShowing: Bool { ClickHintsSession.isActive }
-
     /// Shows hints over the front window, or takes them down if they are up
     /// (the shortcut toggles).
     static func showHints() {

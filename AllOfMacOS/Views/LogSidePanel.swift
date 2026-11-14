@@ -4,12 +4,6 @@ import SwiftUI
 struct LogSidePanel: View {
     let entries: [GestureLogEntry]
 
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
-        return f
-    }()
-
     var body: some View {
         VStack(spacing: 0) {
             // Header

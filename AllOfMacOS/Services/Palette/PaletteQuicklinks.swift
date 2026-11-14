@@ -174,10 +174,6 @@ final class PaletteQuicklinkStore: ObservableObject {
         PaletteQuicklinks.save(links, to: defaults)
     }
 
-    func restoreDefaults() {
-        replace(with: PaletteQuicklinks.defaults)
-    }
-
     func reload() {
         links = PaletteQuicklinks.load(from: defaults)
     }

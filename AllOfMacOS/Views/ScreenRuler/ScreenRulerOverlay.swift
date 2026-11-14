@@ -50,8 +50,6 @@ struct ScreenRulerStyle {
 @MainActor
 final class ScreenRulerOverlayController {
     private(set) static var active: ScreenRulerOverlayController?
-    static var isActive: Bool { active != nil }
-
     private var session: ScreenRulerSession
     private let images: [CGDirectDisplayID: CGImage]
     private var panels: [ScreenRulerPanel] = []

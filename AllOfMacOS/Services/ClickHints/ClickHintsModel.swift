@@ -66,7 +66,6 @@ struct ClickHintsTarget: @unchecked Sendable {
     var id: Int
 
     var role: String { attributes.role }
-    var subrole: String? { attributes.subrole }
     var clickPoint: CGPoint { CGPoint(x: visibleFrame.midX, y: visibleFrame.midY) }
 }
 

@@ -461,7 +461,4 @@ final class FocusIdleAppsController: ObservableObject {
         }
     }
 
-    /// Memory freed today by quits that finished.
-    var freedToday: UInt64 { activity.freedToday(now: clock()) }
-
 }

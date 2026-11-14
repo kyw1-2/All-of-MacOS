@@ -186,12 +186,6 @@ final class CaptureShortcuts: ObservableObject {
         NotificationCenter.default.post(name: .init("AOMCaptureShortcutsDidChange"), object: self)
     }
 
-    func resetToDefaults() {
-        for action in CaptureShortcutAction.allCases {
-            setShortcut(action.defaultShortcut, for: action)
-        }
-    }
-
     /// The "Restore Capture Defaults" button's scope: the capture and tool
     /// shortcuts this button has always meant. Window pinning, the switcher
     /// and Keep Awake defaults stay untouched.

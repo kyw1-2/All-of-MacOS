@@ -21,8 +21,6 @@ final class FocusStatusItemController: NSObject, NSMenuDelegate {
 
     func attach(_ session: FocusSessionController) { self.session = session }
 
-    var isShowing: Bool { item != nil }
-
     /// The countdown in the menu bar ("18:22"); the glyph shows the phase,
     /// or a pause symbol while paused.
     static func title(timer: FocusTimer, now: Date) -> String? {

@@ -257,10 +257,4 @@ enum PaletteFuzzy {
         return initials[Int(value - 0xAC00) / (21 * 28)]
     }
 
-    /// 카 → ㅋ; nil for anything that is not a precomposed syllable.
-    static func initialConsonant(of character: Character) -> Character? {
-        guard let scalar = character.unicodeScalars.first, character.unicodeScalars.count == 1,
-              let initial = initialConsonant(scalar.value), let result = Unicode.Scalar(initial) else { return nil }
-        return Character(result)
-    }
 }

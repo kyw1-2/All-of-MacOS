@@ -69,14 +69,6 @@ enum TextSelectionReader {
     /// Bounds are asked only for selections up to this long (UTF-16 units).
     static let boundsLimit = 5_000
 
-    static func focusedElement(pid: pid_t, timeout: Float) -> AXUIElement? {
-        let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, timeout)
-        guard let focused = element(app, kAXFocusedUIElementAttribute) else { return nil }
-        AXUIElementSetMessagingTimeout(focused, timeout)
-        return focused
-    }
-
     /// Selection in browser-backed UIs is often exposed by the element under
     /// the mouse or by an AXWebArea ancestor, not by AXFocusedUIElement.
     /// A native selection bubble can even move focus to one of its buttons.

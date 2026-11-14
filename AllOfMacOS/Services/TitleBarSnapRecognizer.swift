@@ -21,14 +21,6 @@ struct SwishSnapHistory {
     private var order: [String] = []
     var limit = 64
 
-    /// Records a snap. A chain of snaps keeps the first starting frame, so a
-    /// restore goes back to where the window began; a window moved by hand
-    /// since its last snap starts a new chain.
-    mutating func recordSnap(key: String, from start: CGRect, to actual: CGRect,
-                             layout: CustomSnapZone.Layout? = nil) {
-        recordSnap(key: key, from: start, to: actual, place: layout.flatMap(SwishSnap.Place.init))
-    }
-
     mutating func recordSnap(key: String, from start: CGRect, to actual: CGRect, place: SwishSnap.Place?) {
         if var entry = entries[key] {
             if !WindowGeometry.close(entry.snapped, start) { entry.original = start }

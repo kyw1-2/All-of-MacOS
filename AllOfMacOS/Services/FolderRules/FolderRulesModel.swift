@@ -584,9 +584,6 @@ struct FolderRuleAction: Codable, Equatable, Identifiable {
     }
     static func rename(_ pattern: String) -> FolderRuleAction { FolderRuleAction(kind: .rename, pattern: pattern) }
     static func addTags(_ tags: [String]) -> FolderRuleAction { FolderRuleAction(kind: .addTags, tags: tags) }
-    static func colorLabel(_ label: FolderRuleColorLabel) -> FolderRuleAction {
-        FolderRuleAction(kind: .setColorLabel, colorLabel: label)
-    }
     static var moveToTrash: FolderRuleAction { FolderRuleAction(kind: .moveToTrash) }
 
     /// Changes or removes the item, so it asks first (unless the rule runs

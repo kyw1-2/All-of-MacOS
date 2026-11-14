@@ -33,8 +33,6 @@ enum MonitorVCP: UInt8, CaseIterable {
     struct Reading: Equatable {
         let current: UInt16
         let maximum: UInt16
-        var fraction: Float { maximum == 0 ? 0 : Float(current) / Float(maximum) }
-
         func scaled(_ level: Float) -> UInt16 {
             UInt16((min(1, max(0, level)) * Float(maximum)).rounded())
         }

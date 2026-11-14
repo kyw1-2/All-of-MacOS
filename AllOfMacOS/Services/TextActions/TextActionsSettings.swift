@@ -292,17 +292,6 @@ struct TextActionsSettings: Codable, Equatable {
         actions[index].isOn = isOn
     }
 
-    /// Moves `id` to sit just before `target` (or to the end for nil).
-    mutating func moveAction(_ id: TextActionID, before target: TextActionID?) {
-        guard id != target, let from = actions.firstIndex(where: { $0.id == id }) else { return }
-        let moving = actions.remove(at: from)
-        if let target, let to = actions.firstIndex(where: { $0.id == target }) {
-            actions.insert(moving, at: to)
-        } else {
-            actions.append(moving)
-        }
-    }
-
     /// Moves `id` `offset` places: -1 is one place up, +1 one place down.
     mutating func moveAction(_ id: TextActionID, by offset: Int) {
         guard let from = actions.firstIndex(where: { $0.id == id }) else { return }

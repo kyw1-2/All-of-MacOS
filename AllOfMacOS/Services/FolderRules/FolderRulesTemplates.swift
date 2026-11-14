@@ -80,5 +80,4 @@ enum FolderRuleTemplates {
         }
     ]
 
-    static func template(_ id: String) -> FolderRuleTemplate? { all.first { $0.id == id } }
 }

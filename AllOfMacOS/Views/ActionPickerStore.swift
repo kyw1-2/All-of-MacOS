@@ -21,8 +21,6 @@ struct ActionPickerStore {
     var favorites: [ActionType] { read(Self.favoritesKey) }
     var recents: [ActionType] { read(Self.recentsKey) }
 
-    func isFavorite(_ type: ActionType) -> Bool { favorites.contains(type) }
-
     /// Adds or removes a favourite; returns the new state.
     @discardableResult
     func toggleFavorite(_ type: ActionType) -> Bool {

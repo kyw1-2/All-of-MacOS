@@ -229,8 +229,6 @@ final class AppAudioMixerService: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: Volume Overdrive and Timed Mute
 
-    func overdrive(_ bundleID: String) -> Float { AppAudioPreferences.overdrive(bundleID: bundleID) }
-
     func setOverdrive(_ value: Float, bundleID: String) {
         guard #available(macOS 14.2, *), AppAudioPreferences.setOverdrive(value, bundleID: bundleID) else { return }
         objectWillChange.send()

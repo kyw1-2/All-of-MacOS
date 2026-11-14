@@ -150,11 +150,6 @@ final class ClipboardLinkMetadataStore {
     nonisolated static let imageByteLimit = 2 * 1_024 * 1_024
     static let capacity = 200
 
-    /// Both switches: private web previews, and link cards themselves.
-    static var isEnabled: Bool {
-        ClipboardPreferences.shared.networkPreviews && ClipboardPreferences.shared.linkCards
-    }
-
     private var cards: [URL: ClipboardLinkCard] = [:]
     private var images: [URL: CGImage] = [:]
     private var failures: Set<URL> = []

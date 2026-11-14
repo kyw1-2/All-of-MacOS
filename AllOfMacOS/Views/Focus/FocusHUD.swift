@@ -52,11 +52,6 @@ final class FocusHUD {
         }
     }
 
-    func dismiss() {
-        generation += 1
-        panel?.orderOut(nil)
-    }
-
     private func makePanel() -> NSPanel {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 220, height: 140),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

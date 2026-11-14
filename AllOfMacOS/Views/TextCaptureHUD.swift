@@ -26,8 +26,6 @@ final class TextCaptureHUDController {
     private var duration: TimeInterval = 6
     private(set) var currentModel: TextCaptureHUDModel?
 
-    var isVisible: Bool { panel?.isVisible == true }
-
     /// Builds the panel and lays out a sample result once, off screen, so the
     /// first real result appears without SwiftUI's cold-start cost.
     func prewarm() {

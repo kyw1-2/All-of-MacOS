@@ -2033,10 +2033,6 @@ private struct ClipboardCardView: View, Equatable {
         titleFocused = false
     }
 
-    private func symbol(_ kind: ClipboardEntry.Kind) -> String {
-        switch kind { case .text: return "text.alignleft"; case .link: return "link"; case .image: return "photo"; case .file: return "doc"; case .color: return "paintpalette" }
-    }
-
     /// Paste 6.5 card menu: Paste to App ↩ · Paste as Plain Text ⇧↩ · Copy ⌘C |
     /// Edit ⌘E · Rename ⌘R · Delete ⌫ | Pin ▸ | Preview Space · Share ▸.
     /// AOM-only commands follow in their own section. With several cards

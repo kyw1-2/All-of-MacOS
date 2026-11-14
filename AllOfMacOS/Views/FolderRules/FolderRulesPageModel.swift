@@ -351,10 +351,6 @@ final class FolderRulesPageModel: ObservableObject {
         engine.undo(entry.id)
     }
 
-    func entries(for filter: (FolderRuleActivity) -> Bool = { _ in true }) -> [FolderRuleActivity] {
-        engine.activity.filter(filter)
-    }
-
     static func logEntry(_ activity: FolderRuleActivity) -> AOMLogEntry {
         let tone: AOMTone
         switch activity.result {

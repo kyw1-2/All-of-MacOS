@@ -135,11 +135,6 @@ enum ScreenRulerGeometry {
         CGPoint(x: point.x, y: primaryHeight - point.y)
     }
 
-    /// An `NSScreen.frame` (bottom-left origin) as a global top-left frame.
-    static func globalRect(fromAppKit rect: CGRect, primaryHeight: CGFloat) -> CGRect {
-        CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
-    }
-
     /// The display holding the point, else the nearest one.
     static func display(containing point: CGPoint, in displays: [ScreenRulerDisplay]) -> ScreenRulerDisplay? {
         if let exact = displays.first(where: { $0.contains(point) }) { return exact }

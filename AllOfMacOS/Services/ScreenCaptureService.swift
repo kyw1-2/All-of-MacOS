@@ -578,10 +578,6 @@ final class ScreenCaptureService {
         }
     }
 
-    func copyToClipboard(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) throws {
-        try writeClipboardRepresentations(clipboardRepresentations(result, format: format, quality: CaptureSettings.quality))
-    }
-
     @MainActor
     func copyToClipboardAsync(_ result: CaptureResult, format: CaptureFormat = CaptureSettings.format) async throws {
         let quality = CaptureSettings.quality

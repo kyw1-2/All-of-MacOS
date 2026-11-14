@@ -30,11 +30,6 @@ struct DoublePressGate: Equatable {
         return false
     }
 
-    /// Forgets a pending press, e.g. after the deferred action ran.
-    mutating func clear(_ key: String) {
-        lastPress.removeValue(forKey: key)
-    }
-
     mutating func reset() {
         lastPress.removeAll()
     }

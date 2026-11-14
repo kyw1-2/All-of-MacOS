@@ -56,57 +56,6 @@ enum RecordingExportService {
         return seconds
     }
 
-    /// Trim MP4 losslessly when possible; AVFoundation preserves any audio track.
-    static func trim(source: URL, start: Double, end: Double) async throws -> URL {
-        // Cursor-track recordings intentionally omit the baked pointer. Render
-        // it into standalone trims so playback never depends on a missing sidecar.
-        let track = AOMCursorTrack.read(for: source)
-        let hasOverlays = track.map { !$0.points.isEmpty || !($0.clicks ?? []).isEmpty || !($0.keystrokes ?? []).isEmpty } ?? false
-        if hasOverlays || FileManager.default.fileExists(atPath: AOMStudioCameraFrames.url(for: source).path) {
-            var style = AOMStudioSettings(cursorPoints: track?.points ?? [], clicks: track?.clicks ?? [], keystrokes: track?.keystrokes ?? [])
-            // 3.3.3: a pointer path kept only for the highlight never adds a
-            // second pointer; clicks and the highlight use the recording options.
-            if track?.pointerInVideo == true { style.cursorStyle = .hidden }
-            style.clickStyle = CaptureSettings.recordingClickStyle
-            if CaptureSettings.recordingCursorHighlight { style.cursorHighlight = CaptureSettings.recordingCursorHighlightStyle }
-            return try await render(source: source, start: start, end: end,
-                                    muteAudio: false, quality: .high,
-                                    studio: style,
-                                    outputSuffix: "Trimmed")
-        }
-        let total = try await duration(for: source)
-        let range = try validatedRange(start: start, end: end, duration: total)
-        let asset = AVURLAsset(url: source)
-        guard let session = AVAssetExportSession(asset: asset,
-                                                 presetName: AVAssetExportPresetPassthrough) else {
-            throw ExportError.failed("This MP4 cannot be trimmed on this Mac.")
-        }
-        let url = outputURL(for: source, suffix: "Trimmed", extension: "mp4")
-        session.outputFileType = .mp4
-        session.outputURL = url
-        session.timeRange = range
-
-        do {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                session.exportAsynchronously {
-                    switch session.status {
-                    case .completed: continuation.resume()
-                    case .failed, .cancelled:
-                        continuation.resume(throwing: session.error ?? ExportError.failed("Export was cancelled or failed."))
-                    default: continuation.resume(throwing: ExportError.failed("Unexpected exporter state."))
-                    }
-                }
-            }
-            guard (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) ?? 0 > 0 else {
-                throw ExportError.failed("The exported MP4 was empty.")
-            }
-            return url
-        } catch {
-            try? FileManager.default.removeItem(at: url)
-            throw error
-        }
-    }
-
     /// Optional post-production rendering. Unlike passthrough trimming, this
     /// creates a fresh timeline, allows audio removal, and re-encodes using an
     /// explicit quality preset. The original file is never changed.

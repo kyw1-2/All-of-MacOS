@@ -6,11 +6,6 @@ enum QuickAccessShortcut: Equatable {
     case close, copy, save, edit, pin, quickLook, trash
 }
 
-/// The buttons on a Quick Access card's hover curtain, by corner.
-enum QuickAccessHoverControl: String, Equatable {
-    case close, pin, quickLook, copy, save, annotate, editVideo, trash, more
-}
-
 enum QuickAccessPolicy {
     static func shortcut(keyCode: UInt16, command: Bool) -> QuickAccessShortcut? {
         if keyCode == 53 || (command && keyCode == 13) { return .close }
@@ -32,16 +27,6 @@ enum QuickAccessPolicy {
     }
 
     static let maximumVisible = 3
-
-    /// Hover curtain layout: top row, centre, bottom row. Trash sits beside
-    /// More so one click removes a capture right after taking it (CleanShot's
-    /// overlay trash button), without unbalancing the four corners.
-    static func hoverControls(isVideo: Bool) -> (top: [QuickAccessHoverControl], center: [QuickAccessHoverControl],
-                                                  bottom: [QuickAccessHoverControl]) {
-        (top: [.close, isVideo ? .quickLook : .pin],
-         center: [.copy, .save],
-         bottom: [isVideo ? .editVideo : .annotate, .trash, .more])
-    }
 
     /// Only recordings ask before going to the Trash (CleanShot's
     /// "confirm video delete"); screenshots stay in Capture History either way.

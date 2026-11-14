@@ -1666,7 +1666,6 @@ private struct WorkspaceQuickActionCell: View {
     let accepts: (WorkspaceQuickActionKind) -> Bool
     let drop: (WorkspaceQuickActionKind) -> Void
     let action: () -> Void
-    @ObservedObject private var focus = AOMModuleStatusBoard.focus
     @State private var targeted = false
 
     init(kind: WorkspaceQuickActionKind, recording: Bool, accepts: @escaping (WorkspaceQuickActionKind) -> Bool,

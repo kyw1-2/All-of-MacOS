@@ -1361,14 +1361,6 @@ struct AnnotationBackground: Equatable, Codable {
     enum Kind: String, CaseIterable, Identifiable, Codable {
         case solid, gradient, blurred, wallpaper
         var id: String { rawValue }
-        var displayName: String {
-            switch self {
-            case .solid: return "Plain Color"
-            case .gradient: return "Gradient"
-            case .blurred: return "Blurred"
-            case .wallpaper: return "Wallpaper"
-            }
-        }
     }
 
     enum GradientPreset: String, CaseIterable, Identifiable, Codable {

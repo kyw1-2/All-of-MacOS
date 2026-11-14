@@ -13,7 +13,6 @@ final class ResilientFileWatcher {
     private var timer: Timer?
     private var signature: Signature?
     private var active = false
-    var pollingInterval: TimeInterval? { timer?.timeInterval }
     private struct Signature: Equatable {
         var inode: UInt64
         var size: UInt64

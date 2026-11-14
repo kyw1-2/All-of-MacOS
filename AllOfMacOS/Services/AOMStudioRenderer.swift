@@ -8,14 +8,6 @@ import ImageIO
 enum AOMStudioBackdrop: String, Codable, CaseIterable, Identifiable {
     case none, graphite, midnight, slate
     var id: String { rawValue }
-    var displayName: String {
-        switch self {
-        case .none: return "None"
-        case .graphite: return "Graphite"
-        case .midnight: return "Midnight"
-        case .slate: return "Slate"
-        }
-    }
     var color: CIColor {
         switch self {
         case .none: return CIColor(red: 0, green: 0, blue: 0)

@@ -91,8 +91,6 @@ final class TextCaptureShortcuts: ObservableObject {
         }
     }
 
-    var hasActiveShortcuts: Bool { !shortcuts.isEmpty }
-
     func matchingAction(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> TextCaptureShortcutAction? {
         let mask: NSEvent.ModifierFlags = [.command, .option, .control, .shift, .function]
         let clean = modifiers.intersection(mask)

@@ -102,11 +102,4 @@ enum TextRecognitionService {
         return String(text.prefix(maximumLength))
     }
 
-    /// Image-data convenience for `recognizeForIndexing(_:)`.
-    static func recognizeForIndexing(imageData: Data, maximumLength: Int = 100_000) async -> String? {
-        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-        return await recognizeForIndexing(image, maximumLength: maximumLength)
-    }
-
 }

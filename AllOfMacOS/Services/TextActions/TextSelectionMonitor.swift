@@ -48,8 +48,6 @@ final class TextSelectionMonitor {
     private var downDragCount = 0
     private var keyboardWork: DispatchWorkItem?
 
-    var isMonitoring: Bool { mouseMonitor != nil || keyMonitor != nil }
-
     func update(_ options: Options) {
         self.options = options
         let wantsMouse = options.drag || options.clicks

@@ -52,11 +52,6 @@ enum FocusStorage {
         }
     }
 
-    static func remove(named name: String, in directory: URL) {
-        let url = directory.appendingPathComponent(name)
-        queue.async { try? FileManager.default.removeItem(at: url) }
-    }
-
     /// Waits for every pending write (tests and termination).
     static func flush() { queue.sync {} }
 }

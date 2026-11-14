@@ -29,8 +29,6 @@ final class PermissionWatchdog {
     private let requestPrompt: () -> Void
     private let notifications: NotificationCenter
     private let workspaceNotifications: NotificationCenter
-    var pollingInterval: TimeInterval? { timer?.timeInterval }
-
     init(trustCheck: @escaping () -> Bool = { AXIsProcessTrusted() },
          requestPrompt: @escaping () -> Void = {
              let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary

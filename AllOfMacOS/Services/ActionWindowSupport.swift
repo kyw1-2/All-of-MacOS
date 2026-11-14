@@ -123,8 +123,6 @@ final class WindowDragController {
     private var startFrame = CGRect.zero
     private var pointerStart = CGPoint.zero
     private var deadline = Date.distantFuture
-    var isActive: Bool { mode != nil }
-
     func perform(_ type: ActionType, timeout: Double?, target: WindowManager.Target?) -> Bool {
         guard let (verb, requested) = WindowDragMath.verb(for: type) else { return false }
         switch WindowDragMath.outcome(active: mode, requested: requested, verb: verb) {

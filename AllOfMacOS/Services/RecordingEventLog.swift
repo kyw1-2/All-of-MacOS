@@ -40,15 +40,6 @@ enum RecordingEventLog {
     /// Waits for queued writes (tests, and before reading the archive).
     static func flush() { queue.sync {} }
 
-    /// The archived events, oldest first.
-    static func entries(directory: URL = RecordingEventLog.defaultDirectory) -> [[String: String]] {
-        flush()
-        guard let text = try? String(contentsOf: directory.appendingPathComponent(fileName), encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").compactMap { line in
-            (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: String]
-        }
-    }
-
     private static func append(_ line: String, to target: URL) {
         let folder = target.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,

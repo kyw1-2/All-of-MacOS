@@ -319,9 +319,6 @@ final class ClipboardStore: ObservableObject {
     /// server round trip, and 150 ms is still shorter than a copy-then-open.
     static func pollInterval(recording: Bool) -> TimeInterval { recording ? 0.15 : 60 }
 
-    /// The running poller's interval; nil while stopped (tests).
-    var pollingInterval: TimeInterval? { timer?.timeInterval }
-
     private func schedulePolling() {
         let interval = Self.pollInterval(recording: settings.enabled && !paused)
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
