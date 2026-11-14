@@ -551,7 +551,7 @@ class KeyboardMonitor: ObservableObject {
         var handledByPressCount = Set<UUID>()
         let doubleTriggers = matches.filter { $0.pressCount >= 2 }
         if !doubleTriggers.isEmpty {
-            let window = Double(TriggerTimingSettings.mouseMultiClickMs(timingDefaults)) / 1000
+            let window = Double(TriggerTimingSettings.keyboardDoublePressMs(timingDefaults)) / 1000
             let gateKey = "\(keyCode)-\(shortcut.modifiers.rawValue)"
             if doublePressGate.register(gateKey, now: clock(), window: window) {
                 // Second press: the pair's own triggers run now, the deferred

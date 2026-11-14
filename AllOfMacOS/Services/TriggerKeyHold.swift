@@ -7,6 +7,7 @@ import AppKit
 enum TriggerTimingSettings {
     static let keyboardLongPressKey = "AOMKeyboardLongPressMs"
     static let keyboardQuickReleaseKey = "AOMKeyboardQuickReleaseMaxMs"
+    static let keyboardDoublePressKey = "AOMKeyboardDoublePressMs"
     static let mouseLongPressKey = "AOMMouseLongPressMs"
     static let mouseDragThresholdKey = "AOMMouseDragThresholdPx"
     static let mouseMultiClickKey = "AOMMouseMultiClickIntervalMs"
@@ -18,10 +19,12 @@ enum TriggerTimingSettings {
     /// Chosen defaults (not BTT's, which are unknown): 500 ms long press, 250 ms quick release.
     static let defaultKeyboardLongPressMs = 500
     static let defaultKeyboardQuickReleaseMs = 250
+    static let defaultKeyboardDoublePressMs = 300
     static let defaultMouseLongPressMs = 500
     static let defaultMouseDragThresholdPx = 40
     static let longPressRangeMs = 100...5000
     static let quickReleaseRangeMs = 50...2000
+    static let doublePressRangeMs = 150...1000
     static let dragThresholdRangePx = 5...500
     static let multiClickRangeMs = 150...1500
 
@@ -37,6 +40,10 @@ enum TriggerTimingSettings {
     }
     static func keyboardQuickReleaseMs(_ d: UserDefaults = TriggerTimingSettings.store) -> Int {
         value(keyboardQuickReleaseKey, default: defaultKeyboardQuickReleaseMs, range: quickReleaseRangeMs, defaults: d)
+    }
+    /// Max gap between the two presses of a double-press shortcut; a single press waits this long.
+    static func keyboardDoublePressMs(_ d: UserDefaults = TriggerTimingSettings.store) -> Int {
+        value(keyboardDoublePressKey, default: defaultKeyboardDoublePressMs, range: doublePressRangeMs, defaults: d)
     }
     static func mouseLongPressMs(_ d: UserDefaults = TriggerTimingSettings.store) -> Int {
         value(mouseLongPressKey, default: defaultMouseLongPressMs, range: longPressRangeMs, defaults: d)
