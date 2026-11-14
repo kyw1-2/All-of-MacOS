@@ -70,6 +70,8 @@ struct SystemToolsView: View {
                     .accessibilityElement(children: .contain)
                 }
             }
+            // Charging limit, fan presets and SMC sensors have no tile of their own.
+            if showsStrip { HardwareCareCard() }
         }
         .aomPage("System Tools")
         .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
