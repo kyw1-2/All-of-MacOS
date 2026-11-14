@@ -1,3 +1,11 @@
+## [3.6.2] - 2026-11-14
+
+### Fixed
+- **Double presses were not recognized.** 3.6.0 gave double-press shortcuts a fixed 300 ms window, so a relaxed double press on the UGREEN side buttons (about 400 ms apart) ran the single-press action twice. Like BetterTouchTool's double clicks, the window again follows the macOS double-click speed (500 ms by default). Keyboard double press in Settings still overrides it, and Restore Gesture Defaults returns to the system speed.
+
+### Validation
+- 100 tests passed, including 4 new ones that replay the user's ⌃fn← single- and double-press triggers. A 400 ms double press gave two single presses on 3.6.1 and now runs the double press.
+
 ## [3.6.1] - 2026-11-14
 
 ### Fixed
