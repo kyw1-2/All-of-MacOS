@@ -1,3 +1,16 @@
+## [3.6.0] - 2026-11-14
+
+### Changed
+- **Calmer pages.** Page headers sit on the canvas instead of in a tinted gradient card. Section titles are plain text without the accent bar, count pill or ⓘ (help shows as the title's tooltip). Cards are flat, with a hairline instead of a gloss and shadow. Workspace tiles keep colour in the badge only, and System Tools uses tinted symbols instead of filled squircles.
+- Workspace drops its status card and the two always-green pills; a pill appears only when something needs attention. The sidebar loses its duplicate app name and status, and its search field reads "Search".
+- Capture shows your captures before the ruler settings.
+
+### Fixed
+- **Single presses of double-press shortcuts lagged half a second.** The wait for a second press used the mouse double-click interval (500 ms by default). It now has its own setting, Keyboard double press, which defaults to 300 ms (Settings › Gestures & triggers › Edit… › Keyboard & mouse). This makes the UGREEN side buttons (⌃← / ⌃→) respond faster.
+
+### Validation
+- 94 tests passed (89 existing, 5 new for double-press pairing and the new setting). Every page was reviewed in an isolated preview build, in light and dark mode.
+
 ## [3.5.0] - 2026-11-14
 
 ### Changed
