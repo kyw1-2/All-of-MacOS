@@ -19,7 +19,7 @@ struct ActivationGroupsEditor: View {
                 VStack(spacing: 0) {
                     List(selection: $selectedID) {
                         ForEach(groups) { group in
-                            AOMListRow(group.name, detail: Self.scopeSummary(group), dimmed: !group.isEnabled) {
+                            AOMListRow(group.name, dimmed: !group.isEnabled) {
                                 Image(systemName: "square.stack.3d.up")
                             }
                             .tag(group.id)
@@ -42,12 +42,10 @@ struct ActivationGroupsEditor: View {
                     if let index = groups.firstIndex(where: { $0.id == selectedID }) {
                         ActivationGroupForm(group: Binding(
                             get: { appState.currentPreset.activationGroups[index] },
-                            set: { appState.updateActivationGroup($0) }),
-                            triggerCount: appState.currentPreset.triggers.filter { $0.activationGroupID == groups[index].id }.count)
+                            set: { appState.updateActivationGroup($0) }))
                         .id(groups[index].id)
                     } else {
-                        AOMEmptyState("No Group Selected", systemImage: "square.stack.3d.up",
-                                      message: "A group shares automations across several apps and can be limited to certain times, power states or display setups.") {
+                        AOMEmptyState("No Group Selected", systemImage: "square.stack.3d.up", message: "") {
                             Button("New Group") { add() }
                         }
                     }
@@ -56,7 +54,6 @@ struct ActivationGroupsEditor: View {
             }
             AOMDivider()
             HStack {
-                AOMEditorNote("Automations join a group from “Applies to” in the Automation editor.")
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
@@ -83,18 +80,11 @@ struct ActivationGroupsEditor: View {
         selectedID = id
     }
 
-    static func scopeSummary(_ group: ActivationGroup) -> String {
-        var parts = [group.appliesToAllApps ? "All apps" : "\(group.includedBundleIDs.count) app\(group.includedBundleIDs.count == 1 ? "" : "s")"]
-        if let conditions = group.conditions, !conditions.isEmpty { parts.append(conditions.summary) }
-        if !group.isEnabled { parts.insert("Off", at: 0) }
-        return parts.joined(separator: " · ")
-    }
 }
 
 /// One group's settings, as a grouped form.
 private struct ActivationGroupForm: View {
     @Binding var group: ActivationGroup
-    let triggerCount: Int
 
     private var conditions: Binding<ActivationConditions> {
         Binding(get: { group.conditions ?? ActivationConditions() },
@@ -106,7 +96,6 @@ private struct ActivationGroupForm: View {
             Section {
                 TextField("Name", text: $group.name)
                 Toggle("Enabled", isOn: $group.isEnabled)
-                LabeledContent("Automations") { Text("\(triggerCount)").foregroundStyle(.secondary) }
             }
             Section {
                 Toggle("All applications", isOn: $group.appliesToAllApps)
@@ -117,18 +106,11 @@ private struct ActivationGroupForm: View {
                 Toggle("Turn off global automations while this group is active", isOn: $group.disableGlobalTriggers)
             } header: {
                 Text("Apps")
-            } footer: {
-                Text("App-specific automations win over groups; groups win over All Applications.")
-                    .font(AOMType.caption).foregroundStyle(AOMColor.textSecondary)
             }
             Section {
                 ConditionsForm(conditions: conditions)
             } header: {
                 Text("Only When")
-            } footer: {
-                Text(conditions.wrappedValue.isEmpty ? "No conditions: active whenever one of its apps is frontmost."
-                     : "Active only while all of these hold: \(conditions.wrappedValue.summary).")
-                    .font(AOMType.caption).foregroundStyle(AOMColor.textSecondary)
             }
         }
         .formStyle(.grouped)

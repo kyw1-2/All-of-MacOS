@@ -6,10 +6,10 @@ import SwiftUI
 // AOMTokens and AOMComponents:
 //
 //   AOMEditorGroup   a titled group inside a card (e.2: never a card in a
-//                    card): symbol, title, detail, ⓘ, optional disclosure,
-//                    and a hairline above every group
-//   AOMEditorNote    one line of scope or consequence, or a warning in its
-//                    tone with a glyph; longer explanations go in an ⓘ
+//                    card): symbol, title, detail, optional help, optional
+//                    disclosure, and a hairline above every group
+//   AOMEditorNote    one line of consequence, or a warning in its tone with a
+//                    glyph; used only where the user must act on it
 //   AOMRowValue      the value beside a slider or stepper (monospaced digits)
 //   AOMRowStepper    a row control: the value, then the stepper
 //   aomRowInset()    pads free content like a row inside a section card

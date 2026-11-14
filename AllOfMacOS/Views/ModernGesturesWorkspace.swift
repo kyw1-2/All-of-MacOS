@@ -16,6 +16,7 @@ struct ModernGesturesWorkspace: View {
     @AppStorage("AOMAutomationListWidth") private var listWidth: Double = AOMSize.listColumnIdeal
     @AppStorage("AOMAutomationTableWidth") private var tableWidth: Double = 560
     @State private var showingGroupsEditor = false
+    @State private var showingBrowseActions = false
     @State private var selectedDeviceCategory: TriggerCategory = .all
     @State private var searchQuery = ""
     @State private var searchPresented = false
@@ -74,10 +75,6 @@ struct ModernGesturesWorkspace: View {
         return triggers
     }
 
-    private func count(_ category: TriggerCategory) -> Int {
-        category == .all ? scopedTriggers.count : scopedTriggers.filter { $0.input.category == category }.count
-    }
-
     private var scopeTitle: String {
         if let id = appState.selectedActivationGroupID,
            let group = appState.currentPreset.activationGroups.first(where: { $0.id == id }) { return group.name }
@@ -103,8 +100,7 @@ struct ModernGesturesWorkspace: View {
     }
 
     private var subtitle: String {
-        let scoped = scopedTriggers
-        return "\(scopeTitle) · \(scoped.filter(\.isEnabled).count) of \(scoped.count) on"
+        scopeTitle
     }
 
     // MARK: Body
@@ -144,7 +140,10 @@ struct ModernGesturesWorkspace: View {
             ActivationGroupsEditor().environmentObject(appState)
         }
         .sheet(isPresented: $appState.showingAddAction) {
-            AddActionSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
+            BrowseActionsSheet(parentID: parentID, toElse: toElse, replaceActionID: replaceActionID)
+        }
+        .sheet(isPresented: $showingBrowseActions) {
+            BrowseActionsSheet()
         }
         .aomToast(toast)
         .onAppear {
@@ -188,14 +187,19 @@ struct ModernGesturesWorkspace: View {
             .pickerStyle(.segmented)
             .help("Show as a list or a sortable table")
             Menu {
-                Button("Import Preset…", systemImage: "square.and.arrow.down") { appState.presentPresetImport() }
-                Button("Export Preset…", systemImage: "square.and.arrow.up") { appState.presentPresetExport() }
+                Button("Browse Actions…", systemImage: "square.grid.3x3") { showingBrowseActions = true }
+                Button("Floating Menus & Widgets…", systemImage: "menubar.rectangle") {
+                    FloatingMenuController.shared.edit()
+                }
                 Divider()
                 Button("Edit Activation Groups…", systemImage: "square.stack.3d.up") { showingGroupsEditor = true }
+                Divider()
+                Button("Import Preset…", systemImage: "square.and.arrow.down") { appState.presentPresetImport() }
+                Button("Export Preset…", systemImage: "square.and.arrow.up") { appState.presentPresetExport() }
             } label: {
-                Label("Presets", systemImage: "ellipsis.circle")
+                Label("More", systemImage: "ellipsis.circle")
             }
-            .help("Import or export presets and manage activation groups")
+            .help("Actions, floating menus and presets")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -258,10 +262,8 @@ struct ModernGesturesWorkspace: View {
             AOMDivider()
             if rows.isEmpty {
                 if searchQuery.isEmpty {
-                    // design-336 b.9: the column's own empty state with one
-                    // action; New Automation stays in the toolbar (⌘N).
-                    AOMEmptyState("No \(selectedDeviceCategory.rawValue) Automations", systemImage: selectedDeviceCategory.iconName,
-                                  message: "Nothing in \(scopeTitle) uses this input yet.") {
+                    AOMEmptyState("No \(selectedDeviceCategory.rawValue) Automations",
+                                  systemImage: selectedDeviceCategory.iconName, message: "") {
                         Button("Show All Inputs") { selectedDeviceCategory = .all }
                     }
                 } else {
@@ -299,14 +301,13 @@ struct ModernGesturesWorkspace: View {
         }
     }
 
-    /// The input filter as labelled chips with their counts; all categories
-    /// stay visible so users can discover Trackpad, Keyboard, Mouse, Drawing
-    /// and Other triggers at a glance.
+    /// The input filter as labelled chips. All categories stay visible so
+    /// users can discover Trackpad, Keyboard, Mouse, Drawing and Other
+    /// triggers at a glance; the chips carry no counts.
     private var filterBar: some View {
         let items = TriggerCategory.allCases.map { category -> AOMScopeItem<TriggerCategory> in
-            let number = count(category)
-            return AOMScopeItem(id: category, title: Self.shortTitle(category),
-                                symbol: category == .all ? nil : category.iconName, count: number)
+            AOMScopeItem(id: category, title: Self.shortTitle(category),
+                         symbol: category == .all ? nil : category.iconName)
         }
         return ScrollView(.horizontal) {
             AOMScopeBar(items: items, selection: $selectedDeviceCategory, accessibilityLabel: "Input")
@@ -662,7 +663,7 @@ struct ModernGesturesWorkspace: View {
         let rows = ActionTree.rows(trigger.actions)
         let runState = runStates[trigger.id] ?? .idle
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-            AOMSectionTitle("Then", detail: rows.isEmpty ? nil : "\(rows.count) step\(rows.count == 1 ? "" : "s")",
+            AOMSectionTitle("Then",
                             help: "The steps run in order, top to bottom. Test runs them now; each step's options open from its chevron.") {
                 AOMRunStatusView(state: runState)
                 if !trigger.actions.isEmpty {
@@ -685,13 +686,7 @@ struct ModernGesturesWorkspace: View {
                                 .foregroundStyle(.tint)
                                 .frame(width: Self.choiceBadge)
                                 .accessibilityHidden(true)
-                            // A settings row: the title over what can go here.
-                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                                Text("Add the first action").font(AOMFont.headline).foregroundStyle(AOMColor.text)
-                                Text("Shortcuts, window moves, app launches, scripts, captures and more.")
-                                    .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                                    .lineLimit(1)
-                            }
+                            Text("Add Action").font(AOMFont.headline).foregroundStyle(AOMColor.text)
                             Spacer(minLength: AOMSpace.x2)
                             Image(systemName: "chevron.right")
                                 .font(AOMFont.caption.weight(.semibold))
@@ -704,7 +699,7 @@ struct ModernGesturesWorkspace: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.card))
-                    .accessibilityLabel("Add the first action")
+                    .accessibilityLabel("Add Action")
                 }
             } else {
                 VStack(spacing: 0) {
@@ -778,8 +773,7 @@ struct ModernGesturesWorkspace: View {
     /// A value-bound trigger drives its value and never runs its steps
     /// (SystemTriggerMonitor / TrackpadMonitor), so the steps say so.
     private var valueBindingNotice: some View {
-        AOMNotice(.info, "Actions don't run while a value binding is on.",
-                  detail: "The input sets the bound value instead. Turn the binding off in Options to run these steps again.") {
+        AOMNotice(.info, "Actions don't run while a value binding is on.") {
             Button("Show Binding") { withAnimation(AOMMotion.panel) { showOptions = true } }
         }
     }
@@ -840,49 +834,18 @@ struct ModernGesturesWorkspace: View {
 
     // MARK: - Onboarding (no automations in this scope)
 
-    /// No automations in this scope yet: what can start one, as a short
-    /// menu of inputs (Keyboard Maestro's New Macro choices), never a blank page.
-    /// No automations in this scope yet: the d.9 header says so, then one
-    /// section of input kinds to start from (e.5; a chooser rather than one
-    /// button, because the input decides everything that follows).
+    /// Nothing in this scope yet: one title, one New Automation button and the
+    /// five input kinds as a plain menu of names.
     private var onboardingView: some View {
-        AOMPage(maxWidth: AOMSize.readableWidth) {
-            AOMPageHeader("No automations in \(scopeTitle) yet", module: .automation,
-                          subtitle: "Choose what starts one, then add the actions it runs. You can change both later.")
-            AOMSection("Start with",
-                       footer: "\(AOMPaletteShortcut.current(appState.currentPreset).displayString) finds any action, automation or setting.") {
-                let choices: [(TriggerCategory, String, String)] = [
-                    (.trackpad, "Trackpad Gesture", "Swipes, taps, pinches, TipTap and edge slides"),
-                    (.keyboard, "Keyboard Shortcut", "Shortcuts, key sequences and typed words"),
-                    (.normalMouse, "Mouse Button", "Extra buttons and clicks with modifiers"),
-                    (.drawings, "Drawing", "Draw a shape with the pointer to run actions"),
-                    (.otherTriggers, "Other Trigger", "App launch, Wi-Fi, battery, displays and timers")
-                ]
-                ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
-                    Button { presentAddTrigger(choice.0) } label: {
-                        HStack(spacing: AOMSpace.x3) {
-                            AOMModuleBadge(symbol: choice.0.iconName, hue: GestureVisual.tint(choice.0), size: Self.choiceBadge)
-                            // The input over what it covers, as a System Settings row.
-                            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                                Text(choice.1).font(AOMFont.headline).foregroundStyle(AOMColor.text)
-                                Text(choice.2).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: AOMSpace.x2)
-                            Image(systemName: "chevron.right")
-                                .font(AOMFont.caption.weight(.semibold))
-                                .foregroundStyle(AOMColor.textTertiary)
-                        }
-                        .padding(.horizontal, AOMSpace.rowInset)
-                        .padding(.vertical, AOMSpace.x2)
-                        .frame(minHeight: AOMSize.rowDetail + AOMSpace.x2)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(AOMRowButtonStyle(radius: 0))
-                    .accessibilityLabel("\(choice.1): \(choice.2)")
-                    if index < choices.count - 1 { AOMDivider().padding(.leading, AOMSpace.rowInset + Self.choiceBadge + AOMSpace.x3) }
+        AOMEmptyState("No Automations", systemImage: "bolt", message: "") {
+            Button("New Automation") { presentAddTrigger(.trackpad) }
+                .keyboardShortcut("n", modifiers: .command)
+            Menu("Add by Input") {
+                ForEach(TriggerCategory.inputCategories) { category in
+                    Button(Self.shortTitle(category)) { presentAddTrigger(category) }
                 }
             }
+            .fixedSize()
         }
     }
 }
