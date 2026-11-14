@@ -1385,12 +1385,6 @@ final class SystemToolsModel: ObservableObject {
 
     // MARK: - Clipboard
 
-    /// One line, at most 48 characters, for toasts and the last-result line.
-    static func preview(_ text: String) -> String {
-        let line = text.replacingOccurrences(of: "\n", with: " ⏎ ").trimmingCharacters(in: .whitespaces)
-        return line.count > 48 ? String(line.prefix(47)) + "…" : line
-    }
-
     func copy(_ id: SystemToolID, _ text: String, message: String) {
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.setString(text, forType: .string) else {

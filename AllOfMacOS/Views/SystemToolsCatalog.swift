@@ -166,7 +166,6 @@ struct SystemToolInfo: Identifiable {
     var requirement: SystemToolRequirement?
 
     var isAvailable: Bool { requirement?.isMet ?? true }
-    var isToggle: Bool { kind == .toggle }
 
     /// Title, section name, keywords and the tooltip all count.
     func matches(_ query: String) -> Bool {
