@@ -49,6 +49,10 @@ enum AOMSpace {
     // 24 pt margins and section gaps, 16 pt inside cards, 12 pt between tiles
     // (HIG: ~12 pt around bezeled elements).
     static let pageMargin = x6
+    /// From the toolbar to the top of a page's header (its title, or the
+    /// Workspace's glass header panel), on every page, so switching pages
+    /// never moves the header up or down.
+    static let pageTop = x5
     static let sectionGap = x6
     static let titleGap = x2
     static let cardPadding = x4

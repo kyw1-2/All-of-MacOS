@@ -506,7 +506,7 @@ struct ModernGesturesWorkspace: View {
                 }
                 .frame(maxWidth: AOMSize.readableWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x5)
+                .padding(.top, AOMSpace.pageTop)
                 .padding(.bottom, AOMSpace.x8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

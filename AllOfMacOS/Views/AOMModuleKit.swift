@@ -734,6 +734,9 @@ struct AOMStatusHeader<Actions: View>: View {
                 .fixedSize()
         }
         .frame(minHeight: progress == nil ? nil : AOMIcon.statusRing + AOMSpace.x2)
+        // The same 2 pt optical inset as AOMPageHeader and section titles,
+        // so the title starts on the page's text line.
+        .padding(.horizontal, AOMSpace.x0_5)
         .accessibilityElement(children: .contain)
     }
 }

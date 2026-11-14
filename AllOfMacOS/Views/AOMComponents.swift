@@ -52,7 +52,7 @@ struct AOMPage<Content: View>: View {
             LazyVStack(alignment: .leading, spacing: spacing) { content }
                 .frame(maxWidth: maxWidth, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x5)
+                .padding(.top, AOMSpace.pageTop)
                 .padding(.bottom, AOMSpace.x6)
                 .frame(maxWidth: .infinity)
         }

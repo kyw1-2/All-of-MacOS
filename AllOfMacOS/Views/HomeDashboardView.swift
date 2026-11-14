@@ -119,7 +119,7 @@ struct AOMHomeView: View {
                 if abs(width - contentWidth) > 1 { contentWidth = width }
             }
             .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x5)
+            .padding(.top, AOMSpace.pageTop)
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity)
         }
@@ -1130,7 +1130,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
                 TimelineView(.periodic(from: .now, by: 30)) { context in
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                        HStack(alignment: .center, spacing: AOMSpace.x2) {
+                        HStack(alignment: .center, spacing: Self.dotGap) {
                             statusDot
                             Text(state.sentence)
                                 .font(AOMFont.pageTitle)
@@ -1147,7 +1147,8 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.leading, AOMSpace.x2 + AOMSpace.x2 + AOMSpace.x0_5)
+                            // Under the sentence, not the dot: the dot and its gap.
+                            .padding(.leading, Self.dotSize + Self.dotGap)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1159,8 +1160,9 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
             }
             strip
         }
-        .padding(.horizontal, AOMSpace.x5)
-        .padding(.vertical, AOMSpace.x4 + AOMSpace.x0_5)
+        // A pane like the others: its content inset by the pane padding, so
+        // the dot and chips start on the same line as the setup card's text.
+        .padding(AOMSpace.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .aomGlassPanel()
         .aomAnimation(.standard, value: state)
@@ -1170,10 +1172,13 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
 
     /// The state as one dot before the sentence (green running, grey
     /// paused, orange when something needs you); the words carry the meaning.
+    private static var dotSize: CGFloat { AOMSpace.x2 }
+    private static var dotGap: CGFloat { AOMSpace.x2 }
+
     private var statusDot: some View {
         Circle()
             .fill(state.tone.color)
-            .frame(width: AOMSpace.x2, height: AOMSpace.x2)
+            .frame(width: Self.dotSize, height: Self.dotSize)
             .accessibilityHidden(true)
     }
 }

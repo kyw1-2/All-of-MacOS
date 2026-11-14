@@ -77,7 +77,8 @@ struct FolderRulesPage: View {
                 FolderRulesNotices(model: model, engine: engine)
             }
             .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.vertical, AOMSpace.x3)
+            .padding(.top, AOMSpace.pageTop)
+            .padding(.bottom, AOMSpace.x3)
             AOMDivider()
             columns
         }

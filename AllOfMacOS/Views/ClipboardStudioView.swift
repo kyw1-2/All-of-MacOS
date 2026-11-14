@@ -143,7 +143,7 @@ struct ClipboardStudioView: View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, AOMSpace.pageMargin)
-                .padding(.top, AOMSpace.x4)
+                .padding(.top, AOMSpace.pageTop)
                 .padding(.bottom, AOMSpace.x2)
             filterBar
             AOMDivider()
