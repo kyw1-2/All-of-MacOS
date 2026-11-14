@@ -117,26 +117,17 @@ extension View {
         }
     }
 
-    /// A round Liquid Glass button face (Workspace quick actions): system
-    /// glass on macOS 26+, tinted when the action is live; a frosted circle
-    /// before.
+    /// A round button face in the content layer (Workspace quick actions,
+    /// capture modes): a quiet system fill, the accent when the action is
+    /// live. Not glass — content-layer controls stay opaque (HIG Materials).
     @ViewBuilder func aomRoundGlass(tint: Color? = nil) -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(tint.map { Glass.regular.tint($0).interactive() } ?? Glass.regular.interactive(), in: Circle())
-        } else {
-            background(tint ?? AOMColor.surface, in: Circle())
-        }
+        background(tint ?? AOMColor.sunken, in: Circle())
     }
 
-    /// A large Liquid Glass pane for the one hero area of a page (the
-    /// Workspace header): system glass on macOS 26+, a frosted pane before.
-    @ViewBuilder func aomGlassPanel(radius: CGFloat = AOMRadius.panel) -> some View {
-        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if #available(macOS 26.0, *) {
-            glassEffect(.regular, in: shape)
-        } else {
-            background(AOMColor.surface, in: shape)
-        }
+    /// The one hero area of a page (the Workspace header): an ordinary
+    /// content pane with the card hairline.
+    @ViewBuilder func aomGlassPanel(radius: CGFloat = AOMRadius.card) -> some View {
+        modifier(AOMCardSurface(style: .paper, radius: radius, padding: 0))
     }
 
     /// The one top-edge treatment for every page: the automatic scroll edge

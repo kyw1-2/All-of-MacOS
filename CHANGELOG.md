@@ -1,3 +1,18 @@
+## [3.9.1] - 2026-11-14
+
+### Changed
+- Main page backgrounds are opaque neutral grey (#F5F5F7 in light mode, #1E1E1E in dark mode). Content cards use opaque white (#FFFFFF) or dark #2A2A2A, with a subtle 0.5 pt outline. Card corners are 12 pt rather than 16 pt; translucency remains for system chrome and floating panels.
+- Workspace uses a two-column dashboard at wide window sizes: module controls, Quick actions and Utilities on the left; Today, This Mac and Recent activity in a 300 pt right rail. Narrow windows use the original one-column flow.
+- Set up AOM collapses to the next actionable setup step once any step is finished, with a Show Steps override.
+
+### Fixed
+- Empty Files and Focus module metrics no longer show an ambiguous ellipsis.
+- System Tools' This Mac figures attempt an equal-width single row where space permits, and wrap into a grid in narrow layouts.
+- Capture's empty gallery takes 200 pt rather than 320 pt.
+
+### Validation
+- UI changes reviewed in a preview build before this release; the System Tools live figures could not be populated in that inactive preview, including on the previous release. A successful build and code tests do not establish that the live 6-figure layout was visually verified.
+
 ## [3.9.0] - 2026-11-14
 
 ### Changed

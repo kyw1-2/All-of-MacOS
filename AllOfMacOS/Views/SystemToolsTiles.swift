@@ -245,36 +245,49 @@ struct SystemStatusStrip: View {
         return monitor.address?.interface == "en0" ? "Wi-Fi" : (monitor.address?.interface ?? "Online")
     }
 
+    /// One row of equal figures across the page when it fits (no ragged
+    /// gap at the end, no truncated values); a wrapping grid otherwise.
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: AOMSpace.tileGap)], alignment: .leading,
-                  spacing: AOMSpace.tileGap) {
-            ForEach(figures) { figure in
-                let content = HStack(spacing: AOMSpace.x2) {
-                    Image(systemName: figure.symbol)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.row)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(figure.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
-                        Text(figure.value).font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.text)
-                            .lineLimit(1).truncationMode(.tail)
-                    }
-                    .layoutPriority(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, AOMSpace.x2)
-                .frame(minHeight: AOMSize.rowDetail)
-                if let action = figure.action {
-                    Button(action: action) { content }
-                        .buttonStyle(SystemTileButtonStyle())
-                        .help(figure.title)
-                        .accessibilityLabel("\(figure.title), \(figure.value)")
-                } else {
-                    content.aomCard(padding: 0)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(figure.title), \(figure.value)")
+        let figures = figures
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: AOMSpace.tileGap) {
+                ForEach(figures) { figure in
+                    cell(figure).frame(minWidth: 132, maxWidth: .infinity)
                 }
             }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: AOMSpace.tileGap)], alignment: .leading,
+                      spacing: AOMSpace.tileGap) {
+                ForEach(figures) { figure in cell(figure) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(_ figure: Figure) -> some View {
+        let content = HStack(spacing: AOMSpace.x2) {
+            Image(systemName: figure.symbol)
+                .foregroundStyle(AOMColor.textSecondary)
+                .frame(width: AOMIcon.row)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(figure.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                Text(figure.value).font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.text)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, AOMSpace.x2)
+        .frame(minHeight: AOMSize.rowDetail)
+        if let action = figure.action {
+            Button(action: action) { content }
+                .buttonStyle(SystemTileButtonStyle())
+                .help(figure.title)
+                .accessibilityLabel("\(figure.title), \(figure.value)")
+        } else {
+            content.aomCard(padding: 0)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(figure.title), \(figure.value)")
         }
     }
 }

@@ -51,9 +51,10 @@ struct AOMHomeView: View {
     /// must not come back when you return to Workspace. Dismissed suggestions
     /// stay session-only.
     @SceneStorage("workspace.setupSkipped") private var setupSkipped = false
-    /// The setup steps are open on first run; "Hide Steps" folds them into
-    /// the header for the rest of the session.
-    @State private var setupExpanded = true
+    /// The setup steps are open until the first step is done, then fold into
+    /// one line with the next step's button; "Show/Hide Steps" overrides that
+    /// for the rest of the session.
+    @State private var setupExpandedChoice: Bool?
     @State private var dismissedSuggestions: Set<String> = []
     @State private var showsAllAttention = false
     /// What this page shows and in which order (design-3.4.0 b.15).
@@ -90,6 +91,7 @@ struct AOMHomeView: View {
         let snapshot = WorkspaceSnapshot(home: self)
         ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                // Status and anything that asks for you span the page.
                 hero(snapshot)
                 if snapshot.showsSetup {
                     setupCard(snapshot)
@@ -97,17 +99,20 @@ struct AOMHomeView: View {
                 if !snapshot.attention.isEmpty {
                     needsAttention(snapshot.attention)
                 }
-                if layout.shows(.tools) {
-                    toolModules(snapshot)
+                // Dashboard: what you operate on the left, what happened on
+                // the right rail (Xcode Organizer, Activity summary), so the
+                // whole state reads in one screen at the default window size.
+                if usesRail {
+                    HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
+                        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) { mainColumn(snapshot) }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        overviewRail(snapshot)
+                            .frame(width: Self.railWidth)
+                    }
+                } else {
+                    mainColumn(snapshot)
+                    overview(snapshot)
                 }
-                if layout.shows(.productivity) {
-                    productivityModules
-                }
-                if layout.shows(.quickActions) {
-                    quickActions
-                }
-                utilities
-                overview(snapshot)
             }
             .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
             .background {
@@ -236,6 +241,40 @@ struct AOMHomeView: View {
         appState.showingAddTrigger = true
     }
 
+    // MARK: Layout
+
+    static let railWidth: CGFloat = 300
+    /// The right rail needs the module grid to keep two columns beside it.
+    private var usesRail: Bool { contentWidth >= 720 + Self.railWidth + AOMSpace.sectionGap }
+    /// Width of the column the module grid and utilities sit in.
+    private var mainWidth: CGFloat { usesRail ? contentWidth - Self.railWidth - AOMSpace.sectionGap : contentWidth }
+
+    @ViewBuilder
+    private func mainColumn(_ snapshot: WorkspaceSnapshot) -> some View {
+        if layout.shows(.tools) {
+            toolModules(snapshot)
+        }
+        if layout.shows(.productivity) {
+            productivityModules
+        }
+        if layout.shows(.quickActions) {
+            quickActions
+        }
+        utilities
+    }
+
+    /// Today, This Mac and Recent activity stacked in the rail.
+    @ViewBuilder
+    private func overviewRail(_ snapshot: WorkspaceSnapshot) -> some View {
+        let parts = [AOMWorkspaceLayout.Part.today, .thisMac, .recent].filter(layout.shows)
+        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+            ForEach(parts) { part in
+                overviewCard(part, snapshot)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     // MARK: Hero
 
     @ViewBuilder
@@ -334,7 +373,9 @@ struct AOMHomeView: View {
         if case .blocked(let permission, _) = snapshot.hero, permission == .accessibility, accessibility != .granted {
             heroAsksForNext = true
         }
-        return WorkspaceSetupCard(steps: steps, expanded: $setupExpanded, prominentNext: !heroAsksForNext,
+        let anyDone = steps.contains(where: \.done)
+        let expanded = Binding(get: { setupExpandedChoice ?? !anyDone }, set: { setupExpandedChoice = $0 })
+        return WorkspaceSetupCard(steps: steps, expanded: expanded, prominentNext: !heroAsksForNext,
                                   skip: { withAnimation(AOMMotion.standard) { setupSkipped = true } },
                                   tour: { appState.showTutorialRequested = true })
     }
@@ -428,7 +469,7 @@ struct AOMHomeView: View {
 
     /// Module rows in one frosted pane, two columns when there is room.
     private func moduleGrid<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        let columns = contentWidth >= 720 ? 2 : 1
+        let columns = mainWidth >= 720 ? 2 : 1
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1, alignment: .top),
                                         count: columns),
                          alignment: .leading, spacing: 0, content: content)
@@ -740,7 +781,7 @@ struct AOMHomeView: View {
     /// rows): a monochrome glyph, the name, a short detail and a chevron.
     private var utilities: some View {
         let links = utilityLinks
-        let columns = contentWidth >= 720 ? 2 : 1
+        let columns = mainWidth >= 720 ? 2 : 1
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
             AOMSectionTitle("Utilities")
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1), count: columns),
@@ -2040,10 +2081,12 @@ struct AOMModuleStatusTile<MenuItems: View>: View {
 
     var body: some View {
         // With a switch, a tile without a count shows no figure: the switch
-        // already says on or off.
+        // already says on or off. A module with neither a count nor an on/off
+        // state (Files, an idle Focus) shows none either — its status line
+        // says what it does; a lone "…" read as a broken value.
         let hasSwitch = status.isOn != nil && status.setOn != nil
         let metric = status.count.map { $0.formatted() }
-            ?? (hasSwitch ? "" : (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "…")))
+            ?? (hasSwitch ? "" : (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "")))
         AOMModuleTile(status.module,
                       metric: metric,
                       unit: status.count == nil ? nil : status.unit,

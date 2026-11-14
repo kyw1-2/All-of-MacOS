@@ -203,13 +203,13 @@ enum AOMRadius {
     /// Keycaps, tiny chips.
     static let keycap: CGFloat = 5
     /// Thumbnails and wells inside cards; minimum concentric radius.
-    static let control: CGFloat = 7
+    static let control: CGFloat = 6
     /// Layout diagrams and previews inside panes, row hover and selection fills.
-    static let well: CGFloat = 10
+    static let well: CGFloat = 8
     /// Panes (groups of rows), section groups.
-    static let card: CGFloat = 16
+    static let card: CGFloat = 12
     /// ⌘K palette, the Workspace glass header, large HUDs, floating panels.
-    static let panel: CGFloat = 22
+    static let panel: CGFloat = 18
 
     /// HUDs, toasts and the recording bar (was 16).
     static let hud = panel
@@ -241,15 +241,14 @@ enum AOMColor {
     /// #1E1E1E dark), the grouped-content canvas of System Settings.
     static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1),
                                          dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1))
-    /// Main-window pages: clear, so the window's glass backdrop
-    /// (`AOMWorkspaceBackground`) shows through. Sheets and panels keep the
-    /// opaque `canvas`.
-    static let pageBackground = Color.clear
-    /// Groups of rows and content blocks: a frosted pane over the glass
-    /// backdrop — translucent white in light mode, a faint lift in dark mode —
-    /// with no edge. Over an opaque sheet it reads as a lighter surface.
-    static let surface = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.62),
-                                          dark: NSColor(white: 1, alpha: 0.075),
+    /// Main-window pages: the opaque canvas. Liquid Glass stays in the
+    /// functional layer (sidebar, toolbar, floating panels); HIG Materials:
+    /// "Don't use Liquid Glass in the content layer."
+    static let pageBackground = canvas
+    /// Groups of rows and content blocks: opaque white (#FFFFFF) in light
+    /// mode, #2A2A2A in dark — one clear step above the canvas, never tinted.
+    static let surface = Color.aomDynamic(light: .white,
+                                          dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
                                           highContrastLight: .white,
                                           highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
     /// Opaque: labels and small panels that sit over other drawn content
@@ -259,12 +258,12 @@ enum AOMColor {
                                                  dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
                                                  highContrastLight: .white,
                                                  highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
-    /// A pane under the pointer.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.80),
-                                               dark: NSColor(white: 1, alpha: 0.11))
+    /// A pane under the pointer: the fill shifts one small step.
+    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.980, green: 0.980, blue: 0.984, alpha: 1),
+                                               dark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
     /// Pressed panes.
-    static let surfacePressed = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.45),
-                                                 dark: NSColor(white: 1, alpha: 0.05))
+    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.945, blue: 0.953, alpha: 1),
+                                                 dark: NSColor(srgbRed: 0.220, green: 0.220, blue: 0.220, alpha: 1))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.

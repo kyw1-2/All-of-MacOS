@@ -748,7 +748,7 @@ private enum CaptureGalleryMetrics {
     /// How far a column may grow past its minimum before another one fits.
     static let columnStretch: CGFloat = 1.6
     /// The empty gallery keeps the page from collapsing under the strip.
-    static let emptyMinHeight: CGFloat = 320
+    static let emptyMinHeight: CGFloat = 200
     /// A tool in the one-row strip needs this much for "Measure Screen" in
     /// Caption; narrower columns use two rows of five.
     static let toolRowMinimum: CGFloat = 92

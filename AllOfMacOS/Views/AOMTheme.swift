@@ -122,13 +122,13 @@ struct AOMCardSurface: ViewModifier {
                 .background {
                     shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
                 }
-                // Frosted panes have no edge; only Increase Contrast and Show
-                // Borders draw one.
+                // A 0.5 pt hairline: white on #F5F5F7 alone is too faint to
+                // read as a group (1 pt with Increase Contrast / Show Borders).
                 .overlay {
-                    if contrast == .increased || showBorders {
-                        shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline, lineWidth: 1)
-                            .allowsHitTesting(false)
-                    }
+                    shape.strokeBorder(contrast == .increased ? AOMColor.strongLine
+                                                              : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
+                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
+                        .allowsHitTesting(false)
                 }
                 .containerShape(shape)
         case .well:
