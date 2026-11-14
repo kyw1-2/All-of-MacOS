@@ -1244,12 +1244,16 @@ final class ClipboardStore: ObservableObject {
             // Local snippets can be created while the encrypted archive loads.
             let local = entries
             let localIDs = Set(local.map(\.id))
-            entries = (local + document.entries.filter { !localIDs.contains($0.id) })
-                .sorted { $0.lastCopiedAt > $1.lastCopiedAt }
             boards = document.boards + boards.filter { current in !document.boards.contains { $0.id == current.id } }
             self.digests.merge(digests) { current, _ in current }
             let boardIDs = Set(boards.map(\.id))
-            for index in entries.indices { entries[index].pinboardIDs.formIntersection(boardIDs) }
+            // Built locally and published once: assigning element by element
+            // to the @Published array sent one change per item (1,000 by
+            // default) to every observer of the store at launch.
+            var merged = (local + document.entries.filter { !localIDs.contains($0.id) })
+                .sorted { $0.lastCopiedAt > $1.lastCopiedAt }
+            for index in merged.indices { merged[index].pinboardIDs.formIntersection(boardIDs) }
+            entries = merged
             if !isolated && !encryptedExists { pendingSave = true }
         case .failure(let error):
             handleStorageFailure(error)

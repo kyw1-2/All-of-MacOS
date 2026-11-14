@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import AllOfMacOS
 
 final class RuntimePerformanceTests: XCTestCase {
@@ -112,5 +113,26 @@ final class RuntimePerformanceTests: XCTestCase {
         XCTAssertEqual(histogram.labelled, ["0.0": 4, "0.4": 1, "0.9": 1, "1.0": 1, "1.5": 2, "6.3": 1])
         XCTAssertEqual(TouchPressureHistogram.bucket(for: 0.75), 7)
         XCTAssertEqual(TouchPressureHistogram().labelled, [:])
+    }
+
+    /// Loading the history publishes the merged list once; it used to send one
+    /// change per stored item while dropping stale pinboard memberships.
+    @MainActor
+    func testClipboardHistoryLoadPublishesOnceNotPerItem() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AOMClipboardLoad-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let writer = ClipboardStore(directory: directory)
+        await writer.ready()
+        for index in 0..<60 { writer.createTextItem("Item \(index)") }
+        await writer.flush()
+        XCTAssertEqual(writer.entries.count, 60)
+
+        let reader = ClipboardStore(directory: directory)
+        var changes = 0
+        let subscription = reader.objectWillChange.sink { changes += 1 }
+        await reader.ready()
+        subscription.cancel()
+        XCTAssertEqual(reader.entries.count, 60)
+        XCTAssertLessThan(changes, 15, "one change per item instead of one per load")
     }
 }
