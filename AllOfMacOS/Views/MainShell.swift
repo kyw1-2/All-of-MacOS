@@ -44,9 +44,7 @@ struct AOMMainShell<Content: View>: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
-            AOMSidebar(showingCommandPalette: $showingCommandPalette,
-                       showLog: $showLog,
-                       showTouchVisualizer: $showTouchVisualizer)
+            AOMSidebar(showingCommandPalette: $showingCommandPalette)
                 .navigationSplitViewColumnWidth(min: AOMSize.sidebarMin, ideal: AOMSize.sidebarIdeal,
                                                 max: AOMSize.sidebarMax)
                 .tutorialAnchor(.sidebar)
@@ -115,26 +113,15 @@ struct AOMMainShell<Content: View>: View {
 
 // MARK: - Sidebar
 
-/// Navigation only (d.6): the search field at the top (the visible way into
-/// ⌘K), then Workspace, Tools and Activity. Badges appear only for states that
-/// aren't normal ("Paused", "Rec", "Off", a count of problems to fix), in the
-/// one status pill. Icons stay the system accent; module hues never appear
-/// here. No footer: global controls moved to the hero and the menus.
+/// Navigation only, the way Finder, Mail and Notes draw it: the search field
+/// at the top (the visible way into ⌘K), then outline symbols the system
+/// tints with the accent. Badges are plain trailing text and appear only for
+/// states that aren't normal ("Paused", "Rec", "Off", a count to fix). No
+/// footer: Pause lives in the Workspace header, the menu-bar extra and
+/// Controls › Pause AOM; the drawers in the Window menu; Settings at ⌘,.
 struct AOMSidebar: View {
     @EnvironmentObject var appState: AppState
     @Binding var showingCommandPalette: Bool
-    @Binding var showLog: Bool
-    @Binding var showTouchVisualizer: Bool
-    /// The selection is the accent only in the key window; elsewhere it is grey.
-    @Environment(\.controlActiveState) private var controlActiveState
-
-    init(showingCommandPalette: Binding<Bool>,
-         showLog: Binding<Bool> = .constant(false),
-         showTouchVisualizer: Binding<Bool> = .constant(false)) {
-        self._showingCommandPalette = showingCommandPalette
-        self._showLog = showLog
-        self._showTouchVisualizer = showTouchVisualizer
-    }
 
     private var selection: Binding<AOMMainTab?> {
         Binding(get: { appState.selectedMainTab },
@@ -182,9 +169,6 @@ struct AOMSidebar: View {
         // System Settings › Appearance (HIG Sidebars), so no override here.
         .safeAreaInset(edge: .top, spacing: 0) {
             AOMSidebarSearchButton(showingCommandPalette: $showingCommandPalette)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            AOMSidebarFooterDock(showLog: $showLog, showTouchVisualizer: $showTouchVisualizer)
         }
         .accessibilityElement(children: .contain)
     }
@@ -245,20 +229,21 @@ struct AOMSidebar: View {
         }
     }
 
-    /// Apple System Settings / Arc / Raycast style sidebar rows: a jewel-toned
-    /// 22 pt squircle badge beside the page title and trailing live status pill.
+    /// A system sidebar row: the outline symbol (accent-tinted by the list),
+    /// the page title and, only when something is off-normal, a trailing
+    /// status word.
     private func navigationItem(_ tab: AOMMainTab) -> some View {
-        HStack(spacing: AOMSpace.x2) {
-            AOMModuleBadge(symbol: tab.iconName, hue: tab.accentColor, size: 22, active: true)
-            Text(tab.title)
-                .font(AOMFont.body.weight(tab == appState.selectedMainTab ? .semibold : .regular))
-                .lineLimit(1)
-            Spacer(minLength: AOMSpace.x1)
-            statusBadge(for: tab)
-                .environment(\.aomOnAccentSelection,
-                             tab == appState.selectedMainTab && controlActiveState == .key)
+        Label {
+            HStack(spacing: AOMSpace.x2) {
+                Text(tab.title).lineLimit(1)
+                Spacer(minLength: AOMSpace.x1)
+                statusBadge(for: tab)
+            }
+        } icon: {
+            // One icon column, so every title starts at the same x.
+            Image(systemName: tab.sidebarSymbol)
+                .frame(width: AOMIcon.row)
         }
-        .padding(.vertical, 2)
         .tag(tab)
         .help(tab.shortcutKey.map { "\(tab.title) — ⌘\($0.character)" } ?? tab.title)
         .contextMenu { rowMenu(tab) }
@@ -365,102 +350,6 @@ private struct AOMSidebarSearchButton: View {
         .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
         .padding(.top, AOMSpace.x2)
         .padding(.bottom, AOMSpace.x2)
-    }
-}
-
-/// Raycast / Linear / Arc style bottom sidebar dock: 1-click access to engine
-/// pause/resume, live Touch Visualizer, Diagnostics Console, and Settings (⌘,).
-private struct AOMSidebarFooterDock: View {
-    @EnvironmentObject var appState: AppState
-    @Binding var showLog: Bool
-    @Binding var showTouchVisualizer: Bool
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        VStack(spacing: 0) {
-            AOMDivider()
-            HStack(spacing: AOMSpace.x1) {
-                Button {
-                    appState.toggleGlobalEnabled()
-                } label: {
-                    HStack(spacing: AOMSpace.x1) {
-                        Circle()
-                            .fill(appState.globalEnabled ? AOMColor.success : AOMColor.textTertiary)
-                            .frame(width: 7, height: 7)
-                        Text(appState.globalEnabled ? "Active" : "Paused")
-                            .font(AOMFont.caption.weight(.semibold))
-                            .foregroundStyle(appState.globalEnabled ? AOMColor.text : AOMColor.textSecondary)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    .padding(.horizontal, AOMSpace.x2)
-                    .frame(height: 26)
-                    .background(
-                        Capsule().fill(appState.globalEnabled ? AOMColor.success.opacity(0.12) : AOMColor.track)
-                    )
-                    .overlay {
-                        Capsule().strokeBorder(
-                            appState.globalEnabled ? AOMColor.success.opacity(0.28) : AOMColor.hairline,
-                            lineWidth: 0.6
-                        )
-                    }
-                }
-                .buttonStyle(.plain)
-                .help(appState.globalEnabled ? "AOM is active — click to pause all automations" : "AOM is paused — click to resume")
-
-                Spacer(minLength: AOMSpace.x1)
-
-                dockIconButton(
-                    symbol: "hand.point.up.braille",
-                    active: showTouchVisualizer,
-                    help: "Toggle Live Touch Visualizer"
-                ) {
-                    showTouchVisualizer.toggle()
-                }
-
-                dockIconButton(
-                    symbol: "terminal",
-                    active: showLog,
-                    help: "Toggle Diagnostics Console"
-                ) {
-                    showLog.toggle()
-                }
-
-                dockIconButton(
-                    symbol: "gearshape",
-                    active: false,
-                    help: "Settings (⌘,)"
-                ) {
-                    openSettings()
-                }
-            }
-            .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
-            .padding(.vertical, AOMSpace.x1 + AOMSpace.x0_5)
-        }
-        .background(.ultraThinMaterial)
-    }
-
-    private func dockIconButton(symbol: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(active ? Color.accentColor : AOMColor.textSecondary)
-                .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
-                        .fill(active ? Color.accentColor.opacity(0.14) : Color.clear)
-                )
-                .overlay {
-                    if active {
-                        RoundedRectangle(cornerRadius: AOMRadius.control, style: .continuous)
-                            .strokeBorder(Color.accentColor.opacity(0.30), lineWidth: 0.6)
-                    }
-                }
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 
@@ -575,14 +464,30 @@ enum AOMPaletteShortcut {
 // Only the small status badge observes recording ticks/clipboard updates.
 // Navigation selection and the full List no longer redraw for these events.
 
-/// A sidebar badge: the one status pill.
+/// A sidebar badge: a few words of trailing secondary text, like Mail's
+/// counts. Only warnings and recording take their tone's colour (with a
+/// glyph for warnings, so colour is never the only signal). On the accent
+/// selection of the key window everything turns white.
 private struct AOMSidebarStatusBadge: View {
     let text: String
     var tone: AOMTone = .neutral
     var symbol: String?
+    @Environment(\.backgroundProminence) private var prominence
 
     var body: some View {
-        AOMStatusPill(text, tone: tone, symbol: symbol)
+        let onSelection = prominence == .increased
+        let colour: Color = onSelection ? .white
+            : (tone == .warning || tone == .recording || tone == .danger ? tone.textColor : AOMColor.textSecondary)
+        HStack(spacing: AOMSpace.x0_5) {
+            if let symbol { Image(systemName: symbol).imageScale(.small) }
+            Text(text).monospacedDigit()
+        }
+        .font(AOMFont.caption.weight(.medium))
+        .foregroundStyle(colour)
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
     }
 }
 

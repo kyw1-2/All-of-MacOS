@@ -267,7 +267,7 @@ struct WorkspaceCustomizeSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: AOMSpace.x3) {
-                AOMModuleBadge(symbol: "slider.horizontal.3", hue: AOMColor.accent, size: AOMIcon.tileBadge)
+                AOMModuleBadge(symbol: "slider.horizontal.3", size: AOMIcon.tileBadge)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("Customize Workspace")
                         .font(AOMFont.title)

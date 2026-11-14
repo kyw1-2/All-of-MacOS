@@ -53,10 +53,7 @@ struct AOMAutomationRow<Accessory: View>: View {
     var body: some View {
         // Names only: the input glyph and the trailing value say the rest.
         AOMListRow(trigger.displayName, dimmed: !trigger.isEnabled) {
-            AOMModuleBadge(
-                symbol: trigger.input.category.iconName,
-                hue: GestureVisual.tint(trigger.input.category),
-                size: 22,
+            AOMModuleBadge(symbol: trigger.input.category.iconName, size: 22,
                 active: trigger.isEnabled
             )
             .help(trigger.input.category.rawValue)

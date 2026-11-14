@@ -10,7 +10,7 @@ struct FreeUpSpaceSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(spacing: AOMSpace.x3) {
-                AOMModuleBadge(symbol: "externaldrive.badge.minus", hue: .brown, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: "externaldrive.badge.minus", size: AOMIcon.headerBadge)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("Free Up Space").font(AOMFont.pageStatus)
                     Text("Scans read only; what you check moves to the Trash.").font(AOMFont.callout)
@@ -70,7 +70,7 @@ struct StartupDiskSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
             HStack(spacing: AOMSpace.x3) {
-                AOMModuleBadge(symbol: "internaldrive", hue: .brown, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: "internaldrive", size: AOMIcon.headerBadge)
                 Text("Startup Disk").font(AOMFont.pageStatus)
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)

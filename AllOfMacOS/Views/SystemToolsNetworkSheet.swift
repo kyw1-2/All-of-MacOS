@@ -21,7 +21,7 @@ struct NetworkInfoSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
             HStack(spacing: AOMSpace.x3) {
-                AOMModuleBadge(symbol: "network", hue: .green, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: "network", size: AOMIcon.headerBadge)
                 Text("Network Info").font(AOMFont.pageStatus)
                 Spacer()
                 Button("Refresh") { refresh() }

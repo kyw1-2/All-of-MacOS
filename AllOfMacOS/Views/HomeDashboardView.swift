@@ -106,7 +106,7 @@ struct AOMHomeView: View {
                 if layout.shows(.quickActions) {
                     quickActions
                 }
-                powerUtilitiesBar
+                utilities
                 overview(snapshot)
             }
             .frame(maxWidth: Self.maximumContentWidth, alignment: .leading)
@@ -239,7 +239,7 @@ struct AOMHomeView: View {
 
     @ViewBuilder
     private func hero(_ snapshot: WorkspaceSnapshot) -> some View {
-        WorkspaceHero(state: snapshot.hero, chips: snapshot.chips, toast: toast) {
+        WorkspaceHero(state: snapshot.hero, chips: snapshot.chips) {
             heroAction(snapshot.hero)
         } strip: {
             if recording.isRecording { recordingStrip }
@@ -684,7 +684,7 @@ struct AOMHomeView: View {
                     ForEach(pinned) { trigger in
                         let canRun = trigger.isEnabled && !trigger.actions.isEmpty && !trigger.aomTypesText
                         WorkspaceQuickAction(trigger.displayName, symbol: canRun ? "bolt.fill" : "bolt",
-                                             hue: canRun ? AOMModule.automation.hue : nil,
+                                             active: canRun,
                                              keys: { if case .keyboardShortcut(let shortcut) = trigger.input { return shortcut.displayString }; return nil }(),
                                              running: runStates[trigger.id] == .running,
                                              help: canRun ? "Run “\(trigger.displayName)”" : "Open “\(trigger.displayName)” in Automation") {
@@ -704,14 +704,13 @@ struct AOMHomeView: View {
         .accessibilityLabel("Quick actions")
     }
 
-    // MARK: Power utilities (1-click access to deep features)
+    // MARK: Utilities: the deeper settings, one click away
 
-    private struct PowerUtilityItem: Identifiable {
+    private struct UtilityLink: Identifiable {
         let id: String
         let title: String
-        let subtitle: String
+        let detail: String
         let symbol: String
-        let hue: Color
         let action: () -> Void
     }
 
@@ -722,75 +721,70 @@ struct AOMHomeView: View {
         }
     }
 
-    private var powerUtilitiesBar: some View {
-        let items: [PowerUtilityItem] = [
-            PowerUtilityItem(id: "hyperKey", title: "Hyper Key & Remaps", subtitle: "Caps Lock → ⌃⌥⌘⇧ & key remaps",
-                             symbol: "command.square", hue: AOMModule.automation.hue) {
-                openSettingsTarget("automation")
-            },
-            PowerUtilityItem(id: "inputSources", title: "App Input Sources", subtitle: "Auto-switch Korean / English by app",
-                             symbol: "globe", hue: Color(nsColor: .systemIndigo)) {
-                openSettingsTarget("general")
-            },
-            PowerUtilityItem(id: "linkRules", title: "Browser Link Rules", subtitle: "Route URLs & strip tracking tags",
-                             symbol: "arrow.triangle.branch", hue: Color(nsColor: .systemCyan)) {
-                openSettingsTarget("sheet:linkRules")
-            },
-            PowerUtilityItem(id: "floatingWidgets", title: "Floating Menus", subtitle: "Custom palettes & screen widgets",
-                             symbol: "menubar.rectangle", hue: Color(nsColor: .systemPurple)) {
-                FloatingMenuController.shared.edit()
-            },
-            PowerUtilityItem(id: "snapZones", title: "Snap Zones & Profiles", subtitle: "Custom drop areas & display sets",
-                             symbol: "rectangle.split.3x3", hue: AOMModule.tiling.hue) {
-                appState.selectedMainTab = .snapping
-            },
-            PowerUtilityItem(id: "clickHints", title: "Click Hints & Sequences", subtitle: "Keyboard-driven UI click labels",
-                             symbol: "keyboard.badge.eye", hue: AOMModule.textActions.hue) {
-                appState.selectedMainTab = .textActions
-            },
-            PowerUtilityItem(id: "audioMixer", title: "Floating Audio Mixer", subtitle: "Per-app volume, EQ & Magic Boost",
-                             symbol: "slider.horizontal.3", hue: AOMModule.audio.hue) {
-                AppAudioMixerService.shared.showPanel()
-            },
-            PowerUtilityItem(id: "globalShortcuts", title: "Global Shortcuts", subtitle: "Capture, clipboard & tool hotkeys",
-                             symbol: "command", hue: Color(nsColor: .systemOrange)) {
-                openSettingsTarget("shortcuts")
-            }
+    private var utilityLinks: [UtilityLink] {
+        [
+            UtilityLink(id: "hyperKey", title: "Hyper Key & Remaps", detail: "Caps Lock as ⌃⌥⌘⇧, key remaps",
+                        symbol: "command.square") { openSettingsTarget("automation") },
+            UtilityLink(id: "inputSources", title: "Input Sources", detail: "Switch Korean and English by app",
+                        symbol: "globe") { openSettingsTarget("general") },
+            UtilityLink(id: "linkRules", title: "Browser Links", detail: "Route URLs, strip tracking tags",
+                        symbol: "arrow.triangle.branch") { openSettingsTarget("sheet:linkRules") },
+            UtilityLink(id: "floatingWidgets", title: "Floating Menus", detail: "Palettes and screen widgets",
+                        symbol: "menubar.rectangle") { FloatingMenuController.shared.edit() },
+            UtilityLink(id: "snapZones", title: "Snap Zones", detail: "Drop areas and display layouts",
+                        symbol: "rectangle.split.3x3") { appState.selectedMainTab = .snapping },
+            UtilityLink(id: "clickHints", title: "Click Hints", detail: "Click anything from the keyboard",
+                        symbol: "keyboard") { appState.selectedMainTab = .textActions },
+            UtilityLink(id: "audioMixer", title: "Audio Mixer", detail: "Per-app volume and EQ",
+                        symbol: "slider.vertical.3") { AppAudioMixerService.shared.showPanel() },
+            UtilityLink(id: "globalShortcuts", title: "Shortcuts", detail: "Capture, clipboard and tool keys",
+                        symbol: "keyboard.badge.ellipsis") { openSettingsTarget("shortcuts") }
         ]
-        let cols = Self.gridColumns(count: items.count, width: contentWidth, preferred: [4, 2], minimum: 210)
+    }
+
+    /// One card of plain rows, two columns wide (System Settings' grouped
+    /// rows): a monochrome glyph, the name, a short detail and a chevron.
+    private var utilities: some View {
+        let links = utilityLinks
+        let columns = contentWidth >= 720 ? 2 : 1
         return VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-            AOMSectionTitle("Power utilities", detail: "Direct access")
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top), count: cols),
-                      alignment: .leading, spacing: AOMSpace.tileGap) {
-                ForEach(items) { item in
-                    Button(action: item.action) {
-                        HStack(spacing: AOMSpace.x2 + AOMSpace.x0_5) {
-                            AOMModuleBadge(symbol: item.symbol, hue: item.hue, size: AOMIcon.hitArea)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(AOMFont.bodyEmphasis)
-                                    .foregroundStyle(AOMColor.text)
-                                    .lineLimit(1)
-                                Text(item.subtitle)
-                                    .font(AOMFont.caption)
-                                    .foregroundStyle(AOMColor.textSecondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: AOMSpace.x1)
+            AOMSectionTitle("Utilities")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: AOMSpace.x1), count: columns),
+                      alignment: .leading, spacing: 0) {
+                ForEach(links) { link in
+                    Button(action: link.action) {
+                        HStack(spacing: AOMSpace.x3) {
+                            Image(systemName: link.symbol)
+                                .font(AOMFont.body)
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .frame(width: AOMIcon.row)
+                            Text(link.title)
+                                .foregroundStyle(AOMColor.text)
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                            Text(link.detail)
+                                .font(AOMFont.callout)
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: AOMSpace.x2)
                             Image(systemName: "chevron.right")
                                 .font(AOMFont.caption.weight(.semibold))
                                 .foregroundStyle(AOMColor.textTertiary)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, AOMSpace.x3)
+                        .frame(minHeight: AOMSize.rowStandard)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: AOMSpace.x3))
-                    .help("\(item.title) — \(item.subtitle)")
+                    .buttonStyle(AOMRowButtonStyle())
+                    .help("\(link.title): \(link.detail)")
                 }
             }
+            .padding(AOMSpace.x1)
+            .aomCard(padding: 0)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Power utilities")
+        .accessibilityLabel("Utilities")
     }
 
     private func quickActionTile(_ kind: WorkspaceQuickActionKind) -> some View {
@@ -1095,15 +1089,6 @@ enum WorkspaceHeroState: Equatable {
         }
     }
 
-    /// The white glyph inside the header squircle.
-    var badgeSymbol: String {
-        switch self {
-        case .running: return "checkmark"
-        case .paused: return "pause.fill"
-        case .blocked: return "exclamationmark.triangle.fill"
-        }
-    }
-
     var sentence: String {
         switch self {
         case .running: return "AOM is running"
@@ -1137,17 +1122,13 @@ enum WorkspaceHeroState: Equatable {
 private struct WorkspaceHero<Action: View, Strip: View>: View {
     let state: WorkspaceHeroState
     let chips: [(AOMPermission, AOMPermissionStatus)]
-    @ObservedObject var toast: AOMToastModel
     @ViewBuilder var action: Action
     @ViewBuilder var strip: Strip
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
 
-    init(state: WorkspaceHeroState, chips: [(AOMPermission, AOMPermissionStatus)], toast: AOMToastModel,
+    init(state: WorkspaceHeroState, chips: [(AOMPermission, AOMPermissionStatus)],
          @ViewBuilder action: () -> Action, @ViewBuilder strip: () -> Strip) {
         self.state = state
         self.chips = chips
-        self.toast = toast
         self.action = action()
         self.strip = strip()
     }
@@ -1155,10 +1136,10 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
-                glyph
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         HStack(alignment: .center, spacing: AOMSpace.x2) {
+                            statusDot
                             Text(state.sentence)
                                 .font(AOMFont.heroSentence)
                                 .foregroundStyle(AOMColor.text)
@@ -1174,6 +1155,7 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, AOMSpace.x2 + AOMSpace.x2)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1182,7 +1164,6 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
             }
             if chips.contains(where: { $0.1 == .denied || $0.1 == .notDetermined }) {
                 WorkspacePermissionChips(chips: chips)
-                    .padding(.leading, AOMIcon.headerBadge + AOMSpace.x3)
             }
             strip
         }
@@ -1193,14 +1174,12 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
         .accessibilityLabel("Status: \(state.sentence)")
     }
 
-    private var glyph: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(AOMIcon.headerBadge), style: .continuous)
-        return Image(systemName: state.badgeSymbol)
-            .font(.system(size: (AOMIcon.headerBadge * 0.5).rounded(), weight: .bold))
-            .foregroundStyle(.white)
-            .contentTransition(.symbolEffect(.replace))
-            .frame(width: AOMIcon.headerBadge, height: AOMIcon.headerBadge)
-            .background(state.tone.color.gradient, in: shape)
+    /// The state as one dot before the sentence (green running, grey
+    /// paused, orange when something needs you); the words carry the meaning.
+    private var statusDot: some View {
+        Circle()
+            .fill(state.tone.color)
+            .frame(width: AOMSpace.x2, height: AOMSpace.x2)
             .accessibilityHidden(true)
     }
 }
@@ -1228,13 +1207,11 @@ private struct WorkspaceSetupCard: View {
     var prominentNext = true
     let skip: () -> Void
     let tour: () -> Void
-    @Environment(\.colorSchemeContrast) private var contrast
 
     private var doneCount: Int { steps.filter(\.done).count }
     private var next: WorkspaceSetupItem? { steps.first { !$0.done } }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             header
             if expanded {
@@ -1249,28 +1226,13 @@ private struct WorkspaceSetupCard: View {
                 .transition(.opacity)
             }
         }
-        .background {
-            ZStack {
-                shape.fill(AOMColor.surface)
-                if contrast != .increased { shape.fill(AOMColor.accent.opacity(0.05)) }
-            }
-        }
-        .overlay {
-            shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.accent.opacity(0.22),
-                               lineWidth: contrast == .increased ? 1 : 0.5)
-        }
+        .aomCard(padding: 0)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Set up AOM, \(doneCount) of \(steps.count) done")
     }
 
     private var header: some View {
         HStack(spacing: AOMSpace.x3) {
-            Image(systemName: "sparkles")
-                .font(AOMFont.title)
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(AOMColor.accent)
-                .frame(width: AOMIcon.tileBadge)
-                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text("Set up AOM")
                     .font(AOMFont.headline)
@@ -1466,15 +1428,16 @@ private struct WorkspaceAttentionRow: View {
         switch item.kind {
         case .fixNow: return item.tone == .danger ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
         case .upcoming: return "clock.fill"
-        case .suggestion: return "lightbulb.fill"
+        case .suggestion: return "lightbulb"
         }
     }
 
+    /// Only problems take a status colour; a suggestion or a reminder is
+    /// secondary text, so the one real warning stands out.
     private var tint: Color {
         switch item.kind {
         case .fixNow: return item.tone.color
-        case .upcoming: return AOMColor.accent
-        case .suggestion: return Color(nsColor: .systemYellow)
+        case .upcoming, .suggestion: return AOMColor.textSecondary
         }
     }
 
@@ -1538,15 +1501,15 @@ private struct WorkspaceTileChevron: View {
     }
 }
 
-/// A launch tile (Shortcuts gallery, Control Center): a 28 pt squircle in
-/// the module hue, the name in Body and the shortcut under it like a menu's
+/// A launch tile (Shortcuts gallery, Control Center): a 28 pt monochrome
+/// mark, the name in Body and the shortcut under it like a menu's
 /// key equivalent. Beside each other when the cell is wide enough, the glyph
 /// over the name in narrow windows (five per row either way). A tile whose
 /// action is running (a recording, a focus session) pulses its glyph.
 private struct WorkspaceQuickAction: View {
     let title: String
     let symbol: String
-    var hue: Color?
+    var active = true
     var keys: String?
     var running = false
     var live = false
@@ -1554,11 +1517,11 @@ private struct WorkspaceQuickAction: View {
     let action: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(_ title: String, symbol: String, hue: Color?, keys: String? = nil, running: Bool = false,
+    init(_ title: String, symbol: String, active: Bool = true, keys: String? = nil, running: Bool = false,
          live: Bool = false, help: String? = nil, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
-        self.hue = hue
+        self.active = active
         self.keys = keys
         self.running = running
         self.live = live
@@ -1600,7 +1563,7 @@ private struct WorkspaceQuickAction: View {
             if running {
                 ProgressView().controlSize(.small)
             } else {
-                AOMModuleBadge(symbol: symbol, hue: hue, size: AOMIcon.hitArea)
+                AOMModuleBadge(symbol: symbol, size: AOMIcon.hitArea, active: active)
                     .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion)
             }
         }
@@ -1648,7 +1611,6 @@ private struct WorkspaceQuickActionCell: View {
         let focusing = kind == .focusSession && FocusModule.isSessionActive
         WorkspaceQuickAction(recording ? "Stop Recording" : kind.title,
                              symbol: recording ? "stop.fill" : kind.symbol,
-                             hue: recording ? AOMColor.recording : kind.module.hue,
                              keys: kind.shortcut,
                              live: recording || focusing,
                              help: recording ? "Stops the screen recording" : kind.help,
@@ -2069,21 +2031,6 @@ enum CaptureItemActions {
 }
 
 // MARK: - Shared row components
-
-/// Input category glyph colours shared by gesture rows and icons. Kept quiet:
-/// categories are told apart by their symbol; colour stays for status.
-enum GestureVisual {
-    static func tint(_ category: TriggerCategory) -> Color {
-        switch category {
-        case .trackpad: return Color(nsColor: .systemIndigo)
-        case .keyboard: return Color(nsColor: .systemPurple)
-        case .normalMouse: return Color(nsColor: .systemOrange)
-        case .drawings: return Color(nsColor: .systemPink)
-        case .otherTriggers: return Color(nsColor: .systemTeal)
-        case .all: return AOMColor.accent
-        }
-    }
-}
 
 /// A 3.4 module's tile, drawn from the live `AOMModuleStatus` the module
 /// publishes: its count, one status line, and its switch when it has one.

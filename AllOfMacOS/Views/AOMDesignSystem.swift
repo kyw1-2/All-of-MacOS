@@ -6,19 +6,14 @@ import SwiftUI
 /// One set of spacing, radius and surface rules for every AOM page. These are
 /// aliases of AOMTokens.swift, kept for existing call sites.
 enum AOMDesign {
-    /// Outer page margin and the gap between sections.
-    static let pagePadding: CGFloat = AOMSpace.pageMargin
-    static let sectionSpacing: CGFloat = AOMSpace.sectionGap
-    static let controlRadius: CGFloat = AOMRadius.control
-
     static var reduceMotion: Bool { AOMMotion.systemReduceMotion }
     static func animation(_ animation: Animation = AOMMotion.quickCurve) -> Animation? {
         AOMMotion.resolve(animation, reduceMotion: reduceMotion)
     }
 }
 
-/// The shell's one canvas: every page sits on the same opaque surface
-/// (#FFFFFF / #282828), edge to edge under the toolbar, so the system draws
+/// The shell's one canvas: every page sits on the same opaque neutral grey
+/// (`AOMColor.canvas`), edge to edge under the toolbar, so the system draws
 /// the toolbar glass and scroll-edge effect over it. No translucent window,
 /// no behind-window material (c.4).
 struct AOMWorkspaceBackground: View {

@@ -429,7 +429,7 @@ struct HomebrewSheet: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: AOMSpace.x3) {
-            AOMModuleBadge(symbol: "mug.fill", hue: .orange, size: AOMIcon.headerBadge)
+            AOMModuleBadge(symbol: "mug.fill", size: AOMIcon.headerBadge)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 Text(model.version ?? "Homebrew")
                     .font(AOMFont.pageStatus)

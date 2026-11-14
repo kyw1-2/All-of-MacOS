@@ -277,7 +277,7 @@ struct ModernWindowSnappingView: View {
     private func quickZoneButton(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: AOMSpace.x2) {
-                AOMModuleBadge(symbol: symbol, hue: AOMModule.tiling.hue, size: AOMIcon.hitArea)
+                AOMModuleBadge(symbol: symbol, size: AOMIcon.hitArea)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(AOMFont.bodyEmphasis)

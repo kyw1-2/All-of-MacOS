@@ -17,8 +17,8 @@ import SwiftUI
 //   behind `if #available(macOS 26, *)` with a material fallback. Cards,
 //   tiles, lists and forms are opaque `surface` with a hairline.
 // - Colour has three jobs: the accent marks interaction, semantic colours mark
-//   status (always with a glyph and text), module hues are identity badges in
-//   content only.
+//   status (always with a glyph and text), module hues key charts and rings
+//   only. Icons are monochrome SF Symbols; nothing is a coloured badge.
 // - Motion confirms, it never decorates; Reduce Motion turns movement into a
 //   short crossfade.
 
@@ -217,21 +217,22 @@ enum AOMColor {
     static let textTertiary = Color(nsColor: .tertiaryLabelColor)
 
     // Surfaces (opaque; glass is reserved for chrome)
-    /// Every page background: architectural slate canvas (#F0F2F7 in light, #0E1015 in dark).
-    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.941, green: 0.949, blue: 0.969, alpha: 1),
-                                         dark: NSColor(srgbRed: 0.055, green: 0.063, blue: 0.082, alpha: 1))
-    /// Cards, tiles, section groups: crisp elevated white (#FFFFFF) in light mode,
-    /// machined graphite (#181B22) in dark mode.
+    /// Every page background: a neutral grey with no tint (#F5F5F7 light,
+    /// #1E1E1E dark), the grouped-content canvas of System Settings.
+    static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.961, green: 0.961, blue: 0.969, alpha: 1),
+                                         dark: NSColor(srgbRed: 0.118, green: 0.118, blue: 0.118, alpha: 1))
+    /// Cards, tiles, section groups: white (#FFFFFF) in light mode, #2A2A2A in
+    /// dark mode — one step above the canvas, never a coloured tint.
     static let surface = Color.aomDynamic(light: .white,
-                                          dark: NSColor(srgbRed: 0.094, green: 0.106, blue: 0.133, alpha: 1),
+                                          dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
                                           highContrastLight: .white,
-                                          highContrastDark: NSColor(srgbRed: 0.125, green: 0.137, blue: 0.169, alpha: 1))
-    /// A card under the pointer: subtle tactile shift.
-    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.980, green: 0.984, blue: 0.996, alpha: 1),
-                                               dark: NSColor(srgbRed: 0.129, green: 0.145, blue: 0.180, alpha: 1))
+                                          highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
+    /// A card under the pointer: the fill shifts one small step.
+    static let surfaceHover = Color.aomDynamic(light: NSColor(srgbRed: 0.980, green: 0.980, blue: 0.984, alpha: 1),
+                                               dark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
     /// Pressed tiles and cards.
-    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.953, blue: 0.973, alpha: 1),
-                                                 dark: NSColor(srgbRed: 0.157, green: 0.173, blue: 0.212, alpha: 1))
+    static let surfacePressed = Color.aomDynamic(light: NSColor(srgbRed: 0.945, green: 0.945, blue: 0.953, alpha: 1),
+                                                 dark: NSColor(srgbRed: 0.220, green: 0.220, blue: 0.220, alpha: 1))
     /// Wells, thumbnails, empty slots.
     static let sunken = Color(nsColor: .tertiarySystemFill)
     /// Hover cards, dragged tiles, the chrome fallback under Reduce Transparency.
@@ -317,9 +318,9 @@ enum AOMTone: Equatable {
 
 // MARK: - Modules (identity hues and symbols)
 
-/// The six tools plus the two places without a hue. Module hues appear only
-/// in content badges (tiles, page headers), never in the sidebar, on buttons
-/// or as status.
+/// The tools and productivity modules. Their hues key charts and progress
+/// rings (Today, Insights, Focus) and nothing else: never icons, the sidebar,
+/// buttons or status.
 enum AOMModule: String, CaseIterable, Identifiable {
     case automation, tiling, capture, clipboard, audio, systemTools
     // 3.4 productivity modules
@@ -357,7 +358,7 @@ enum AOMModule: String, CaseIterable, Identifiable {
         }
     }
 
-    /// White glyphs on these reach ≥3.1:1 in both modes (measured).
+    /// Series colours, distinct from each other and from the status colours.
     var hue: Color {
         switch self {
         case .automation: return Color(nsColor: .systemIndigo)
@@ -518,9 +519,6 @@ enum AOMIcon {
     static let tileGlyph: CGFloat = 16
     /// Page-header squircle, glyph 20 pt.
     static let headerBadge: CGFloat = 40
-    /// Workspace status squircle and its glyph.
-    static let hero: CGFloat = 40
-    static let heroGlyph: CGFloat = 22
     /// Empty-state glyph.
     static let empty: CGFloat = 40
     /// Minimum hit area for icon buttons (the default macOS control, HIG).

@@ -181,7 +181,7 @@ private struct WhatsNewView: View {
             HStack(alignment: .center, spacing: AOMSpace.x3) {
                 // The panel's identity, like the page headers: a squircle
                 // with the release's glyph.
-                AOMModuleBadge(symbol: "sparkles", hue: AOMColor.accent, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: "sparkles", size: AOMIcon.headerBadge)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("What's New")
@@ -242,7 +242,7 @@ private struct WhatsNewRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: AOMSpace.x3) {
-            AOMModuleBadge(symbol: item.symbol, hue: item.module?.hue ?? AOMColor.accent, size: Self.badge)
+            AOMModuleBadge(symbol: item.symbol, size: Self.badge)
             VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                 HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
                     Text(item.title)

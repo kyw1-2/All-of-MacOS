@@ -34,20 +34,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The squircle colour behind the category glyph in the sidebar; the
-    /// tool categories share their sidebar colour in the main window.
-    var tint: Color {
-        switch self {
-        case .general: Color(nsColor: .systemGray)
-        case .capture: AOMMainTab.capture.accentColor
-        case .clipboard: AOMMainTab.clipboard.accentColor
-        case .automation: Color(nsColor: .systemBlue)
-        case .shortcuts: Color(nsColor: .systemIndigo)
-        case .permissions: Color(nsColor: .systemGreen)
-        case .data: Color(nsColor: .systemBrown)
-        case .about: Color(nsColor: .systemTeal)
-        }
-    }
 
     /// Panes that are a complete view of their own (live status, recorders)
     /// rather than a list of rows; their rows still answer search.
@@ -779,10 +765,9 @@ struct SettingsHubView: View {
             List(selection: sidebarSelection) {
                 ForEach(SettingsCategory.allCases) { cat in
                     HStack(spacing: AOMSpace.x2) {
-                        // The shared squircle (hue, white glyph) at the 20 pt
-                        // size System Settings draws in its sidebar (#78).
+                        // Outline symbols in one column, like the main window's sidebar.
                         Label { Text(cat.title) } icon: {
-                            AOMModuleBadge(symbol: cat.symbol, hue: cat.tint, size: AOMIcon.row)
+                            Image(systemName: cat.symbol).frame(width: AOMIcon.row)
                         }
                         Spacer(minLength: 0)
                         if cat == .permissions { PermissionSummaryBadge(compact: true, onAccent: false) }

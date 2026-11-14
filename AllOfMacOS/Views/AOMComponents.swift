@@ -10,7 +10,7 @@ import SwiftUI
 //   AOMToggleRow       AOMSettingRow with a switch
 //   AOMInfoButton      the ⓘ popover (≤ 3 sentences) that replaces caption walls
 //   AOMStatusPill      glyph or dot + a few words in a semantic tone
-//   AOMModuleBadge     module identity badge (hue fill, white glyph)
+//   AOMModuleBadge     module mark (neutral squircle, monochrome glyph)
 //   AOMModuleTile      Workspace module tile: squircle, name, status line, one control, live count
 //   AOMNotice          inline warning/error banner with one verb button
 //   AOMEmptyState      ContentUnavailableView wrapper (AOMDesignSystem.swift)
@@ -110,7 +110,7 @@ struct AOMPageHeader<Trailing: View>: View {
             if let module {
                 AOMModuleBadge(module, size: AOMIcon.headerBadge, active: active)
             } else if let symbol {
-                AOMModuleBadge(symbol: symbol, hue: AOMColor.accent, size: AOMIcon.headerBadge, active: active)
+                AOMModuleBadge(symbol: symbol, size: AOMIcon.headerBadge, active: active)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .center, spacing: AOMSpace.x2) {
@@ -495,11 +495,9 @@ struct AOMStatusPill: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    /// `.increased` inside a selected row of an active list (the sidebar's
-    /// accent selection): tone colours on accent read poorly, so the pill
-    /// turns white there, like Mail's counts.
+    /// `.increased` inside a selected row of an active list: tone colours on
+    /// the accent read poorly, so the pill turns white there, like Mail's counts.
     @Environment(\.backgroundProminence) private var prominence
-    @Environment(\.aomOnAccentSelection) private var onAccentSelection
 
     init(_ text: String, tone: AOMTone = .neutral, symbol: String? = nil) {
         self.text = text
@@ -516,7 +514,7 @@ struct AOMStatusPill: View {
 
     var body: some View {
         let increased = contrast == .increased
-        let onSelection = prominence == .increased || onAccentSelection
+        let onSelection = prominence == .increased
         let fill = onSelection ? Color.white : (customTint ?? tone.color)
         let label = onSelection ? Color.white : (customTint ?? tone.textColor)
         // A 13% wash disappears on dark sidebars and cards; dark mode gets 20%.
@@ -545,62 +543,38 @@ struct AOMStatusPill: View {
     }
 }
 
-private struct AOMOnAccentSelectionKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    /// True inside a row drawn on the accent selection (the selected sidebar
-    /// row of the key window), where pills switch to white.
-    var aomOnAccentSelection: Bool {
-        get { self[AOMOnAccentSelectionKey.self] }
-        set { self[AOMOnAccentSelectionKey.self] = newValue }
-    }
-}
-
 // MARK: - Module badge and tile
 
-/// A module identity badge: Apple System Settings / Raycast / Linear style
-/// jewel-toned gradient squircle with crisp white glyph, specular top rim,
-/// and subtle ambient glow when active; muted well when inactive.
+/// A module or item mark: its SF Symbol in a quiet neutral squircle, the
+/// way Finder, Xcode and System Information draw item icons. Colour is not
+/// identity here (it marks interaction and status only), so a page of tiles
+/// reads as one surface instead of a palette. An inactive mark dims its glyph.
 struct AOMModuleBadge: View {
     let symbol: String
-    let hue: Color?
     var size: CGFloat = AOMIcon.tileBadge
     var active = true
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
     init(_ module: AOMModule, size: CGFloat = AOMIcon.tileBadge, active: Bool = true) {
         self.symbol = module.symbol
-        self.hue = module.hue
         self.size = size
         self.active = active
     }
 
-    init(symbol: String, hue: Color?, size: CGFloat = AOMIcon.tileBadge, active: Bool = true) {
+    init(symbol: String, size: CGFloat = AOMIcon.tileBadge, active: Bool = true) {
         self.symbol = symbol
-        self.hue = hue
         self.size = size
         self.active = active
     }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(size), style: .continuous)
-        let tinted = active && hue != nil
-        let tintColor = hue ?? AOMColor.accent
         Image(systemName: symbol)
-            .font(.system(size: (size * 0.5).rounded(), weight: .semibold))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(tinted ? Color.white : AOMColor.textSecondary)
+            .font(.system(size: (size * 0.46).rounded(), weight: .medium))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(active ? AOMColor.text : AOMColor.textTertiary)
             .frame(width: size, height: size)
-            .background {
-                if tinted {
-                    shape.fill(tintColor.gradient)
-                } else {
-                    shape.fill(AOMColor.sunken)
-                }
-            }
+            .background(active ? AOMColor.sunken : AOMColor.track, in: shape)
             .overlay {
                 if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
             }

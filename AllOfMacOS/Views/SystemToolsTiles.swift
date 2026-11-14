@@ -27,7 +27,7 @@ struct SystemTileButtonStyle: ButtonStyle {
 
 // MARK: - Tool tiles
 
-/// A compact command: the glyph in the section's hue, the name, the value when
+/// A compact command: a monochrome glyph, the name, the value when
 /// there is one, and a chevron for tools that open a sheet. One row tall.
 struct SystemToolTile: View {
     let info: SystemToolInfo
@@ -46,8 +46,7 @@ struct SystemToolTile: View {
             HStack(spacing: AOMSpace.x2) {
                 Image(systemName: info.symbol)
                     .font(.system(size: 14, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(info.group.tint)
+                    .foregroundStyle(AOMColor.textSecondary)
                     .frame(width: 22, height: 22)
                     .accessibilityHidden(true)
                 Text(info.title)

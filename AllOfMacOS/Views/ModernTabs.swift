@@ -89,24 +89,6 @@ enum AOMMainTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// System Settings–style tile colour for the sidebar and page heroes.
-    var accentColor: Color {
-        switch self {
-        case .home: return .blue
-        case .gestures: return .cyan
-        case .snapping: return .indigo
-        case .capture: return .orange
-        case .clipboard: return .purple
-        case .audio: return .pink
-        case .tools: return .teal
-        case .insights: return .green
-        case .folderRules: return .mint
-        case .textActions: return .orange
-        case .files: return .blue
-        case .focus: return .red
-        }
-    }
-
     /// ⌘1…⌘9 in the View menu and sidebar for the first nine pages; later
     /// pages have none (a two-digit key equivalent does not exist).
     var shortcutKey: KeyEquivalent? {

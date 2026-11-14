@@ -473,7 +473,7 @@ struct ClipboardStudioView: View {
                 if let icon = AppMetadataCache.shared.icon(for: entry.sourceBundleID) {
                     Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
                 } else {
-                    AOMModuleBadge(symbol: entry.kind.symbol, hue: AOMModule.clipboard.hue, size: AOMIcon.tileBadge)
+                    AOMModuleBadge(symbol: entry.kind.symbol, size: AOMIcon.tileBadge)
                 }
             }
             .frame(width: AOMIcon.tileBadge, height: AOMIcon.tileBadge)

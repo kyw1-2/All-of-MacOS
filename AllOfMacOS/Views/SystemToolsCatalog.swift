@@ -34,21 +34,6 @@ enum SystemToolGroup: String, CaseIterable, Identifiable {
         case .tweaks: return "slider.horizontal.3"
         }
     }
-
-    /// The glyph hue for the section's tiles.
-    var tint: Color {
-        switch self {
-        case .toggles: return .blue
-        case .display: return .pink
-        case .power: return .purple
-        case .apps: return .red
-        case .storage: return .brown
-        case .network: return .green
-        case .homebrew: return .orange
-        case .fixIt: return .indigo
-        case .tweaks: return .cyan
-        }
-    }
 }
 
 /// How a tool is drawn: a live switch, a one-shot command, or a control that

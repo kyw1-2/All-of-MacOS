@@ -200,7 +200,7 @@ struct VPNSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
             HStack(spacing: AOMSpace.x3) {
-                AOMModuleBadge(symbol: "lock.shield.fill", hue: .green, size: AOMIcon.headerBadge)
+                AOMModuleBadge(symbol: "lock.shield.fill", size: AOMIcon.headerBadge)
                 VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                     Text("VPN").font(AOMFont.pageStatus)
                     Text(summary).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(1)

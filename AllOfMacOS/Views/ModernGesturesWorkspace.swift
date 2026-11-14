@@ -346,7 +346,7 @@ struct ModernGesturesWorkspace: View {
             TableColumn("Name", value: \.displayName) { trigger in
                 HStack(spacing: AOMSpace.x2) {
                     Image(systemName: trigger.input.category.iconName)
-                        .foregroundStyle(trigger.isEnabled ? GestureVisual.tint(trigger.input.category) : .secondary)
+                        .foregroundStyle(trigger.isEnabled ? .primary : .secondary)
                         .frame(width: 16)
                         .help(trigger.input.category.rawValue)
                         .accessibilityLabel(trigger.input.category.rawValue)
@@ -615,8 +615,7 @@ struct ModernGesturesWorkspace: View {
                 // The input as a settings row with a squircle (System Settings,
                 // Shortcuts): its kind over the input itself and its modifiers.
                 HStack(spacing: AOMSpace.x3) {
-                    AOMModuleBadge(symbol: trigger.input.category.iconName,
-                                   hue: GestureVisual.tint(trigger.input.category), size: Self.choiceBadge,
+                    AOMModuleBadge(symbol: trigger.input.category.iconName, size: Self.choiceBadge,
                                    active: trigger.isEnabled)
                     VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
                         Text(trigger.input.category.rawValue)
