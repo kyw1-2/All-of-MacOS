@@ -219,8 +219,10 @@ struct AOMSection<Content: View, Accessory: View>: View {
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Rows draw their divider on top; the first one is hidden here.
-                .overlay(alignment: .top) { AOMFirstDividerCover() }
+                // Rows draw their divider on top; the first one is not drawn
+                // (AOMDivider reads its place in this space).
+                .environment(\.aomInSectionCard, true)
+                .coordinateSpace(name: AOMSectionCardSpace.space)
                 .aomCard(padding: padding)
             if let footer, !footer.isEmpty {
                 Text(footer)
@@ -232,17 +234,6 @@ struct AOMSection<Content: View, Accessory: View>: View {
             }
         }
         .accessibilityElement(children: .contain)
-    }
-}
-
-/// Hides the top divider of the first row in a section card.
-private struct AOMFirstDividerCover: View {
-    @Environment(\.displayScale) private var scale
-    var body: some View {
-        AOMColor.surface
-            .frame(height: max(1, 1 / max(scale, 1)) + 0.5)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 }
 

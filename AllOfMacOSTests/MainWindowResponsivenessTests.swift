@@ -227,4 +227,12 @@ final class MainWindowResponsivenessTests: XCTestCase {
         await monitor.sample().value
         XCTAssertEqual(monitor.disk?.available, 7)
     }
+
+    /// A divider at the top of a section card is the pane's edge, not a
+    /// separator between rows; only that one is left out.
+    func testSectionCardHidesOnlyTheDividerAtItsTop() {
+        XCTAssertTrue(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 0, width: 300, height: 0.5)))
+        XCTAssertTrue(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 0.25, width: 300, height: 0.5)))
+        XCTAssertFalse(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 36, width: 300, height: 0.5)))
+    }
 }

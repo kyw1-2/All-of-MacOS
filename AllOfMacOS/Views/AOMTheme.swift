@@ -167,17 +167,55 @@ extension View {
 }
 
 /// A one-pixel separator that matches the card dividers.
+///
+/// Inside a section card (`AOMSection`) a horizontal divider at the very top
+/// of the card is not drawn: rows draw their separator above themselves, and
+/// the first one would sit on the pane's own edge. Until 3.8 a strip of the
+/// pane colour covered it; the frosted pane is translucent, so the strip let
+/// the line through and added a brighter band (with square ends past the
+/// rounded corners) at the top of every pane.
 struct AOMDivider: View {
     var axis: Axis = .horizontal
     @Environment(\.displayScale) private var scale
+    @Environment(\.aomInSectionCard) private var inSectionCard
 
     var body: some View {
         let line = 1 / max(scale, 1)
         if axis == .horizontal {
-            Rectangle().fill(AOMTheme.divider).frame(height: line)
+            if inSectionCard {
+                // The section's coordinate space does not move while the page
+                // scrolls, so this reads once per layout, not per frame.
+                GeometryReader { proxy in
+                    if !AOMSectionCardSpace.isAtTop(proxy.frame(in: .named(AOMSectionCardSpace.space))) {
+                        Rectangle().fill(AOMTheme.divider)
+                    }
+                }
+                .frame(height: line)
+            } else {
+                Rectangle().fill(AOMTheme.divider).frame(height: line)
+            }
         } else {
             Rectangle().fill(AOMTheme.divider).frame(width: line)
         }
+    }
+}
+
+/// The coordinate space and environment flag `AOMSection` gives its card,
+/// so a divider can tell it is the card's first.
+enum AOMSectionCardSpace {
+    static let space = "AOMSectionCard"
+    /// Within half a point of the card's top edge.
+    static func isAtTop(_ frame: CGRect) -> Bool { frame.minY < 0.5 }
+}
+
+private struct AOMInSectionCardKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var aomInSectionCard: Bool {
+        get { self[AOMInSectionCardKey.self] }
+        set { self[AOMInSectionCardKey.self] = newValue }
     }
 }
 
