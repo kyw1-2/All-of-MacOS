@@ -10,6 +10,7 @@ struct FilesPage: View {
     @ObservedObject private var shelf = FilesShelfStore.shared
     @ObservedObject private var recent = FilesRecentModel.shared
     @StateObject private var toast = AOMToastModel()
+    @StateObject private var tools = FileToolsModel()
     @AppStorage("AOMDiskImageTrashOnSuccess") private var trashInstalledDMG = false
     @State private var accessibilityTrusted = AXIsProcessTrusted()
     @State private var finderPermission: FilesFinder.Permission?
@@ -32,6 +33,7 @@ struct FilesPage: View {
                     Label("Show Drop Shelf", systemImage: "tray.and.arrow.down")
                 }
                 .help(shortcutHelp)
+                FilesToolsMenu(model: tools)
             }
             if settings.dialogHelper && !accessibilityTrusted {
                 AOMNotice(.warning, "The Open and Save helper needs Accessibility",
