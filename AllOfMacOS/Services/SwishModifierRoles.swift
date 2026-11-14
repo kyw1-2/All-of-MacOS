@@ -1,26 +1,16 @@
 import AppKit
 
-// Swish's configurable modifier roles and the ⌃⌥ hotkey extensions (3.3.3).
+// The configurable modifier roles and the ⌃⌥ hotkey extensions.
 //
-// Swish 1.13.3's Advanced tab lets the user pick a key for each of five roles:
-// "Super Modifier" ("Use this modifier to perform window gestures on their
-// entire area instead of their titlebar only or on their dock icon. Can be
-// combined with all modifiers below."), then "General", "Screen", "Secondary"
-// and "Tertiary" ("Perform general functions (fullscreen, closing, spaces,
-// etc.), invoke multi-screen actions, unlock secondary (3×2 snapping, all
-// windows, etc.) and tertiary (3×3 snapping) functionality."). Its modifier
-// controls carry `flagsConstraints` closures that refuse a key another role
-// already uses, and "Restore Modifiers" puts the defaults back.
+// Each of five roles takes a key: Super (a modifier that extends window
+// gestures to the whole window, its Dock icon and the arrow keys), then
+// General, Screen, Secondary and Tertiary. A pick that would share a key with
+// another role is refused, and the defaults can be restored.
 //
-// The same tab adds the keyboard: "Arrow Hotkeys: ←↑↓→ | WASD | ,AOE",
-// "Center: Esc | ⌫ | ↩", and "Use the super modifier together with your arrow
-// keys to enable all snapping, screens and spaces gestures. Press the center
-// key to center & unsnap." AOM keeps its 3.3.2 ⌃⌥ chord as the base and lets
-// the Screen and Secondary roles extend it.
-//
-// AOM 3.3.2 hard-wired ⌥ (general), ⌘ (screen) and ⇧ (secondary) in
-// `SwishSnap.Modifiers`; the standard roles below keep exactly those, so an
-// upgrade changes nothing until the user edits them.
+// The ⌃⌥ chord is the base for the keyboard hotkeys (arrows, WASD, IJKL, HJKL;
+// a centre key), and the Screen and Secondary roles extend it. The standard
+// roles are ⌥, ⌘, ⇧ and ⌃, the values the snapping engine has always used, so
+// an upgrade changes nothing until the user edits them.
 //
 // Everything here is pure: settings are read and written only through the
 // `UserDefaults` passed in, so tests use a throwaway suite.
