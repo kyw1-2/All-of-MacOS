@@ -169,15 +169,4 @@ enum FileTools {
         return names.filter { $0.hasSuffix(".savedState") }.map { String($0.dropLast(".savedState".count)) }.sorted()
     }
 
-    /// A new file name in `folder` that doesn't exist yet: "untitled.txt",
-    /// then "untitled 2.txt", … (Finder's own numbering).
-    static func freeName(_ base: String, ext: String, in folder: URL, exists: (URL) -> Bool) -> URL {
-        var candidate = folder.appendingPathComponent("\(base).\(ext)")
-        var number = 2
-        while exists(candidate) {
-            candidate = folder.appendingPathComponent("\(base) \(number).\(ext)")
-            number += 1
-        }
-        return candidate
-    }
 }

@@ -214,30 +214,6 @@ final class MacMagicSystemToolService {
 
     // MARK: - File Maintenance & Attributes
 
-    /// Recursively erases all .DS_Store files within a given directory URL.
-    func eraseDSStoreFiles(in directory: URL) async throws -> Int {
-        let fileManager = FileManager.default
-        var deletedCount = 0
-
-        guard let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.nameKey, .isDirectoryKey],
-            options: []
-        ) else { return 0 }
-
-        for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent == ".DS_Store" {
-                do {
-                    try fileManager.removeItem(at: fileURL)
-                    deletedCount += 1
-                } catch {
-                    continue
-                }
-            }
-        }
-        return deletedCount
-    }
-
     /// Identifies all processes currently locking or holding open file descriptors for a target path.
     func findProcessesLockingFile(at url: URL) async throws -> [LockingProcess] {
         let process = Process()
@@ -269,28 +245,6 @@ final class MacMagicSystemToolService {
             ))
         }
         return results
-    }
-
-    /// Sets or clears the Darwin immutable flag (UF_IMMUTABLE / uchg).
-    func setFileLocked(url: URL, locked: Bool) throws {
-        try updateFileFlag(url: url, flag: UInt32(UF_IMMUTABLE), enabled: locked)
-    }
-
-    /// Sets or clears only UF_HIDDEN; unrelated Finder/backup flags survive.
-    func setFileHidden(url: URL, hidden: Bool) throws {
-        try updateFileFlag(url: url, flag: UInt32(UF_HIDDEN), enabled: hidden)
-    }
-
-    private func updateFileFlag(url: URL, flag: UInt32, enabled: Bool) throws {
-        var metadata = stat()
-        guard lstat(url.path, &metadata) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-        let flags = enabled ? metadata.st_flags | flag : metadata.st_flags & ~flag
-        guard flags != metadata.st_flags else { return }
-        guard lchflags(url.path, flags) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
     }
 
     // MARK: - PDF Tools

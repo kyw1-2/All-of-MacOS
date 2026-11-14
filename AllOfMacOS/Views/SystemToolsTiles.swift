@@ -30,11 +30,10 @@ struct SystemTileButtonStyle: ButtonStyle {
     }
 }
 
-// MARK: - Tool tile
+// MARK: - Tool tiles
 
-/// One tool, one row tall (36 pt): glyph in the group's hue, the name in
-/// Body, and on the right either a small live state pill or a spinner while
-/// it runs. The tooltip carries the one-line description; right-click pins it.
+/// A compact command: glyph in the section's hue, the name, the value when
+/// there is one, and a chevron for tools that open a sheet. One row tall.
 struct SystemToolTile: View {
     let info: SystemToolInfo
     let state: SystemToolState?
@@ -62,7 +61,13 @@ struct SystemToolTile: View {
                 if isRunning {
                     ProgressView().controlSize(.small)
                 } else if let state {
-                    SystemToolStatePill(state: state)
+                    SystemToolValue(state: state)
+                }
+                if info.kind == .sheet {
+                    Image(systemName: "ellipsis")
+                        .font(AOMFont.caption)
+                        .foregroundStyle(AOMColor.textTertiary)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(.horizontal, AOMSpace.rowInset)
@@ -84,49 +89,8 @@ struct SystemToolTile: View {
     }
 }
 
-/// Accepts one dropped app bundle when the tile takes one.
-private struct SystemToolDropModifier: ViewModifier {
-    let dropApp: ((URL) -> Void)?
-    @Binding var targeted: Bool
-
-    func body(content: Content) -> some View {
-        if let dropApp {
-            content.dropDestination(for: URL.self) { urls, _ in
-                guard let app = urls.first(where: { $0.pathExtension == "app" }) else { return false }
-                dropApp(app)
-                return true
-            } isTargeted: { targeted = $0 }
-        } else {
-            content
-        }
-    }
-}
-
-/// A compact state capsule for tiles: on in the success colour, off and
-/// values in secondary text.
-struct SystemToolStatePill: View {
-    let state: SystemToolState
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        let tint = state.tone == .success ? AOMColor.success : AOMColor.paused
-        Text(state.text)
-            .font(AOMFont.badge)
-            .foregroundStyle(state.tone == .success ? AOMColor.successText : AOMColor.textSecondary)
-            .lineLimit(1)
-            .padding(.horizontal, AOMSpace.x2 - 2)
-            .padding(.vertical, 2)
-            .background(tint.opacity(scheme == .dark ? 0.22 : 0.14), in: Capsule())
-            .fixedSize()
-    }
-}
-
-// MARK: - Control Center toggle tile
-
-/// A Quick Toggle the way Control Center draws its modules: a round glyph
-/// that fills with the accent while the setting is on, the name in Headline
-/// and the live state under it. Tools without a readable state (Focus,
-/// Bluetooth Device) keep a neutral circle and say what a click does.
+/// A compact switch tile: the round glyph fills with the accent while the
+/// setting is on, and the live value sits beside the name.
 struct SystemToggleTile: View {
     let info: SystemToolInfo
     let state: SystemToolState?
@@ -145,7 +109,6 @@ struct SystemToggleTile: View {
         if let state { return state.text }
         switch info.id {
         case .bluetooth: return "Choose a device"
-        case .focus: return "Runs your shortcut"
         default: return "Click to run"
         }
     }
@@ -198,223 +161,144 @@ struct SystemToggleTile: View {
     }
 }
 
-// MARK: - Status panel
+/// Accepts one dropped app bundle when the tile takes one.
+private struct SystemToolDropModifier: ViewModifier {
+    let dropApp: ((URL) -> Void)?
+    @Binding var targeted: Bool
 
-/// A continuous capacity bar (HIG Gauges, Disk Utility's volume header):
-/// accent fill on a track, orange when the value needs attention.
-struct SystemCapacityBar: View {
-    let fraction: Double
-    var warning = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(AOMColor.track)
-                Capsule().fill(warning ? AOMColor.warning : AOMColor.accent)
-                    .frame(width: max(fraction > 0 ? 4 : 0, proxy.size.width * min(1, max(0, fraction))))
-            }
-        }
-        .frame(height: 6)
-        .accessibilityHidden(true)
-    }
-}
-
-/// The live readouts on top of the page, like Activity Monitor's footer and
-/// Battery settings: a card per figure with a big value, a capacity bar and
-/// one detail line, then a facts card (uptime, thermal state, address).
-/// Values show "…" until the first sample.
-struct SystemStatusPanel: View {
-    @ObservedObject var monitor: SystemStatusMonitor
-    /// The opt-in Weather card, drawn after the facts while it is on.
-    var weather: WeatherCardModel?
-
-    private struct Gauge: Identifiable {
-        var id: String { title }
-        let title: String
-        let symbol: String
-        let value: String
-        let fraction: Double?
-        let detail: String
-        var warning = false
-        var help: String?
-    }
-
-    private var gauges: [Gauge] {
-        var gauges: [Gauge] = []
-        let cpu = monitor.cpuPercent
-        gauges.append(Gauge(title: "CPU", symbol: "cpu", value: cpu.map { "\(Int($0.rounded()))%" } ?? "…", fraction: cpu.map { $0 / 100 },
-                            detail: "\(ProcessInfo.processInfo.activeProcessorCount) cores in use by all apps", warning: (cpu ?? 0) > 85))
-        if let memory = monitor.memory {
-            gauges.append(Gauge(title: "Memory", symbol: "memorychip", value: SystemStatus.memorySize(memory.used),
-                                fraction: memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil,
-                                detail: "of \(SystemStatus.memorySize(memory.total)) · pressure \(memory.pressure.lowercased())",
-                                warning: (memory.pressureLevel ?? 1) > 1))
+    func body(content: Content) -> some View {
+        if let dropApp {
+            content.dropDestination(for: URL.self) { urls, _ in
+                guard let app = urls.first(where: { $0.pathExtension == "app" }) else { return false }
+                dropApp(app)
+                return true
+            } isTargeted: { targeted = $0 }
         } else {
-            gauges.append(Gauge(title: "Memory", symbol: "memorychip", value: "…", fraction: nil, detail: "Reading…"))
+            content
         }
-        let volumes = monitor.volumes.prefix(3)
-        if volumes.isEmpty, let disk = monitor.disk {
-            gauges.append(Gauge(title: "Startup Disk", symbol: "internaldrive", value: "\(SystemStatus.size(disk.available)) free",
-                                fraction: DiskTools.usedFraction(total: disk.total, available: disk.available),
-                                detail: "of \(SystemStatus.size(disk.total))",
-                                warning: disk.total > 0 && Double(disk.available) / Double(disk.total) < 0.1))
-        }
-        for volume in volumes {
-            let low = volume.total > 0 && Double(volume.available) / Double(volume.total) < 0.1
-            gauges.append(Gauge(title: volume.url.path == "/" ? "\(volume.name) (startup)" : volume.name,
-                                symbol: volume.isInternal ? "internaldrive" : "externaldrive",
-                                value: "\(SystemStatus.size(volume.available)) free", fraction: volume.usedFraction,
-                                detail: "\(SystemStatus.size(volume.used)) used of \(SystemStatus.size(volume.total))", warning: low,
-                                help: volume.url.path))
-        }
-        if let battery = monitor.battery {
-            var detail: [String] = []
-            if let health = battery.healthPercent { detail.append("\(health)% health") }
-            if let cycles = battery.cycleCount { detail.append("\(cycles) cycles") }
-            if detail.isEmpty { detail.append(battery.state) }
-            // The power state rides in the title so health and cycles fit.
-            let power = battery.isCharging ? "Battery · charging" : battery.onPower ? "Battery · on power" : "Battery"
-            gauges.append(Gauge(title: power, symbol: battery.isCharging ? "battery.100percent.bolt" : "battery.75percent",
-                                value: "\(battery.percent)%", fraction: Double(battery.percent) / 100,
-                                detail: detail.joined(separator: " · "), warning: !battery.onPower && battery.percent <= 15))
-        }
-        return gauges
     }
+}
 
-    private var facts: [(String, String)] {
-        var facts: [(String, String)] = [("Uptime", SystemStatus.uptimeText(monitor.uptime)),
-                                         ("Thermal", SystemStatus.thermalText(monitor.thermal))]
-        facts.append((monitor.address.map { "IP (\($0.interface))" } ?? "IP", monitor.address?.address ?? "Offline"))
-        facts.append(("macOS", SystemInfo.versionText(ProcessInfo.processInfo.operatingSystemVersion)))
-        if monitor.battery == nil && !monitor.hasBattery { facts.append(("Power", "AC, no battery")) }
-        return facts
-    }
+/// A tool's value beside its name: plain secondary text, in the success
+/// colour only when it means "on".
+struct SystemToolValue: View {
+    let state: SystemToolState
 
-    /// The narrowest a card may get (Activity Monitor's figures stay on one line).
-    private static let cardMinimum: CGFloat = 196
-    @State private var width: CGFloat = 0
-
-    /// Even rows (design-3.4.0 b.2): every card in one row when they fit;
-    /// otherwise the gauges in rows that divide their count (4 → 2 × 2) and
-    /// the facts as a strip under them, so no row is left half empty.
     var body: some View {
-        let cards = gauges
-        let fitting = width > 0 ? max(1, Int((width + AOMSpace.tileGap) / (Self.cardMinimum + AOMSpace.tileGap))) : cards.count + 1
-        Group {
-            if fitting >= cards.count + 1 {
-                LazyVGrid(columns: Self.columns(cards.count + 1), alignment: .leading, spacing: AOMSpace.tileGap) {
-                    ForEach(cards) { gaugeCard($0) }
-                    factsCard
-                }
-            } else {
-                VStack(alignment: .leading, spacing: AOMSpace.tileGap) {
-                    LazyVGrid(columns: Self.columns(Self.evenColumns(count: cards.count, fitting: fitting)),
-                              alignment: .leading, spacing: AOMSpace.tileGap) {
-                        ForEach(cards) { gaugeCard($0) }
+        Text(state.text)
+            .font(AOMFont.caption.monospacedDigit())
+            .foregroundStyle(state.tone == .success ? AOMColor.successText : AOMColor.textSecondary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+}
+
+// MARK: - This Mac strip
+
+/// The live strip on top of the page, one line of figures (Activity Monitor's
+/// toolbar and Battery settings): model and macOS, battery percentage and
+/// health, startup disk free space, memory pressure, network and uptime.
+/// Battery, disk and network open their detail sheet.
+struct SystemStatusStrip: View {
+    @ObservedObject var monitor: SystemStatusMonitor
+    let openBattery: () -> Void
+    let openFreeUpSpace: () -> Void
+    let openNetworkInfo: () -> Void
+
+    private struct Figure: Identifiable {
+        let id: String
+        let title: String
+        let value: String
+        let symbol: String
+        var action: (() -> Void)?
+    }
+
+    private var figures: [Figure] {
+        var figures: [Figure] = []
+        let os = SystemInfo.versionText(ProcessInfo.processInfo.operatingSystemVersion)
+        figures.append(Figure(id: "mac", title: "This Mac", value: "macOS \(os)", symbol: "laptopcomputer"))
+        if let battery = monitor.battery {
+            let health = battery.healthPercent.map { ", \($0)% health" } ?? ""
+            figures.append(Figure(id: "battery", title: "Battery", value: "\(battery.percent)%\(health)", symbol: "battery.75percent",
+                                  action: openBattery))
+        }
+        if let disk = monitor.disk {
+            figures.append(Figure(id: "disk", title: "Startup Disk", value: "\(SystemStatus.size(disk.available)) free",
+                                  symbol: "internaldrive", action: openFreeUpSpace))
+        }
+        if let memory = monitor.memory {
+            figures.append(Figure(id: "memory", title: "Memory", value: memory.pressure, symbol: "memorychip"))
+        }
+        figures.append(Figure(id: "network", title: "Network", value: networkText, symbol: "network", action: openNetworkInfo))
+        figures.append(Figure(id: "uptime", title: "Uptime", value: SystemStatus.uptimeText(monitor.uptime), symbol: "clock"))
+        return figures
+    }
+
+    private var networkText: String {
+        if VPNModel.shared.lastServices?.contains(where: { $0.state == .connected }) == true { return "VPN" }
+        if monitor.address == nil { return "Offline" }
+        if let ssid = monitor.wifiSSID { return ssid }
+        return monitor.address?.interface == "en0" ? "Wi-Fi" : (monitor.address?.interface ?? "Online")
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: AOMSpace.tileGap)], alignment: .leading,
+                  spacing: AOMSpace.tileGap) {
+            ForEach(figures) { figure in
+                let content = HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: figure.symbol)
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: AOMIcon.row)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(figure.title).font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary).lineLimit(1)
+                        Text(figure.value).font(AOMFont.caption.monospacedDigit()).foregroundStyle(AOMColor.text)
+                            .lineLimit(1).truncationMode(.tail)
                     }
-                    factsStrip
+                    .layoutPriority(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, AOMSpace.x2)
+                .frame(minHeight: AOMSize.rowDetail)
+                if let action = figure.action {
+                    Button(action: action) { content }
+                        .buttonStyle(SystemTileButtonStyle())
+                        .help(figure.title)
+                        .accessibilityLabel("\(figure.title), \(figure.value)")
+                } else {
+                    content.aomCard(padding: 0)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(figure.title), \(figure.value)")
                 }
             }
         }
-        .background(GeometryReader { proxy in
-            Color.clear.preference(key: SystemPanelWidthKey.self, value: proxy.size.width)
-        })
-        .onPreferenceChange(SystemPanelWidthKey.self) { if abs($0 - width) > 0.5 { width = $0 } }
-        if let weather {
-            WeatherCard(model: weather)
-                .padding(.top, AOMSpace.tileGap - AOMSpace.titleGap)
-        }
-    }
-
-    private static func columns(_ count: Int) -> [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: AOMSpace.tileGap, alignment: .top), count: max(1, count))
-    }
-
-    /// The most columns that fit and divide `count` (at least two), else
-    /// as many as fit.
-    static func evenColumns(count: Int, fitting: Int) -> Int {
-        let most = max(1, min(fitting, count))
-        for columns in stride(from: most, through: 2, by: -1) where count % columns == 0 { return columns }
-        return most
-    }
-
-    private func gaugeCard(_ gauge: Gauge) -> some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x1) {
-            Label(gauge.title, systemImage: gauge.symbol)
-                .font(AOMFont.caption)
-                .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(1)
-            Text(gauge.value)
-                .font(AOMFont.metricLarge)
-                .foregroundStyle(gauge.warning ? AOMColor.warningText : AOMColor.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            SystemCapacityBar(fraction: gauge.fraction ?? 0, warning: gauge.warning)
-                .padding(.vertical, AOMSpace.x0_5)
-            Text(gauge.detail)
-                .font(AOMFont.callout)
-                .foregroundStyle(AOMColor.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .aomCard(padding: AOMSpace.cardPadding)
-        .help(gauge.help ?? "\(gauge.title): \(gauge.value), \(gauge.detail)")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(gauge.title), \(gauge.value), \(gauge.detail)")
-    }
-
-    private var factsCard: some View {
-        VStack(alignment: .leading, spacing: AOMSpace.x1 + 2) {
-            ForEach(facts, id: \.0) { fact in
-                HStack(spacing: AOMSpace.x2) {
-                    Text(fact.0).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
-                    Spacer(minLength: AOMSpace.x2)
-                    Text(fact.1).font(AOMFont.callout.monospacedDigit()).foregroundStyle(AOMColor.text)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .aomCard(padding: AOMSpace.cardPadding)
-    }
-
-    /// The same facts side by side in one full-width card.
-    private var factsStrip: some View {
-        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x6) {
-            ForEach(facts, id: \.0) { fact in
-                HStack(spacing: AOMSpace.x2) {
-                    Text(fact.0).foregroundStyle(AOMColor.textSecondary)
-                    Text(fact.1).monospacedDigit().foregroundStyle(AOMColor.text).lineLimit(1).truncationMode(.middle)
-                }
-                .font(AOMFont.callout)
-                .accessibilityElement(children: .combine)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .aomCard(padding: AOMSpace.cardPadding)
     }
 }
 
-/// The status panel's width, to pick even rows.
-private struct SystemPanelWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
+// MARK: - Review sheets
 
-// MARK: - Cleanup review
-
-/// The preview list every new cleanup tool shows before anything moves:
-/// checkboxes, sizes, Reveal in Finder, and one Move to Trash button.
+/// The preview every scan (and the uninstaller) shows before anything moves:
+/// checkboxes, sizes, Show in Finder, and one Move to Trash button.
 struct CleanupReviewSheet: View {
-    let review: SystemToolsModel.CleanupReview
-    let onTrash: (SystemToolsModel.CleanupReview) -> Void
+    let review: CleanupReview
+    let onTrash: (CleanupReview) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        CleanupReviewContent(review: review, onTrash: onTrash, onCancel: onCancel)
+            .padding(AOMSpace.x4)
+            .frame(width: 640, height: review.groupsByNote ? 540 : 480)
+    }
+}
+
+/// The review list itself, so the Free Up Space sheet can show it in place.
+struct CleanupReviewContent: View {
+    let review: CleanupReview
+    let onTrash: (CleanupReview) -> Void
     let onCancel: () -> Void
     @State private var selected: Set<String>
 
-    init(review: SystemToolsModel.CleanupReview, onTrash: @escaping (SystemToolsModel.CleanupReview) -> Void, onCancel: @escaping () -> Void) {
+    init(review: CleanupReview, onTrash: @escaping (CleanupReview) -> Void, onCancel: @escaping () -> Void) {
         self.review = review
         self.onTrash = onTrash
         self.onCancel = onCancel
@@ -521,8 +405,6 @@ struct CleanupReviewSheet: View {
             }
             .controlSize(.regular)
         }
-        .padding(AOMSpace.x4)
-        .frame(width: 640, height: review.groupsByNote ? 540 : 480)
         .onExitCommand(perform: onCancel)
     }
 
@@ -533,17 +415,29 @@ struct CleanupReviewSheet: View {
     }
 }
 
-// MARK: - Process review
-
-/// Processes holding a port or a file, each with Quit (asks first).
+/// Processes in a sheet, each with Quit (asks first); Activity adds the
+/// CPU/Memory sort.
 struct ProcessReviewSheet: View {
-    let review: SystemToolsModel.ProcessReview
-    let onQuit: (SystemToolsModel.ProcessReview.Row) -> Void
+    let review: ProcessReview
+    let onQuit: (ProcessReview.Row) -> Void
+    let onSort: (ProcessTools.Order) -> Void
     let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            Text(review.title).font(AOMFont.title)
+            HStack(spacing: AOMSpace.x3) {
+                Text(review.title).font(AOMFont.title)
+                Spacer()
+                if let sort = review.sort {
+                    Picker("Sort", selection: Binding(get: { sort }, set: onSort)) {
+                        Text("CPU").tag(ProcessTools.Order.cpu)
+                        Text("Memory").tag(ProcessTools.Order.memory)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 160)
+                }
+            }
             List(review.rows) { row in
                 HStack(spacing: AOMSpace.x2) {
                     VStack(alignment: .leading, spacing: 0) {
@@ -567,6 +461,6 @@ struct ProcessReviewSheet: View {
             .controlSize(.regular)
         }
         .padding(AOMSpace.x4)
-        .frame(width: 560, height: 360)
+        .frame(width: 560, height: 380)
     }
 }

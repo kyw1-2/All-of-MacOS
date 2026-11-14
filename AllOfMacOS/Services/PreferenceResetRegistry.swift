@@ -61,8 +61,8 @@ enum PreferenceResetRegistry {
             ("AOMGestureEvents", history), ("AOMGestureStatistics_fired", history),
             ("AOMGestureStatistics_total", history), ("AOMGestureStatistics.v2", history),
             ("AOMActionRecents.v1", history), ("AOMAnnotationRecentColors", history), ("AOMSessionStart", history),
-            // 3.4.0: recent System Tools, the input source each app used last,
-            // and whether Downloads was read once (macOS has asked already).
+            // 3.4.0: the input source each app used last, and whether
+            // Downloads was read once (macOS has asked already).
             ("AOMSystemToolsRecent", history),
             (AppInputSourcesSettings.memoryKey, "\(history) (the input source each app used last)"),
             (AppInputSourcesSettings.memoryOrderKey, "\(history) (the input source each app used last)"),

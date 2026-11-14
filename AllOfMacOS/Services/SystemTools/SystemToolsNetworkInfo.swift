@@ -202,6 +202,11 @@ extension NetworkTools {
         return !value.isEmpty && (inet_pton(AF_INET, value, &v4) == 1 || inet_pton(AF_INET6, value, &v6) == 1)
     }
 
+    /// The resolvers in use right now (`scutil --dns`).
+    static func dnsServers() -> [String] {
+        (try? SystemToolsCommand.runChecked("/usr/sbin/scutil", ["--dns"])).map { parseDNSServers($0.stdout) } ?? []
+    }
+
     static func publicIP() async throws -> String {
         var request = URLRequest(url: publicIPURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
         request.setValue("text/plain", forHTTPHeaderField: "Accept")

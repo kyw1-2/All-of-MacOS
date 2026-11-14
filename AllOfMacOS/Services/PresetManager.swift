@@ -232,7 +232,7 @@ class PresetManager {
         keys += SwishSnap.ModifierRole.allCases.map(\.defaultsKey)
         // 3.4.0 modules: Screen Ruler, Click Hints, Text Actions, Focus, Files
         // (the dialog helper and the Drop Shelf), Mic Mute, System Tools
-        // favorites and weather, per-app input sources, the palette's
+        // favorites, per-app input sources, the palette's
         // quicklinks, link router, shortcut sheet and switcher, and the
         // Workspace sections and quick actions the user chose. Keys owned by
         // main-actor types are spelled out.
@@ -245,7 +245,7 @@ class PresetManager {
             "AOMFilesShakeSensitivity", "AOMDiskImageTrashOnSuccess",
             "AOMMicMuteShowHUD", "AOMMicMuteMenuBarIndicator", "AOMMicMutePushToTalk", "AOMMicMutePushToTalkKey",
             "AOMMicMuteAutoMute", "AOMMicMuteAutoMuteApps",
-            "AOMSystemToolsFavorites", "AOMSystemToolsWeatherEnabled", "AOMSystemToolsWeatherPlace",
+            "AOMSystemToolsFavorites",
             AppInputSourcesSettings.enabledKey, AppInputSourcesSettings.rulesKey,
             AppInputSourcesSettings.rememberKey, AppInputSourcesSettings.fallbackKey,
             PaletteLinkRouterSettings.storageKey, PaletteQuicklinks.storageKey,

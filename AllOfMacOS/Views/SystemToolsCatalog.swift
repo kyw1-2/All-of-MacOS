@@ -1,162 +1,159 @@
 import SwiftUI
 
-/// The System Tools page's groups, in page order.
+/// The System Tools page's sections, in page order.
 enum SystemToolGroup: String, CaseIterable, Identifiable {
-    case toggles, displaySound, power, energy, apps, homebrew, finderDock, screenshots, disk, maintenance, cleanup, files, pdf, network, info
+    case toggles, display, power, apps, storage, network, homebrew, fixIt, tweaks
 
     var id: String { rawValue }
 
     var name: String {
         switch self {
         case .toggles: return "Quick Toggles"
-        case .displaySound: return "Display & Sound"
+        case .display: return "Display"
         case .power: return "Power & Session"
-        case .energy: return "Battery & Energy"
-        case .apps: return "Apps & Processes"
-        case .homebrew: return "Homebrew"
-        case .finderDock: return "Finder & Dock"
-        case .screenshots: return "Screenshots"
-        case .disk: return "Disk & Storage"
-        case .maintenance: return "Maintenance"
-        case .cleanup: return "Cleanup"
-        case .files: return "Files & Media"
-        case .pdf: return "PDF"
+        case .apps: return "Apps"
+        case .storage: return "Storage"
         case .network: return "Network"
-        case .info: return "System Info"
+        case .homebrew: return "Homebrew"
+        case .fixIt: return "Fix It"
+        case .tweaks: return "Tweaks"
         }
     }
 
-    /// The group's SF Symbol, for section headers.
+    /// The section's SF Symbol, for section headers.
     var symbol: String {
         switch self {
         case .toggles: return "switch.2"
-        case .displaySound: return "display"
+        case .display: return "display"
         case .power: return "power"
-        case .energy: return "battery.75percent"
         case .apps: return "app.badge"
-        case .homebrew: return "mug"
-        case .finderDock: return "folder"
-        case .screenshots: return "camera.viewfinder"
-        case .disk: return "internaldrive"
-        case .maintenance: return "wrench.and.screwdriver"
-        case .cleanup: return "trash"
-        case .files: return "doc.on.doc"
-        case .pdf: return "doc.richtext"
+        case .storage: return "internaldrive"
         case .network: return "network"
-        case .info: return "info.circle"
+        case .homebrew: return "mug"
+        case .fixIt: return "wrench.and.screwdriver"
+        case .tweaks: return "slider.horizontal.3"
         }
     }
 
-    /// The glyph hue for the group's tiles (colour for grouping, as before).
+    /// The glyph hue for the section's tiles.
     var tint: Color {
         switch self {
         case .toggles: return .blue
-        case .displaySound: return .pink
+        case .display: return .pink
         case .power: return .purple
-        case .energy: return .green
         case .apps: return .red
-        case .homebrew: return .orange
-        case .finderDock: return .cyan
-        case .screenshots: return .mint
-        case .disk: return .brown
-        case .maintenance: return .indigo
-        case .cleanup: return .teal
-        case .files: return .orange
-        case .pdf: return .red
+        case .storage: return .brown
         case .network: return .green
-        case .info: return .gray
+        case .homebrew: return .orange
+        case .fixIt: return .indigo
+        case .tweaks: return .cyan
         }
     }
 }
 
-/// Every tool on the page. Raw values are stable ids: favorites and the
-/// recent list persist them, and the 3.3.4 and 3.3.5 ids are kept unchanged.
-/// Ids of removed tools (3.3.5's Text & Developer group) simply no longer
-/// decode, and `SystemToolsModel.storedTools` drops them.
+/// How a tool is drawn: a live switch, a one-shot command, or a control that
+/// opens a sheet, menu or alert (and shows its value when it has one).
+enum SystemToolKind {
+    case toggle, command, sheet
+}
+
+/// Every tool on the page. Raw values are persisted ids: favorites and the
+/// recent list keep them, so kept tools never change theirs. Ids of merged
+/// and removed tools are handled by `migratedID` and `storedTools`.
 enum SystemToolID: String, CaseIterable, Identifiable {
     // Quick Toggles
-    case darkMode, keepAwake, hidden, desktop, dockAutoHide, wifi, muteSound, muteMic, bluetooth, focus, keyboardClean
-    case lowPower, hideMenuBar
-    // Display & Sound
-    case resolution, brightness, wallpaper, reduceTransparency, reduceMotion, soundOutput, soundInput, volume, alertVolume, startupChime
+    case darkMode, keepAwake, hideMenuBar, dockAutoHide, hidden, desktop, wifi, bluetooth, lowPower, keyboardClean
+    // Display
+    case resolution, brightness, metalHUD
     // Power & Session
-    case lockScreen, sleep, sleepDisplays, screenSaver, restart, shutDown, logOut, quitAll, hideOthers
-    // Battery & Energy
-    case batteryDetails, sleepTimer, awakeWhileApp, awakeReasons
-    // Apps & Processes
-    case forceQuit, topCPU, topMemory, relaunchApp, loginItems, resetSavedState
-    // Finder & Dock
-    case finder, extensions, pathbar, statusbar, posixtitle, dockactive, dockdelay, dockrecents, restartDock
-    case showLibrary, copyFinderPath, newTextFile, terminalHere
-    // Screenshots
-    case shotshadow, shotformat, shotfolder
-    // Disk & Storage
-    case ejectAll, ejectDisk, verifyDisk, backupNow, backupStatus, snapshots, installDMG
-    // Maintenance
-    case restartMenuBar, launchServices, spotlight, fontCaches, freeMemory
-    // Cleanup
-    case cache, dsstore, trash, uninstall, largeFiles, oldDownloads, devJunk
-    // Files, PDF & Media
-    case pdfmerge, pdfcompress, imageconvert, videoconvert, qr, rename, lockFiles, hideFiles, whoLocks, fileHash
-    case duplicates, folderSizes
+    case lockScreen, sleep, sleepDisplays, sleepTimer, awakeWhileApp, batteryDetails, restart, shutDown, logOut, quitAll
+    // Apps
+    case activity, forceQuit, relaunchApp, uninstall, loginItems, awakeReasons, resetSavedState
+    // Storage
+    case freeUpSpace, eject, timeMachine, snapshots, verifyDisk, installDMG
     // Network
-    case dns, speedTest, portLookup, copyIP, wifiDetails, publicIP, ping, dnsServers, renewDHCP, listeningPorts
-    case airDropSettings, bluetoothSettings
-    // System Info
-    case aboutMac, copySerial, bootReasons, settingsPane
-    // 3.4.0: Homebrew, VPN, PDF page tools, Metal HUD
-    case brewOutdated, brewUpgradeAll, brewInstalled, brewUpdate, brewCleanup, brewDoctor, brewServices, brewSearch
-    case vpn, tailscale, openVPN
-    case pdfSplit, pdfExtract, pdfRemovePages, pdfRotate, pdfReorder, imagesToPDF, pdfToImages, pdfProtect, pdfUnlock, pdfPageNumbers
-    case metalHUD
+    case networkInfo, speedTest, ping, ports, vpn, dns, renewDHCP
+    // Homebrew
+    case homebrew
+    // Fix It
+    case finder, restartDock, restartMenuBar, launchServices, spotlight, fontCaches
+    // Tweaks
+    case extensions, pathbar, statusbar, posixtitle, showLibrary, dockactive, dockdelay, dockrecents
+    case shotshadow, shotformat, shotfolder, startupChime
 
     var id: String { rawValue }
 }
 
-/// What a tool needs on this Mac to be offered at all. Tools whose app or
-/// command isn't installed aren't shown (or counted).
+/// Ids 3.4.x persisted that 3.5.0 merged into one tool. Favorites and the
+/// recent list pass through this table before they are filtered.
+enum SystemToolMigration {
+    static let map: [String: SystemToolID] = [
+        "topCPU": .activity, "topMemory": .activity,
+        "ejectAll": .eject, "ejectDisk": .eject,
+        "backupNow": .timeMachine, "backupStatus": .timeMachine,
+        "portLookup": .ports, "listeningPorts": .ports,
+        "copyIP": .networkInfo, "publicIP": .networkInfo, "wifiDetails": .networkInfo, "dnsServers": .networkInfo,
+        "brewOutdated": .homebrew, "brewUpgradeAll": .homebrew, "brewInstalled": .homebrew, "brewUpdate": .homebrew,
+        "brewCleanup": .homebrew, "brewDoctor": .homebrew, "brewServices": .homebrew, "brewSearch": .homebrew,
+        "cache": .freeUpSpace, "trash": .freeUpSpace, "largeFiles": .freeUpSpace, "oldDownloads": .freeUpSpace,
+        "devJunk": .freeUpSpace, "duplicates": .freeUpSpace, "folderSizes": .freeUpSpace,
+        "tailscale": .vpn, "openVPN": .vpn
+    ]
+
+    /// Ids that no longer name a tool: removed in 3.5.0, or moved to Files.
+    /// Merged ids are not listed here; they already name a tool through `map`.
+    static let removed: Set<String> = [
+        // Audio page duplicates
+        "muteSound", "muteMic", "alertVolume", "soundOutput", "soundInput", "volume",
+        // macOS already offers these
+        "reduceTransparency", "reduceMotion", "screenSaver", "hideOthers", "aboutMac", "copySerial",
+        "settingsPane", "airDropSettings", "bluetoothSettings", "bootReasons",
+        // Removed features
+        "focus", "wallpaper", "dsstore", "lockFiles", "hideFiles", "copyFinderPath",
+        "newTextFile", "terminalHere", "freeMemory",
+        // Moved to the Files page
+        "pdfmerge", "pdfcompress", "pdfSplit", "pdfExtract", "pdfRemovePages", "pdfRotate", "pdfReorder",
+        "imagesToPDF", "pdfToImages", "pdfProtect", "pdfUnlock", "pdfPageNumbers",
+        "imageconvert", "videoconvert", "qr", "rename", "whoLocks", "fileHash"
+    ]
+}
+
+/// What a tool needs on this Mac to be offered at all.
 enum SystemToolRequirement: Equatable {
-    case homebrew, tailscale, openVPNConnect
+    case homebrew
 
     var isMet: Bool {
         switch self {
         case .homebrew: return SystemToolAvailability.shared.hasHomebrew
-        case .tailscale: return SystemToolAvailability.shared.hasTailscale
-        case .openVPNConnect: return SystemToolAvailability.shared.hasOpenVPNConnect
         }
     }
 }
 
-/// Which optional apps and commands exist, looked up at most every 10 s
-/// (the page asks on every redraw).
+/// Which optional commands exist, looked up at most every 10 s (the page asks
+/// on every redraw).
 final class SystemToolAvailability: @unchecked Sendable {
     static let shared = SystemToolAvailability()
     private let lock = NSLock()
     private var checkedAt: TimeInterval = -.infinity
-    private var values = (homebrew: false, tailscale: false, openVPN: false)
+    private var value = false
 
-    var hasHomebrew: Bool { current().homebrew }
-    var hasTailscale: Bool { current().tailscale }
-    var hasOpenVPNConnect: Bool { current().openVPN }
+    var hasHomebrew: Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        if now - checkedAt < 10 { let cached = value; lock.unlock(); return cached }
+        lock.unlock()
+        let fresh = Homebrew.locate() != nil
+        lock.lock(); value = fresh; checkedAt = now; lock.unlock()
+        return fresh
+    }
 
     func invalidate() {
         lock.lock(); checkedAt = -.infinity; lock.unlock()
     }
-
-    private func current() -> (homebrew: Bool, tailscale: Bool, openVPN: Bool) {
-        let now = ProcessInfo.processInfo.systemUptime
-        lock.lock()
-        if now - checkedAt < 10 { let cached = values; lock.unlock(); return cached }
-        lock.unlock()
-        let fresh = (homebrew: Homebrew.locate() != nil, tailscale: VPNTools.tailscaleExecutable() != nil,
-                     openVPN: VPNTools.openVPNConnectURL() != nil)
-        lock.lock(); values = fresh; checkedAt = now; lock.unlock()
-        return fresh
-    }
 }
 
-/// What a tile shows and searches: name, glyph, group, search keywords and
-/// the one-line tooltip. `isToggle` tiles carry a live state pill.
+/// What a tile shows and searches: name, glyph, section, search keywords,
+/// the one-line tooltip, and how it is drawn.
 struct SystemToolInfo: Identifiable {
     let id: SystemToolID
     let title: String
@@ -164,14 +161,14 @@ struct SystemToolInfo: Identifiable {
     let group: SystemToolGroup
     let keywords: [String]
     let help: String
-    var isToggle = false
+    var kind: SystemToolKind = .command
     /// Offered only when this is met (an app or command is installed).
     var requirement: SystemToolRequirement?
 
     var isAvailable: Bool { requirement?.isMet ?? true }
+    var isToggle: Bool { kind == .toggle }
 
-    /// Title, group name, keywords and the tooltip all count, so "awake",
-    /// "lsof", "battery" or "trash" find their tools.
+    /// Title, section name, keywords and the tooltip all count.
     func matches(_ query: String) -> Bool {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return true }
@@ -182,7 +179,7 @@ struct SystemToolInfo: Identifiable {
 enum SystemToolCatalog {
     static func info(_ id: SystemToolID) -> SystemToolInfo { byID[id]! }
 
-    /// Every tool of the group, offered on this Mac or not.
+    /// Every tool of the section, offered on this Mac or not.
     static func tools(in group: SystemToolGroup) -> [SystemToolInfo] { all.filter { $0.group == group } }
 
     /// The tools the page shows: everything whose requirement is met.
@@ -190,152 +187,79 @@ enum SystemToolCatalog {
 
     static func availableTools(in group: SystemToolGroup) -> [SystemToolInfo] { available.filter { $0.group == group } }
 
-    private static let byID: [SystemToolID: SystemToolInfo] = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+    static let byID: [SystemToolID: SystemToolInfo] = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
 
-    // swiftlint:disable line_length
     static let all: [SystemToolInfo] = [
         // Quick Toggles
-        .init(id: .darkMode, title: "Dark Mode", symbol: "circle.lefthalf.filled", group: .toggles, keywords: ["appearance", "light", "theme"], help: "Switches macOS between light and dark appearance (needs Automation for System Events).", isToggle: true),
-        .init(id: .keepAwake, title: "Keep Awake", symbol: "cup.and.saucer", group: .toggles, keywords: ["caffeine", "amphetamine", "sleep", "prevent"], help: "Keeps the Mac awake for a chosen time or until turned off.", isToggle: true),
-        .init(id: .hidden, title: "Hidden Files", symbol: "eye.trianglebadge.exclamationmark", group: .toggles, keywords: ["finder", "dotfiles", "invisible"], help: "Shows or hides hidden files in Finder, then restarts Finder.", isToggle: true),
-        .init(id: .desktop, title: "Desktop Icons", symbol: "menubar.rectangle", group: .toggles, keywords: ["finder", "clean desktop", "presentation"], help: "Shows or hides the icons on the desktop, then restarts Finder.", isToggle: true),
-        .init(id: .dockAutoHide, title: "Dock Auto-Hide", symbol: "dock.rectangle", group: .toggles, keywords: ["dock", "hide"], help: "Turns Dock hiding on or off (needs Automation for System Events).", isToggle: true),
-        .init(id: .wifi, title: "Wi-Fi", symbol: "wifi", group: .toggles, keywords: ["network", "airport", "wireless"], help: "Turns Wi-Fi on or off.", isToggle: true),
-        .init(id: .muteSound, title: "Mute Sound", symbol: "speaker.slash", group: .toggles, keywords: ["volume", "audio", "output"], help: "Mutes or unmutes the current sound output.", isToggle: true),
-        .init(id: .muteMic, title: "Mute Microphone", symbol: "mic.slash", group: .toggles, keywords: ["input", "audio", "call"], help: "Mutes or unmutes the default microphone.", isToggle: true),
-        .init(id: .bluetooth, title: "Bluetooth Device", symbol: "airpods", group: .toggles, keywords: ["airpods", "headphones", "connect", "bluetooth"], help: "Connects or disconnects a paired Bluetooth device, such as AirPods."),
-        .init(id: .focus, title: "Focus", symbol: "moon", group: .toggles, keywords: ["do not disturb", "dnd", "notifications"], help: "Runs your “Toggle Focus” shortcut. macOS doesn't let apps read or set Focus directly, so the state isn't shown."),
-        .init(id: .keyboardClean, title: "Lock Keyboard", symbol: "keyboard.badge.ellipsis", group: .toggles, keywords: ["clean", "cleaning", "wipe", "keyboard"], help: "Ignores every key for up to two minutes while you clean the keyboard; the pointer still works.", isToggle: true),
-        .init(id: .lowPower, title: "Low Power Mode", symbol: "battery.25percent", group: .toggles, keywords: ["energy", "pmset", "battery saver"], help: "Turns Low Power Mode on or off on battery and power adapter (pmset, asks for an administrator).", isToggle: true),
-        .init(id: .hideMenuBar, title: "Hide Menu Bar", symbol: "rectangle.topthird.inset.filled", group: .toggles, keywords: ["menu bar", "auto-hide", "autohide", "full screen"], help: "Hides the menu bar until the pointer reaches the top of the screen (needs Automation for System Events).", isToggle: true),
-        // Display & Sound
-        .init(id: .resolution, title: "Resolution", symbol: "arrow.up.left.and.arrow.down.right", group: .displaySound, keywords: ["display", "refresh rate", "hz", "scaled", "betterdisplay"], help: "Switches a display's resolution or refresh rate; the current mode is checked in the menu.", isToggle: true),
-        .init(id: .brightness, title: "Brightness", symbol: "sun.max", group: .displaySound, keywords: ["display", "dim", "monitorcontrol"], help: "Sets a display's brightness: hardware where the display allows it, otherwise a software dim that AOM undoes when it quits.", isToggle: true),
-        .init(id: .wallpaper, title: "Wallpaper", symbol: "photo.on.rectangle", group: .displaySound, keywords: ["desktop picture", "background"], help: "Sets a picture you choose as the wallpaper on every display.", isToggle: true),
-        .init(id: .reduceTransparency, title: "Reduce Transparency", symbol: "square.on.square.dashed", group: .displaySound, keywords: ["accessibility", "blur", "glass"], help: "Shows whether Reduce Transparency is on and opens Accessibility settings to change it (macOS doesn't let apps change it).", isToggle: true),
-        .init(id: .reduceMotion, title: "Reduce Motion", symbol: "figure.walk.motion", group: .displaySound, keywords: ["accessibility", "animation"], help: "Shows whether Reduce Motion is on and opens Accessibility settings to change it (macOS doesn't let apps change it).", isToggle: true),
-        .init(id: .soundOutput, title: "Sound Output", symbol: "hifispeaker", group: .displaySound, keywords: ["speakers", "headphones", "audio device", "soundsource"], help: "Switches the sound output device; the current one is checked in the menu.", isToggle: true),
-        .init(id: .soundInput, title: "Sound Input", symbol: "mic", group: .displaySound, keywords: ["microphone", "audio device"], help: "Switches the microphone; the current one is checked in the menu.", isToggle: true),
-        .init(id: .volume, title: "Volume", symbol: "speaker.wave.2", group: .displaySound, keywords: ["output volume", "loudness", "preset"], help: "Sets the output volume to a preset level.", isToggle: true),
-        .init(id: .alertVolume, title: "Alert Volume", symbol: "bell", group: .displaySound, keywords: ["beep", "alert sound", "system sounds"], help: "Sets the volume of alert sounds, separate from the output volume.", isToggle: true),
-        .init(id: .startupChime, title: "Startup Sound", symbol: "power.circle", group: .displaySound, keywords: ["chime", "boot sound", "startupmute", "nvram"], help: "Turns the startup chime on or off (the StartupMute firmware setting; asks for an administrator).", isToggle: true),
-        .init(id: .metalHUD, title: "Metal HUD", symbol: "gauge.with.dots.needle.67percent", group: .displaySound, keywords: ["fps", "frame rate", "gpu", "games", "mtl_hud_enabled", "performance"], help: "Shows Apple's Metal Performance HUD (frame rate, GPU time) in games and apps opened after you turn it on, until you log out. Apps already open aren't affected.", isToggle: true),
+        .init(id: .darkMode, title: "Dark Mode", symbol: "circle.lefthalf.filled", group: .toggles, keywords: ["appearance", "light", "theme"], help: "Switches macOS between light and dark appearance.", kind: .toggle),
+        .init(id: .keepAwake, title: "Keep Awake", symbol: "cup.and.saucer", group: .toggles, keywords: ["caffeine", "sleep", "prevent"], help: "Keeps the Mac awake for a chosen time or until turned off.", kind: .toggle),
+        .init(id: .hideMenuBar, title: "Hide Menu Bar", symbol: "rectangle.topthird.inset.filled", group: .toggles, keywords: ["menu bar", "auto-hide", "full screen"], help: "Hides the menu bar until the pointer reaches the top.", kind: .toggle),
+        .init(id: .dockAutoHide, title: "Dock Auto-Hide", symbol: "dock.rectangle", group: .toggles, keywords: ["dock", "hide"], help: "Turns Dock hiding on or off.", kind: .toggle),
+        .init(id: .hidden, title: "Hidden Files", symbol: "eye.trianglebadge.exclamationmark", group: .toggles, keywords: ["finder", "dotfiles", "invisible"], help: "Shows or hides hidden files in Finder.", kind: .toggle),
+        .init(id: .desktop, title: "Desktop Icons", symbol: "menubar.rectangle", group: .toggles, keywords: ["finder", "clean desktop"], help: "Shows or hides the icons on the desktop.", kind: .toggle),
+        .init(id: .wifi, title: "Wi-Fi", symbol: "wifi", group: .toggles, keywords: ["network", "wireless"], help: "Turns Wi-Fi on or off.", kind: .toggle),
+        .init(id: .bluetooth, title: "Bluetooth Device", symbol: "airpods", group: .toggles, keywords: ["airpods", "headphones", "connect"], help: "Connects or disconnects a paired Bluetooth device.", kind: .toggle),
+        .init(id: .lowPower, title: "Low Power Mode", symbol: "battery.25percent", group: .toggles, keywords: ["energy", "pmset", "battery saver"], help: "Turns Low Power Mode on or off.", kind: .toggle),
+        .init(id: .keyboardClean, title: "Lock Keyboard", symbol: "keyboard.badge.ellipsis", group: .toggles, keywords: ["clean", "cleaning", "wipe"], help: "Ignores every key for up to two minutes while you clean the keyboard.", kind: .toggle),
+        // Display
+        .init(id: .resolution, title: "Resolution", symbol: "arrow.up.left.and.arrow.down.right", group: .display, keywords: ["display", "refresh rate", "hz", "scaled"], help: "Switches a display's resolution or refresh rate.", kind: .sheet),
+        .init(id: .brightness, title: "Brightness", symbol: "sun.max", group: .display, keywords: ["display", "dim", "monitorcontrol"], help: "Sets a display's brightness, hardware where the display allows it.", kind: .sheet),
+        .init(id: .metalHUD, title: "Metal HUD", symbol: "gauge.with.dots.needle.67percent", group: .display, keywords: ["fps", "frame rate", "gpu", "games", "performance"], help: "Shows Apple's performance HUD in apps you open afterwards.", kind: .toggle),
         // Power & Session
-        .init(id: .lockScreen, title: "Lock Screen", symbol: "lock", group: .power, keywords: ["away", "security"], help: "Locks the screen right away."),
+        .init(id: .lockScreen, title: "Lock Screen", symbol: "lock", group: .power, keywords: ["away", "security"], help: "Locks the screen now."),
         .init(id: .sleep, title: "Sleep", symbol: "moon.zzz", group: .power, keywords: ["suspend", "power"], help: "Puts the Mac to sleep."),
         .init(id: .sleepDisplays, title: "Sleep Displays", symbol: "display", group: .power, keywords: ["screen off", "monitor"], help: "Turns the displays off without sleeping the Mac."),
-        .init(id: .screenSaver, title: "Screen Saver", symbol: "sparkles.tv", group: .power, keywords: ["screensaver"], help: "Starts the screen saver."),
-        .init(id: .restart, title: "Restart…", symbol: "restart", group: .power, keywords: ["reboot", "power"], help: "Asks first, then restarts the Mac the normal way (apps can still ask to save)."),
-        .init(id: .shutDown, title: "Shut Down…", symbol: "power", group: .power, keywords: ["power off", "turn off"], help: "Asks first, then shuts the Mac down the normal way."),
+        .init(id: .sleepTimer, title: "Sleep Timer", symbol: "timer", group: .power, keywords: ["sleep in", "countdown", "bedtime"], help: "Puts the Mac to sleep after a delay you choose.", kind: .sheet),
+        .init(id: .awakeWhileApp, title: "Awake While App Runs", symbol: "app.badge.checkmark", group: .power, keywords: ["keep awake", "prevent sleep", "app"], help: "Keeps the Mac awake until an app you pick quits.", kind: .sheet),
+        .init(id: .batteryDetails, title: "Battery Details", symbol: "battery.100percent", group: .power, keywords: ["cycle count", "health", "capacity", "temperature", "condition"], help: "Shows charge, cycle count, condition, capacity and temperature."),
+        .init(id: .restart, title: "Restart…", symbol: "restart", group: .power, keywords: ["reboot", "power"], help: "Asks first, then restarts the Mac."),
+        .init(id: .shutDown, title: "Shut Down…", symbol: "power", group: .power, keywords: ["power off", "turn off"], help: "Asks first, then shuts the Mac down."),
         .init(id: .logOut, title: "Log Out…", symbol: "rectangle.portrait.and.arrow.right", group: .power, keywords: ["sign out", "session"], help: "Asks first, then logs you out."),
-        .init(id: .quitAll, title: "Quit All Apps…", symbol: "xmark.app", group: .power, keywords: ["close", "apps", "clean slate"], help: "Asks first, then asks every app except Finder and All of MacOS to quit."),
-        .init(id: .hideOthers, title: "Hide Other Apps", symbol: "eye.slash", group: .power, keywords: ["focus", "declutter"], help: "Hides every app except All of MacOS."),
-        // Battery & Energy
-        .init(id: .batteryDetails, title: "Battery Details", symbol: "battery.100percent", group: .energy, keywords: ["coconutbattery", "cycle count", "health", "capacity", "temperature", "condition"], help: "Shows charge, cycle count, condition, capacity in mAh and temperature (coconutBattery style)."),
-        .init(id: .sleepTimer, title: "Sleep Timer", symbol: "timer", group: .energy, keywords: ["sleep in", "countdown", "bedtime"], help: "Puts the Mac to sleep after 15 minutes to 2 hours. The timer runs in All of MacOS, so it only fires while AOM is open.", isToggle: true),
-        .init(id: .awakeWhileApp, title: "Awake While App Runs", symbol: "app.badge.checkmark", group: .energy, keywords: ["amphetamine", "keep awake", "prevent sleep", "app"], help: "Keeps the Mac awake until an app you pick quits; the display may still sleep.", isToggle: true),
-        .init(id: .awakeReasons, title: "What's Keeping Awake", symbol: "eye", group: .energy, keywords: ["assertions", "pmset", "insomnia", "sleep prevented"], help: "Lists the apps that stop the Mac or its display from sleeping right now (pmset -g assertions)."),
-        // Apps & Processes
-        .init(id: .forceQuit, title: "Force Quit App…", symbol: "xmark.octagon", group: .apps, keywords: ["kill", "frozen", "not responding", "beachball"], help: "Pick an open app; after you confirm it is force quit and its unsaved work is lost."),
-        .init(id: .topCPU, title: "Top CPU", symbol: "cpu", group: .apps, keywords: ["activity monitor", "processes", "busy", "ps"], help: "Lists the processes using the most CPU right now, with Quit."),
-        .init(id: .topMemory, title: "Top Memory", symbol: "square.stack.3d.up", group: .apps, keywords: ["activity monitor", "ram", "processes", "ps"], help: "Lists the processes using the most memory right now, with Quit."),
-        .init(id: .relaunchApp, title: "Relaunch App", symbol: "arrow.clockwise.circle", group: .apps, keywords: ["restart app", "reopen"], help: "Quits an open app the normal way and opens it again."),
-        .init(id: .loginItems, title: "Login Items", symbol: "person.crop.circle.badge.clock", group: .apps, keywords: ["startup", "launch agents", "open at login"], help: "Lists apps that open at login and launch agents (read-only). Background items that apps register themselves appear only in System Settings, which the list links to."),
-        .init(id: .resetSavedState, title: "Reset Window State…", symbol: "rectangle.stack.badge.minus", group: .apps, keywords: ["saved application state", "reopen windows", "restore"], help: "Lists apps with saved windows; what you check moves to the Trash, so the app opens without its old windows."),
-        // Finder & Dock
-        .init(id: .finder, title: "Restart Finder", symbol: "arrow.clockwise", group: .finderDock, keywords: ["relaunch", "finder"], help: "Quits and reopens Finder."),
-        .init(id: .extensions, title: "File Extensions", symbol: "doc.text", group: .finderDock, keywords: ["finder", "suffix", "show all"], help: "Shows every file name extension in Finder (AppleShowAllExtensions).", isToggle: true),
-        .init(id: .pathbar, title: "Path Bar", symbol: "point.topleft.down.to.point.bottomright.curvepath", group: .finderDock, keywords: ["finder", "breadcrumb"], help: "Shows the path bar at the bottom of Finder windows.", isToggle: true),
-        .init(id: .statusbar, title: "Status Bar", symbol: "rectangle.bottomthird.inset.filled", group: .finderDock, keywords: ["finder", "free space", "items"], help: "Shows the status bar (item count, free space) in Finder windows.", isToggle: true),
-        .init(id: .posixtitle, title: "Full Path in Title", symbol: "textformat.abc.dottedunderline", group: .finderDock, keywords: ["finder", "posix", "title bar"], help: "Shows the folder's full path in the Finder window title.", isToggle: true),
-        .init(id: .dockactive, title: "Open Apps Only", symbol: "dock.arrow.up.rectangle", group: .finderDock, keywords: ["dock", "static only", "running"], help: "Keeps only running apps in the Dock, then restarts the Dock.", isToggle: true),
-        .init(id: .dockdelay, title: "Instant Dock", symbol: "hare", group: .finderDock, keywords: ["dock", "autohide delay", "fast"], help: "Removes the delay before a hidden Dock appears, then restarts the Dock.", isToggle: true),
-        .init(id: .dockrecents, title: "Dock Recents", symbol: "clock.arrow.circlepath", group: .finderDock, keywords: ["dock", "recents", "suggested"], help: "Shows recent and suggested apps in the Dock, then restarts the Dock.", isToggle: true),
-        .init(id: .restartDock, title: "Restart Dock", symbol: "arrow.triangle.2.circlepath", group: .finderDock, keywords: ["relaunch", "dock", "stuck"], help: "Quits the Dock; macOS opens it again at once."),
-        .init(id: .showLibrary, title: "Library Folder", symbol: "building.columns", group: .finderDock, keywords: ["~/library", "chflags", "hidden folder"], help: "Shows or hides your Library folder in Finder (chflags nohidden ~/Library).", isToggle: true),
-        .init(id: .copyFinderPath, title: "Copy Finder Path", symbol: "doc.on.clipboard", group: .finderDock, keywords: ["path", "selection", "posix"], help: "Copies the full paths of the items selected in Finder, one per line (needs Automation for Finder)."),
-        .init(id: .newTextFile, title: "New Text File Here", symbol: "square.and.pencil", group: .finderDock, keywords: ["new file", "untitled", "txt"], help: "Creates an empty text file in the front Finder window's folder and selects it (needs Automation for Finder)."),
-        .init(id: .terminalHere, title: "Terminal Here", symbol: "terminal", group: .finderDock, keywords: ["shell", "command line", "open in terminal"], help: "Opens Terminal in the front Finder window's folder (needs Automation for Finder)."),
-        // Screenshots
-        .init(id: .shotshadow, title: "Window Shadows", symbol: "shadow", group: .screenshots, keywords: ["screenshot", "capture", "disable-shadow"], help: "Keeps or drops the shadow on macOS window screenshots (⇧⌘4, Space).", isToggle: true),
-        .init(id: .shotformat, title: "File Format", symbol: "photo", group: .screenshots, keywords: ["screenshot format", "png", "jpg", "heic", "pdf", "capture"], help: "Chooses the file format of macOS screenshots.", isToggle: true),
-        .init(id: .shotfolder, title: "Save Folder", symbol: "folder", group: .screenshots, keywords: ["screenshot folder", "location", "capture"], help: "Chooses where macOS saves screenshots.", isToggle: true),
-        // Disk & Storage
-        .init(id: .ejectAll, title: "Eject All Disks", symbol: "eject", group: .disk, keywords: ["usb", "drive", "disk image", "unmount"], help: "Ejects external drives, disk images and network volumes."),
-        .init(id: .ejectDisk, title: "Eject a Disk", symbol: "eject.circle", group: .disk, keywords: ["usb", "unmount", "external", "volume"], help: "Lists external drives, disk images and network volumes with their free space, and ejects the one you pick."),
-        .init(id: .verifyDisk, title: "Verify Startup Disk", symbol: "checkmark.shield", group: .disk, keywords: ["diskutil", "first aid", "fsck", "onyx"], help: "Checks the startup volume with diskutil verifyVolume / (read-only; takes a few minutes and the Mac may pause briefly)."),
-        .init(id: .backupNow, title: "Back Up Now", symbol: "clock.arrow.2.circlepath", group: .disk, keywords: ["time machine", "tmutil", "backup"], help: "Starts a Time Machine backup (tmutil startbackup); the tile shows when one is running.", isToggle: true),
-        .init(id: .backupStatus, title: "Time Machine Status", symbol: "clock.badge.checkmark", group: .disk, keywords: ["time machine", "latest backup", "tmutil"], help: "Shows whether a backup is running, its progress, and the latest backup."),
-        .init(id: .snapshots, title: "Local Snapshots", symbol: "camera.on.rectangle", group: .disk, keywords: ["apfs", "tmutil", "purgeable", "space"], help: "Lists the startup disk's APFS local snapshots; Thin asks macOS to remove Time Machine's (administrator)."),
-        .init(id: .installDMG, title: "Install Disk Image…", symbol: "externaldrive.badge.plus", group: .disk, keywords: ["dmg", "rapidmg", "install", "hdiutil", "disk image", "app"], help: "Installs the app from a disk image you choose: mounts it read-only, copies the app to Applications (asks before replacing; the old copy goes to the Trash), ejects it and moves the image to the Trash."),
-        // Maintenance
-        .init(id: .restartMenuBar, title: "Restart Menu Bar", symbol: "menubar.arrow.up.rectangle", group: .maintenance, keywords: ["systemuiserver", "control center", "stuck"], help: "Restarts SystemUIServer and Control Center when menu bar icons are stuck."),
-        .init(id: .launchServices, title: "Rebuild Open With", symbol: "list.bullet.rectangle", group: .maintenance, keywords: ["launch services", "lsregister", "duplicates", "default app"], help: "Re-registers apps with Launch Services to fix duplicate or missing Open With entries."),
-        .init(id: .spotlight, title: "Reindex Spotlight", symbol: "magnifyingglass", group: .maintenance, keywords: ["mdutil", "search", "index"], help: "Erases and rebuilds the Spotlight index of the startup disk (administrator)."),
-        .init(id: .fontCaches, title: "Clear Font Caches", symbol: "textformat", group: .maintenance, keywords: ["atsutil", "fonts", "garbled"], help: "Removes your account's font caches; they rebuild after you log out and in."),
-        .init(id: .freeMemory, title: "Purge Disk Cache", symbol: "memorychip", group: .maintenance, keywords: ["purge", "memory", "ram"], help: "Flushes the disk cache from memory with `purge` (administrator)."),
-        // Cleanup
-        .init(id: .cache, title: "Clear Caches", symbol: "paintbrush", group: .cleanup, keywords: ["library", "caches", "space"], help: "Permanently deletes the contents of ~/Library/Caches (apps rebuild them)."),
-        .init(id: .dsstore, title: "Erase .DS_Store", symbol: "trash.slash", group: .cleanup, keywords: ["finder", "metadata"], help: "Deletes .DS_Store files inside a folder you choose."),
-        .init(id: .trash, title: "Empty Trash", symbol: "trash.fill", group: .cleanup, keywords: ["delete", "bin"], help: "Asks first, then permanently deletes everything in the Trash."),
-        .init(id: .uninstall, title: "Uninstall App…", symbol: "xmark.bin", group: .apps, keywords: ["appcleaner", "pearcleaner", "leftovers", "remove", "residue", "cleanup"], help: "Lists an app with the files it left in ~/Library, grouped by folder. Files named with its bundle ID are checked, files that only share its name are not; what stays checked moves to the Trash. You can also drop an app on this tile."),
-        .init(id: .largeFiles, title: "Large Files…", symbol: "externaldrive.badge.exclamationmark", group: .cleanup, keywords: ["big", "space", "disk"], help: "Finds files over a size you choose in a folder, so you can move some to the Trash."),
-        .init(id: .oldDownloads, title: "Old Downloads…", symbol: "arrow.down.circle", group: .cleanup, keywords: ["downloads", "stale", "space"], help: "Lists Downloads items untouched for 30 days to a year, to move to the Trash."),
-        .init(id: .devJunk, title: "Xcode Junk…", symbol: "hammer", group: .cleanup, keywords: ["deriveddata", "simulator", "developer"], help: "Lists rebuildable Xcode data (DerivedData, simulator caches, device support); archives are never listed."),
-        // Files & Media
-        .init(id: .imageconvert, title: "Convert Image", symbol: "photo.badge.arrow.down", group: .files, keywords: ["png", "jpeg", "heic", "webp"], help: "Saves a copy of an image as PNG, JPEG, HEIC or WebP."),
-        .init(id: .videoconvert, title: "Convert Video", symbol: "film", group: .files, keywords: ["mp4", "h264", "movie"], help: "Saves a copy of a video as MP4."),
-        .init(id: .qr, title: "QR Code", symbol: "qrcode", group: .files, keywords: ["barcode", "link"], help: "Makes a QR code PNG from text or a link."),
-        .init(id: .rename, title: "Batch Rename", symbol: "character.cursor.ibeam", group: .files, keywords: ["rename", "replace", "number"], help: "Replaces text in many file names at once; {n} inserts a running number."),
-        .init(id: .lockFiles, title: "Lock Files", symbol: "lock.doc", group: .files, keywords: ["immutable", "uchg", "protect"], help: "Locks or unlocks files (Finder's Locked flag)."),
-        .init(id: .hideFiles, title: "Hide Files", symbol: "eye.slash.circle", group: .files, keywords: ["invisible", "chflags"], help: "Hides or shows files in Finder without renaming them."),
-        .init(id: .whoLocks, title: "What's Using a File", symbol: "questionmark.folder", group: .files, keywords: ["lsof", "in use", "can't eject", "locked"], help: "Lists the processes that have a file open, with Quit."),
-        .init(id: .fileHash, title: "File SHA-256", symbol: "number", group: .files, keywords: ["checksum", "hash", "verify", "sha"], help: "Copies a file's SHA-256 and checks it against a hash on the clipboard."),
-        .init(id: .duplicates, title: "Find Duplicates…", symbol: "square.on.square", group: .files, keywords: ["duplicate", "same file", "gemini", "space"], help: "Finds identical files (same size and SHA-256) in a folder. Copies are checked, the oldest stays unchecked, and only the Trash is used."),
-        .init(id: .folderSizes, title: "Folder Sizes…", symbol: "chart.bar.doc.horizontal", group: .files, keywords: ["daisydisk", "disk usage", "biggest", "space"], help: "Adds up what each item in a folder takes on disk, biggest first, with Show in Finder."),
-        // PDF (3.4.0: PDFgear's page tools; every tool saves a new file)
-        .init(id: .pdfmerge, title: "Merge PDFs", symbol: "doc.badge.plus", group: .pdf, keywords: ["combine", "join"], help: "Combines PDFs into one file, ordered by name."),
-        .init(id: .pdfcompress, title: "Compress PDF", symbol: "doc.badge.gearshape", group: .pdf, keywords: ["shrink", "smaller"], help: "Saves a smaller copy of a PDF (pages become images)."),
-        .init(id: .pdfSplit, title: "Split PDF…", symbol: "rectangle.split.3x1", group: .pdf, keywords: ["pdfgear", "separate", "single pages", "ranges"], help: "Saves every page as its own PDF, or one PDF per range you type (1-3, 4-6, 7-), into a folder you choose."),
-        .init(id: .pdfExtract, title: "Extract Pages…", symbol: "doc.on.doc", group: .pdf, keywords: ["pdfgear", "copy pages", "subset"], help: "Saves the pages you type (1-3, 5) as a new PDF, in that order."),
-        .init(id: .pdfRemovePages, title: "Remove Pages…", symbol: "doc.badge.ellipsis", group: .pdf, keywords: ["pdfgear", "delete pages"], help: "Saves a copy of a PDF without the pages you type; the original stays as it is."),
-        .init(id: .pdfRotate, title: "Rotate Pages…", symbol: "rotate.right", group: .pdf, keywords: ["pdfgear", "turn", "landscape", "portrait"], help: "Saves a copy with the pages you type (or all) turned 90° left, 90° right or 180°."),
-        .init(id: .pdfReorder, title: "Reorder Pages…", symbol: "arrow.up.arrow.down", group: .pdf, keywords: ["pdfgear", "move pages", "order", "sort"], help: "Saves a copy with the pages in the order you type (3, 1-2); pages you leave out follow in their old order."),
-        .init(id: .imagesToPDF, title: "Images to PDF…", symbol: "photo.on.rectangle.angled", group: .pdf, keywords: ["pdfgear", "jpg to pdf", "png to pdf", "scan"], help: "Makes one PDF with a page per image, in name order, at each image's size or on A4 or Letter pages. JPEGs aren't recompressed."),
-        .init(id: .pdfToImages, title: "PDF to Images…", symbol: "photo.stack", group: .pdf, keywords: ["pdfgear", "pdf to png", "pdf to jpg", "export", "dpi"], help: "Saves every page as a PNG or JPEG at 72, 150 or 300 dpi into a folder you choose."),
-        .init(id: .pdfProtect, title: "Add PDF Password…", symbol: "lock.doc", group: .pdf, keywords: ["pdfgear", "encrypt", "protect", "secure"], help: "Saves a copy that asks for a password to open. AOM never stores the password."),
-        .init(id: .pdfUnlock, title: "Remove PDF Password…", symbol: "lock.open", group: .pdf, keywords: ["pdfgear", "decrypt", "unlock", "unprotect"], help: "Saves a copy without the password, once you type the password that opens it."),
-        .init(id: .pdfPageNumbers, title: "Add Page Numbers…", symbol: "number.square", group: .pdf, keywords: ["pdfgear", "paginate", "page numbers", "footer"], help: "Saves a copy with a number on every page (1, 2, 3 or Page 1 of 9) at the bottom or top right. The pages themselves, their links and forms stay untouched."),
+        .init(id: .quitAll, title: "Quit All Apps…", symbol: "xmark.app", group: .power, keywords: ["close", "apps", "clean slate"], help: "Asks every app except Finder and All of MacOS to quit."),
+        // Apps
+        .init(id: .activity, title: "Activity…", symbol: "gauge.with.dots.needle.33percent", group: .apps, keywords: ["activity monitor", "processes", "cpu", "memory", "ram", "ps"], help: "Lists the busiest processes by CPU or memory, with Quit.", kind: .sheet),
+        .init(id: .forceQuit, title: "Force Quit App…", symbol: "xmark.octagon", group: .apps, keywords: ["kill", "frozen", "not responding", "beachball"], help: "Stops an open app at once; its unsaved work is lost."),
+        .init(id: .relaunchApp, title: "Relaunch App", symbol: "arrow.clockwise.circle", group: .apps, keywords: ["restart app", "reopen"], help: "Quits an open app and opens it again.", kind: .sheet),
+        .init(id: .uninstall, title: "Uninstall App…", symbol: "xmark.bin", group: .apps, keywords: ["leftovers", "remove", "residue", "cleanup"], help: "Lists an app with the files it left in ~/Library before anything moves to the Trash."),
+        .init(id: .loginItems, title: "Login Items", symbol: "person.crop.circle.badge.clock", group: .apps, keywords: ["startup", "launch agents", "open at login"], help: "Lists apps that open at login and launch agents."),
+        .init(id: .awakeReasons, title: "What's Keeping Awake", symbol: "eye", group: .apps, keywords: ["assertions", "pmset", "insomnia"], help: "Lists what stops the Mac or its display from sleeping now."),
+        .init(id: .resetSavedState, title: "Reset Window State…", symbol: "rectangle.stack.badge.minus", group: .apps, keywords: ["saved application state", "reopen windows"], help: "Trashes saved window state so apps open without their old windows."),
+        // Storage
+        .init(id: .freeUpSpace, title: "Free Up Space…", symbol: "externaldrive.badge.minus", group: .storage, keywords: ["cleanup", "trash", "caches", "large files", "duplicates", "xcode", "folder sizes", "downloads", "space"], help: "Finds folder sizes, large files, old downloads, duplicates, Xcode data, caches and Trash items."),
+        .init(id: .eject, title: "Eject…", symbol: "eject", group: .storage, keywords: ["usb", "drive", "disk image", "unmount", "external"], help: "Ejects a volume you pick, or every external disk.", kind: .sheet),
+        .init(id: .timeMachine, title: "Time Machine", symbol: "clock.arrow.2.circlepath", group: .storage, keywords: ["backup", "tmutil", "latest backup"], help: "Shows the backup state and starts one.", kind: .sheet),
+        .init(id: .snapshots, title: "Local Snapshots", symbol: "camera.on.rectangle", group: .storage, keywords: ["apfs", "tmutil", "purgeable", "space"], help: "Lists the startup disk's APFS local snapshots."),
+        .init(id: .verifyDisk, title: "Verify Startup Disk", symbol: "checkmark.shield", group: .storage, keywords: ["diskutil", "first aid", "fsck"], help: "Checks the startup volume without changing it."),
+        .init(id: .installDMG, title: "Install Disk Image…", symbol: "externaldrive.badge.plus", group: .storage, keywords: ["dmg", "install", "hdiutil", "disk image"], help: "Copies the app inside a disk image into Applications and ejects the image."),
         // Network
-        .init(id: .dns, title: "Flush DNS", symbol: "network", group: .network, keywords: ["cache", "mdnsresponder", "resolver"], help: "Clears the DNS cache (asks for an administrator if macOS requires it)."),
-        .init(id: .speedTest, title: "Speed Test", symbol: "speedometer", group: .network, keywords: ["networkquality", "bandwidth", "internet"], help: "Measures download, upload and responsiveness with Apple's networkQuality (about 20 s)."),
-        .init(id: .portLookup, title: "What's Using a Port", symbol: "point.3.connected.trianglepath.dotted", group: .network, keywords: ["lsof", "listen", "localhost", "port"], help: "Lists the processes using a TCP or UDP port, with Quit."),
-        .init(id: .copyIP, title: "Copy IP Address", symbol: "doc.on.doc", group: .network, keywords: ["local ip", "address", "ipv4"], help: "Copies this Mac's local IPv4 address."),
-        .init(id: .wifiDetails, title: "Wi-Fi Details", symbol: "wifi.circle", group: .network, keywords: ["rssi", "signal", "channel", "noise", "corewlan"], help: "Shows the Wi-Fi interface, signal (RSSI and noise), channel and rate. macOS shows the network name only with Location permission."),
-        .init(id: .publicIP, title: "Public IP", symbol: "globe", group: .network, keywords: ["external ip", "wan", "ipify"], help: "Asks api64.ipify.org over HTTPS for your public address (one request per click) and copies it."),
-        .init(id: .ping, title: "Ping", symbol: "waveform.path.ecg", group: .network, keywords: ["latency", "packet loss", "reachability"], help: "Pings a host five times and shows the latency and packet loss."),
-        .init(id: .dnsServers, title: "DNS Servers", symbol: "server.rack", group: .network, keywords: ["resolver", "nameserver", "scutil"], help: "Shows the DNS servers macOS is using (scutil --dns) and copies them."),
-        .init(id: .renewDHCP, title: "Renew DHCP", symbol: "arrow.triangle.2.circlepath.circle", group: .network, keywords: ["lease", "ip address", "router"], help: "Asks the router for a fresh address on the active interface (ipconfig set … DHCP; asks for an administrator)."),
-        .init(id: .listeningPorts, title: "Listening Ports", symbol: "antenna.radiowaves.left.and.right", group: .network, keywords: ["lsof", "server", "open ports", "listen"], help: "Lists the processes you can see listening for TCP connections (lsof), with Quit."),
-        .init(id: .airDropSettings, title: "AirDrop Settings", symbol: "dot.radiowaves.left.and.right", group: .network, keywords: ["airdrop", "handoff", "receiving"], help: "Opens System Settings › AirDrop & Handoff."),
-        .init(id: .bluetoothSettings, title: "Bluetooth Settings", symbol: "gearshape", group: .network, keywords: ["bluetooth", "pair", "devices"], help: "Opens System Settings › Bluetooth."),
-        .init(id: .vpn, title: "VPN Connections…", symbol: "lock.shield", group: .network, keywords: ["vpn", "ipsec", "l2tp", "wireguard", "scutil", "tunnel"], help: "Lists the VPNs set up in System Settings with their live state, and connects or disconnects them (scutil --nc). Tailscale and OpenVPN Connect are listed there too.", isToggle: true),
-        .init(id: .tailscale, title: "Tailscale", symbol: "point.3.filled.connected.trianglepath.dotted", group: .network, keywords: ["vpn", "tailnet", "mesh", "exit node", "wireguard"], help: "Shows whether Tailscale is connected, this Mac's Tailscale address and exit node, and connects or disconnects it with the Tailscale app's own command.", isToggle: true, requirement: .tailscale),
-        .init(id: .openVPN, title: "OpenVPN Connect", symbol: "shield.lefthalf.filled", group: .network, keywords: ["vpn", "openvpn", "ovpn", "profile"], help: "Opens OpenVPN Connect, which keeps its profiles to itself, so connecting happens there.", requirement: .openVPNConnect),
-        // Homebrew (3.4.0; shown only when brew is installed)
-        .init(id: .brewOutdated, title: "Outdated Packages", symbol: "arrow.up.circle", group: .homebrew, keywords: ["brew", "outdated", "updates", "formulae", "casks"], help: "Checks which formulae and casks have newer versions (brew outdated, without updating Homebrew first) and lists them with Upgrade.", isToggle: true, requirement: .homebrew),
-        .init(id: .brewUpgradeAll, title: "Upgrade All…", symbol: "arrow.up.square", group: .homebrew, keywords: ["brew", "upgrade", "update packages"], help: "Shows what is outdated, then upgrades everything (brew upgrade) with a live log you can cancel.", requirement: .homebrew),
-        .init(id: .brewInstalled, title: "Installed Packages", symbol: "shippingbox", group: .homebrew, keywords: ["brew", "list", "formulae", "casks", "uninstall"], help: "Lists every installed formula and cask with its version, and uninstalls one after asking.", requirement: .homebrew),
-        .init(id: .brewUpdate, title: "Update Homebrew", symbol: "arrow.triangle.2.circlepath", group: .homebrew, keywords: ["brew", "update", "taps"], help: "Fetches the newest Homebrew and package lists (brew update), with a live log.", requirement: .homebrew),
-        .init(id: .brewCleanup, title: "Clean Up…", symbol: "sparkles", group: .homebrew, keywords: ["brew", "cleanup", "cache", "space", "old versions"], help: "Measures what brew cleanup -s would free, asks, then removes old versions and the download cache and says how much it freed.", requirement: .homebrew),
-        .init(id: .brewDoctor, title: "Brew Doctor", symbol: "stethoscope", group: .homebrew, keywords: ["brew", "doctor", "problems", "diagnose"], help: "Runs brew doctor and shows what it found.", requirement: .homebrew),
-        .init(id: .brewServices, title: "Services", symbol: "gearshape.2", group: .homebrew, keywords: ["brew", "services", "launchd", "start", "stop", "postgres", "redis"], help: "Lists Homebrew services with their state, and starts, stops or restarts them.", requirement: .homebrew),
-        .init(id: .brewSearch, title: "Search & Install…", symbol: "magnifyingglass.circle", group: .homebrew, keywords: ["brew", "search", "install", "cask", "formula"], help: "Searches formulae and casks by name and installs one after asking.", requirement: .homebrew),
-        // System Info
-        .init(id: .aboutMac, title: "About This Mac", symbol: "laptopcomputer", group: .info, keywords: ["model", "chip", "memory", "macos version", "build"], help: "Shows the model, chip, memory and macOS version and build, with Copy."),
-        .init(id: .copySerial, title: "Copy Serial Number", symbol: "barcode", group: .info, keywords: ["serial", "warranty", "applecare"], help: "Copies this Mac's serial number."),
-        .init(id: .bootReasons, title: "Last Restart & Wake", symbol: "arrow.counterclockwise.circle", group: .info, keywords: ["uptime", "boot", "shutdown reason", "wake reason"], help: "Shows uptime and the codes macOS recorded for the last shutdown and wake (kern.shutdownreason, kern.wakereason). Apple doesn't document every code."),
-        .init(id: .settingsPane, title: "Open Settings Pane", symbol: "gearshape.2", group: .info, keywords: ["system settings", "preferences", "pane", "x-apple.systempreferences"], help: "Opens a System Settings pane directly: Battery, Displays, Storage, Login Items and more."),
+        .init(id: .networkInfo, title: "Network Info…", symbol: "network", group: .network, keywords: ["ip", "local", "public", "wifi", "dns", "rssi", "signal"], help: "Shows the local and public address, Wi-Fi details and DNS servers, each copyable.", kind: .sheet),
+        .init(id: .speedTest, title: "Speed Test", symbol: "speedometer", group: .network, keywords: ["networkquality", "bandwidth", "internet"], help: "Measures download, upload and responsiveness with Apple's networkQuality."),
+        .init(id: .ping, title: "Ping…", symbol: "waveform.path.ecg", group: .network, keywords: ["latency", "packet loss", "reachability"], help: "Pings a host and shows the latency and packet loss."),
+        .init(id: .ports, title: "Ports…", symbol: "point.3.connected.trianglepath.dotted", group: .network, keywords: ["lsof", "listen", "localhost", "port", "open ports"], help: "Lists the processes using or listening on a port, with Quit.", kind: .sheet),
+        .init(id: .vpn, title: "VPN…", symbol: "lock.shield", group: .network, keywords: ["vpn", "tailscale", "openvpn", "scutil", "tunnel", "exit node"], help: "Connects or disconnects the VPNs set up on this Mac and Tailscale.", kind: .sheet),
+        .init(id: .dns, title: "Flush DNS", symbol: "arrow.triangle.2.circlepath", group: .network, keywords: ["cache", "mdnsresponder", "resolver"], help: "Clears the DNS cache."),
+        .init(id: .renewDHCP, title: "Renew DHCP", symbol: "arrow.triangle.2.circlepath.circle", group: .network, keywords: ["lease", "ip address", "router"], help: "Asks the router for a fresh address on the active interface."),
+        // Homebrew
+        .init(id: .homebrew, title: "Homebrew…", symbol: "mug", group: .homebrew, keywords: ["brew", "outdated", "upgrade", "installed", "services", "search", "doctor"], help: "Opens outdated, installed and service packages with their live log.", requirement: .homebrew),
+        // Fix It
+        .init(id: .finder, title: "Restart Finder", symbol: "arrow.clockwise", group: .fixIt, keywords: ["relaunch", "finder"], help: "Quits and reopens Finder."),
+        .init(id: .restartDock, title: "Restart Dock", symbol: "arrow.triangle.2.circlepath", group: .fixIt, keywords: ["relaunch", "dock", "stuck"], help: "Quits the Dock; macOS opens it again at once."),
+        .init(id: .restartMenuBar, title: "Restart Menu Bar", symbol: "menubar.arrow.up.rectangle", group: .fixIt, keywords: ["systemuiserver", "control center", "stuck"], help: "Restarts SystemUIServer and Control Center."),
+        .init(id: .launchServices, title: "Rebuild Open With", symbol: "list.bullet.rectangle", group: .fixIt, keywords: ["launch services", "lsregister", "default app"], help: "Re-registers apps to fix duplicate or missing Open With entries."),
+        .init(id: .spotlight, title: "Reindex Spotlight", symbol: "magnifyingglass", group: .fixIt, keywords: ["mdutil", "search", "index"], help: "Rebuilds the Spotlight index of the startup disk."),
+        .init(id: .fontCaches, title: "Clear Font Caches", symbol: "textformat", group: .fixIt, keywords: ["atsutil", "fonts", "garbled"], help: "Removes your account's font caches."),
+        // Tweaks
+        .init(id: .extensions, title: "File Extensions", symbol: "doc.text", group: .tweaks, keywords: ["finder", "suffix", "show all"], help: "Shows every file name extension in Finder.", kind: .toggle),
+        .init(id: .pathbar, title: "Path Bar", symbol: "point.topleft.down.to.point.bottomright.curvepath", group: .tweaks, keywords: ["finder", "breadcrumb"], help: "Shows the path bar at the bottom of Finder windows.", kind: .toggle),
+        .init(id: .statusbar, title: "Status Bar", symbol: "rectangle.bottomthird.inset.filled", group: .tweaks, keywords: ["finder", "free space", "items"], help: "Shows the item count and free space in Finder windows.", kind: .toggle),
+        .init(id: .posixtitle, title: "Full Path in Title", symbol: "textformat.abc.dottedunderline", group: .tweaks, keywords: ["finder", "posix", "title bar"], help: "Shows the folder's full path in the Finder window title.", kind: .toggle),
+        .init(id: .showLibrary, title: "Library Folder", symbol: "building.columns", group: .tweaks, keywords: ["~/library", "chflags", "hidden folder"], help: "Shows or hides your Library folder in Finder.", kind: .toggle),
+        .init(id: .dockactive, title: "Open Apps Only", symbol: "dock.arrow.up.rectangle", group: .tweaks, keywords: ["dock", "static only", "running"], help: "Keeps only running apps in the Dock.", kind: .toggle),
+        .init(id: .dockdelay, title: "Instant Dock", symbol: "hare", group: .tweaks, keywords: ["dock", "autohide delay", "fast"], help: "Removes the delay before a hidden Dock appears.", kind: .toggle),
+        .init(id: .dockrecents, title: "Dock Recents", symbol: "clock.arrow.circlepath", group: .tweaks, keywords: ["dock", "recents", "suggested"], help: "Shows recent and suggested apps in the Dock.", kind: .toggle),
+        .init(id: .shotshadow, title: "Screenshot Shadows", symbol: "shadow", group: .tweaks, keywords: ["screenshot", "capture", "disable-shadow"], help: "Keeps or drops the shadow on window screenshots.", kind: .toggle),
+        .init(id: .shotformat, title: "Screenshot Format", symbol: "photo", group: .tweaks, keywords: ["png", "jpg", "heic", "pdf", "capture"], help: "Chooses the file format of macOS screenshots.", kind: .sheet),
+        .init(id: .shotfolder, title: "Screenshot Folder", symbol: "folder", group: .tweaks, keywords: ["screenshot folder", "location", "capture"], help: "Chooses where macOS saves screenshots.", kind: .sheet),
+        .init(id: .startupChime, title: "Startup Sound", symbol: "power.circle", group: .tweaks, keywords: ["chime", "boot sound", "startupmute", "nvram"], help: "Turns the startup chime on or off in the firmware.", kind: .toggle)
     ]
-    // swiftlint:enable line_length
 }
