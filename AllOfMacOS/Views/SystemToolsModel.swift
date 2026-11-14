@@ -93,6 +93,9 @@ final class SystemToolsModel: ObservableObject {
     @Published var processReview: ProcessReview?
     /// The Network Info sheet opens from its tile and the This Mac strip.
     @Published var showNetworkInfo = false
+    /// The startup disk's detail popover from the This Mac strip. A popover,
+    /// not a sheet: the strip is the only way in and nothing here is modal.
+    @Published var showStartupDisk = false
     var processTool: SystemToolID = .ports
 
     /// States read from helper processes (nvram, tmutil, launchctl), filled

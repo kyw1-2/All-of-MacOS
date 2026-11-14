@@ -59,3 +59,44 @@ struct FreeUpSpaceSheet: View {
         .onExitCommand { dismiss() }
     }
 }
+
+/// The startup disk's detail: capacity, what takes the space, and the way
+/// into Free Up Space and System Settings › Storage.
+struct StartupDiskSheet: View {
+    @ObservedObject var model: SystemToolsModel
+    @ObservedObject private var monitor = SystemStatusMonitor()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+            HStack(spacing: AOMSpace.x3) {
+                AOMModuleBadge(symbol: "internaldrive", hue: .brown, size: AOMIcon.headerBadge)
+                Text("Startup Disk").font(AOMFont.pageStatus)
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            AOMSection {
+                if let disk = monitor.disk {
+                    AOMSettingRow("Free", detail: "of \(SystemStatus.size(disk.total))", showsDivider: false) {
+                        Text(SystemStatus.size(disk.available)).font(AOMFont.body.monospacedDigit())
+                    }
+                } else {
+                    AOMSettingRow("Reading the disk…", showsDivider: false) { EmptyView() }
+                }
+                AOMSettingRow("Free Up Space", detail: "Find large files, duplicates, caches and Trash") {
+                    Button("Open…") {
+                        dismiss()
+                        model.cleanupScan = .folderSizes
+                        model.showFreeUpSpace = true
+                    }
+                }
+            }
+        }
+        .padding(AOMSpace.x4)
+        .frame(width: 460)
+        .background(AOMColor.canvas)
+        .onAppear { monitor.start() }
+        .onDisappear { monitor.stop() }
+        .onExitCommand { dismiss() }
+    }
+}

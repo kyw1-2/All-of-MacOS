@@ -47,7 +47,7 @@ struct SystemToolsView: View {
                     AOMSectionTitle("This Mac", detail: "live")
                     SystemStatusStrip(monitor: status,
                                       openBattery: { model.run(.batteryDetails) },
-                                      openFreeUpSpace: { model.showFreeUpSpace = true },
+                                      openFreeUpSpace: { model.showStartupDisk = true },
                                       openNetworkInfo: { model.showNetworkInfo = true })
                 }
                 favorites
@@ -82,6 +82,9 @@ struct SystemToolsView: View {
         .sheet(item: $model.processReview) { review in
             ProcessReviewSheet(review: review, onQuit: { model.quitProcess($0) },
                                onSort: { model.resortActivity($0) }, onClose: { model.processReview = nil })
+        }
+        .sheet(isPresented: $model.showStartupDisk) {
+            StartupDiskSheet(model: model)
         }
         .sheet(isPresented: $model.showNetworkInfo) {
             NetworkInfoSheet(model: model)
