@@ -253,4 +253,15 @@ final class MainWindowResponsivenessTests: XCTestCase {
         let failed = await AudioOutputService.loadSystemAlertVolumePercent(read: { nil })
         XCTAssertNil(failed)
     }
+
+    /// A row slider draws ticks only up to eleven steps; denser ones slide
+    /// freely and round to the step (no dotted rule under the track).
+    func testRowSliderTicksOnlyWhenSparseAndRoundsOtherwise() {
+        XCTAssertTrue(AOMRowSlider.drawsTicks(range: 0...1, step: 0.1))      // 11 ticks
+        XCTAssertFalse(AOMRowSlider.drawsTicks(range: 1...20, step: 1))      // 20
+        XCTAssertFalse(AOMRowSlider.drawsTicks(range: 0.05...1, step: 0.05)) // 20
+        XCTAssertEqual(AOMRowSlider.snapped(7.4, range: 1...20, step: 1), 7)
+        XCTAssertEqual(AOMRowSlider.snapped(25, range: 1...20, step: 1), 20)
+        XCTAssertEqual(AOMRowSlider.snapped(0.12, range: 0.05...1, step: 0.05), 0.1, accuracy: 1e-9)
+    }
 }

@@ -59,9 +59,31 @@ struct AOMRowSlider: View {
         }
     }
 
+    /// A stepped slider draws one tick per step; past this many the ticks
+    /// read as a dotted rule under the track (Text Actions' 0.05 s timings,
+    /// Capture's edge tolerance), so such a slider slides freely and the
+    /// value is rounded to the step instead (Settings' HubSliderRow rule).
+    static let maximumTickMarks = 11
+
+    static func drawsTicks(range: ClosedRange<Double>, step: Double) -> Bool {
+        step > 0 && (range.upperBound - range.lowerBound) / step + 1 <= Double(maximumTickMarks)
+    }
+
+    /// The nearest step from the lower bound, clamped to the range.
+    static func snapped(_ value: Double, range: ClosedRange<Double>, step: Double) -> Double {
+        guard step > 0 else { return value }
+        let steps = ((value - range.lowerBound) / step).rounded()
+        return min(range.upperBound, max(range.lowerBound, range.lowerBound + steps * step))
+    }
+
     @ViewBuilder private var slider: some View {
-        if let step {
+        if let step, Self.drawsTicks(range: range, step: step) {
             Slider(value: $value, in: range, step: step) { Text(title) }
+        } else if let step {
+            Slider(value: Binding(get: { value }, set: { newValue in
+                let rounded = Self.snapped(newValue, range: range, step: step)
+                if rounded != value { value = rounded }
+            }), in: range) { Text(title) }
         } else {
             Slider(value: $value, in: range) { Text(title) }
         }

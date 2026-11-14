@@ -308,20 +308,10 @@ struct HubSliderRow: View {
 
     @State private var liveValue: Double?
 
-    /// A stepped slider draws one tick per step. Past this many ticks they
-    /// read as a dotted rule under the track (HUD background had 31), so those
-    /// sliders slide freely and the binding rounds to the same steps.
-    private static let maximumTickMarks = 11
-
-    private var drawsTickMarks: Bool {
-        step > 0 && (range.upperBound - range.lowerBound) / step + 1 <= Double(Self.maximumTickMarks)
-    }
-
-    /// The nearest step from the lower bound, as a stepped slider rounds.
+    /// The nearest step from the lower bound, as a stepped slider rounds
+    /// (`AOMRowSlider` decides whether ticks are drawn).
     private func stepped(_ value: Double) -> Double {
-        guard step > 0 else { return value }
-        let steps = ((value - range.lowerBound) / step).rounded()
-        return min(range.upperBound, max(range.lowerBound, range.lowerBound + steps * step))
+        AOMRowSlider.snapped(value, range: range, step: step)
     }
 
     private func label(_ value: Double) -> String {
@@ -344,7 +334,7 @@ struct HubSliderRow: View {
                     // the label updates from liveValue without waiting.
                     UserDefaults.standard.set(snapped, forKey: key)
                     NotificationCenter.default.post(name: .aomSettingChanged, object: nil)
-                }), in: range, step: drawsTickMarks ? step : nil, format: { label($0) })
+                }), in: range, step: step > 0 ? step : nil, format: { label($0) })
                 .labelsHidden()
         }
     }

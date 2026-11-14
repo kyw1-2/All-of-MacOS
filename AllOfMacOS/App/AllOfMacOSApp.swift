@@ -241,12 +241,9 @@ struct BackupSettingsView: View {
                     AOMSettingRow("Backups to keep", detail: "Older snapshots are removed automatically",
                                   symbol: "archivebox") {
                         // The shared row slider (track and value widths of
-                        // every settings slider). Twenty steps would draw a
-                        // dotted rule of ticks, so it slides freely and the
-                        // binding rounds, as Settings' own sliders do.
-                        AOMRowSlider("Backups to keep", value: Binding(
-                            get: { maxBackups },
-                            set: { maxBackups = $0.rounded() }), in: 1...20, format: { "\(Int($0))" })
+                        // every settings slider; twenty steps slide freely).
+                        AOMRowSlider("Backups to keep", value: $maxBackups, in: 1...20, step: 1,
+                                     format: { "\(Int($0))" })
                     }
                     AOMSettingRow("Backup folder", detail: customPath.isEmpty ? "Default (~/.allofmacos_backups)" : customPath,
                                   symbol: "folder") {
@@ -283,10 +280,10 @@ struct BackupSettingsView: View {
                     .padding(.horizontal, AOMSpace.x0_5)
 
                 AOMSection("Existing backups", detail: backups.isEmpty ? nil : "\(backups.count)") {
-                    Button {
+                    // The section-title link of the other sheets ("Restore
+                    // Capture Defaults"), not a bordered button.
+                    AOMCardLink("Show in Finder", symbol: nil) {
                         NSWorkspace.shared.open(PresetManager.backupDirectory)
-                    } label: {
-                        Label("Show in Finder", systemImage: "folder")
                     }
                     .help("Open the backup folder in Finder")
                 } content: {
