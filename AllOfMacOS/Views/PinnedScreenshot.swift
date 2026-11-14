@@ -149,11 +149,14 @@ private final class PinnedWindow: NSPanel {
     func present() {
         // Cascade new pins so a second one does not land exactly on the first.
         let offset = CGFloat(PinnedScreenshotController.shared.count) * 24
-        let screen = NSScreen.main ?? NSScreen.screens[0]
-        let visible = screen.visibleFrame
-        let origin = NSPoint(x: visible.midX - frame.width / 2 + offset,
-                             y: visible.midY - frame.height / 2 - offset)
-        setFrameOrigin(origin)
+        // No screen at all while displays reconfigure (or the lid closes on
+        // an external display): `screens[0]` trapped. The pin then keeps
+        // its default frame instead.
+        if let screen = NSScreen.main ?? NSScreen.screens.first {
+            let visible = screen.visibleFrame
+            setFrameOrigin(NSPoint(x: visible.midX - frame.width / 2 + offset,
+                                   y: visible.midY - frame.height / 2 - offset))
+        }
         orderFrontRegardless()
         installInteractionMonitors()
     }
