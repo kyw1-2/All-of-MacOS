@@ -566,38 +566,32 @@ extension AudioOutputService {
 
     // MARK: - System Alert Sounds Volume
 
-    /// The alert volume, read on the alert-volume queue. On a Mac where the
-    /// alert volume was never changed the global domain has no value and
-    /// `currentSystemAlertVolume()` falls back to AppleScript, which took
-    /// about a second on the main thread when the Audio page opened. The
-    /// queue is the one the slider writes on, so a read never overtakes a
-    /// write that is still pending.
-    static func loadSystemAlertVolume() async -> Float32? {
+    /// The system alert volume in percent (0–100), read on the alert-volume
+    /// queue with the same AppleScript, units and queue the slider writes
+    /// with, so a read never overtakes a pending write and never disagrees
+    /// with it in scale. (3.8.0 read `com.apple.sound.beep.volume` instead and
+    /// took it as linear 0–1; only its end points could be checked against
+    /// AppleScript, so an intermediate value could open the slider at the
+    /// wrong position.) Nil when the script fails. `read` is a test seam.
+    static func loadSystemAlertVolumePercent(read: (@Sendable () -> Double?)? = nil) async -> Double? {
         await withCheckedContinuation { continuation in
-            alertVolumeQueue.async { continuation.resume(returning: currentSystemAlertVolume()) }
+            alertVolumeQueue.async {
+                let value = read.map { $0() } ?? readSystemAlertVolumePercent()
+                continuation.resume(returning: value.map { min(100, max(0, $0)) })
+            }
         }
     }
 
-    /// Blocking (a preferences round trip, AppleScript when unset): never on
-    /// the main thread; views use `loadSystemAlertVolume()`.
-    static func currentSystemAlertVolume() -> Float32? {
-        // The system alert scalar is NOT the volume of the system-output
-        // hardware device, which is often the very same device as music.
-        // Sound settings keep it in the global domain; reading that is a
-        // preferences lookup, where the AppleScript below compiles a script
-        // and loads the scripting additions (about a second on the main
-        // thread when the Audio page opened).
-        CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
-        if let stored = CFPreferencesCopyAppValue(alertVolumeKey, kCFPreferencesAnyApplication) as? NSNumber {
-            return min(1, max(0, stored.floatValue))
-        }
+    /// Queue only: compiles and runs AppleScript (about a second the first
+    /// time, which stalled the Audio page when it ran on the main thread).
+    private static func readSystemAlertVolumePercent() -> Double? {
+        dispatchPrecondition(condition: .onQueue(alertVolumeQueue))
         var error: NSDictionary?
         let value = NSAppleScript(source: "alert volume of (get volume settings)")?.executeAndReturnError(&error)
         guard error == nil, let value else { return nil }
-        return Float32(value.int32Value) / 100
+        return Double(value.int32Value)
     }
 
-    private static let alertVolumeKey = "com.apple.sound.beep.volume" as CFString
     private static let alertVolumeQueue = DispatchQueue(label: "com.kyw.allofmacos.alert-volume", qos: .userInitiated)
     private static let pendingAlertVolume = OSAllocatedUnfairLock<Double?>(initialState: nil)
 
@@ -619,8 +613,10 @@ extension AudioOutputService {
         }
     }
 
+    /// Queue only, like the read.
     @discardableResult
-    static func setSystemAlertVolume(percent: Double) -> Bool {
+    private static func setSystemAlertVolume(percent: Double) -> Bool {
+        dispatchPrecondition(condition: .onQueue(alertVolumeQueue))
         guard percent.isFinite, (0...100).contains(percent) else { return false }
         var error: NSDictionary?
         NSAppleScript(source: "set volume alert volume \(Int(percent.rounded()))")?.executeAndReturnError(&error)

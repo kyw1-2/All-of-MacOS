@@ -1,5 +1,6 @@
 import XCTest
 import Combine
+import os
 @testable import AllOfMacOS
 
 @MainActor
@@ -234,5 +235,22 @@ final class MainWindowResponsivenessTests: XCTestCase {
         XCTAssertTrue(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 0, width: 300, height: 0.5)))
         XCTAssertTrue(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 0.25, width: 300, height: 0.5)))
         XCTAssertFalse(AOMSectionCardSpace.isAtTop(CGRect(x: 12, y: 36, width: 300, height: 0.5)))
+    }
+
+    /// The Audio page's Sound effects row reads the alert volume with
+    /// AppleScript; that read must run on the alert-volume queue, never on
+    /// the main thread, and comes back in the write path's units (percent).
+    func testAlertVolumeReadRunsOffTheMainThreadInPercent() async {
+        let ranOnMain = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+        let percent = await AudioOutputService.loadSystemAlertVolumePercent(read: {
+            ranOnMain.withLock { $0 = Thread.isMainThread }
+            return 42
+        })
+        XCTAssertEqual(ranOnMain.withLock { $0 }, false)
+        XCTAssertEqual(percent, 42)
+        let clamped = await AudioOutputService.loadSystemAlertVolumePercent(read: { 140 })
+        XCTAssertEqual(clamped, 100)
+        let failed = await AudioOutputService.loadSystemAlertVolumePercent(read: { nil })
+        XCTAssertNil(failed)
     }
 }

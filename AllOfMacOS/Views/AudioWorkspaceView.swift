@@ -602,6 +602,10 @@ private struct SoundEffectsRow: View {
     /// Set once the person moves the slider or mutes, so a late read of the
     /// system value never jumps the slider back.
     @State private var adjusted = false
+    /// False until the system value has been read: the controls are
+    /// disabled and the slider and figure hidden (keeping their space), so
+    /// the row never shows a guessed level.
+    @State private var loaded = false
 
     var body: some View {
         HStack(spacing: AOMSpace.x3) {
@@ -614,6 +618,7 @@ private struct SoundEffectsRow: View {
             MuteButton(symbol: isMuted ? "bell.slash.fill" : "bell.fill", muted: isMuted) { toggleMute() }
             .accessibilityLabel(isMuted ? "Unmute system alerts" : "Mute system alerts")
             .help(isMuted ? "Unmute system alerts" : "Mute system alerts")
+            .disabled(!loaded)
             Slider(value: Binding(get: { volume }, set: { newValue in
                 adjusted = true
                 volume = newValue
@@ -622,24 +627,30 @@ private struct SoundEffectsRow: View {
                 AudioOutputService.setSystemAlertVolumeLater(percent: newValue)
             }), in: 0...100)
             .audioRowSlider()
+            .disabled(!loaded)
+            .opacity(loaded ? 1 : 0)
+            .overlay { if !loaded { ProgressView().controlSize(.small) } }
             .accessibilityLabel("System alert volume")
-            .accessibilityValue("\(Int(volume.rounded())) percent")
-            RowValue(text: "\(Int(volume.rounded()))%")
+            .accessibilityValue(loaded ? "\(Int(volume.rounded())) percent" : "Reading")
+            RowValue(text: loaded ? "\(Int(volume.rounded()))%" : "")
             BoostColumnsPlaceholder()
         }
         .audioRowPadding()
         .contentShape(Rectangle())
         .contextMenu {
             Button(isMuted ? "Unmute System Alerts" : "Mute System Alerts") { toggleMute() }
+                .disabled(!loaded)
             Divider()
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
         // Off the main thread: with no stored value the read is AppleScript.
         .task {
             adjusted = false
-            let level = await AudioOutputService.loadSystemAlertVolume()
+            let percent = await AudioOutputService.loadSystemAlertVolumePercent()
+            defer { loaded = true }
             guard !adjusted else { return }
-            volume = Double(level ?? 0.65) * 100
+            // Nil (the script failed): the 65 % default, as before.
+            volume = percent ?? 65
             isMuted = volume == 0
             if volume > 0 { previousVolume = volume }
         }
