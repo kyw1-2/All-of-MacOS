@@ -128,9 +128,9 @@ extension View {
     }
 
     /// The page title in the window toolbar. Context belongs in the page
-    /// header (`AOMPageHeader`), not in a toolbar subtitle (d.9).
-    func aomPage(_ title: String, subtitle: String? = nil) -> some View {
-        modifier(AOMPageChrome(title: title, subtitle: subtitle))
+    /// header (`AOMPageHeader`), not in a toolbar subtitle.
+    func aomPage(_ title: String) -> some View {
+        modifier(AOMPageChrome(title: title))
     }
 
     /// Floating chrome (panels, HUDs, bars) in the shared AOM material.
@@ -141,10 +141,9 @@ extension View {
 }
 
 /// The page title for a main-window page. The canvas belongs to the shell
-/// (`AOMMainShell`); the subtitle is no longer shown in the toolbar.
-struct AOMPageChrome: ViewModifier {
+/// (`AOMMainShell`).
+private struct AOMPageChrome: ViewModifier {
     let title: String
-    let subtitle: String?
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)

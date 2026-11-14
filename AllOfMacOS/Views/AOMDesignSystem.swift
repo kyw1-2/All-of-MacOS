@@ -34,13 +34,8 @@ struct AOMWorkspaceBackground: View {
 extension View {
 
     /// Bottom floating confirmation shared by every page: a glass capsule
-    /// (floating chrome), announced to VoiceOver.
-    func aomToast(_ message: String?) -> some View {
-        modifier(AOMToastPresenter(message: message))
-    }
-
-    /// 3.4: the toast with its tone and its one action ("Undo"), from an
-    /// `AOMToastModel`. Failures use `.danger` and say why.
+    /// (floating chrome), announced to VoiceOver. Failures use `.danger` and
+    /// say why; an item may offer one action ("Undo").
     func aomToast(_ model: AOMToastModel) -> some View {
         modifier(AOMToastModelPresenter(model: model))
     }
@@ -87,46 +82,6 @@ private struct AOMToastModelPresenter: ViewModifier {
                 }
             }
             .aomAnimation(.standard, value: model.message)
-    }
-}
-
-private struct AOMToastPresenter: ViewModifier {
-    let message: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .bottom) {
-                if let message {
-                    Label(message, systemImage: "checkmark.circle.fill")
-                        .font(AOMFont.body.weight(.medium))
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(AOMColor.success, AOMColor.text)
-                        .labelStyle(AOMToastLabelStyle())
-                        .padding(.horizontal, AOMSpace.x3)
-                        .padding(.vertical, AOMSpace.x2 - 1)
-                        .aomChrome(radius: 18, role: .hud, inWindow: true)
-                        .padding(.bottom, AOMSpace.x4)
-                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                        .accessibilityAddTraits(.updatesFrequently)
-                        .onAppear {
-                            NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                                                 userInfo: [.announcement: message,
-                                                            .priority: NSAccessibilityPriorityLevel.medium.rawValue])
-                        }
-                }
-            }
-            .aomAnimation(.standard, value: message)
-    }
-}
-
-/// Toast label: the check in the success colour, the sentence in `.primary`.
-private struct AOMToastLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: AOMSpace.x2) {
-            configuration.icon.foregroundStyle(AOMColor.success)
-            configuration.title.foregroundStyle(AOMColor.text)
-        }
     }
 }
 
