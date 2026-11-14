@@ -22,6 +22,11 @@ struct GesturePreviewView: View {
     @State private var hovering = false
     private static let autoPhaseSeconds: UInt64 = 8
     private var animating: Bool { autoPhase || hovering }
+    /// Bumped when the preview comes to rest. A `repeatForever` animation keeps
+    /// running after its value turns false (3.6.1: the Automation page held
+    /// ~35 % CPU on the main thread, which also delays every keystroke through
+    /// AOM's keyboard tap), so the resting preview is rebuilt without it.
+    @State private var restGeneration = 0
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// 3.4.32 audit: `scenePhase` stays `.active` for an ordered-out
@@ -47,7 +52,7 @@ struct GesturePreviewView: View {
                 // proportionally downscaled with the body
                 gestureAnimation
                     .scaleEffect(2.0 / 3.0)
-                    .id(animationKey)
+                    .id("\(animationKey)-\(restGeneration)")
             }
             .frame(width: 120, height: 92)
             .clipped()
@@ -64,6 +69,7 @@ struct GesturePreviewView: View {
                 } catch { /* The preview disappeared or its configuration changed. */ }
             }
             .onHover { inside in hovering = inside }
+            .onChange(of: animating) { _, now in if !now { restGeneration += 1 } }
             .onDisappear { autoPhase = false; hovering = false }
 
             Text(gesture.rawValue)
