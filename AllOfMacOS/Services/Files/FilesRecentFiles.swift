@@ -120,7 +120,6 @@ final class FilesRecentModel: ObservableObject {
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var watching = 0
     private var refreshTask: Task<Void, Never>?
-    private var lastRefresh: Date?
     var onChange: (() -> Void)?
 
     init() {
@@ -139,12 +138,6 @@ final class FilesRecentModel: ObservableObject {
     func endWatching() {
         watching = max(0, watching - 1)
         if watching == 0 { disarmWatchers() }
-    }
-
-    /// Re-reads both folders when the last read is older than `maxAge`.
-    func refreshIfStale(maxAge: TimeInterval = 20) {
-        if let lastRefresh, Date().timeIntervalSince(lastRefresh) < maxAge { return }
-        refresh()
     }
 
     func refresh() {
@@ -176,7 +169,6 @@ final class FilesRecentModel: ObservableObject {
             self.screenshots = result.1
             self.downloadsToday = result.2
             self.loaded = true
-            self.lastRefresh = Date()
             self.onChange?()
         }
     }
@@ -187,7 +179,6 @@ final class FilesRecentModel: ObservableObject {
         downloadsReadable = read != nil
         let items = read ?? []
         downloads = Array(items.prefix(Self.downloadLimit))
-        lastRefresh = Date()
         return items
     }
 

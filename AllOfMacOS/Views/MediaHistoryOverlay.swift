@@ -925,6 +925,13 @@ private struct CaptureHistoryCard: View {
         .accessibilityLabel(help)
     }
 
+    /// Built once: every visible card formats its date on each render.
+    private static let olderDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, HH:mm"
+        return formatter
+    }()
+
     private func relativeTimeString(_ date: Date) -> String {
         let diff = Date().timeIntervalSince(date)
         if diff < 60 {
@@ -934,9 +941,7 @@ private struct CaptureHistoryCard: View {
         } else if diff < 86400 {
             return "\(Int(diff / 3600))h ago"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d, HH:mm"
-            return formatter.string(from: date)
+            return Self.olderDateFormatter.string(from: date)
         }
     }
 

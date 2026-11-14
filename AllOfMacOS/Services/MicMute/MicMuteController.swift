@@ -94,8 +94,6 @@ final class MicMuteController: ObservableObject {
     private var machine: MicMuteMachine
     private var tracker: PushToTalkTracker
     private var started = false
-    /// Set while the System Tools tile toggles: its page shows a toast.
-    private var quiet = false
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -144,19 +142,6 @@ final class MicMuteController: ObservableObject {
             return
         }
         perform(machine.toggle())
-    }
-
-    /// The System Tools tile: the same change, reported by the page's toast
-    /// instead of the HUD (design-3.4.0 b.5: in the window, a toast). The
-    /// new state, or nil when it didn't change (`lastFailure` says why).
-    @discardableResult
-    func toggleInWindow() -> Bool? {
-        quiet = true
-        defer { quiet = false }
-        lastFailure = nil
-        let before = isMuted
-        toggle()
-        return lastFailure == nil && isMuted != before ? isMuted : nil
     }
 
     func setMuted(_ muted: Bool) {
@@ -211,7 +196,7 @@ final class MicMuteController: ObservableObject {
     }
 
     private func announce(muted: Bool, cause: MicMuteMachine.Cause) {
-        guard showsHUD, !quiet, let hud else { return }
+        guard showsHUD, let hud else { return }
         let device = deviceName
         let key = pushToTalkKey.shortTitle
         switch cause {
@@ -231,7 +216,7 @@ final class MicMuteController: ObservableObject {
     private func fail(_ title: String, _ detail: String) {
         lastFailure = detail
         GestureLog.shared.logFromAnyThread("Microphone: \(detail)", level: .error)
-        if !quiet { hud?.showFailure(title: title, detail: detail) }
+        hud?.showFailure(title: title, detail: detail)
     }
 
     // MARK: - Push-to-talk

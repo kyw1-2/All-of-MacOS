@@ -177,16 +177,6 @@ enum SystemStatus {
         return now.timeIntervalSince(bootDate)
     }
 
-    static func thermalText(_ state: ProcessInfo.ThermalState) -> String {
-        switch state {
-        case .nominal: return "Normal"
-        case .fair: return "Fair"
-        case .serious: return "Serious"
-        case .critical: return "Critical"
-        @unknown default: return "Unknown"
-        }
-    }
-
     struct InterfaceAddress: Equatable, Sendable { let interface: String; let address: String }
 
     /// The IPv4 address to show: Wi-Fi/Ethernet (en*) first, then any other
@@ -227,11 +217,16 @@ enum SystemStatus {
 
     /// Memory sizes the way Activity Monitor shows them (binary units).
     static func memorySize(_ bytes: UInt64) -> String {
+        memoryFormatter.string(fromByteCount: Int64(clamping: bytes))
+    }
+
+    /// Built once: the This Mac strip formats on every poll.
+    private static let memoryFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .memory
         formatter.allowedUnits = [.useGB, .useMB]
-        return formatter.string(fromByteCount: Int64(clamping: bytes))
-    }
+        return formatter
+    }()
 }
 
 /// Samples the strip every couple of seconds while the page is on screen.

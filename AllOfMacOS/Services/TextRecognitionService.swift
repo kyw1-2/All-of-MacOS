@@ -91,15 +91,5 @@ enum TextRecognitionService {
         }.prefix(limit).map(\.box)
     }
 
-    /// Background-friendly text for search indexing (clipboard images).
-    /// Uses line breaks, no Live Text (it is UI-oriented and slower), and
-    /// never throws: an unreadable image simply indexes as nil.
-    static func recognizeForIndexing(_ image: CGImage, maximumLength: Int = 100_000) async -> String? {
-        var options = TextRecognitionOptions.fromSettings(keepsLineBreaks: true)
-        options.engine = .vision
-        options.maximumScriptPasses = 3
-        guard let text = try? await recognize(image, options: options).text else { return nil }
-        return String(text.prefix(maximumLength))
-    }
 
 }

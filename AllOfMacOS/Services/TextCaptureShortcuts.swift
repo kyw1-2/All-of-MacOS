@@ -74,10 +74,6 @@ final class TextCaptureShortcuts: ObservableObject {
         NotificationCenter.default.post(name: .init("AOMCaptureShortcutsDidChange"), object: self)
     }
 
-    func resetToDefaults() {
-        for action in TextCaptureShortcutAction.allCases { setShortcut(action.defaultShortcut, for: action) }
-    }
-
     private func load() {
         for action in TextCaptureShortcutAction.allCases {
             if defaults.bool(forKey: action.userDefaultsKey + ".disabled") {

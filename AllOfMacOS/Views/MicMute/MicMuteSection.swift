@@ -136,35 +136,3 @@ struct MicMuteSection: View {
         }
     }
 }
-
-/// Isolated UI previews only: the section in a window of its own (the
-/// Audio page that shows it belongs to another branch) and the HUD held on
-/// screen long enough to capture. Nothing here runs in a normal launch.
-@MainActor
-enum MicMutePreview {
-    private static var window: NSWindow?
-
-    static func runIfRequested() {
-        guard PresetManager.isUIPreview else { return }
-        let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--aom-preview-micmute"), window == nil {
-            let host = NSHostingView(rootView: AOMPage(maxWidth: AOMSize.readableWidth) { MicMuteSection() }
-                .frame(width: 760, height: 700))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 700),
-                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            window.title = "Microphone Mute (preview)"
-            window.contentView = host
-            window.isReleasedWhenClosed = false
-            window.center()
-            window.orderFrontRegardless()
-            self.window = window
-        }
-        if arguments.contains("--aom-preview-mic-hud") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                MainActor.assumeIsolated {
-                    MicMuteHUDPanel.shared.show(muted: true, title: "Microphone Muted", detail: "MacBook Air Microphone", seconds: 30)
-                }
-            }
-        }
-    }
-}

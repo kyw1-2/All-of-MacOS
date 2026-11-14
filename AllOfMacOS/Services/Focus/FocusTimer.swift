@@ -370,9 +370,18 @@ enum FocusDurationFormat {
     /// For VoiceOver: "18 minutes 22 seconds".
     static func spoken(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds.rounded(.up)))
-        let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = total >= 3600 ? [.hour, .minute] : [.minute, .second]
-        formatter.unitsStyle = .full
+        let formatter = total >= 3600 ? hoursFormatter : minutesFormatter
         return formatter.string(from: TimeInterval(total)) ?? "\(total) seconds"
+    }
+
+    /// Built once each: VoiceOver reads the countdown every second.
+    private static let hoursFormatter = spokenFormatter([.hour, .minute])
+    private static let minutesFormatter = spokenFormatter([.minute, .second])
+
+    private static func spokenFormatter(_ units: NSCalendar.Unit) -> DateComponentsFormatter {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = units
+        formatter.unitsStyle = .full
+        return formatter
     }
 }

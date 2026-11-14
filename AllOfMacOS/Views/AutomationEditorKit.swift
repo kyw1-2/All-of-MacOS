@@ -247,6 +247,4 @@ enum AOMEditorSize {
     static let groupsEditorMinimum = CGSize(width: 720, height: 520)
     static let groupsEditorIdeal = CGSize(width: 780, height: 580)
     static let groupsList: CGFloat = AOMSize.sidebarIdeal
-    /// The category menu beside the action library's search field.
-    static let libraryCategory: CGFloat = 240
 }
