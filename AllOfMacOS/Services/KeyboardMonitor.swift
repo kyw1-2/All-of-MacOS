@@ -238,6 +238,8 @@ class KeyboardMonitor: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     var timingDefaults: UserDefaults = TriggerTimingSettings.store
+    /// Test seam: replaces the real fire path.
+    var onFire: ((Trigger) -> Void)?
     private var registrationGeneration = UUID()
     private var globalMonitors: [Any] = []
     private var triggerEventTap: CFMachPort?
@@ -659,6 +661,7 @@ class KeyboardMonitor: ObservableObject {
     }
 
     private func fire(_ trigger: Trigger, keyCode: UInt16) {
+        if let onFire { onFire(trigger); return }
         // Keep event tap callbacks short: launch the workflow after returning to the run loop.
         let generation = registrationGeneration
         DispatchQueue.main.async { [weak self] in

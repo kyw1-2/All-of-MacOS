@@ -28,7 +28,7 @@ struct GestureSettingsView: View {
     @AppStorage("AOMPressDragThreshold") private var drag = 300.0
     @AppStorage("AOMKeyboardLongPressMs") private var longPress = 500
     @AppStorage("AOMKeyboardQuickReleaseMaxMs") private var quickRelease = 250
-    @AppStorage("AOMKeyboardDoublePressMs") private var doublePress = 300
+    @AppStorage("AOMKeyboardDoublePressMs") private var doublePress = TriggerTimingSettings.keyboardDoublePressMs()
     @AppStorage("AOMMouseLongPressMs") private var mouseLongPress = 500
     @AppStorage("AOMMouseDragThresholdPx") private var mouseDrag = 40
     @AppStorage("AOMForcePressEnabled") private var forcePressEnabled = false
@@ -63,7 +63,7 @@ struct GestureSettingsView: View {
             Section("Keyboard & mouse") {
                 Stepper("Keyboard long press: \(longPress) ms", value: $longPress, in: 100...5000, step: 50)
                 Stepper("Keyboard quick release: \(quickRelease) ms", value: $quickRelease, in: 50...2000, step: 50)
-                Stepper("Keyboard double press: \(doublePress) ms", value: $doublePress, in: 150...1000, step: 25)
+                Stepper("Keyboard double press: \(doublePress) ms", value: $doublePress, in: 150...1500, step: 25)
                 Stepper("Mouse long press: \(mouseLongPress) ms", value: $mouseLongPress, in: 100...5000, step: 50)
                 Stepper("Mouse drag distance: \(mouseDrag) px", value: $mouseDrag, in: 5...500, step: 5)
             }
@@ -80,7 +80,9 @@ struct GestureSettingsView: View {
             }
             Button("Restore Gesture Defaults") {
                 velocity = 200; tipTap = 0.12; drag = 300
-                longPress = 500; quickRelease = 250; doublePress = 300; mouseLongPress = 500; mouseDrag = 40
+                longPress = 500; quickRelease = 250; mouseLongPress = 500; mouseDrag = 40
+                // Back to following the macOS double-click speed.
+                UserDefaults.standard.removeObject(forKey: TriggerTimingSettings.keyboardDoublePressKey)
                 suppression.settings = TriggerSuppressionSettings()
             }
         }.formStyle(.grouped)

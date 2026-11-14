@@ -31,8 +31,10 @@ final class DoublePressGateTests: XCTestCase {
 
     func testKeyboardDoublePressDefaultAndClamp() {
         let d = UserDefaults(suiteName: "test-\(UUID())")!
-        XCTAssertEqual(TriggerTimingSettings.keyboardDoublePressMs(d), 300)
+        // Unset, it follows the macOS double-click speed.
+        XCTAssertEqual(TriggerTimingSettings.keyboardDoublePressMs(d, system: 0.5), 500)
+        XCTAssertEqual(TriggerTimingSettings.keyboardDoublePressMs(d, system: 0.8), 800)
         d.set(5000, forKey: TriggerTimingSettings.keyboardDoublePressKey)
-        XCTAssertEqual(TriggerTimingSettings.keyboardDoublePressMs(d), 1000)
+        XCTAssertEqual(TriggerTimingSettings.keyboardDoublePressMs(d, system: 0.5), 1500)
     }
 }
