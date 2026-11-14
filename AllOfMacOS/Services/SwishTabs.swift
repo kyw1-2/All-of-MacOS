@@ -1,23 +1,16 @@
 import AppKit
 
-// Swish-style tab gestures over a window's tab bar, and macOS's own window
+// Two-finger tab gestures over a window's tab bar, and macOS's own window
 // tiling as an alternative to AOM's snapping engine.
 //
-// Evidence (Swish 1.13.3 settings text and strings, treated as data):
-// - "Control tabs in native macOS windows like Finder & Preview as well as Safari,
-//   Chrome, Firefox, Arc, Dia, Brave, Orion, Xcode, Visual Studio Code & UPDF."
-//   "Support for Edge, Figma & Craft is currently not possible due to them not
-//   implementing the Accessibility API correctly." Firefox: "does not implement
-//   the Accessibility API required to detect tabs."
-// - "Pinch in to close a tab." Chromium's tabs carry a custom accessibility
-//   action whose name reads "Name:close tab\nTarget:0x0\nSelector:(null)".
-// - "Tap and hold to detach a native tab into a new window", "Only works in
-//   native windows and Safari": both offer AppKit's "Move Tab to New Window".
-// - Native tiling: "Apps need to properly expose a 'Window → Move & Resize' menu
-//   for Swish to invoke native tiling. Otherwise, Swish will fall back to its own
-//   snapping engine." "only offers up to a 2×2 grid." "Windows need to be
-//   activated before snapping."
-// This is AOM's own implementation of that behaviour, not Swish code.
+// A tab closes on a pinch in: Chromium's tabs carry a custom accessibility
+// action named "close tab", which is what the pinch looks for. Tap and hold
+// detaches a native tab into a new window through AppKit's "Move Tab to New
+// Window", which native windows and Safari offer.
+//
+// Native tiling is used only where the app exposes a "Window → Move & Resize"
+// menu; otherwise AOM's own snapping engine handles the window. Native tiling
+// offers at most a 2×2 grid, and the window is activated before it is moved.
 //
 // Every Accessibility request is bounded by an `AXDeadline` set on the element
 // being asked (never the system-wide one): these run on main, and one busy app

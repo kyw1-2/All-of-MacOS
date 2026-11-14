@@ -1,15 +1,12 @@
 import AppKit
 
-// The rest of Swish 1.13's snapping options, recovered from its settings
-// strings: "snapThirds", "snapSixths", "snapNinths", "snapAlmost",
-// "snappingDragUnsnap", "snappingResizeAdjacent", "Resnapping after …",
-// "snappingStageManagerOffset", "tooltipAnimationTime" and the keyboard
-// hotkeys of its Advanced tab (arrows / WASD / IJKL / HJKL).
+// The snapping grid's extra options: thirds, sixths, ninths, almost-maximize,
+// drag to unsnap, resnap on a resize, the Stage Manager offset, the tooltip
+// timing and the keyboard hotkeys (arrows, WASD, IJKL, HJKL).
 //
 // Everything here is pure: grid cells, the chaining tables, target frames and
 // the geometry the title-bar snap's mouse, keyboard and display handlers
-// decide with. `TitleBarWindowSnap` does the Accessibility work. This is AOM's
-// own implementation of that behaviour, not Swish code.
+// decide with. `TitleBarWindowSnap` does the Accessibility work.
 
 /// A cell of a snapping grid: `columnSpan` × `rowSpan` units at (`column`,
 /// `row`) of a `columns` × `rows` grid, origin at the top left.
