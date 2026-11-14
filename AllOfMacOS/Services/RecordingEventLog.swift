@@ -12,6 +12,8 @@ enum RecordingEventLog {
     static let maximumLines = 500
     static let fileName = "recording-events.jsonl"
     private static let queue = DispatchQueue(label: "com.kyw.allofmacos.recording-events", qos: .utility)
+    /// Built once (ISO8601DateFormatter is thread-safe).
+    private static let timeFormatter = ISO8601DateFormatter()
 
     /// Tests and UI previews never write into the real Application Support.
     static var defaultDirectory: URL {
@@ -27,7 +29,7 @@ enum RecordingEventLog {
     static func record(_ event: String, file: URL?, detail: String = "",
                        directory: URL = RecordingEventLog.defaultDirectory, now: Date = Date()) {
         let entry: [String: String] = [
-            "time": ISO8601DateFormatter().string(from: now),
+            "time": timeFormatter.string(from: now),
             "event": event,
             "file": file?.lastPathComponent ?? "",
             "detail": String(detail.prefix(600)),

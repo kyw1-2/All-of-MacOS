@@ -55,6 +55,11 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     /// write at stop always lands after every periodic one.
     private let sidecarQueue = DispatchQueue(label: "com.kyw.allofmacos.recording-sidecar", qos: .utility)
     private var sidecarWriteInFlight = false
+    /// The last sidecar failure logged for this take. A folder that stays
+    /// unwritable fails every 2 s; logging each one filled the 500-line
+    /// recording event log in about 17 minutes and pushed out how earlier
+    /// recordings ended. A new reason is still logged.
+    private var loggedSidecarFailure: String?
     /// Why ScreenCaptureKit or the writer ended the take early, if it did.
     private var interruption: String?
     private var pauseStarted: CMTime?
@@ -239,7 +244,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
         pausedDuration = .zero; pauseStarted = nil; isPaused = false; acceptAudioAfter = .zero
         isSessionStarted = false; elapsedSeconds = 0
         frames.removeAll(); displayRects.removeAll(); cursorSamples.removeAll(); clickEvents.removeAll(); keyEvents.removeAll()
-        inputEventsOverflowed = false; lastSidecarWrite = 0; interruption = nil
+        inputEventsOverflowed = false; lastSidecarWrite = 0; loggedSidecarFailure = nil; interruption = nil
         do {
             try RecordingRecovery.add(url)
             if CaptureSettings.recordingCameraOverlay {
@@ -755,8 +760,12 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
                 do { try track.write(for: url); failure = nil } catch { failure = error.localizedDescription }
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        self?.sidecarWriteInFlight = false
-                        if let failure { RecordingEventLog.record("sidecar-write-failed", file: url, detail: failure) }
+                        guard let self else { return }
+                        self.sidecarWriteInFlight = false
+                        if let failure, failure != self.loggedSidecarFailure {
+                            self.loggedSidecarFailure = failure
+                            RecordingEventLog.record("sidecar-write-failed", file: url, detail: failure)
+                        }
                     }
                 }
             }
