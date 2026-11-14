@@ -87,7 +87,7 @@ class TrackpadMonitor {
     private var lastHardwarePressure: Float = 0
     /// Most recent frame's force reading, and how often each tenth was seen.
     private var livePressure: Float = 0
-    private var pressureHistogram: [String: Int] = [:]
+    private var pressureHistogram = TouchPressureHistogram()
     /// Threshold above which a contact counts as a force press.
     ///
     /// Force Click is opt-in and off by default: this trackpad reports 1.0 for
@@ -256,6 +256,9 @@ class TrackpadMonitor {
             })
         }
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkHardwareHealth() }
+        // Recovery acts on 5 s and 10 s windows, so a 25 % slack costs
+        // nothing and lets this all-day timer share wake-ups with others.
+        timer.tolerance = 0.5
         healthTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
@@ -296,7 +299,7 @@ class TrackpadMonitor {
          "forceReported": lastHardwarePressure > 0,
          // Live reading plus a coarse histogram, so the threshold can be set
          // from what this trackpad actually reports rather than guessed.
-         "livePressure": Double(livePressure), "pressureHistogram": pressureHistogram,
+         "livePressure": Double(livePressure), "pressureHistogram": pressureHistogram.labelled,
          "error": source.error ?? ""]
     }
 
@@ -324,13 +327,13 @@ class TrackpadMonitor {
             peakPressure = 0
             livePressure = 0
         } else {
-            let framePressure = points.map(\.pressure).max() ?? 0
+            // Lazy: no array per frame on the hottest input path.
+            let framePressure = points.lazy.map(\.pressure).max() ?? 0
             livePressure = framePressure
             peakPressure = max(peakPressure, framePressure)
             lastHardwarePressure = max(lastHardwarePressure, framePressure)
             // Bucketed to a tenth so a run of real touches shows the spread.
-            let bucket = "0.\(Int((framePressure * 10).rounded(.down)))"
-            pressureHistogram[bucket, default: 0] += 1
+            pressureHistogram.record(framePressure)
         }
         let enabled = Set(applicableTriggers.map(\.gesture))
         var session = sessions[deviceID] ?? ContactGestureSession()
@@ -1470,5 +1473,34 @@ class TrackpadMonitor {
     deinit {
         unregisterAll()
         if let observer = appActivationObserver { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+    }
+}
+
+/// Diagnostics-only count of touch frames per tenth of pressure. Recording is
+/// an array increment (no string or hashing per frame); the labelled form
+/// ("0.0" … "0.9", then "1.0", "1.1" …) is built only for the diagnostics
+/// snapshot. Readings outside the range land in the first or last bucket.
+struct TouchPressureHistogram: Equatable {
+    /// Tenths 0.0 … 6.3; the last bucket also takes anything higher.
+    static let bucketCount = 64
+    private(set) var counts = [Int](repeating: 0, count: bucketCount)
+
+    static func bucket(for pressure: Float) -> Int {
+        guard pressure.isFinite, pressure > 0 else { return 0 }
+        let tenths = (pressure * 10).rounded(.down)
+        return tenths >= Float(bucketCount - 1) ? bucketCount - 1 : Int(tenths)
+    }
+
+    mutating func record(_ pressure: Float) {
+        counts[Self.bucket(for: pressure)] += 1
+    }
+
+    /// The buckets seen so far, keyed by their lower bound.
+    var labelled: [String: Int] {
+        var result: [String: Int] = [:]
+        for (index, count) in counts.enumerated() where count > 0 {
+            result["\(index / 10).\(index % 10)"] = count
+        }
+        return result
     }
 }

@@ -103,4 +103,14 @@ final class RuntimePerformanceTests: XCTestCase {
     func testOwnerResolutionTTLIsABackstopNotASweepCadence() {
         XCTAssertGreaterThanOrEqual(AppAudioEngine.ownerResolutionTTL, 30)
     }
+
+    /// The diagnostics histogram keeps the 3.4 JSON keys for readings below
+    /// 1.0 and labels higher ones correctly (1.5 used to be filed as "0.15").
+    func testTouchPressureHistogramKeepsKeysAndLabelsReadingsAboveOne() {
+        var histogram = TouchPressureHistogram()
+        for pressure: Float in [0, 0.05, 0.42, 0.99, 1.0, 1.5, 1.5, -0.2, .nan, 100] { histogram.record(pressure) }
+        XCTAssertEqual(histogram.labelled, ["0.0": 4, "0.4": 1, "0.9": 1, "1.0": 1, "1.5": 2, "6.3": 1])
+        XCTAssertEqual(TouchPressureHistogram.bucket(for: 0.75), 7)
+        XCTAssertEqual(TouchPressureHistogram().labelled, [:])
+    }
 }
