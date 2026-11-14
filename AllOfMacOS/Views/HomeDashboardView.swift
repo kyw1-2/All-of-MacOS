@@ -1153,25 +1153,24 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         VStack(alignment: .leading, spacing: AOMSpace.x3) {
-            HStack(alignment: .center, spacing: AOMSpace.x4) {
+            HStack(alignment: .center, spacing: AOMSpace.x3) {
                 glyph
                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                    VStack(alignment: .leading, spacing: 1) {
                         HStack(alignment: .center, spacing: AOMSpace.x2) {
                             Text(state.sentence)
                                 .font(AOMFont.heroSentence)
                                 .foregroundStyle(AOMColor.text)
                                 .lineLimit(1)
                                 .accessibilityAddTraits(.isHeader)
-                            AOMStatusPill(
-                                state.tone == .success ? "All Systems Ready" : (state.tone == .warning ? "Action Needed" : "Standby"),
-                                tone: state.tone
-                            )
+                            // Running needs no pill; only a state that asks for something gets one.
+                            if state.tone != .success {
+                                AOMStatusPill(state.tone == .warning ? "Action Needed" : "Standby", tone: state.tone)
+                            }
                         }
                         Text(state.detail(now: context.date))
-                            .font(AOMFont.body)
+                            .font(AOMFont.callout)
                             .foregroundStyle(AOMColor.textSecondary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1179,61 +1178,29 @@ private struct WorkspaceHero<Action: View, Strip: View>: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 action
-                    .controlSize(.large)
                     .fixedSize()
             }
-            if !chips.isEmpty {
+            if chips.contains(where: { $0.1 == .denied || $0.1 == .notDetermined }) {
                 WorkspacePermissionChips(chips: chips)
-                    .padding(.leading, AOMIcon.hero + AOMSpace.x4)
+                    .padding(.leading, AOMIcon.headerBadge + AOMSpace.x3)
             }
             strip
         }
-        .padding(AOMSpace.cardPadding + 2)
+        .padding(.horizontal, AOMSpace.x0_5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            ZStack {
-                shape.fill(AOMColor.surface)
-                if contrast != .increased {
-                    shape.fill(
-                        LinearGradient(
-                            colors: [
-                                state.tone.color.opacity(scheme == .dark ? 0.18 : 0.10),
-                                AOMColor.accent.opacity(scheme == .dark ? 0.08 : 0.04),
-                                Color.clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                }
-            }
-        }
-        .overlay {
-            shape.strokeBorder(
-                contrast == .increased
-                    ? AOMColor.strongLine
-                    : state.tone.color.opacity(scheme == .dark ? 0.38 : 0.26),
-                lineWidth: contrast == .increased ? 1.2 : 0.9
-            )
-        }
-        .shadow(color: Color.black.opacity(scheme == .dark ? 0.28 : 0.05), radius: 6, x: 0, y: 2)
         .aomAnimation(.standard, value: state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status: \(state.sentence)")
     }
 
     private var glyph: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(AOMIcon.hero + 4), style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: AOMRadius.squircle(AOMIcon.headerBadge), style: .continuous)
         return Image(systemName: state.badgeSymbol)
-            .font(.system(size: AOMIcon.heroGlyph, weight: .bold))
+            .font(.system(size: (AOMIcon.headerBadge * 0.5).rounded(), weight: .bold))
             .foregroundStyle(.white)
             .contentTransition(.symbolEffect(.replace))
-            .frame(width: AOMIcon.hero + 4, height: AOMIcon.hero + 4)
+            .frame(width: AOMIcon.headerBadge, height: AOMIcon.headerBadge)
             .background(state.tone.color.gradient, in: shape)
-            .overlay {
-                shape.strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8)
-            }
-            .shadow(color: state.tone.color.opacity(scheme == .dark ? 0.45 : 0.28), radius: 5, x: 0, y: 2)
             .accessibilityHidden(true)
     }
 }

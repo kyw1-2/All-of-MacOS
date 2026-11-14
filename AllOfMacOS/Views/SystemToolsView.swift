@@ -32,7 +32,7 @@ struct SystemToolsView: View {
     /// The last result, or how to use the page before anything ran.
     private var subtitle: String {
         guard let result = model.lastResult else {
-            return "Click a tool to run it · right-click to pin it to Favorites"
+            return "Right-click a tool to add it to Favorites"
         }
         let time = result.date.formatted(date: .omitted, time: .shortened)
         return "\(result.succeeded ? "✓" : "⚠︎") \(SystemToolCatalog.info(result.tool).title.replacingOccurrences(of: "…", with: "")): \(result.message) · \(time)"
@@ -44,7 +44,7 @@ struct SystemToolsView: View {
                 .help(model.lastResult?.message ?? "")
             if showsStrip {
                 VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
-                    AOMSectionTitle("This Mac", detail: "live")
+                    AOMSectionTitle("This Mac")
                     SystemStatusStrip(monitor: status,
                                       openBattery: { model.run(.batteryDetails) },
                                       openFreeUpSpace: { model.showStartupDisk = true },

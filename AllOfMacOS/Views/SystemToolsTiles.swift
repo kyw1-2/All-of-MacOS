@@ -16,14 +16,9 @@ struct SystemTileButtonStyle: ButtonStyle {
         configuration.label
             .background(configuration.isPressed ? AOMColor.surfacePressed : hovering ? AOMColor.surfaceHover : AOMColor.surface, in: shape)
             .overlay {
-                shape.strokeBorder(
-                    contrast == .increased
-                        ? AOMColor.strongLine
-                        : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.5 : 0.38) : AOMColor.hairline),
-                    lineWidth: contrast == .increased || hovering ? 1 : 0.75
-                )
+                shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
+                                   lineWidth: contrast == .increased ? 1 : 0.5)
             }
-            .shadow(color: Color.black.opacity(scheme == .dark ? 0.22 : 0.035), radius: hovering ? 5 : 2.5, x: 0, y: 1)
             .contentShape(shape)
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
@@ -32,7 +27,7 @@ struct SystemTileButtonStyle: ButtonStyle {
 
 // MARK: - Tool tiles
 
-/// A compact command: glyph in the section's hue, the name, the value when
+/// A compact command: the glyph in the section's hue, the name, the value when
 /// there is one, and a chevron for tools that open a sheet. One row tall.
 struct SystemToolTile: View {
     let info: SystemToolInfo
@@ -49,7 +44,11 @@ struct SystemToolTile: View {
     var body: some View {
         Button(action: run) {
             HStack(spacing: AOMSpace.x2) {
-                AOMModuleBadge(symbol: info.symbol, hue: info.group.tint, size: 24, active: true)
+                Image(systemName: info.symbol)
+                    .font(.system(size: 14, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(info.group.tint)
+                    .frame(width: 22, height: 22)
                     .accessibilityHidden(true)
                 Text(info.title)
                     .font(AOMFont.body.weight(.medium))
@@ -242,7 +241,7 @@ struct SystemStatusStrip: View {
     }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: AOMSpace.tileGap)], alignment: .leading,
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: AOMSpace.tileGap)], alignment: .leading,
                   spacing: AOMSpace.tileGap) {
             ForEach(figures) { figure in
                 let content = HStack(spacing: AOMSpace.x2) {

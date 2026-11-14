@@ -75,11 +75,10 @@ struct AOMStatus: Equatable {
     }
 }
 
-/// The one header for every module page (d.9). It sits on the canvas, not in a
-/// card: a 28 pt module badge, the status sentence (Page status style), one
-/// line of context (Callout, secondary), an optional status pill, then the
-/// trailing controls (master switch, actions) and an ⓘ help button, always in
-/// that order.
+/// The one header for every module page. It sits on the canvas, not in a card:
+/// the module badge, the status sentence, one line of context, an optional
+/// status pill, then the trailing controls (master switch, actions). `help`
+/// becomes the title's tooltip.
 struct AOMPageHeader<Trailing: View>: View {
     var module: AOMModule?
     var symbol: String?
@@ -107,15 +106,13 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
-        let bannerHue = active ? (module?.hue ?? AOMColor.accent) : AOMColor.paused
         HStack(alignment: .center, spacing: AOMSpace.x3) {
             if let module {
                 AOMModuleBadge(module, size: AOMIcon.headerBadge, active: active)
             } else if let symbol {
                 AOMModuleBadge(symbol: symbol, hue: AOMColor.accent, size: AOMIcon.headerBadge, active: active)
             }
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .center, spacing: AOMSpace.x2) {
                     Text(title)
                         .font(AOMFont.heroSentence)
@@ -123,6 +120,7 @@ struct AOMPageHeader<Trailing: View>: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .accessibilityAddTraits(.isHeader)
+                        .help(help ?? "")
                     if let status {
                         AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol)
                     }
@@ -139,48 +137,19 @@ struct AOMPageHeader<Trailing: View>: View {
             Spacer(minLength: AOMSpace.x3)
             HStack(spacing: AOMSpace.x2) { trailing }
                 .fixedSize()
-            if let help {
-                AOMInfoButton(help, topic: title, textStyle: AOMFont.pageStatus)
-            }
         }
-        .padding(.horizontal, AOMSpace.cardPadding)
-        .padding(.vertical, AOMSpace.x3 + 2)
-        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x5)
-        .background {
-            ZStack {
-                shape.fill(AOMColor.surface)
-                if contrast != .increased {
-                    shape.fill(
-                        LinearGradient(
-                            colors: [
-                                bannerHue.opacity(scheme == .dark ? 0.18 : 0.10),
-                                bannerHue.opacity(scheme == .dark ? 0.04 : 0.02),
-                                Color.clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                }
-            }
-        }
-        .overlay {
-            shape.strokeBorder(
-                contrast == .increased
-                    ? AOMColor.strongLine
-                    : bannerHue.opacity(scheme == .dark ? 0.35 : 0.24),
-                lineWidth: contrast == .increased ? 1.2 : 0.85
-            )
-        }
-        .shadow(color: Color.black.opacity(scheme == .dark ? 0.25 : 0.04), radius: 5, x: 0, y: 2)
+        .padding(.horizontal, AOMSpace.x0_5)
+        .padding(.bottom, AOMSpace.x1)
+        .frame(minHeight: AOMIcon.headerBadge + AOMSpace.x2)
         .accessibilityElement(children: .contain)
     }
 }
 
 // MARK: - Section
 
-/// A section title in sentence case (Section style) with an optional count or
-/// detail, an ⓘ and a trailing accessory such as `AOMCardLink("View All")`.
+/// A section title in sentence case with an optional count or detail in
+/// secondary text and a trailing accessory such as `AOMCardLink("View All")`.
+/// `help` becomes the title's tooltip.
 struct AOMSectionTitle<Accessory: View>: View {
     let title: String
     var detail: String?
@@ -196,30 +165,20 @@ struct AOMSectionTitle<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: AOMSpace.x2) {
-            Capsule()
-                .fill(Color.accentColor.gradient)
-                .frame(width: 3.5, height: 14)
-                .accessibilityHidden(true)
+        HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
             Text(title)
                 .font(AOMFont.section)
                 .foregroundStyle(AOMColor.text)
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
+                .help(help ?? "")
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(AOMFont.caption.weight(.medium))
+                    .font(AOMFont.callout)
                     .foregroundStyle(AOMColor.textSecondary)
                     .monospacedDigit()
                     .lineLimit(1)
-                    .padding(.horizontal, AOMSpace.x2 - 1)
-                    .padding(.vertical, 2)
-                    .background(AOMColor.track, in: Capsule())
-                    .overlay {
-                        Capsule().strokeBorder(AOMColor.hairline.opacity(0.7), lineWidth: 0.5)
-                    }
             }
-            if let help { AOMInfoButton(help, topic: title, textStyle: AOMFont.section) }
             Spacer(minLength: AOMSpace.x2)
             accessory
         }
@@ -501,7 +460,7 @@ struct AOMInfoButton: View {
                 .font(textStyle)
                 .imageScale(.medium)
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(hovering || shown ? AOMColor.accent : AOMColor.textSecondary)
+                .foregroundStyle(hovering || shown ? AOMColor.accent : AOMColor.textTertiary)
                 .frame(width: AOMIcon.row, height: AOMIcon.row)
                 .contentShape(Rectangle())
         }
@@ -637,44 +596,20 @@ struct AOMModuleBadge: View {
             .frame(width: size, height: size)
             .background {
                 if tinted {
-                    ZStack {
-                        shape.fill(tintColor.gradient)
-                        shape.fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.22), Color.clear, Color.black.opacity(0.12)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    }
+                    shape.fill(tintColor.gradient)
                 } else {
                     shape.fill(AOMColor.sunken)
                 }
             }
             .overlay {
-                shape.strokeBorder(
-                    contrast == .increased
-                        ? LinearGradient(colors: [AOMColor.strongLine, AOMColor.strongLine],
-                                         startPoint: .top, endPoint: .bottom)
-                        : (tinted
-                            ? LinearGradient(colors: [Color.white.opacity(0.42), Color.white.opacity(0.10)],
-                                             startPoint: .top, endPoint: .bottom)
-                            : LinearGradient(colors: [AOMColor.hairline.opacity(0.7), AOMColor.hairline.opacity(0.5)],
-                                             startPoint: .top, endPoint: .bottom)),
-                    lineWidth: contrast == .increased ? 1 : 0.75
-                )
+                if contrast == .increased { shape.strokeBorder(AOMColor.strongLine, lineWidth: 1) }
             }
-            .shadow(color: tinted && size >= 24 ? tintColor.opacity(scheme == .dark ? 0.36 : 0.22) : .clear,
-                    radius: size >= 32 ? 4 : 2.5, x: 0, y: 1.5)
             .accessibilityHidden(true)
     }
 }
 
-/// A Workspace module tile (Bento / Apple Control Center / Raycast style):
-/// top row shows the jewel squircle badge and the module's toggle/control;
-/// bottom row shows the bold module name, status subtitle, and a sleek
-/// monospaced metric pill badge on the trailing edge. Active modules emit a
-/// subtle top-leading ambient glow in the module's signature hue.
+/// A Workspace module tile: the module badge and its switch on top, the name,
+/// status line and one figure at the bottom. Colour stays in the badge.
 struct AOMModuleTile<Control: View, MenuItems: View>: View {
     let module: AOMModule
     let metric: String
@@ -712,34 +647,13 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: AOMRadius.card, style: .continuous)
         ZStack(alignment: .topLeading) {
             // The whole card is the open button; the text on top passes
             // clicks through to it, the control keeps its own.
             Button(action: open) {
-                ZStack {
-                    Color.clear
-                    if active && contrast != .increased {
-                        LinearGradient(
-                            colors: [
-                                module.hue.opacity(scheme == .dark ? 0.16 : 0.08),
-                                module.hue.opacity(scheme == .dark ? 0.03 : 0.015),
-                                Color.clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .buttonStyle(AOMCardTileButtonStyle(radius: AOMRadius.card, padding: 0))
-            .overlay {
-                if active && contrast != .increased {
-                    shape.strokeBorder(module.hue.opacity(scheme == .dark ? 0.32 : 0.20), lineWidth: 0.85)
-                        .allowsHitTesting(false)
-                }
-            }
             .accessibilityLabel("\(module.title), \([metric, unit].compactMap { $0 }.joined(separator: " ")), \(status)")
             .accessibilityHint("Opens \(module.title)")
             .help("\(module.title): \(status)")
@@ -763,27 +677,15 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(metric)
                             .font(AOMFont.metric)
-                            .foregroundStyle(active ? module.hue : AOMColor.textSecondary)
+                            .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
                             .contentTransition(.numericText())
                             .lineLimit(1)
                         if let unit {
                             Text(unit)
-                                .font(AOMFont.caption.weight(.medium))
+                                .font(AOMFont.caption)
                                 .foregroundStyle(AOMColor.textSecondary)
                                 .lineLimit(1)
                         }
-                    }
-                    .padding(.horizontal, AOMSpace.x2)
-                    .padding(.vertical, 3)
-                    .background(
-                        active ? module.hue.opacity(scheme == .dark ? 0.16 : 0.10) : AOMColor.track,
-                        in: Capsule()
-                    )
-                    .overlay {
-                        Capsule().strokeBorder(
-                            active ? module.hue.opacity(0.25) : AOMColor.hairline.opacity(0.6),
-                            lineWidth: 0.5
-                        )
                     }
                     .fixedSize()
                     .allowsHitTesting(false)

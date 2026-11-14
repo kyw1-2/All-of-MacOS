@@ -106,7 +106,7 @@ struct AOMCardSurface: ViewModifier {
     var padding: CGFloat? = AOMSpace.cardPadding
     var hovering = false
     var pressed = false
-    /// Kept for source compatibility; elevation adds subtle native card depth.
+    /// Kept for source compatibility; cards are flat.
     var elevated = true
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -120,31 +120,13 @@ struct AOMCardSurface: ViewModifier {
             content
                 .padding(padding ?? 0)
                 .background {
-                    ZStack {
-                        shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
-                        shape.fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(scheme == .dark ? (hovering ? 0.06 : 0.035) : (hovering ? 0.75 : 0.45)),
-                                    Color.clear
-                                ],
-                                startPoint: .top,
-                                endPoint: .center
-                            )
-                        )
-                    }
+                    shape.fill(pressed ? AOMColor.surfacePressed : (hovering ? AOMColor.surfaceHover : AOMColor.surface))
                 }
                 .overlay {
-                    shape.strokeBorder(
-                        contrast == .increased
-                            ? AOMColor.strongLine
-                            : (hovering ? Color.accentColor.opacity(scheme == .dark ? 0.55 : 0.42) : AOMColor.hairline),
-                        lineWidth: contrast == .increased || showBorders || hovering ? 1.1 : 0.75
-                    )
-                    .allowsHitTesting(false)
+                    shape.strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline.opacity(scheme == .dark ? 0.9 : 0.7),
+                                       lineWidth: contrast == .increased || showBorders ? 1 : 0.5)
+                        .allowsHitTesting(false)
                 }
-                .shadow(color: elevated ? Color.black.opacity(scheme == .dark ? 0.28 : 0.05) : .clear,
-                        radius: hovering ? 8 : 4, x: 0, y: hovering ? 3 : 1.5)
                 .containerShape(shape)
         case .well:
             content

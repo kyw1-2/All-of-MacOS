@@ -338,28 +338,11 @@ private struct AOMSidebarSearchButton: View {
 
     var body: some View {
         VStack(spacing: AOMSpace.x2) {
-            HStack(spacing: AOMSpace.x2) {
-                AOMModuleBadge(symbol: "sparkles.rectangle.stack.fill", hue: AOMColor.accent, size: 26, active: true)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("All of MacOS")
-                        .font(AOMFont.headline)
-                        .foregroundStyle(AOMColor.text)
-                        .lineLimit(1)
-                    Text(appState.globalEnabled ? "Engine Active" : "Engine Paused")
-                        .font(AOMFont.badge)
-                        .foregroundStyle(appState.globalEnabled ? AOMColor.successText : AOMColor.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: AOMSpace.x1)
-            }
-            .padding(.horizontal, AOMSpace.x1)
-
             Button { showingCommandPalette = true } label: {
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     Image(systemName: "magnifyingglass")
                         .imageScale(.medium)
-                        .foregroundStyle(AOMColor.accent)
-                    Text("Command Bar…").font(AOMFont.callout.weight(.medium))
+                    Text("Search").font(AOMFont.callout)
                     Spacer(minLength: AOMSpace.x1)
                     AOMKeycap(text: AOMPaletteShortcut.current(appState.currentPreset).displayString)
                 }
@@ -368,10 +351,9 @@ private struct AOMSidebarSearchButton: View {
                 .frame(height: AOMIcon.hitArea + AOMSpace.x0_5)
                 .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: Capsule())
                 .overlay {
-                    Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : (hovering ? AOMColor.accent.opacity(0.45) : AOMColor.hairline),
-                                           lineWidth: contrast == .increased ? 1 : 0.75)
+                    Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
+                                           lineWidth: contrast == .increased ? 1 : 0.5)
                 }
-                .shadow(color: Color.black.opacity(0.04), radius: 2, x: 0, y: 1)
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
