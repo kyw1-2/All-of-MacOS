@@ -3,7 +3,45 @@ import ApplicationServices
 import AVFoundation
 import CoreGraphics
 import IOKit.hid
+import os
+import QuartzCore
 import SwiftUI
+
+/// TCC answers (Accessibility, Input Monitoring, Screen Recording,
+/// Microphone) are IPC round trips, and views read them while rendering —
+/// several did in a `@State` initial value, which runs on every parent
+/// render. Views read this cache instead: the first read asks synchronously,
+/// later reads return the last answer and refresh it in the background at
+/// most every 2 s. Code that acts on a permission (requests, starts a tap)
+/// keeps asking `status` directly.
+enum AOMPermissionCache {
+    private static let entries = OSAllocatedUnfairLock<[AOMPermission: (status: AOMPermissionStatus, at: CFTimeInterval)]>(initialState: [:])
+    private static let inFlight = OSAllocatedUnfairLock<Set<AOMPermission>>(initialState: [])
+    static let maximumAge: CFTimeInterval = 2
+
+    static func status(_ permission: AOMPermission) -> AOMPermissionStatus {
+        let now = CACurrentMediaTime()
+        if let entry = entries.withLock({ $0[permission] }) {
+            if now - entry.at > maximumAge { refresh(permission) }
+            return entry.status
+        }
+        let status = permission.status
+        entries.withLock { $0[permission] = (status, now) }
+        return status
+    }
+
+    static var accessibilityTrusted: Bool { status(.accessibility) == .granted }
+    static var screenRecordingGranted: Bool { status(.screenRecording) == .granted }
+
+    private static func refresh(_ permission: AOMPermission) {
+        guard inFlight.withLock({ $0.insert(permission).inserted }) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let status = permission.status
+            entries.withLock { $0[permission] = (status, CACurrentMediaTime()) }
+            _ = inFlight.withLock { $0.remove(permission) }
+        }
+    }
+}
 
 /// The public APIs expose four permission states. Other TCC grants are
 /// scoped to a target app or individual file and cannot be reliably aggregated.

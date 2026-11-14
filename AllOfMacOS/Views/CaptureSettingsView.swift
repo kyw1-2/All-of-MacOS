@@ -89,7 +89,7 @@ struct CaptureSettingsView: View {
     @State private var microphones: [RecordingInputDevice] = []
 
     @State private var saveDirectory: String = CaptureSettings.saveDirectory.path
-    @State private var permissionGranted = ScreenCaptureService.hasPermission
+    @State private var permissionGranted = AOMPermissionCache.screenRecordingGranted
 
     private var format: CaptureFormat { CaptureFormat(rawValue: formatRaw) ?? .png }
     private var afterAction: AfterCaptureAction { AfterCaptureAction(rawValue: afterActionRaw) ?? .showOverlay }

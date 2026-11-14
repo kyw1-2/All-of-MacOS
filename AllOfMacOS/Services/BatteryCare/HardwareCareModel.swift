@@ -74,8 +74,20 @@ final class HardwareCareModel: ObservableObject {
         }
     }
 
+    /// Asks Service Management on the worker queue: the status is an XPC
+    /// round trip that stalled the System Tools page as it opened.
     func refreshHelper() {
-        let status = SMAppService.daemon(plistName: HardwareHelperIdentity.plist).status
+        worker.async {
+            let status = SMAppService.daemon(plistName: HardwareHelperIdentity.plist).status
+            DispatchQueue.main.async { self.apply(helperStatus: status) }
+        }
+    }
+
+    private func refreshHelperNow() {
+        apply(helperStatus: SMAppService.daemon(plistName: HardwareHelperIdentity.plist).status)
+    }
+
+    private func apply(helperStatus status: SMAppService.Status) {
         helperReady = status == .enabled
         switch status {
         case .enabled: helperStatus = "Hardware helper enabled"
@@ -90,9 +102,9 @@ final class HardwareCareModel: ObservableObject {
         do {
             _ = try HardwareHelperIdentity.requirement(identifier: HardwareHelperIdentity.name)
             try SMAppService.daemon(plistName: HardwareHelperIdentity.plist).register()
-            refreshHelper()
+            refreshHelperNow()
             if !helperReady { SMAppService.openSystemSettingsLoginItems() }
-        } catch { message = error.localizedDescription; refreshHelper() }
+        } catch { message = error.localizedDescription; refreshHelperNow() }
     }
 
     func setBattery(_ mode: BatteryCareMode) {

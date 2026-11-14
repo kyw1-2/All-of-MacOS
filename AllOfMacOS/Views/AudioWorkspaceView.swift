@@ -43,7 +43,7 @@ struct AudioWorkspaceView: View {
     /// The page's one status: what App Audio is doing, one line of context and
     /// its master switch. Off is a state, not a warning (e.6).
     private var header: some View {
-        AOMPageHeader(headerTitle, module: .audio, subtitle: subtitle,
+        AOMPageHeader(headerTitle, subtitle: subtitle,
                       help: "App Audio sends each app through AOM, so every app gets its own volume, Magic Boost and equalizer. Turned off, audio plays directly and every setting is kept.",
                       active: service.isSupported && service.soundEnabled) {
             if service.isSupported {
@@ -615,7 +615,7 @@ private struct SoundEffectsRow: View {
                 volume = newValue
                 isMuted = newValue == 0
                 if newValue > 0 { previousVolume = newValue }
-                AudioOutputService.setSystemAlertVolume(percent: newValue)
+                AudioOutputService.setSystemAlertVolumeLater(percent: newValue)
             }), in: 0...100)
             .audioRowSlider()
             .accessibilityLabel("System alert volume")
@@ -640,10 +640,9 @@ private struct SoundEffectsRow: View {
     private func toggleMute() {
         if !isMuted, volume > 0 { previousVolume = volume }
         let target = isMuted ? previousVolume : 0
-        if AudioOutputService.setSystemAlertVolume(percent: target) {
-            volume = target
-            isMuted = target == 0
-        }
+        AudioOutputService.setSystemAlertVolumeLater(percent: target)
+        volume = target
+        isMuted = target == 0
     }
 }
 

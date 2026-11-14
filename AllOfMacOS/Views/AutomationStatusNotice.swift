@@ -44,7 +44,7 @@ struct AutomationStatusNotice: View {
     private func refresh() {
         let missing = AOMPermission.required.first { permission in
             guard permission == .accessibility || permission == .inputMonitoring else { return false }
-            let status = permission.status
+            let status = AOMPermissionCache.status(permission)
             return status == .denied || status == .notDetermined
         }
         if missing != blocking { blocking = missing }

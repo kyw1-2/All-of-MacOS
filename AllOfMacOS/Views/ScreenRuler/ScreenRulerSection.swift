@@ -19,7 +19,7 @@ struct ScreenRulerSection: View {
 
     init(permissionOverride: Bool? = nil) {
         self.permissionOverride = permissionOverride
-        _permissionGranted = State(initialValue: permissionOverride ?? ScreenCaptureService.hasPermission)
+        _permissionGranted = State(initialValue: permissionOverride ?? AOMPermissionCache.screenRecordingGranted)
     }
 
     private var shortcut: KeyboardShortcut? { shortcuts.shortcut(for: .measureScreen) }
@@ -46,7 +46,7 @@ struct ScreenRulerSection: View {
     }
 
     private func refreshPermission() {
-        permissionGranted = permissionOverride ?? ScreenCaptureService.hasPermission
+        permissionGranted = permissionOverride ?? AOMPermissionCache.screenRecordingGranted
     }
 
     /// Each card's width when the two sit side by side (wider pages give them more).

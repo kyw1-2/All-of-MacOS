@@ -816,7 +816,7 @@ final class AudioVolumeOverdrive {
 /// buffers and calls AudioUnitRender. Stereo, 32-bit float, deinterleaved,
 /// at the bus's 48 kHz, at most `maximumFrames` per call.
 final class AudioUnitEffectHost {
-    struct Choice: Equatable, Hashable {
+    struct Choice: Equatable, Hashable, Sendable {
         var type: OSType
         var subtype: OSType
         var manufacturer: OSType

@@ -259,6 +259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSApp.activate(ignoringOtherApps: true)
                 mainWindow?.makeKeyAndOrderFront(nil)
             }
+            if let appState { AOMPageSwitchBench.runIfRequested(appState) }
         }
     }
 

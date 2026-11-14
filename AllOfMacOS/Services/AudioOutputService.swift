@@ -1,5 +1,6 @@
 import AppKit
 import CoreAudio
+import os
 import AudioToolbox
 
 struct AudioOutputDevice: Identifiable, Equatable {
@@ -568,10 +569,40 @@ extension AudioOutputService {
     static func currentSystemAlertVolume() -> Float32? {
         // The system alert scalar is NOT the volume of the system-output
         // hardware device, which is often the very same device as music.
+        // Sound settings keep it in the global domain; reading that is a
+        // preferences lookup, where the AppleScript below compiles a script
+        // and loads the scripting additions (about a second on the main
+        // thread when the Audio page opened).
+        CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
+        if let stored = CFPreferencesCopyAppValue(alertVolumeKey, kCFPreferencesAnyApplication) as? NSNumber {
+            return min(1, max(0, stored.floatValue))
+        }
         var error: NSDictionary?
         let value = NSAppleScript(source: "alert volume of (get volume settings)")?.executeAndReturnError(&error)
         guard error == nil, let value else { return nil }
         return Float32(value.int32Value) / 100
+    }
+
+    private static let alertVolumeKey = "com.apple.sound.beep.volume" as CFString
+    private static let alertVolumeQueue = DispatchQueue(label: "com.kyw.allofmacos.alert-volume", qos: .userInitiated)
+    private static let pendingAlertVolume = OSAllocatedUnfairLock<Double?>(initialState: nil)
+
+    /// The slider's path: applies the latest value off the main thread, so
+    /// dragging never waits on AppleScript; intermediate values are dropped.
+    static func setSystemAlertVolumeLater(percent: Double) {
+        guard percent.isFinite, (0...100).contains(percent) else { return }
+        let alreadyQueued = pendingAlertVolume.withLock { pending -> Bool in
+            defer { pending = percent }
+            return pending != nil
+        }
+        guard !alreadyQueued else { return }
+        alertVolumeQueue.async {
+            guard let latest = pendingAlertVolume.withLock({ pending -> Double? in
+                defer { pending = nil }
+                return pending
+            }) else { return }
+            setSystemAlertVolume(percent: latest)
+        }
     }
 
     @discardableResult

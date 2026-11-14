@@ -13,47 +13,13 @@ extension UserDefaults {
 // was removed in 3.3: nothing referenced it, and first run is the short
 // skippable welcome below (contextual help over an up-front tour).
 
-enum TutorialRegion: String {
-    case sidebar, triggers, actions, config
-}
-
-struct TutorialFramePreferenceKey: PreferenceKey {
-    static var defaultValue: [TutorialRegion: CGRect] = [:]
-    static func reduce(value: inout [TutorialRegion: CGRect], nextValue: () -> [TutorialRegion: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
-struct TutorialAnchorModifier: ViewModifier {
-    let region: TutorialRegion
-
-    func body(content: Content) -> some View {
-        content.background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: TutorialFramePreferenceKey.self,
-                    value: [region: geo.frame(in: .named("tutorialOverlay"))]
-                )
-            }
-        )
-    }
-}
-
-extension View {
-    func tutorialAnchor(_ region: TutorialRegion) -> some View {
-        modifier(TutorialAnchorModifier(region: region))
-    }
-}
-
 /// First run: a short, skippable setup instead of a tour of the interface
 /// (HIG Onboarding; Nova's and Paste's first-launch assistants). Three steps —
 /// what AOM does, the access it needs (live status, asked with a reason, never
 /// all at once), and how to reach it — then the app itself teaches the rest.
-/// `frames` is kept for the anchor API; the welcome flow does not spotlight.
 struct TutorialOverlayView: View {
     @EnvironmentObject var appState: AppState
     @Binding var isPresented: Bool
-    var frames: [TutorialRegion: CGRect]
     @State private var page = 0
     @State private var statuses: [AOMPermission: AOMPermissionStatus] = [:]
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true

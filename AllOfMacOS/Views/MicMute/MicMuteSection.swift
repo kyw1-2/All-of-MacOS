@@ -7,7 +7,7 @@ import SwiftUI
 /// Two cards so neither holds more than eight rows (design-3.4.0 b.2).
 struct MicMuteSection: View {
     @ObservedObject private var mic = MicMuteController.shared
-    @State private var accessibilityTrusted = AXIsProcessTrusted()
+    @State private var accessibilityTrusted = AOMPermissionCache.accessibilityTrusted
 
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {

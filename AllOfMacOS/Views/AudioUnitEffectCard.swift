@@ -53,8 +53,13 @@ struct AudioUnitEffectCard: View {
             }
         }
         .onAppear {
-            effects = AudioUnitEffectHost.installedEffects()
             selection = SharedOutputRenderer.shared.masterEffect?.key ?? ""
+        }
+        // Enumerating Audio Units loads their bundles; doing it on the main
+        // thread stalled the Audio page as it opened.
+        .task {
+            let found = await Task.detached(priority: .userInitiated) { AudioUnitEffectHost.installedEffects() }.value
+            if found != effects { effects = found }
         }
         // The page and the mixer panel can both show this card; a choice in
         // one reaches the other (the renderer's choice is stored in defaults).

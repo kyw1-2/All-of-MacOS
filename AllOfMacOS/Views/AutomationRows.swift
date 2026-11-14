@@ -30,36 +30,28 @@ extension Trigger {
 
 /// An automation as a list row: input glyph, title, what it does, and its
 /// key caps / pin / switch on the trailing edge.
-struct AOMAutomationRow<Accessory: View>: View {
-    @EnvironmentObject var appState: AppState
+///
+/// It reads no app state: the list passes whether it is selected and how to
+/// switch it, and `==` compares only what it draws. Before, every row
+/// observed AppState, so selecting, searching or toggling one automation
+/// redrew all of them.
+struct AOMAutomationRow: View, Equatable {
     let trigger: Trigger
+    var isSelected = false
     var showsSwitch = true
-    /// True only inside a selection list: key caps then invert to white on the
-    /// row's accent fill when this trigger is the selected one.
-    var rendersSelection = false
-    @ViewBuilder var accessory: Accessory
+    let setEnabled: (Bool) -> Void
 
-    init(trigger: Trigger, showsSwitch: Bool = true, rendersSelection: Bool = false,
-         @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
-        self.trigger = trigger
-        self.showsSwitch = showsSwitch
-        self.rendersSelection = rendersSelection
-        self.accessory = accessory()
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.trigger == rhs.trigger && lhs.isSelected == rhs.isSelected && lhs.showsSwitch == rhs.showsSwitch
     }
-
-    /// The list selection is app state, so the row knows when it is selected.
-    private var isSelected: Bool { rendersSelection && appState.selectedTrigger?.id == trigger.id }
 
     var body: some View {
         // Names only: the input glyph and the trailing value say the rest.
         AOMListRow(trigger.displayName, dimmed: !trigger.isEnabled) {
-            AOMModuleBadge(symbol: trigger.input.category.iconName, size: 22,
-                active: trigger.isEnabled
-            )
-            .help(trigger.input.category.rawValue)
+            AOMModuleBadge(symbol: trigger.input.category.iconName, size: 22, active: trigger.isEnabled)
+                .help(trigger.input.category.rawValue)
         } trailing: {
             HStack(spacing: AOMSpace.xs) {
-                accessory
                 if trigger.isFavorite {
                     // Hierarchical, so List selection turns it white with the
                     // row; tertiary at 9.5 pt all but vanished in light mode.
@@ -70,8 +62,7 @@ struct AOMAutomationRow<Accessory: View>: View {
                     AOMShortcutKeys(shortcut: shortcut, onSelection: isSelected)
                 }
                 if showsSwitch {
-                    Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled },
-                                                    set: { appState.setTriggerEnabled($0, triggerID: trigger.id) }))
+                    Toggle("Enabled", isOn: Binding(get: { trigger.isEnabled }, set: setEnabled))
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.mini)

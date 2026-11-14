@@ -6,10 +6,11 @@ struct MainWindow: View {
     @AppStorage("AOMShowLog") private var showLog = false
     @AppStorage("AOMShowTouchVisualizer") private var showTouchVisualizer = false
     @State private var showTutorial = !UserDefaults.hasSeenTutorial
-    @State private var tutorialFrames: [TutorialRegion: CGRect] = [:]
     @AppStorage("AOMAppearance") private var appearance: String = "system"
     @Environment(\.openSettings) private var openSettings
-    @ObservedObject private var history = AOMNavigationHistory.shared
+    /// Written on every page change, never read here: not observed, so a
+    /// history change no longer re-renders the whole window mid-switch.
+    private let history = AOMNavigationHistory.shared
 
     /// The last page, restored at launch (HIG Launching: restore the previous
     /// state). Isolated previews and tests share no state with the app, so
@@ -26,10 +27,7 @@ struct MainWindow: View {
             Group {
                 switch appState.selectedMainTab {
                 case .home: AOMHomeView(showingCommandPalette: $appState.showingCommandPalette)
-                case .gestures:
-                    ModernGesturesWorkspace()
-                        .tutorialAnchor(.triggers)
-                        .tutorialAnchor(.actions)
+                case .gestures: ModernGesturesWorkspace()
                 case .snapping: ModernWindowSnappingView()
                 case .capture: CaptureStudioView()
                 case .clipboard: ClipboardStudioView()
@@ -44,11 +42,9 @@ struct MainWindow: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .coordinateSpace(name: "tutorialOverlay")
-        .onPreferenceChange(TutorialFramePreferenceKey.self) { if tutorialFrames != $0 { tutorialFrames = $0 } }
         .overlay {
             if showTutorial {
-                TutorialOverlayView(isPresented: $showTutorial, frames: tutorialFrames)
+                TutorialOverlayView(isPresented: $showTutorial)
                     .environmentObject(appState)
             }
         }
