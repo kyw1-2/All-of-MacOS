@@ -14,8 +14,10 @@ import SwiftUI
 // Rules in one place:
 // - Glass is chrome, content is solid: Liquid Glass only on the toolbar, the
 //   system sidebar, the ⌘K palette, HUDs and floating panels (`aomChrome`),
-//   behind `if #available(macOS 26, *)` with a material fallback. Cards,
-//   tiles, lists and forms are opaque `surface` with a hairline.
+//   behind `if #available(macOS 26, *)` with a material fallback. In the
+//   main window, panes of rows are frosted `surface` with no edge over the
+//   window's glass backdrop; anything drawn over other content (a label on a
+//   chart) uses the opaque `overlaySurface`.
 // - Colour has three jobs: the accent marks interaction, semantic colours mark
 //   status (always with a glyph and text), module hues key charts and rings
 //   only. Icons are monochrome SF Symbols; nothing is a coloured badge.
@@ -238,6 +240,13 @@ enum AOMColor {
                                           dark: NSColor(white: 1, alpha: 0.075),
                                           highContrastLight: .white,
                                           highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
+    /// Opaque: labels and small panels that sit over other drawn content
+    /// (a chart's grid lines, a layout diagram). The frosted `surface` lets
+    /// those lines run through the text, nearly unchanged in dark mode.
+    static let overlaySurface = Color.aomDynamic(light: .white,
+                                                 dark: NSColor(srgbRed: 0.165, green: 0.165, blue: 0.165, alpha: 1),
+                                                 highContrastLight: .white,
+                                                 highContrastDark: NSColor(srgbRed: 0.196, green: 0.196, blue: 0.196, alpha: 1))
     /// A pane under the pointer.
     static let surfaceHover = Color.aomDynamic(light: NSColor(white: 1, alpha: 0.80),
                                                dark: NSColor(white: 1, alpha: 0.11))

@@ -785,7 +785,7 @@ struct ModernWindowSnappingView: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .padding(.horizontal, AOMSpace.x2)
                     .padding(.vertical, AOMSpace.x0_5)
-                    .background(AOMColor.surface.opacity(0.9), in: Capsule())
+                    .background(AOMColor.overlaySurface.opacity(0.9), in: Capsule())
                     .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
                     .padding(.trailing, AOMSpace.x2)
                     .padding(.bottom, AOMSpace.x2)

@@ -236,7 +236,7 @@ struct FocusWeekChart: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .padding(.horizontal, AOMSpace.x2)
                     .padding(.vertical, AOMSpace.x1)
-                    .background(AOMColor.surface, in: Capsule())
+                    .background(AOMColor.overlaySurface, in: Capsule())
             }
         }
         .accessibilityElement(children: .ignore)
