@@ -15,10 +15,6 @@ enum SystemToolsInventory {
     /// Counted the way the page header counts: every tool the page shows.
     static var count: Int { SystemToolCatalog.available.count }
 
-    /// The sections the page shows (a section whose tools all need something
-    /// missing, such as Homebrew, isn't shown).
-    static var groupCount: Int { groups.count }
-
     /// A one-line summary for the Workspace tile.
     static var subtitle: String {
         SystemToolAvailability.shared.hasHomebrew ? "Toggles, storage, Homebrew" : "Toggles, storage, network"
