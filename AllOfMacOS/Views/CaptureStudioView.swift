@@ -83,8 +83,6 @@ struct CaptureStudioView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Capture tools")
-            // Screen Ruler (3.4): its own section, drawn by its module.
-            ScreenRulerSection()
             VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                 // Nothing to filter or size before the first capture.
                 if !history.entries.isEmpty {
@@ -96,6 +94,8 @@ struct CaptureStudioView: View {
                 }
                 gallerySection
             }
+            // The ruler's settings come after the captures they sit beside.
+            ScreenRulerSection()
         }
         .aomPage("Capture")
         .toolbar { toolbarContent }
