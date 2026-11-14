@@ -73,27 +73,10 @@ struct SystemToolsView: View {
         }
         .aomPage("System Tools")
         .searchable(text: $query, placement: .toolbar, prompt: "Search Tools")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button { model.run(.homebrew) } label: {
-                    Label("Homebrew", systemImage: "mug")
-                }
-                .labelStyle(.titleAndIcon)
-                .help("Outdated, installed and service packages")
-            }
-            ToolbarItem(placement: .automatic) {
-                Button { model.run(.vpn) } label: {
-                    Label("VPN", systemImage: "network.badge.shield.half.filled")
-                }
-                .labelStyle(.titleAndIcon)
-                .help("VPN connections and Tailscale")
-            }
-        }
         .sheet(isPresented: $model.showFreeUpSpace) {
             FreeUpSpaceSheet(model: model)
         }
-        .sheet(item: Binding(get: { model.showFreeUpSpace ? nil : model.cleanupReview },
-                             set: { model.cleanupReview = $0 })) { review in
+        .sheet(item: $model.cleanupReview) { review in
             CleanupReviewSheet(review: review, onTrash: { model.trashSelected($0) }, onCancel: { model.cleanupReview = nil })
         }
         .sheet(item: $model.processReview) { review in

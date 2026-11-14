@@ -330,17 +330,14 @@ struct VPNSheet: View {
         }
     }
 
+    /// Only when OpenVPN Connect is installed: it keeps its profiles to
+    /// itself, so the row only opens the app.
+    @ViewBuilder
     private var openVPNSection: some View {
-        AOMSection("OpenVPN Connect", footer: "OpenVPN Connect keeps its profiles to itself, so connecting happens in the app.") {
-            if model.openVPNURL != nil {
+        if model.openVPNURL != nil {
+            AOMSection("OpenVPN Connect", footer: "OpenVPN Connect keeps its profiles to itself, so connecting happens in the app.") {
                 AOMSettingRow("OpenVPN Connect", detail: "Installed", symbol: "shield.lefthalf.filled") {
                     Button("Open OpenVPN Connect") { model.openOpenVPN() }
-                }
-            } else {
-                AOMSettingRow("OpenVPN Connect", detail: "Not installed on this Mac", symbol: "shield.lefthalf.filled") {
-                    Button("Open OpenVPN Connect") {}
-                        .disabled(true)
-                        .help("Install OpenVPN Connect first")
                 }
             }
         }
