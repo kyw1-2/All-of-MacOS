@@ -1,3 +1,31 @@
+## [3.9.0] - 2026-11-14
+
+### Changed
+- **The Liquid Glass window, finished.** Frosted panes no longer show a brighter band with square ends at their top edge. Labels drawn over a chart or a layout preview (an empty week on Workspace and Focus, Window Tiling's layout hint) sit on an opaque backing, so grid lines no longer run through the words.
+- Every page header starts at the same distance under the toolbar and on the same text line. Window Tiling, Folder Rules and Clipboard sat 4–8 pt higher than the other pages, and Focus 2 pt to the left. The Workspace header uses the same inner padding as the panes below it.
+- Workspace rows end on one line: switches, buttons and chevrons line up down both columns, and the figures before them are aligned. A switch no longer has a redundant "Off" or "On" beside it. Audio now shows its count of app settings.
+- Window Tiling's link buttons are all the same height. "Window Switcher" used to be 2 px taller than the rest.
+- Settings sliders no longer draw a dotted row of tick marks when they have many steps, for example Text Actions' timings, capture quality and the screen ruler's tolerance. They slide freely and snap to the step.
+- Settings › Backups uses the same sections, rows and monochrome symbols as the other Settings sheets. The coloured icons are gone and "Show in Finder" is now a link in the section header. All Settings sheets share one content column.
+
+### Fixed
+- **The Sound effects slider could open at the wrong level.** 3.8.0 read the alert volume from a system preference and assumed it was a linear 0–1 value, while the slider writes the volume in percent. The read and the write now use the same method, units and background queue. The row stays disabled until the real value has been read, so it never shows a guessed 65 %.
+- Pinning a screenshot while macOS reported no screen at all (during a display change, for example) could crash AOM.
+- A recording whose crash-recovery file kept failing to save wrote the same error every 2 seconds. An hour-long take could push every earlier entry out of the recording log. Each take now logs a failure once, and again only when the reason changes.
+
+### Improved
+- The Audio page no longer reads the alert volume with AppleScript on the main thread. That still happened on Macs where the alert volume had never been changed.
+- Trackpad touch frames no longer allocate a string and an array for diagnostics. Pressure readings of 1.0 and above are labelled correctly in the diagnostics file ("1.5", not "0.15").
+- The clipboard history is published to the interface once when it loads, instead of once per item (about 1,000 updates at the default limit).
+- The always-running timers (trackpad health, App Audio, scheduled triggers, a locked pinned screenshot's hover fade and a few others) can now share wake-ups with other timers. The saving in wake-ups is expected but was not measured.
+- Page switching shows no regression. In the isolated preview's page-switch bench with release builds (six runs each), the 12 switches took 3,075 ms on 3.8.0 and 3,119 ms on 3.9.0, within run-to-run noise.
+
+### Validation
+- 105 tests passed (100 existing, 5 new: alert-volume thread and units, clipboard load publishing, the pressure histogram, slider ticks, the first-row divider).
+- Every page and Settings sheet was reviewed in an isolated preview, light and dark, from snapshots the preview renders of its own windows (new preview-only option `--aom-preview-snapshot`). System glass and the window's blur do not appear in those snapshots, and the Workspace header panel and quick-action glass were not seen. Only 2x rendering was checked, not a 1x display.
+- The no-screen pin crash and the repeated sidecar failure were found in the code and not reproduced. The system alert volume was not changed to test the Sound effects fix.
+- Settings › Gestures & Triggers still uses the older form layout and was left as it is.
+
 ## [3.8.0] - 2026-11-14
 
 ### Changed
