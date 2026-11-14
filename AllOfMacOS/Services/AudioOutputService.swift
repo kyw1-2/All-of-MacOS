@@ -566,6 +566,20 @@ extension AudioOutputService {
 
     // MARK: - System Alert Sounds Volume
 
+    /// The alert volume, read on the alert-volume queue. On a Mac where the
+    /// alert volume was never changed the global domain has no value and
+    /// `currentSystemAlertVolume()` falls back to AppleScript, which took
+    /// about a second on the main thread when the Audio page opened. The
+    /// queue is the one the slider writes on, so a read never overtakes a
+    /// write that is still pending.
+    static func loadSystemAlertVolume() async -> Float32? {
+        await withCheckedContinuation { continuation in
+            alertVolumeQueue.async { continuation.resume(returning: currentSystemAlertVolume()) }
+        }
+    }
+
+    /// Blocking (a preferences round trip, AppleScript when unset): never on
+    /// the main thread; views use `loadSystemAlertVolume()`.
     static func currentSystemAlertVolume() -> Float32? {
         // The system alert scalar is NOT the volume of the system-output
         // hardware device, which is often the very same device as music.

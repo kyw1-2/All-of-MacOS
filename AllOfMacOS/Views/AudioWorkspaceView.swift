@@ -599,6 +599,9 @@ private struct SoundEffectsRow: View {
     @State private var volume: Double = 65
     @State private var isMuted = false
     @State private var previousVolume: Double = 65
+    /// Set once the person moves the slider or mutes, so a late read of the
+    /// system value never jumps the slider back.
+    @State private var adjusted = false
 
     var body: some View {
         HStack(spacing: AOMSpace.x3) {
@@ -612,6 +615,7 @@ private struct SoundEffectsRow: View {
             .accessibilityLabel(isMuted ? "Unmute system alerts" : "Mute system alerts")
             .help(isMuted ? "Unmute system alerts" : "Mute system alerts")
             Slider(value: Binding(get: { volume }, set: { newValue in
+                adjusted = true
                 volume = newValue
                 isMuted = newValue == 0
                 if newValue > 0 { previousVolume = newValue }
@@ -630,14 +634,19 @@ private struct SoundEffectsRow: View {
             Divider()
             Button("Sound Settings…") { AudioSystemSettings.openSound() }
         }
-        .onAppear {
-            volume = Double(AudioOutputService.currentSystemAlertVolume() ?? 0.65) * 100
+        // Off the main thread: with no stored value the read is AppleScript.
+        .task {
+            adjusted = false
+            let level = await AudioOutputService.loadSystemAlertVolume()
+            guard !adjusted else { return }
+            volume = Double(level ?? 0.65) * 100
             isMuted = volume == 0
             if volume > 0 { previousVolume = volume }
         }
     }
 
     private func toggleMute() {
+        adjusted = true
         if !isMuted, volume > 0 { previousVolume = volume }
         let target = isMuted ? previousVolume : 0
         AudioOutputService.setSystemAlertVolumeLater(percent: target)
