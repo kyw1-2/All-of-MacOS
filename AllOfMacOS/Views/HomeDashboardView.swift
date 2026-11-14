@@ -604,8 +604,10 @@ struct AOMHomeView: View {
             let custom = audioDisplay.value.customApps
             let detail = [outputDevice.map { "Output: \($0)" }, audio.eqEnabled ? "EQ \(audio.eqPreset)" : nil].compactMap { $0 }
             AOMModuleTile(.audio,
-                          metric: audio.soundEnabled ? "\(custom)" : "Off",
-                          unit: audio.soundEnabled ? (custom == 1 ? "app setting" : "app settings") : nil,
+                          // The switch says on or off; the figure is the
+                          // per-app settings, kept while App Audio is off.
+                          metric: "\(custom)",
+                          unit: custom == 1 ? "app setting" : "app settings",
                           status: !audio.isSupported ? "Needs macOS 14.2 or later"
                               : (audio.soundEnabled ? (detail.isEmpty ? "Per-app volume and effects" : detail.joined(separator: " · "))
                                  : "Apps play directly"),
@@ -1494,7 +1496,9 @@ private struct WorkspaceTileChevron: View {
         Image(systemName: "chevron.right")
             .font(AOMFont.body.weight(.semibold))
             .foregroundStyle(AOMColor.textTertiary)
-            .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
+            // Trailing, so the chevron ends on the same line as the switches
+            // and buttons in the module rows' control slot.
+            .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea, alignment: .trailing)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -2035,7 +2039,11 @@ struct AOMModuleStatusTile<MenuItems: View>: View {
     }
 
     var body: some View {
-        let metric = status.count.map { $0.formatted() } ?? (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "…"))
+        // With a switch, a tile without a count shows no figure: the switch
+        // already says on or off.
+        let hasSwitch = status.isOn != nil && status.setOn != nil
+        let metric = status.count.map { $0.formatted() }
+            ?? (hasSwitch ? "" : (status.isOn == false ? "Off" : (status.isOn == true ? "On" : "…")))
         AOMModuleTile(status.module,
                       metric: metric,
                       unit: status.count == nil ? nil : status.unit,

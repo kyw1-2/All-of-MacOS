@@ -103,6 +103,10 @@ enum AOMSize {
     static let tileMax: CGFloat = 420
     /// A Workspace module row: name over status beside the figure and switch.
     static let moduleRowHeight: CGFloat = 52
+    /// The control slot at a module row's trailing edge: wide enough for a
+    /// small bordered "Create…" or "Set Up…", so switches, buttons and
+    /// chevrons end on one vertical line down every column of rows.
+    static let moduleControlSlot: CGFloat = 72
     /// A text or link preview in the clipboard detail pane.
     static let textPreviewMinHeight: CGFloat = 116
     /// The ⌘K palette.
@@ -549,6 +553,10 @@ enum AOMIcon {
     static let headerBadge: CGFloat = 40
     /// Empty-state glyph.
     static let empty: CGFloat = 40
+    /// The symbol frame inside a text button (a capsule link): one Body
+    /// line tall, so a tall glyph (`rectangle.stack`) cannot make its button
+    /// taller than its neighbours.
+    static let inlineGlyph: CGFloat = 16
     /// Minimum hit area for icon buttons (the default macOS control, HIG).
     static let hitArea: CGFloat = 28
     /// Status dot inside pills and badges.

@@ -281,14 +281,7 @@ struct ModernWindowSnappingView: View {
     /// A capsule button (glass on macOS 26) with the subtitle as its tooltip,
     /// instead of a boxed card per tool.
     private func quickZoneButton(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .padding(.horizontal, AOMSpace.x1)
-        }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
-        .help("\(title) — \(subtitle)")
+        AOMCapsuleLink(title, symbol: symbol, help: "\(title) — \(subtitle)", action: action)
     }
 
     // MARK: - Title-bar snap

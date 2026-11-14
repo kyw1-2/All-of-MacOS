@@ -630,7 +630,8 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
-            .accessibilityLabel("\(module.title), \([metric, unit].compactMap { $0 }.joined(separator: " ")), \(status)")
+            .accessibilityLabel(([module.title, [metric, unit].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "), status])
+                .filter { !$0.isEmpty }.joined(separator: ", "))
             .accessibilityHint("Opens \(module.title)")
             .help("\(module.title): \(status)")
 
@@ -644,26 +645,32 @@ struct AOMModuleTile<Control: View, MenuItems: View>: View {
                 lines
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .allowsHitTesting(false)
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(metric)
-                        .font(AOMFont.bodyEmphasis.monospacedDigit())
-                        .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
-                        .contentTransition(.numericText())
-                    if let unit {
-                        Text(unit)
-                            .font(AOMFont.caption)
-                            .foregroundStyle(AOMColor.textSecondary)
+                // The figure ends where the control slot begins, so figures
+                // are trailing-aligned down a column; an empty metric (a
+                // switch already says on or off) draws nothing.
+                if !metric.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x0_5 + 1) {
+                        Text(metric)
+                            .font(AOMFont.bodyEmphasis.monospacedDigit())
+                            .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
+                            .contentTransition(.numericText())
+                        if let unit {
+                            Text(unit)
+                                .font(AOMFont.caption)
+                                .foregroundStyle(AOMColor.textSecondary)
+                        }
                     }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 }
-                .lineLimit(1)
-                .fixedSize()
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
                 control
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .fixedSize()
+                    .frame(width: AOMSize.moduleControlSlot, alignment: .trailing)
             }
             .padding(.horizontal, AOMSpace.x3)
         }
