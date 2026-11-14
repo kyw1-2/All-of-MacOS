@@ -260,6 +260,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 mainWindow?.makeKeyAndOrderFront(nil)
             }
             if let appState { AOMPageSwitchBench.runIfRequested(appState) }
+            AOMPreviewSnapshot.scheduleIfRequested()
         }
     }
 
