@@ -1,3 +1,12 @@
+## [3.6.1] - 2026-11-14
+
+### Fixed
+- **A keystroke sometimes disappeared.** After an AOM shortcut press whose key-up never reached AOM (Secure Input in a password field took it, or macOS briefly turned the keyboard tap off), the next ordinary press of that key was treated as autorepeat and swallowed. Only real autorepeat is swallowed now.
+- **The Automation page used about 35 % CPU indefinitely** while a trackpad trigger was selected: the gesture preview kept animating after its 8-second play phase. AOM's keyboard tap runs on the same main thread, so typing could lag while the page was open. It now rests at 0 %.
+
+### Validation
+- 96 tests passed (94 existing, 2 new for the lost key-up; the main one fails on 3.6.0). Automation-page CPU was measured in an isolated preview with a copy of the user's preset: 38 % at 30 s before the fix, 0 % after.
+
 ## [3.6.0] - 2026-11-14
 
 ### Changed
