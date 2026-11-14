@@ -51,7 +51,8 @@ struct AOMAutomationRow<Accessory: View>: View {
     private var isSelected: Bool { rendersSelection && appState.selectedTrigger?.id == trigger.id }
 
     var body: some View {
-        AOMListRow(trigger.displayName, detail: trigger.aomRowDetail, dimmed: !trigger.isEnabled) {
+        // Names only: the input glyph and the trailing value say the rest.
+        AOMListRow(trigger.displayName, dimmed: !trigger.isEnabled) {
             AOMModuleBadge(
                 symbol: trigger.input.category.iconName,
                 hue: GestureVisual.tint(trigger.input.category),

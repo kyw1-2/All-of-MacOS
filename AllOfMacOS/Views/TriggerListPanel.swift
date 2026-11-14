@@ -85,16 +85,11 @@ struct AddTriggerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x4) {
             // Named like the command that opens it (File › New Automation,
-            // the toolbar's New Automation), with what happens next.
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                Text("New Automation")
-                    .font(AOMFont.title)
-                    .foregroundStyle(AOMColor.text)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Choose what starts it. You add the actions it runs next.")
-                    .font(AOMFont.callout)
-                    .foregroundStyle(AOMColor.textSecondary)
-            }
+            // the toolbar's New Automation).
+            Text("New Automation")
+                .font(AOMFont.title)
+                .foregroundStyle(AOMColor.text)
+                .accessibilityAddTraits(.isHeader)
 
             Picker("Input type", selection: $category) {
                 ForEach(TriggerCategory.inputCategories) { item in
@@ -315,7 +310,7 @@ struct AddTriggerSheet: View {
                 Button("Undo") { if !sequenceStrokes.isEmpty { sequenceStrokes.removeLast() } }
                     .disabled(sequenceStrokes.isEmpty)
                 Spacer(minLength: 0)
-                AOMInfoButton("Regular keys still reach the active app. Modifier-only key presses are available via Modifier Press. At least 2 steps are needed unless hold is selected.",
+                AOMInfoButton("Regular keys still reach the active app. At least two steps are needed unless hold is selected.",
                               topic: "key sequences")
             }
             Toggle("Single-key hold instead of sequence", isOn: $sequenceHoldEnabled)
@@ -445,7 +440,6 @@ struct AddTriggerSheet: View {
                         .accessibilityLabel(names[day - 1])
                     }
                 }
-                AOMEditorNote(SystemTriggerKind.weekdayNames(Array(selectedWeekdays)))
             }
         }
     }
@@ -636,15 +630,11 @@ struct AddTriggerSheet: View {
 
     private var typedStringFields: some View {
         VStack(alignment: .leading, spacing: AOMSpace.x2) {
-            Text("Type this abbreviation in any app and it is replaced")
-                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Abbreviation, e.g. ;email", text: $typedAbbreviation)
                 .textFieldStyle(.roundedBorder)
-            Text("Replaced with")
-                .font(AOMFont.caption).foregroundStyle(AOMColor.textSecondary)
             TextField("Replacement text (empty = run the trigger's actions)", text: $typedReplacement)
                 .textFieldStyle(.roundedBorder)
-            AOMEditorNote("Never expands in password fields. Leave the replacement empty to run this trigger's actions instead.")
+            AOMEditorNote("Never expands in password fields.")
         }
     }
 

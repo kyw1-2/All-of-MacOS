@@ -57,26 +57,23 @@ struct ActionCardView: View {
                 .frame(width: AOMIcon.row)
                 .accessibilityHidden(true)
 
-            // The name over its detail (a 48 pt settings row, design-336
-            // #74); the detail truncates in the middle, the full text stays
-            // in the tooltip.
-            VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                Text(action.displayName)
-                    .font(AOMFont.bodyEmphasis)
-                    .foregroundStyle(action.isEnabled ? AOMColor.text : AOMColor.textSecondary)
-                    .lineLimit(1)
-                if let detail = actionDetail {
-                    Text(detail)
-                        .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(detail)
-                }
-            }
-            .layoutPriority(1)
+            // The name; its parameter value rides at the trailing edge.
+            Text(action.displayName)
+                .font(AOMFont.bodyEmphasis)
+                .foregroundStyle(action.isEnabled ? AOMColor.text : AOMColor.textSecondary)
+                .lineLimit(1)
+                .layoutPriority(1)
 
             Spacer(minLength: AOMSpace.x2)
+
+            if let detail = actionDetail {
+                Text(detail)
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(detail)
+            }
 
             if !action.isEnabled {
                 AOMStatusPill("Off", tone: .neutral)
@@ -122,7 +119,7 @@ struct ActionCardView: View {
         }
         .padding(.horizontal, AOMSpace.rowInset)
         .padding(.vertical, AOMSpace.x1)
-        .frame(minHeight: actionDetail == nil ? AOMSize.rowStandard : AOMSize.rowDetail)
+        .frame(minHeight: AOMSize.rowStandard)
         .contentShape(Rectangle())
         .onTapGesture { onToggleExpand() }
     }
@@ -153,233 +150,5 @@ struct ActionCardView: View {
             return CaptureHistory.shared.mostRecent?.displayName ?? "no capture yet"
         default: return ActionSummary.detail(action)
         }
-    }
-}
-
-struct AddActionSheet: View {
-    var parentID: UUID? = nil
-    var toElse = false
-    var replaceActionID: UUID? = nil
-    @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
-
-    /// "Favorites & Recent" first, then the categories, like BTT's selector.
-    private enum Section: Hashable {
-        case quick
-        case category(ActionCategory)
-    }
-    private let store = ActionPickerStore()
-    @State private var section: Section
-    @State private var searchText = ""
-    @State private var favorites: [ActionType]
-    @State private var recents: [ActionType]
-
-    init(parentID: UUID? = nil, toElse: Bool = false, replaceActionID: UUID? = nil) {
-        self.parentID = parentID; self.toElse = toElse; self.replaceActionID = replaceActionID
-        let store = ActionPickerStore()
-        let hasQuick = !store.favorites.isEmpty || !store.recents.isEmpty
-        _section = State(initialValue: hasQuick ? .quick : .category(.windowManagement))
-        _favorites = State(initialValue: store.favorites)
-        _recents = State(initialValue: store.recents)
-    }
-
-    private var hidden: Set<ActionType> { [.toggleDoNotDisturb] }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                // Title 3, the sheet-title style (design-336 b.1).
-                Text(replaceActionID != nil ? "Change Action" : (parentID == nil ? "Add Action" : "Add Action Inside"))
-                    .font(AOMFont.title)
-                    .foregroundStyle(AOMColor.text)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(AOMFont.title.weight(.regular))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-                        .contentShape(Rectangle())
-                }
-                    .buttonStyle(.plain)
-                    .help("Close without adding")
-                    .accessibilityLabel("Close")
-            }
-            .padding(.horizontal, AOMSpace.x5)
-            .padding(.top, AOMSpace.x4)
-            .padding(.bottom, AOMSpace.x3)
-
-            HStack(spacing: AOMSpace.x2) {
-                Image(systemName: "magnifyingglass").foregroundStyle(AOMColor.textSecondary).accessibilityHidden(true)
-                TextField("Search actions by name or what they do", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("Search actions")
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(AOMColor.textSecondary) }
-                        .buttonStyle(.plain)
-                        .help("Clear search")
-                        .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, AOMSpace.x3)
-            .frame(height: AOMSize.rowStandard - AOMSpace.x1)
-            .background(AOMColor.sunken, in: RoundedRectangle(cornerRadius: AOMRadius.well, style: .continuous))
-            .padding(.horizontal, AOMSpace.x5)
-            .padding(.bottom, AOMSpace.x4)
-
-            HSplitView {
-                List(selection: Binding<Section?>(get: { section }, set: { if let value = $0 { section = value; searchText = "" } })) {
-                    sidebarRow("Favorites & Recent", icon: "star", selected: section == .quick).tag(Section.quick)
-                    ForEach(ActionCategory.allCases) { category in
-                        sidebarRow(category.rawValue, icon: category.iconName, selected: section == .category(category))
-                            .tag(Section.category(category))
-                    }
-                }
-                .listStyle(.sidebar)
-                .frame(width: AOMEditorSize.actionPickerSidebar)
-
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if !searchText.isEmpty {
-                            let found = ActionSearch.results(for: searchText, in: ActionType.allCases.filter { !hidden.contains($0) })
-                            if found.isEmpty {
-                                emptyNote("No action matches “\(searchText)”. Try a verb (click, scroll, speak) or an app area (window, space, volume).")
-                            }
-                            ForEach(found) { row($0, showsCategory: true) }
-                        } else if section == .quick {
-                            heading("Favorite actions")
-                            if favorites.isEmpty { emptyNote("Click the star next to any action to keep it here.") }
-                            ForEach(favorites) { row($0) }
-                            heading("Recently used")
-                            if recents.isEmpty { emptyNote("Actions you add show up here.") }
-                            ForEach(recents) { row($0) }
-                        } else if case .category(let category) = section {
-                            ForEach(ActionType.actionsForCategory(category).filter { !hidden.contains($0) }) { row($0) }
-                        }
-                    }
-                    .padding(AOMSpace.x2)
-                }
-            }
-            .frame(height: AOMEditorSize.actionPicker.height)
-
-            AOMDivider()
-
-            HStack {
-                if replaceActionID == nil {
-                    Menu("Sequence Templates") {
-                        Button("Next display → maximize") { addTemplate([.moveWindowNextMonitor, .maximizeWindow], name: "Move and maximize") }
-                        Button("Activate app → wait → maximize") { addTemplate([.activateApplication, .wait, .maximizeWindow], name: "Open workspace") }
-                        Button("Shortcut → wait → shortcut") { addTemplate([.sendKeyStroke, .wait, .sendKeyStroke], name: "Keyboard sequence") }
-                    }
-                    .fixedSize()
-                    .help("Add several steps at once")
-                }
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(.horizontal, AOMSpace.x5)
-            .padding(.vertical, AOMSpace.x4)
-        }
-        .frame(width: AOMEditorSize.actionPicker.width)
-    }
-
-    private func sidebarRow(_ title: String, icon: String, selected: Bool) -> some View {
-        HStack(spacing: AOMSpace.x2) {
-            Image(systemName: icon)
-                .foregroundStyle(selected ? AOMColor.accent : AOMColor.textSecondary)
-                .frame(width: AOMIcon.row)
-            Text(title).font(selected ? AOMFont.bodyEmphasis : AOMFont.body)
-        }
-    }
-    /// A group label in the result list: sentence case, never tracked caps (e.10).
-    private func heading(_ title: String) -> some View {
-        Text(title)
-            .aomSectionCaps()
-            .padding(.horizontal, AOMSpace.x3)
-            .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x1)
-            .accessibilityAddTraits(.isHeader)
-    }
-    private func emptyNote(_ text: String) -> some View {
-        AOMEditorNote(text)
-            .padding(.horizontal, AOMSpace.x3)
-            .padding(.vertical, AOMSpace.x1)
-    }
-
-    private func row(_ type: ActionType, showsCategory: Bool = false) -> some View {
-        let isFavorite = favorites.contains(type)
-        return HStack(spacing: AOMSpace.x2) {
-            Button { addAction(type) } label: {
-                HStack(alignment: .top, spacing: AOMSpace.x3) {
-                    Image(systemName: type.iconName)
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .frame(width: AOMIcon.row)
-                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
-                        Text(type.rawValue).font(AOMFont.body).foregroundStyle(AOMColor.text)
-                        Text(type.description).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary).lineLimit(2)
-                        if showsCategory || !type.parameterHint.isEmpty {
-                            Text([showsCategory ? type.category.rawValue : nil, type.parameterHint.isEmpty ? nil : "Options: " + type.parameterHint]
-                                .compactMap { $0 }.joined(separator: " · "))
-                                .font(AOMFont.caption).foregroundStyle(AOMColor.textTertiary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, AOMSpace.x2)
-                .padding(.vertical, AOMSpace.x2)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(AOMRowButtonStyle())
-            .accessibilityLabel(type.rawValue)
-            .accessibilityHint(type.description)
-
-            Button {
-                store.toggleFavorite(type)
-                favorites = store.favorites
-            } label: {
-                Image(systemName: isFavorite ? "star.fill" : "star")
-                    .foregroundStyle(isFavorite ? AOMColor.accent : AOMColor.textSecondary)
-                    .frame(width: AOMIcon.hitArea, height: AOMIcon.hitArea)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isFavorite ? "Remove from Favorite Actions" : "Add to Favorite Actions")
-            .accessibilityLabel(isFavorite ? "Remove \(type.rawValue) from favorites" : "Add \(type.rawValue) to favorites")
-        }
-        .padding(.trailing, AOMSpace.x1)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func addTemplate(_ types: [ActionType], name: String) {
-        guard let trigger = appState.selectedTrigger else { return }
-        var group = TriggerAction(actionType: .actionGroup); group.parameters.label = name
-        group.parameters.children = types.map { type in
-            var value = TriggerAction(actionType: type)
-            if type == .maximizeWindow, types.contains(.activateApplication) { value.parameters.useCurrentWindow = true }
-            if type == .wait { value.parameters.waitMs = 300 }
-            return value
-        }
-        appState.addAction(to: trigger, action: group, parentID: parentID); dismiss()
-    }
-
-    private func addAction(_ actionType: ActionType) {
-        guard let trigger = appState.selectedTrigger else { return }
-        store.recordUse(actionType)
-
-        if let replaceID = replaceActionID,
-           var target = ActionTree.rows(trigger.actions).first(where: { $0.id == replaceID })?.action {
-            target.actionType = actionType
-            target.parameters = actionType.defaultParameters
-            appState.updateAction(in: trigger, action: target)
-            dismiss()
-            return
-        }
-
-        let action = TriggerAction(actionType: actionType, parameters: actionType.defaultParameters)
-        appState.addAction(to: trigger, action: action, parentID: parentID, toElse: toElse)
-        dismiss()
     }
 }
