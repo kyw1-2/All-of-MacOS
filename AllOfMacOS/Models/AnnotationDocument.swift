@@ -166,7 +166,7 @@ enum AnnotationToolbarItem: String, CaseIterable, Identifiable {
     case move, rectangle, filledRectangle, ellipse, line, arrow, text, redact,
          spotlight, counter, draw, highlighter
     case marker
-    /// 3.3.3: the eraser follows the marker; image layers are inserted from a button.
+    /// The eraser follows the marker; image layers are inserted from a button.
     case eraser
     case crop, background, imageLayer
 
@@ -891,7 +891,7 @@ struct AnnotationDocument {
                              scale: CGFloat, base: CGImage) {
         var source = base
         var layerSinceSource = false
-        // 3.3.3: several spotlights share one dimmed layer with every cutout,
+        // Several spotlights share one dimmed layer with every cutout,
         // instead of each dimming the others' bright areas.
         let spotlights = list.filter { $0.kind == .spotlight }
         var spotlightsDrawn = false

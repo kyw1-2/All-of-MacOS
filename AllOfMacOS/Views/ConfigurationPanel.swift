@@ -228,7 +228,7 @@ struct TriggerConfigView: View {
                             }
                             .pickerStyle(.menu)
                         }
-                        // 3.4.33: the same shortcut can carry a single-press and
+                        // The same shortcut can carry a single-press and
                         // a double-press binding, as the UGREEN side buttons do.
                         AOMSettingRow("Press count",
                                       detail: trigger.pressCount >= 2

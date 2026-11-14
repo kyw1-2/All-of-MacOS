@@ -259,10 +259,10 @@ struct AOMStudioSettings: Codable, Equatable {
     /// 3.3.3 (C05): canvas background. When set it supersedes `backdrop` and
     /// `paddingFraction`; nil keeps the pre-3.3.3 rendering of old projects.
     var background: AOMVideoBackground?
-    /// 3.3.3 (C06): click shape, left/right colours, size and duration.
+    /// Click shape, left/right colours, size and duration.
     /// nil keeps the original blue ring.
     var clickStyle: AOMClickStyle?
-    /// 3.3.3 (C06): a halo under the pointer; nil is off.
+    /// A halo under the pointer; nil is off.
     var cursorHighlight: AOMCursorHighlight?
 
     var isActive: Bool {

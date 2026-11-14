@@ -189,7 +189,7 @@ enum CaptureMenu {
         root.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
         let menu = NSMenu(title: root.title)
         let coordinator = CaptureCoordinator.shared
-        // 3.3.3: titled groups, as in the status menu, rather than bare separators.
+        // Titled groups, as in the status menu, rather than bare separators.
         menu.addItem(.sectionHeader(title: "Windows & Displays"))
         menu.addItem(action("Capture Active Window", "macwindow.badge.plus",
                             shortcut: shortcuts.shortcut(for: .captureWindow)) { coordinator.captureActiveWindow() })

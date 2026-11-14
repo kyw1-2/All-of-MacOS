@@ -44,7 +44,7 @@ struct ShortcutsSettingsView: View {
                         }
                     }
                 }
-                // 3.4.0: hold ⌘ for the front app's shortcuts (KeyClu).
+                // Hold ⌘ for the front app's shortcuts (KeyClu).
                 PaletteShortcutSheetSettings()
             }
             .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)

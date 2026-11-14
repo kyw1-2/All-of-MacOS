@@ -656,7 +656,7 @@ private struct AppAudioMixerView: View {
                     .padding(AOMSpace.x3)
                 Divider()
                 EQSection(service: service)
-                // 3.3.3: per-output curves and the Audio Unit effect follow the equalizer.
+                // Per-output curves and the Audio Unit effect follow the equalizer.
                 Divider()
                 HeadphoneEQCard(style: .panel)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -781,7 +781,7 @@ struct MasterBoostControls: View {
                     .foregroundStyle(AOMColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            // 3.3.3: the output's preset, under its switch and off with it.
+            // The output's preset, under its switch and off with it.
             AudioBoostPresetPicker(bundleID: nil)
                 .disabled(!service.allAppsBoostEnabled)
         }

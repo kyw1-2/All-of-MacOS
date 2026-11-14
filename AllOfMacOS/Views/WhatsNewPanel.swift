@@ -133,7 +133,7 @@ final class WhatsNewPanelController {
 /// per item (module badge, title, optional pill, detail), and the actions.
 /// Floating chrome outside, opaque cards inside, as on every AOM page.
 private struct WhatsNewView: View {
-    /// 3.3.6: 380 → 460 wide, 500 → 600 tall at most, for 13 pt text.
+    /// 380 → 460 wide, 500 → 600 tall at most, for 13 pt text.
     static let width: CGFloat = 460
     /// The panel grows with its list up to this height, then the list scrolls.
     static let maxHeight: CGFloat = 600

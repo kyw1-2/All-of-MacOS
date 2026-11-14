@@ -47,7 +47,7 @@ struct ModernWindowSnappingView: View {
     @AppStorage(TrackpadUtilityGestures.dockQuitEnabledKey) private var dockPinchQuit = true
     @AppStorage(TrackpadUtilityGestures.dockGesturesKey) private var dockGestures = true
     @AppStorage(TrackpadUtilityGestures.menuBarGesturesKey) private var menuBarGestures = true
-    // 3.3.3 (swish-titlebar): multi-motion, tab gestures, the tooltip, native
+    // Multi-motion, tab gestures, the tooltip, native
     // tiling, the external display timeout and the ⌃⌥ center key. The Super
     // switch and the modifier roles live in `SwishModifierRolesSection`.
     @AppStorage(TitleBarWindowSnap.motionPauseKey) private var motionPause = TitleBarWindowSnap.motionPauseDefault
@@ -552,14 +552,14 @@ struct ModernWindowSnappingView: View {
                 Toggle("Dock gestures", isOn: $dockGestures)
             }
             .help("Two fingers on a Dock icon: tap and hold to activate the app, swipe sideways through its windows, down to minimize, up to unminimize (⇧ all), double tap to hide (⇧ the others), pinch out for ⌘N. With Tap to click on, a two-finger tap is also a right-click, so the Dock menu may open.")
-            // 3.3.3: Dock pinch twice and the app's menu, under their switch.
+            // Dock pinch twice and the app's menu, under their switch.
             SwishDockMenuBarExtraRows.DockRows()
             AOMSettingRow("Menu-bar gestures",
                           help: "Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.") {
                 Toggle("Menu-bar gestures", isOn: $menuBarGestures)
             }
             .help("Two fingers on the menu bar: tap and hold, then swipe for the previous or next app, or lift for the window switcher; double tap to unsnap (⇧ every display); swipe down to minimize all, up to bring them back (twice or ⇧ every display); ⌘ swipe moves snapped windows to the next display.")
-            // 3.3.3: scroll to top and the tap-hold-scroll switcher under
+            // Scroll to top and the tap-hold-scroll switcher under
             // their switch, then Mission Control gestures.
             SwishDockMenuBarExtraRows()
         }
@@ -853,11 +853,11 @@ struct ModernWindowSnappingView: View {
                                     PickerPreset(title: "1 s", value: 1), PickerPreset(title: "1.5 s", value: 1.5),
                                     PickerPreset(title: "2 s", value: 2), PickerPreset(title: "2.5 s", value: 2.5),
                                     PickerPreset(title: "3 s", value: 3)]
-    /// 3.3.3: 0 is off; the snap clamps anything else to 0.15…1 s.
+    /// 0 is off; the snap clamps anything else to 0.15…1 s.
     static let motionPausePresets = [PickerPreset(title: "Off", value: 0), PickerPreset(title: "0.15 s", value: 0.15),
                                      PickerPreset(title: "0.25 s", value: 0.25), PickerPreset(title: "0.5 s", value: 0.5),
                                      PickerPreset(title: "0.75 s", value: 0.75), PickerPreset(title: "1 s", value: 1)]
-    /// 3.3.3: the external display timeout, 0.5…10 s (0, re-snapping off, is
+    /// The external display timeout, 0.5…10 s (0, re-snapping off, is
     /// the switch beside it).
     static let resnapDelayPresets = [PickerPreset(title: "0.5 s", value: 0.5), PickerPreset(title: "1 s", value: 1),
                                      PickerPreset(title: "1.5 s", value: 1.5), PickerPreset(title: "2 s", value: 2),
@@ -994,7 +994,7 @@ struct ModernWindowSnappingView: View {
 /// them): the screen miniature, the group-name column and a layout's diagram,
 /// in the side column (`compact`) and full width.
 private enum TilingGalleryMetrics {
-    // 3.3.6: back to a miniature and diagrams you can read beside 13 pt
+    // Back to a miniature and diagrams you can read beside 13 pt
     // labels (3.3.5 had 60 / 76, 60 / 72, 30 / 28).
     static let previewHeightCompact: CGFloat = 88
     static let previewHeight: CGFloat = 112

@@ -20,10 +20,10 @@ struct AudioWorkspaceView: View {
             header
             notices
             devicesCard
-            // 3.4: the microphone mute section sits under the input device it
+            // The microphone mute section sits under the input device it
             // mutes (drawn by its module).
             MicMuteSection()
-            // 3.3.3: output-wide effects follow the devices (and the output
+            // Output-wide effects follow the devices (and the output
             // equalizer inside them), before the per-app list.
             HeadphoneEQCard()
             AudioUnitEffectCard()
@@ -380,7 +380,7 @@ private struct OutputDeviceRow: View {
                 service.allAppsBoostEnabled.toggle()
             }
             .disabled(!service.isSupported)
-            // 3.3.3: the output's Magic Boost preset, next to its switch like
+            // The output's Magic Boost preset, next to its switch like
             // every app row's; off while the output boost is off.
             AudioBoostPresetPicker(bundleID: nil, style: .menu)
                 .disabled(!service.isSupported || !service.allAppsBoostEnabled)
@@ -759,7 +759,7 @@ private struct ApplicationAudioRow: View {
                 MagicBoostButton(isOn: app.magicBoost, label: "Magic Boost for \(app.name)") {
                     service.toggleMagicBoost(bundleID: app.bundleID)
                 }
-                // 3.3.3: this app's Magic Boost preset, next to its switch.
+                // This app's Magic Boost preset, next to its switch.
                 AudioBoostPresetPicker(bundleID: app.bundleID, style: .menu)
                     .disabled(!app.magicBoost || app.bundleID.isEmpty)
                 DisclosureButton(expanded: $expanded, label: "Effects for \(app.name)")

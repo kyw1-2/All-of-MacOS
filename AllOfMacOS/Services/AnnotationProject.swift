@@ -50,7 +50,7 @@ struct AnnotationProject: Codable {
             [rect.origin.x, rect.origin.y, rect.width, rect.height].allSatisfy { $0.isFinite && abs($0) <= 1_000_000 }
                 && rect.width >= 0 && rect.height >= 0
         }
-        // 3.3.3: text styles, rotation and image layers are checked as well.
+        // Text styles, rotation and image layers are checked as well.
         func validAdditions(_ object: AnnotationObject) -> Bool {
             guard object.style.hasValidTextStyle else { return false }
             if let rotation = object.rotation, !(rotation.isFinite && abs(rotation) <= 100) { return false }

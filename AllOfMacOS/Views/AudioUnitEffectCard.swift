@@ -2,7 +2,7 @@ import AppKit
 import CoreAudioKit
 import SwiftUI
 
-/// 3.3.3 (parity S03): an Audio Unit effect on every output's master chain
+/// An Audio Unit effect on every output's master chain
 /// (after the apps are mixed, before Magic Boost and the limiter). A page
 /// section after Headphone EQ on the Audio page (`.section`), compact rows
 /// after `HeadphoneEQCard` in the mixer panel (`.panel`).

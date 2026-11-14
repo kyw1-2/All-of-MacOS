@@ -642,7 +642,7 @@ final class ClipboardIntelligence {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
         set {
             UserDefaults.standard.set(newValue, forKey: Self.enabledKey)
-            // 3.4.0: suggestions already on screen go when the feature does.
+            // Suggestions already on screen go when the feature does.
             if !newValue { withdrawLiveAnswerIfRefused() }
         }
     }

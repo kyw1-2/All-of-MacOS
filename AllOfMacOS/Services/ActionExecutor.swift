@@ -401,7 +401,7 @@ class ActionExecutor {
                 source: action.parameters.scriptContent ?? "", timeout: action.parameters.scriptTimeoutSeconds ?? 30) { code, output, timedOut in
                     ScriptActionResults.record(name: action.parameters.scriptResultVariable, output: output, code: code, timedOut: timedOut)
                     GestureLog.shared.logFromAnyThread(timedOut ? "Script timed out" : "Script completed (exit \(code))", level: code == 0 && !timedOut ? .action : .error)
-                    // 3.4.0: say when Apple Events were the reason (-1743, -600).
+                    // Say when Apple Events were the reason (-1743, -600).
                     if code != 0, !timedOut { AppleEventScripts.explain(kind: kind, output: output) }
                     completion(code == 0 && !timedOut)
                 }

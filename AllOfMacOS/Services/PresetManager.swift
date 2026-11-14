@@ -193,7 +193,7 @@ class PresetManager {
             "AOMGlobalSwipeMinVelocity", "AOMKeyboardLongPressMs", "AOMKeyboardQuickReleaseMaxMs",
             "AOMMouseLongPressMs", "AOMMouseQuickReleaseMaxMs", "AOMMouseMultiClickIntervalMs",
             "AOMMouseDragThresholdPx", "AOMForcePressEnabled", "AOMForcePressThreshold",
-            // 3.3.3: how far Force Touch pressure eases off before a stage can fire again.
+            // How far Force Touch pressure eases off before a stage can fire again.
             PressureStageTracker.hysteresisKey,
             "AOMHUDEnabled", "AOMReverseMouseWheel", "AOMLinearMouse", "AOMSmoothMouseWheel", "AOMUGREENThumbWheel", "AOMUGREENThumbWheelVolume", "AOMUGREENThumbWheelReversed",
             // Key remapping and the Hyper key (the remaps AOM owns at runtime are not settings).
@@ -411,7 +411,7 @@ class PresetManager {
                                           "AOMAudioBoostLevel_", "AOMAudioOverdrive_", "AOMAudioBalance_",
                                           "AOMAudioAppEQEnabled_", "AOMAudioAppEQGains_", "AOMAudioAppEQPreset_",
                                           "AOMAudioDeviceGain_", "AOMAudioOutputUnmute_", "AOMAudioInputUnmute_",
-                                          // 3.3.3: each app's Magic Boost preset.
+                                          // Each app's Magic Boost preset.
                                           "AOMAudioMagicBoostPreset_"]
     private static let backedUpKeySet = Set(userDefaultsKeys)
 

@@ -160,7 +160,7 @@ final class SecureInputHotKeys {
         }, types.count, &types, Unmanaged.passUnretained(self).toOpaque(), &handler)
         guard status == noErr else { return }
         refresh()
-        // 3.4.44: an app switch refreshes at once; the timer now only notices
+        // An app switch refreshes at once; the timer now only notices
         // secure input turning on inside the same app (a password field
         // taking focus), so it runs at 2 Hz instead of 4 Hz.
         activation = NSWorkspace.shared.notificationCenter.addObserver(

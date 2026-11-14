@@ -99,7 +99,7 @@ enum MissionControlWindows {
     // MARK: Live (bounded Accessibility)
 
     /// The processes that draw Mission Control: WindowManager (macOS 27), then the Dock.
-    /// 3.4.43: each lookup was two LaunchServices round trips on every idle
+    /// Each lookup was two LaunchServices round trips on every idle
     /// probe. The Dock and WindowManager live for the whole session; a pid
     /// that exits (a Dock restart) drops the cache at once, and the TTL picks
     /// up a process that started later.

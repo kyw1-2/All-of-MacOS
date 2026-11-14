@@ -521,12 +521,12 @@ enum SettingsCatalog {
             item("accentColor", .general, "Highlight color", "Accent for buttons and selections", ["색", "컬러", "accent"], AnyView(AccentColorRow())),
             item("hud", .general, "On-screen HUD", "Show feedback when actions run", ["hud", "오버레이", "알림"], AnyView(HubToggleRow(icon: "rectangle.on.rectangle", tint: .teal, title: "On-screen HUD", subtitle: "Show feedback when actions run", key: "AOMHUDEnabled", fallback: true))),
             item("hudOpacity", .general, "HUD background", "Background opacity", ["투명도", "opacity"], AnyView(HubSliderRow(icon: "circle.dashed", tint: .teal, title: "HUD background", subtitle: "", key: "AOMHUDBackgroundOpacity", fallback: 0.06, range: 0...0.3, step: 0.01, percent: true))),
-            // 3.4: per-app input sources (Input Source Pro parity).
+            // Per-app input sources (Input Source Pro parity).
             item("inputSourcesSwitch", .general, "Switch input sources by app", "Each app types in the input source you choose", ["input source", "입력 소스", "한영", "한/영", "한글", "영어", "korean", "english", "keyboard", "자판", "input source pro"], AnyView(InputSourcesSwitchRow())),
             item("inputSourcesRules", .general, "Apps and their input sources", "Terminal in English, KakaoTalk in Korean", ["input source", "입력 소스", "한영", "terminal", "터미널", "kakaotalk", "카카오톡", "app", "앱"], AnyView(InputSourcesRulesRows())),
             item("inputSourcesRemember", .general, "Remember in other apps", "Apps without a rule get back the input source they used last", ["remember", "기억", "input source", "입력 소스", "한영"], AnyView(InputSourcesRememberRow())),
             item("inputSourcesFallback", .general, "Other apps", "The input source for apps without a rule", ["default", "기본", "input source", "입력 소스", "한영"], AnyView(InputSourcesFallbackRow())),
-            // 3.4: link rules (Velja/Choosy): which browser opens which link, tracking parameters removed.
+            // Link rules (Velja/Choosy): which browser opens which link, tracking parameters removed.
             item("linkRules", .general, "Link rules", "Open links in the browser you choose and remove tracking parameters", ["link", "링크", "browser", "브라우저", "default browser", "기본 브라우저", "safari", "chrome", "utm", "fbclid", "tracking", "추적", "velja", "choosy", "router", "라우터"], AnyView(HubActionRow(icon: "arrow.triangle.branch", tint: .blue, title: "Link rules", subtitle: "Open links in the browser you choose, without tracking parameters") {
                 Button("Open…") { sheet.wrappedValue = .linkRules }
             })),

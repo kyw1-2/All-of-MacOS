@@ -959,7 +959,7 @@ enum ParityActions {
             default: value = "not autohide"
             }
             let script = "tell application \"System Events\" to tell dock preferences to set autohide to \(value)"
-            // 3.4.0: Apple Events failures explained, -600 asked once more.
+            // Apple Events failures explained, -600 asked once more.
             AppleEventScripts.run(script, action: "Dock hiding", timeout: 10, completion: completion)
         case .bluetoothDevice: bluetooth(p, completion)
         case .setWiFiPower:

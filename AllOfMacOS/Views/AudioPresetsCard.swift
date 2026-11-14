@@ -90,7 +90,7 @@ struct AudioBoostPresetPicker: View {
     }
 }
 
-/// 3.3.3 (parity S04): an EQ curve per output device, switched with the
+/// An EQ curve per output device, switched with the
 /// output, and the import of AutoEQ "ParametricEQ.txt" files the user
 /// chooses (AOM ships no measurement data). A page section after the
 /// System Devices card on the Audio page (`.section`), compact rows after

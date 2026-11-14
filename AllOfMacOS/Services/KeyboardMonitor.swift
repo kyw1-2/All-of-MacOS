@@ -228,7 +228,7 @@ class KeyboardMonitor: ObservableObject {
     private var pressApps: [UInt16: String] = [:]
     private var pressTimes: [UInt16: TimeInterval] = [:]
     private var pressSerial: [UInt16: UUID] = [:]
-    /// 3.4.32: single/double press discrimination (UGREEN side buttons, any
+    /// Single/double press discrimination (UGREEN side buttons, any
     /// shortcut that carries both a single-press and a double-press trigger).
     private(set) var doublePressGate = DoublePressGate()
     private var deferredSingles: [String: UUID] = [:]

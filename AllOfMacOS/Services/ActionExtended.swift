@@ -170,7 +170,7 @@ enum ExtendedActions {
         case .startScreenSaver: openSystemApp(["/System/Library/CoreServices/ScreenSaverEngine.app"], completion)
         case .sleepDisplay: runProcess("/usr/bin/pmset", ["displaysleepnow"], completion)
         case .emptyTrash:
-            // 3.4.0: Apple Events failures explained, -600 asked once more.
+            // Apple Events failures explained, -600 asked once more.
             AppleEventScripts.run("tell application \"Finder\" to empty trash", action: "Empty Trash", timeout: 60, completion: completion)
         case .logOut:
             AppleEventScripts.run("tell application \"loginwindow\" to «event aevtrlgo»", action: "Log Out", timeout: 15, completion: completion)

@@ -182,7 +182,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             GestureHUD.shared.start()
             AppActivationHistory.shared.start()
             TitleBarWindowSnap.shared.refreshEnabled()
-            // 3.3.3: a window a Dock gesture brings forward (tap and hold, the
+            // A window a Dock gesture brings forward (tap and hold, the
             // swipes, pinch out twice) is chained to the title-bar snap, so the
             // next title-bar gesture applies to it wherever the pointer is. True
             // means the snap took the window; the Dock then lets go of the touch.
@@ -264,7 +264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Action names follow the public screenshot-workflow terminology; the
     // namespace remains AOM-only to avoid hijacking another app's URLs.
-    // 3.4.0: web links arrive only after the user makes AOM the default
+    // Web links arrive only after the user makes AOM the default
     // browser (Settings › General › Link rules); the router passes each on
     // to a browser and never back to AOM.
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -627,7 +627,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let more = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
         more.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: nil)
         let moreMenu = NSMenu(title: "More")
-        // 3.4.13: secondary commands stay accessible, but never occupy the
+        // Secondary commands stay accessible, but never occupy the
         // main status menu. The productivity submenu is populated lazily when
         // opened, avoiding seven module queries on every menu-bar click.
         let clipboardTools = NSMenuItem(title: "Clipboard Tools", action: nil, keyEquivalent: "")

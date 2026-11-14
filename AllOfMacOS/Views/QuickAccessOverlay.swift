@@ -660,7 +660,7 @@ final class QuickAccessOverlayController {
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu(title: "Quick Access")
         menu.autoenablesItems = false
-        // 3.4: the card's two everyday actions lead its menu too (History's
+        // The card's two everyday actions lead its menu too (History's
         // menu starts the same way); CleanShot's block follows unchanged.
         let copy = QuickAccessMenuAction.item(isVideo ? "Copy File" : "Copy", symbol: "doc.on.doc") { [weak self] in
             guard let self else { return }

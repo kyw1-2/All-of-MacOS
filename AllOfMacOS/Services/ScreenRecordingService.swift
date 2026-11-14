@@ -35,7 +35,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     private var recordedScale: CGFloat = 1
     private var outputGIF = false
     private var recordsEditableCursor = false
-    /// 3.3.3: the pointer path is also kept for the cursor highlight.
+    /// The pointer path is also kept for the cursor highlight.
     private var recordsPointerPath = false
     /// ScreenCaptureKit draws the system pointer into this take.
     private var capturesSystemPointer = false
@@ -806,7 +806,7 @@ final class ScreenRecordingService: NSObject, ObservableObject, SCStreamOutput, 
     }
 
     func offerInterruptedRecordingRecovery() {
-        // 3.3.3: undo what an interrupted take changed in the system first.
+        // Undo what an interrupted take changed in the system first.
         if !isRecording, !isStarting {
             RecordingDesktopIcons.shared.restore()
             RecordingFocus.recoverAfterUnexpectedExit()

@@ -169,7 +169,7 @@ private final class AnnotationEditorWindow: NSWindowController, NSWindowDelegate
     init(capture: CaptureHistoryEntry, url: URL?, document: AnnotationDocument? = nil, projectURL: URL? = nil, onApply: ((CGImage) -> Void)? = nil) {
         self.capture = capture
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
-        // 3.4: 1120 pt fits the whole tool bar (tools, Undo/Redo and the output
+        // 1120 pt fits the whole tool bar (tools, Undo/Redo and the output
         // actions) without scrolling, on screens wide enough for it.
         let width = min(screen.width - 40, min(1280, max(1120, capture.pointSize.width + 48)))
         let height = min(screen.height - 60, min(900, max(640, capture.pointSize.height + 100)))
@@ -787,7 +787,7 @@ private struct AnnotationEditorView: View {
             .accessibilityLabel("Text format")
             .popover(isPresented: $textFormatPopover, arrowEdge: .bottom) { textFormatOptions }
             if let id = selectedID, let object = document.objects.first(where: { $0.id == id }), object.kind == .text {
-                // 3.3.3: vertical axis, so ⌥↩ adds a line (the box grows to fit).
+                // Vertical axis, so ⌥↩ adds a line (the box grows to fit).
                 TextField("Text", text: Binding(
                     get: { object.text },
                     set: { newValue in
@@ -1550,7 +1550,7 @@ private struct AnnotationEditorView: View {
                                          rect: CGRect(x: min(point.x, current.x), y: min(point.y, current.y),
                                                       width: abs(current.x - point.x), height: abs(current.y - point.y)),
                                          style: style,
-                                         // 3.3.3: lines and arrows keep the drag direction.
+                                         // Lines and arrows keep the drag direction.
                                          points: tool == .line || tool == .arrow ? [point, current] : [])
             }
             .onEnded { value in
@@ -1591,7 +1591,7 @@ private struct AnnotationEditorView: View {
                                 y: updated.rect.minY + (point.y - original.rect.minY) * updated.rect.height / max(1, original.rect.height))
                     }
                 }
-                // 3.3.3: a text box's height follows its wrapped lines.
+                // A text box's height follows its wrapped lines.
                 document.update(fittedText(updated))
             }
             .onEnded { _ in resizeOriginal = nil }
@@ -2243,7 +2243,7 @@ private struct AnnotationEditorView: View {
     @discardableResult
     private func pasteObjects() -> Bool {
         guard let objects = AnnotationObjectClipboard.read() else {
-            // 3.3.3: an image (or image file) on the clipboard pastes as a free layer.
+            // An image (or image file) on the clipboard pastes as a free layer.
             if let entry = AnnotationEditorController.entryFromPasteboard(.general) {
                 insertImageLayer(entry.image, imageScale: entry.scale)
                 return true
@@ -2557,7 +2557,7 @@ private struct DraftOverlay: View {
                     path.addLine(to: end.scaled(by: fit))
                 }.stroke(color, lineWidth: object.style.thickness * fit)
             case .arrow:
-                // 3.3.3: from where the drag started to where it is, like the export.
+                // From where the drag started to where it is, like the export.
                 Path { path in
                     let (start, end) = object.lineEndpoints
                     path.move(to: start.scaled(by: fit))
