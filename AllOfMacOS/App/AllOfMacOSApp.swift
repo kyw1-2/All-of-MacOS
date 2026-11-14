@@ -208,91 +208,6 @@ struct AllOfMacOSApp: App {
     }
 }
 
-// MARK: - Apple System Settings Components
-
-/// A titled group of settings rows: the same inset card and heading as the
-/// Settings window's own groups, so every pane and sheet reads alike.
-struct AppleSettingsGroup<Content: View>: View {
-    let title: String?
-    @ViewBuilder let content: Content
-
-    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let title {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AOMTheme.textSecondary)
-                    .padding(.leading, 4)
-                    .accessibilityAddTraits(.isHeader)
-            }
-            VStack(spacing: 0) {
-                content
-            }
-            .aomCardStyle(.paper, radius: AOMRadius.card, padding: 0, elevated: false)
-        }
-    }
-}
-
-/// One settings row: a System Settings squircle, title over an optional
-/// detail line, and a trailing control.
-struct AppleSettingsRow<Trailing: View>: View {
-    let icon: String
-    let iconColor: Color
-    let title: String
-    var subtitle: String? = nil
-    var showDivider: Bool = true
-    @ViewBuilder let trailing: Trailing
-
-    init(icon: String, iconColor: Color, title: String, subtitle: String? = nil, showDivider: Bool = true, @ViewBuilder trailing: () -> Trailing) {
-        self.icon = icon
-        self.iconColor = iconColor
-        self.title = title
-        self.subtitle = subtitle
-        self.showDivider = showDivider
-        self.trailing = trailing()
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: AOMSpace.s) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(iconColor.gradient, in: RoundedRectangle(cornerRadius: 5.5, style: .continuous))
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(AOMType.body)
-                        .foregroundStyle(AOMTheme.text)
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(AOMType.caption)
-                            .foregroundStyle(AOMTheme.textSecondary)
-                    }
-                }
-
-                Spacer(minLength: AOMSpace.s)
-
-                trailing
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .frame(minHeight: 44)
-
-            if showDivider {
-                AOMDivider().padding(.leading, 48)
-            }
-        }
-    }
-}
-
 struct SettingsView: View {
     var body: some View {
         SettingsHubView()
@@ -306,7 +221,8 @@ struct BackupSettingsView: View {
     @State private var maxBackups = Double(PresetManager.maxBackups)
     @State private var backups: [(date: Date, size: Int64, url: URL)] = []
 
-    private let dateFormatter: DateFormatter = {
+    /// Built once, not on every render of the sheet.
+    private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
@@ -314,55 +230,31 @@ struct BackupSettingsView: View {
     }()
 
     var body: some View {
+        // The same sections and rows as the other Settings sheets
+        // (Permissions, Shortcuts): monochrome symbols, no coloured squircles.
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 18) {
-                AppleSettingsGroup("Automatic Backups") {
-                    AppleSettingsRow(
-                        icon: "clock.arrow.circlepath",
-                        iconColor: .orange,
-                        title: "Enable Automatic Backups",
-                        subtitle: "Keeps a copy of your automations, profiles and settings each time they change. Restore one below.",
-                        showDivider: true
-                    ) {
-                        Toggle("", isOn: $backupsEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .onChange(of: backupsEnabled) { _, newValue in
-                                PresetManager.backupsEnabled = newValue
-                            }
-                    }
-
-                    AppleSettingsRow(
-                        icon: "archivebox",
-                        iconColor: .brown,
-                        title: "Max Backups to Retain",
-                        subtitle: "Older snapshots are automatically pruned",
-                        showDivider: true
-                    ) {
-                        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
+                AOMSection("Automatic backups") {
+                    AOMToggleRow("Enable automatic backups",
+                                 detail: "A copy of your automations, profiles and settings each time they change",
+                                 symbol: "clock.arrow.circlepath", isOn: $backupsEnabled)
+                    AOMSettingRow("Backups to keep", detail: "Older snapshots are removed automatically",
+                                  symbol: "archivebox") {
+                        HStack(spacing: AOMSpace.x2) {
                             Slider(value: $maxBackups, in: 1...20, step: 1)
-                                .frame(width: 120)
+                                .frame(width: AOMSize.quickActionMin - AOMSpace.x3)
                                 .controlSize(.small)
-                                .onChange(of: maxBackups) { _, newValue in
-                                    PresetManager.maxBackups = Int(newValue)
-                                }
+                                .accessibilityLabel("Backups to keep")
                             Text("\(Int(maxBackups))")
-                                .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: 20, alignment: .trailing)
+                                .font(AOMFont.metric)
+                                .foregroundStyle(AOMColor.textSecondary)
+                                .frame(minWidth: AOMIcon.row, alignment: .trailing)
                         }
                     }
-
-                    AppleSettingsRow(
-                        icon: "folder",
-                        iconColor: .yellow,
-                        title: "Backup Directory",
-                        subtitle: customPath.isEmpty ? "Default (~/.allofmacos_backups)" : customPath,
-                        showDivider: false
-                    ) {
-                        HStack(spacing: 6) {
-                            Button("Browse…") {
+                    AOMSettingRow("Backup folder", detail: customPath.isEmpty ? "Default (~/.allofmacos_backups)" : customPath,
+                                  symbol: "folder") {
+                        HStack(spacing: AOMSpace.x2) {
+                            Button("Choose…") {
                                 let panel = NSOpenPanel()
                                 panel.canChooseDirectories = true
                                 panel.canChooseFiles = false
@@ -372,73 +264,61 @@ struct BackupSettingsView: View {
                                     UserDefaults.standard.set(url.path, forKey: "AOMBackupPath")
                                 }
                             }
-                            .controlSize(.small)
-
                             if !customPath.isEmpty {
                                 Button("Reset") {
                                     customPath = ""
                                     UserDefaults.standard.removeObject(forKey: "AOMBackupPath")
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                .onChange(of: backupsEnabled) { _, newValue in PresetManager.backupsEnabled = newValue }
+                .onChange(of: maxBackups) { _, newValue in PresetManager.maxBackups = Int(newValue) }
+
+                // What a backup holds, stated where backups are restored
+                // (audit 2026-10-28 F07).
+                Text("Each backup holds your automations, app-specific sets, activation groups and snap layouts, plus the settings of the same moment: gestures and their timing, title-bar snap, key remapping, pausing rules, shortcuts, capture, text capture and recording, clipboard preferences, audio and appearance. Restoring them puts back exactly those settings, including the ones that were still at their defaults. Not included: clipboard history, captures and recordings, the backup and capture folders, the backup options, whether automation is paused, and AI tool or screen-reading access.")
+                    .font(AOMFont.callout)
+                    .foregroundStyle(AOMColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, AOMSpace.x0_5)
+
+                AOMSection("Existing backups", detail: backups.isEmpty ? nil : "\(backups.count)") {
+                    Button {
+                        NSWorkspace.shared.open(PresetManager.backupDirectory)
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                    .controlSize(.small)
+                    .help("Open the backup folder in Finder")
+                } content: {
+                    if backups.isEmpty {
+                        AOMInlineEmpty(symbol: "doc.badge.clock", message: "No backups found yet.")
+                    } else {
+                        ForEach(Array(backups.enumerated()), id: \.offset) { _, backup in
+                            AOMSettingRow(Self.dateFormatter.string(from: backup.date), detail: backupSubtitle(backup),
+                                          symbol: "doc.badge.clock") {
+                                HStack(spacing: AOMSpace.x2) {
+                                    Button("Restore…") { confirmRestore(backup.url, date: backup.date) }
+                                        .accessibilityLabel("Restore the backup from \(Self.dateFormatter.string(from: backup.date))")
+                                    Button("Reveal") {
+                                        NSWorkspace.shared.selectFile(backup.url.path, inFileViewerRootedAtPath: "")
+                                    }
                                 }
                                 .controlSize(.small)
                             }
                         }
                     }
                 }
-
-                // What a backup holds, stated where backups are restored
-                // (audit 2026-10-28 F07).
-                Text("Each backup holds your automations, app-specific sets, activation groups and snap layouts, plus the settings of the same moment: gestures and their timing, title-bar snap, key remapping, pausing rules, shortcuts, capture, text capture and recording, clipboard preferences, audio and appearance. Restoring them puts back exactly those settings, including the ones that were still at their defaults. Not included: clipboard history, captures and recordings, the backup and capture folders, the backup options, whether automation is paused, and AI tool or screen-reading access.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
-
-                AppleSettingsGroup("Existing Backups") {
-                    if backups.isEmpty {
-                        HStack {
-                            Text("No backups found yet")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                    } else {
-                        ForEach(Array(backups.enumerated()), id: \.offset) { index, backup in
-                            AppleSettingsRow(
-                                icon: "doc.badge.clock",
-                                iconColor: .blue,
-                                title: dateFormatter.string(from: backup.date),
-                                subtitle: backupSubtitle(backup),
-                                showDivider: index < backups.count - 1
-                            ) {
-                                HStack(spacing: 6) {
-                                    Button("Restore…") { confirmRestore(backup.url, date: backup.date) }
-                                        .controlSize(.small)
-                                        .accessibilityLabel("Restore the backup from \(dateFormatter.string(from: backup.date))")
-                                    Button("Reveal") {
-                                        NSWorkspace.shared.selectFile(backup.url.path, inFileViewerRootedAtPath: "")
-                                    }
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                HStack {
-                    Spacer()
-                    Button {
-                        NSWorkspace.shared.open(PresetManager.backupDirectory)
-                    } label: {
-                        Label("Open Backup Folder in Finder", systemImage: "folder")
-                    }
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 4)
             }
-            .padding(20)
+            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
+            .padding(.horizontal, AOMSpace.pageMargin)
+            .padding(.top, AOMSpace.x3)
+            .padding(.bottom, AOMSpace.x6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { backups = PresetManager.listBackups() }
     }
@@ -463,7 +343,7 @@ struct BackupSettingsView: View {
         // Offered only when the settings file was actually read.
         let hasSettings = preview.hasSettings
         let alert = NSAlert()
-        alert.messageText = "Restore the backup from \(dateFormatter.string(from: date))?"
+        alert.messageText = "Restore the backup from \(Self.dateFormatter.string(from: date))?"
         alert.informativeText = preview.summary + "\n\n"
             + "It replaces your current automations, app profiles and snap layouts"
             + (hasSettings ? ", and optionally your settings" : "")
