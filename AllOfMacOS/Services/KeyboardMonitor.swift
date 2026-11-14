@@ -507,7 +507,17 @@ class KeyboardMonitor: ObservableObject {
             }
             return true
         }
-        if pressed[keyCode] != nil { return true } // Native autorepeat must not create additional macros.
+        if let stale = pressed[keyCode] {
+            // Native autorepeat of a swallowed press must not create more macros.
+            if isRepeat { return true }
+            // A fresh press while the key still counts as down: its key-up never
+            // reached the tap (Secure Input took it, or the tap was off). Treating
+            // this press as a repeat swallowed an ordinary keystroke, so drop the
+            // stale press and handle this one normally.
+            pressed[keyCode] = nil; pressApps[keyCode] = nil
+            pressTimes[keyCode] = nil; pressSerial[keyCode] = nil
+            for trigger in stale { ActionExecutor.releaseHold(trigger.id) }
+        }
         // Nor reach the app: the autorepeat of a swallowed press that was let
         // go early (an app change, a disabled tap) stays AOM's until the key
         // goes up or is pressed afresh (3.4.0 audit: ⌥Space opening Terminal,
