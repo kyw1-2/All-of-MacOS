@@ -1,3 +1,17 @@
+## [3.5.0] - 2026-11-14
+
+### Changed
+- **System Tools has nine sections and 62 tools** (127 tiles before): Quick Toggles, Display, Power & Session, Apps, Storage, Network, Homebrew, Fix It and Tweaks, under a live This Mac strip and your Favorites. Overlapping tiles were merged, for example Activity (top CPU and memory), Free Up Space, Network Info, Ports, VPN and one Homebrew tile. Old ids in favorites still open the merged tool. See `docs/system-tools-3.5.0.md`.
+- The PDF, image and video conversion, QR, rename, file-lock and hash tools moved to a Tools menu on the Files page.
+- Automation lists automations by name only. Counts, banners and ⓘ buttons are gone, and every tooltip is one short sentence. One Browse Actions sheet in the ⋯ menu replaces All Actions and the Add Action sheet. Floating Menus & Widgets also moved into the ⋯ menu.
+
+### Removed
+- Tiles that duplicate the Sound page or a one-click macOS control (mute, volumes, devices, Reduce Motion/Transparency, About This Mac, settings panes and similar), weather, Focus, wallpaper, `.DS_Store` cleanup, lock and hide files, Terminal here and free memory.
+- Unreferenced helpers, stale design-token aliases, a second toast presenter and release-history comments. App sources shrank from 150,383 to 148,624 lines (−1.2%). The spec aimed for 5–10%. The rest of the bulk is live code in the audio engine, gestures, window snapping and System Tools, so it stays.
+
+### Validation
+- 89 tests passed (79 existing, 10 new: catalog migration and section coverage, Automation copy length). Still needs a live check: the Tweaks rows, the Activity sort picker, the Files Tools menu and Browse Actions.
+
 ## [3.4.44] - 2026-11-14
 
 ### Fixed
