@@ -48,7 +48,7 @@ struct PermissionsSettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear(perform: refresh)
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()) { _ in
             refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

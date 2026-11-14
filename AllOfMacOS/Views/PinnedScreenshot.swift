@@ -237,6 +237,9 @@ private final class PinnedWindow: NSPanel {
             let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateHoverFade() }
             }
+            // A locked pin can stay up all day; let this 10 Hz hover poll
+            // (click-through windows get no tracking events) coalesce.
+            timer.tolerance = 0.02
             RunLoop.main.add(timer, forMode: .common)
             hoverFadeTimer = timer
             GestureHUD.shared.show(title: "Pin Locked", detail: "Hover the pin and press ⌘T to unlock")

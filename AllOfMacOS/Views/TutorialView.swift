@@ -59,7 +59,7 @@ struct TutorialOverlayView: View {
         }
         .aomAnimation(.standard, value: page)
         .onAppear(perform: refresh)
-        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 2, tolerance: 0.4, on: .main, in: .common).autoconnect()) { _ in
             if page == 1 { refresh() }
         }
         .onExitCommand { finish() }

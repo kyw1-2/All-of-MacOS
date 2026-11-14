@@ -211,6 +211,8 @@ final class SystemTriggerMonitor {
         // 20s is frequent enough that a minute boundary is never missed, and
         // cheap enough to leave running for a whole session.
         let timer = Timer(timeInterval: 20, repeats: true) { [weak self] _ in self?.tick() }
+        // Ticks stay at most 22 s apart, still well inside every minute.
+        timer.tolerance = 2
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         tick()

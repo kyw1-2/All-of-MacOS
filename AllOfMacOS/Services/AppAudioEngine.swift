@@ -358,6 +358,9 @@ final class AppAudioEngine {
             guard !self.sessions.isEmpty || now - self.lastSyncAt >= 3 else { return }
             self.scheduleSync()
         }
+        // A backstop behind the CoreAudio listeners: 10 % slack lets it
+        // coalesce with other wake-ups while App Audio runs all day.
+        timer?.tolerance = 0.1
         if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 

@@ -250,6 +250,9 @@ final class MicMuteController: ObservableObject {
                 if let transition = self.tracker.poll(flags: NSEvent.modifierFlags) { self.handle(transition) }
             }
         }
+        // A missed release is a backstop, not the normal path (the
+        // flagsChanged monitors are), so it may fire up to 50 ms late.
+        timer.tolerance = 0.05
         RunLoop.main.add(timer, forMode: .common)
         holdWatchdog = timer
     }
