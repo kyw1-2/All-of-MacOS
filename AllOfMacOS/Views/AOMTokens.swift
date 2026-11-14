@@ -220,11 +220,6 @@ enum AOMColor {
     /// Every page background: architectural slate canvas (#F0F2F7 in light, #0E1015 in dark).
     static let canvas = Color.aomDynamic(light: NSColor(srgbRed: 0.941, green: 0.949, blue: 0.969, alpha: 1),
                                          dark: NSColor(srgbRed: 0.055, green: 0.063, blue: 0.082, alpha: 1))
-    static let canvasNSColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor(srgbRed: 0.055, green: 0.063, blue: 0.082, alpha: 1)
-            : NSColor(srgbRed: 0.941, green: 0.949, blue: 0.969, alpha: 1)
-    }
     /// Cards, tiles, section groups: crisp elevated white (#FFFFFF) in light mode,
     /// machined graphite (#181B22) in dark mode.
     static let surface = Color.aomDynamic(light: .white,
