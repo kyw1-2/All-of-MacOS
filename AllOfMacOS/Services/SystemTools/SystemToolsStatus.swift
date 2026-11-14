@@ -248,7 +248,6 @@ final class SystemStatusMonitor: ObservableObject {
         var address: SystemStatus.InterfaceAddress?
         /// The Wi-Fi network name; nil without Location permission or Wi-Fi.
         var wifiSSID: String?
-        var volumes: [DiskTools.Volume] = []
     }
 
     @Published private(set) var snapshot = Snapshot()
@@ -261,7 +260,6 @@ final class SystemStatusMonitor: ObservableObject {
     var thermal: ProcessInfo.ThermalState { snapshot.thermal }
     var address: SystemStatus.InterfaceAddress? { snapshot.address }
     var wifiSSID: String? { snapshot.wifiSSID }
-    var volumes: [DiskTools.Volume] { snapshot.volumes }
 
     func publish(_ next: Snapshot) {
         if next != snapshot { snapshot = next }
@@ -354,7 +352,6 @@ final class SystemStatusMonitor: ObservableObject {
             next.hasBattery = next.battery != nil
             next.address = SystemStatus.preferredAddress(SystemStatus.ipv4Addresses())
             next.wifiSSID = NetworkTools.wifiDetails()?.ssid
-            next.volumes = DiskTools.volumes()
         }
         return Reading(snapshot: next, ticks: ticks)
     }
