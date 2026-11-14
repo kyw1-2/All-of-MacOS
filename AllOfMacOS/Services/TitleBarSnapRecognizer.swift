@@ -138,28 +138,25 @@ enum TrackpadReadiness {
     }
 }
 
-/// Classifies a two-finger swipe from raw contact frames — and, since 3.3.2,
-/// Swish's other title-bar gestures: a pinch in or out (only from a touch
-/// that has not engaged a swipe, and never turning into one), a tap (the
-/// service pairs taps into a double tap), and tap-and-hold (fingers resting
-/// `holdTime` before the swipe mark its strokes `held`). It is fed from one
-/// thread only, allocates nothing per frame and reports state transitions
-/// through closures (which the service hops to the main thread).
+/// Classifies a two-finger swipe from raw contact frames, plus the other
+/// title-bar gestures: a pinch in or out (only from a touch that has not engaged a
+/// swipe, and never turning into one), a tap (the service pairs taps into a
+/// double tap), and tap-and-hold (fingers resting `holdTime` before the swipe
+/// mark its strokes `held`). It is fed from one thread only, allocates nothing
+/// per frame and reports state transitions through closures (which the service
+/// hops to the main thread).
 ///
 /// Only lifting the fingers commits: going from two contacts to none or one.
-/// Activity is measured in contact frames: while two fingers stay on the
-/// pad the gesture stays alive, and the recognizer tells the service so
-/// (`onActive`). Until 3.3.0 only a zone change refreshed the service's 1.2 s
-/// timer, so holding one preview hid it and the later lift had nothing to
-/// apply (audit 2026-10-28 F05). Since 3.3.2 fingers held perfectly still for
-/// `holdCancelTime` (Swish's 2 s) cancel on purpose, with the preview fading
-/// over the last second; any movement keeps the gesture.
+/// Activity is measured in contact frames: while two fingers stay on the pad
+/// the gesture stays alive, and the recognizer tells the service so
+/// (`onActive`). Fingers held perfectly still for `holdCancelTime` (Swish's
+/// 2 s) cancel on purpose, with the preview fading over the last second; any
+/// movement keeps the gesture.
 ///
 /// Everything else that ends a gesture cancels it, and a cancelled gesture
 /// stays spent until the fingers lift, so its remains can never start a new
 /// snap:
-/// - a third finger (the start of Mission Control or a three-finger trigger;
-///   until 3.3.0 this committed the snap);
+/// - a third finger (the start of Mission Control or a three-finger trigger);
 /// - a gap of more than `frameGap` between frames (sleep and wake, a device
 ///   reset, a lost lift frame), so a stale start position cannot turn the
 ///   next touch into an instant swipe;
