@@ -26,7 +26,6 @@ protocol FocusSystem: AnyObject {
     // Keep awake
     func beginKeepAwake(minutes: Int) -> IOPMAssertionID?
     func endKeepAwake(_ id: IOPMAssertionID)
-    var isKeepAwakeActive: Bool { get }
     // Feedback
     func playSound(_ name: String)
     func showHUD(symbol: String, title: String, detail: String?, seconds: TimeInterval)
@@ -38,7 +37,6 @@ protocol FocusSystem: AnyObject {
     var pausedApps: Set<String> { get }
     // Input
     var secondsSinceLastInput: TimeInterval { get }
-    var isSecureInputOn: Bool { get }
 }
 
 @MainActor
@@ -120,8 +118,6 @@ final class FocusLiveSystem: FocusSystem {
         service.stop()
     }
 
-    var isKeepAwakeActive: Bool { KeepAwakeService.shared.isActive }
-
     // MARK: Feedback
 
     func playSound(_ name: String) {
@@ -150,5 +146,4 @@ final class FocusLiveSystem: FocusSystem {
     // MARK: Input
 
     var secondsSinceLastInput: TimeInterval { FocusSystemProbes.secondsSinceLastInput() }
-    var isSecureInputOn: Bool { IsSecureEventInputEnabled() }
 }
