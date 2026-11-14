@@ -65,6 +65,20 @@ struct AOMPage<Content: View>: View {
     }
 }
 
+/// The content column of a Settings sheet (Permissions, Shortcuts,
+/// Backups): leading-aligned at `AOMSize.settingsColumn` with the page
+/// margins, so switching sheets never moves the panes. Apply inside the
+/// sheet's scroll view.
+extension View {
+    func aomSettingsSheetContent() -> some View {
+        frame(maxWidth: AOMSize.settingsColumn, alignment: .leading)
+            .padding(.horizontal, AOMSpace.pageMargin)
+            .padding(.top, AOMSpace.x3)
+            .padding(.bottom, AOMSpace.x6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - Page header
 
 /// A short status: words plus a tone (and optionally a glyph).

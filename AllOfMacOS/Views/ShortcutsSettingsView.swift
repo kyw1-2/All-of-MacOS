@@ -47,11 +47,7 @@ struct ShortcutsSettingsView: View {
                 // Hold ⌘ for the front app's shortcuts (KeyClu).
                 PaletteShortcutSheetSettings()
             }
-            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
-            .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x6)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .aomSettingsSheetContent()
         }
         // Isolated previews only (`--aom-preview-scroll-bottom`); nil otherwise.
         .defaultScrollAnchor(PreviewScrollAnchor.current)

@@ -86,6 +86,10 @@ enum AOMSize {
     static let editorMinimum: CGFloat = 440
     /// Readable line length for editors and forms.
     static let readableWidth: CGFloat = 760
+    /// The content column of the Settings window and its sheets: the
+    /// readable width less the page margins on both sides, so a pane and a
+    /// sheet at their minimum width (`readableWidth`) show the same column.
+    static let settingsColumn: CGFloat = readableWidth - AOMSpace.pageMargin * 2
     /// Readable text (paragraphs, help popovers stay well under this).
     static let readableText: CGFloat = 640
     /// Dashboards and grids fill the detail column up to this, centred beyond.

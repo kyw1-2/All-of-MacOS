@@ -240,16 +240,13 @@ struct BackupSettingsView: View {
                                  symbol: "clock.arrow.circlepath", isOn: $backupsEnabled)
                     AOMSettingRow("Backups to keep", detail: "Older snapshots are removed automatically",
                                   symbol: "archivebox") {
-                        HStack(spacing: AOMSpace.x2) {
-                            Slider(value: $maxBackups, in: 1...20, step: 1)
-                                .frame(width: AOMSize.quickActionMin - AOMSpace.x3)
-                                .controlSize(.small)
-                                .accessibilityLabel("Backups to keep")
-                            Text("\(Int(maxBackups))")
-                                .font(AOMFont.metric)
-                                .foregroundStyle(AOMColor.textSecondary)
-                                .frame(minWidth: AOMIcon.row, alignment: .trailing)
-                        }
+                        // The shared row slider (track and value widths of
+                        // every settings slider). Twenty steps would draw a
+                        // dotted rule of ticks, so it slides freely and the
+                        // binding rounds, as Settings' own sliders do.
+                        AOMRowSlider("Backups to keep", value: Binding(
+                            get: { maxBackups },
+                            set: { maxBackups = $0.rounded() }), in: 1...20, format: { "\(Int($0))" })
                     }
                     AOMSettingRow("Backup folder", detail: customPath.isEmpty ? "Default (~/.allofmacos_backups)" : customPath,
                                   symbol: "folder") {
@@ -271,7 +268,6 @@ struct BackupSettingsView: View {
                                 }
                             }
                         }
-                        .controlSize(.small)
                     }
                 }
                 .onChange(of: backupsEnabled) { _, newValue in PresetManager.backupsEnabled = newValue }
@@ -292,7 +288,6 @@ struct BackupSettingsView: View {
                     } label: {
                         Label("Show in Finder", systemImage: "folder")
                     }
-                    .controlSize(.small)
                     .help("Open the backup folder in Finder")
                 } content: {
                     if backups.isEmpty {
@@ -308,17 +303,12 @@ struct BackupSettingsView: View {
                                         NSWorkspace.shared.selectFile(backup.url.path, inFileViewerRootedAtPath: "")
                                     }
                                 }
-                                .controlSize(.small)
                             }
                         }
                     }
                 }
             }
-            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
-            .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x6)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .aomSettingsSheetContent()
         }
         .onAppear { backups = PresetManager.listBackups() }
     }

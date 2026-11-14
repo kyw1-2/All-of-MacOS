@@ -41,11 +41,7 @@ struct PermissionsSettingsView: View {
                     }
                 }
             }
-            .frame(maxWidth: AOMSize.readableWidth - AOMSpace.pageMargin * 2, alignment: .leading)
-            .padding(.horizontal, AOMSpace.pageMargin)
-            .padding(.top, AOMSpace.x3)
-            .padding(.bottom, AOMSpace.x6)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .aomSettingsSheetContent()
         }
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 5, tolerance: 1, on: .main, in: .common).autoconnect()) { _ in

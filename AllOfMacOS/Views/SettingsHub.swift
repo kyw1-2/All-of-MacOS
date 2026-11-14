@@ -875,12 +875,12 @@ struct SettingsHubView: View {
                 }
                 // One leading-aligned column, as the Shortcuts and Permissions
                 // panes, so switching panes never moves the cards.
-                .frame(maxWidth: SettingsHubMetrics.column, alignment: .leading)
+                .frame(maxWidth: AOMSize.settingsColumn, alignment: .leading)
                 .padding(.horizontal, AOMSpace.pageMargin)
                 .padding(.top, AOMSpace.x4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 footer
-                    .frame(maxWidth: SettingsHubMetrics.column, alignment: .leading)
+                    .frame(maxWidth: AOMSize.settingsColumn, alignment: .leading)
                     .padding(.horizontal, AOMSpace.pageMargin)
                     .padding(.bottom, AOMSpace.x6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -985,9 +985,6 @@ struct SettingsSectionGroup: Identifiable {
 
 /// Settings window sizes the shared scale does not name.
 private enum SettingsHubMetrics {
-    /// The readable column every pane uses (the Shortcuts and Permissions
-    /// panes compute the same width).
-    static let column = AOMSize.readableWidth - AOMSpace.pageMargin * 2
     static let windowMinWidth: CGFloat = 800
     static let windowIdealWidth: CGFloat = 920
     static let windowMinHeight: CGFloat = 580
