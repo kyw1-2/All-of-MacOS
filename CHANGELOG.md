@@ -1,3 +1,17 @@
+## [3.7.0] - 2026-11-14
+
+### Changed
+- **A quieter main window.** The coloured gradient squircles are gone from the sidebar, Workspace tiles, quick actions, page headers and System Tools. Icons are monochrome SF Symbols, as in Finder, Mail and System Settings, and colour now marks only interaction (the accent) and status (green, orange, red).
+- The sidebar uses outline symbols in one column, and its status words ("Off", "Paused", "Rec") are plain text instead of pills. The "Active" pill dock at its bottom is gone: Pause AOM is in the Workspace header, the menu bar extra and Controls › Pause AOM; Diagnostics Console and Touch Visualizer are in the Window menu; Settings is ⌘,.
+- Pages sit on a neutral grey canvas instead of a blue-tinted one, in light and dark mode.
+- Workspace: a status dot replaces the green check badge, the setup card loses its sparkle and tint, suggestions are no longer yellow, and "Power utilities" is now **Utilities**, one card of rows instead of eight coloured tiles.
+
+### Improved
+- Removed unused code paths and built formatters once instead of on every render or poll (capture history dates, This Mac memory, the Focus countdown). The Workspace header no longer redraws when a toast appears.
+
+### Validation
+- 100 tests passed. Workspace, Automation, Window Tiling, Capture, Clipboard, Audio, System Tools and Insights were reviewed in an isolated preview build, Workspace in light and dark mode.
+
 ## [3.6.2] - 2026-11-14
 
 ### Fixed
