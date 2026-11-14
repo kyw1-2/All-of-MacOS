@@ -1,3 +1,23 @@
+## [3.8.0] - 2026-11-14
+
+### Changed
+- **Liquid Glass main window.** The window sits on a blur of the desktop, and pages float on it in frosted, edgeless panes with larger rounded corners. The awkward hairline borders around cards, tips, notices and pills are gone.
+- **Workspace** opens with a glass header showing the status in large type. The module tiles are now rows, grouped in one pane per section, and quick actions are round glass buttons like Control Center.
+- Page headers are a bold title and one line of context, with no icon badge. Window Tiling's four link cards are now capsule buttons. System Tools commands are rows in one pane per section, and Capture's mode buttons use the round glass style.
+
+### Fixed
+- **The main window stuttered when switching pages.** Measured on 3.7.0, each switch stalled the main thread for 0.3–1.5 s, and Audio froze scrolling for up to 1.9 s after it opened. Causes and fixes:
+  - Audio read and wrote the alert volume with AppleScript on the main thread. It now reads the system setting, and writes happen in the background.
+  - Audio Unit enumeration and the hardware helper's status check no longer run on the main thread.
+  - An unused tutorial mechanism measured the sidebar on every layout and redrew the whole window. It is removed.
+  - The sidebar, the Back/Forward history and all 64 automation rows redrew on every app-state change. Now they redraw only when what they show changes.
+  - Pages build only the sections on screen, and they no longer re-lay themselves out a second after opening to hide scroll bars.
+  - Permission checks are cached instead of being repeated on every render.
+- In the same release builds with the user's preset, the 12 page switches took 35 % less time in total (9.2 s → 6.0 s). Window Tiling dropped from about 650 ms to 235 ms, and System Tools from 285 ms to 175 ms.
+
+### Validation
+- 100 tests passed. All pages were reviewed in an isolated preview build, Workspace and System Tools also in dark mode. Analysis: docs/performance-main-window-20261114.md.
+
 ## [3.7.0] - 2026-11-14
 
 ### Changed
