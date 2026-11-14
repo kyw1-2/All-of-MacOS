@@ -1,40 +1,39 @@
 import AppKit
 import ApplicationServices
 
-// Swish's two-finger Dock and menu-bar gestures (Swish 1.13 help strings).
-// AOM's own implementation; `TrackpadUtilityGestures` feeds the recognizer and
-// runs the actions through `GestureDesktop`.
+// Two-finger Dock and menu-bar gestures. `TrackpadUtilityGestures` feeds the
+// recognizer and runs the actions through `GestureDesktop`.
 //
-// Dock, pointer over an app's icon (3.3.3: or, with the Application Menu
-// option, over the frontmost app's own menu, its name next to the Apple menu):
+// Dock, pointer over an app's icon (or, with the Application Menu option, over
+// the frontmost app's own menu):
 // - tap and hold, then lift: activate the app and raise its front window;
 // - swipe left / right: activate it and step through its windows (chains);
 // - swipe down: minimize the front window (⇧ Shift: all of them);
 // - swipe up: unminimize the window AOM minimized last, else one the app has
 //   (⇧: all of them);
 // - double tap: hide the app (⇧: hide the other apps);
-// - pinch out: activate it and send ⌘N; pinch in: ask it to quit. 3.3.3:
-//   pinch in twice: minimize all its windows; pinch out twice: unminimize
-//   them; a single pinch waits 0.35 s for the second, and any pinch runs
-//   when its fingers lift at the earliest (a third finger or a 2 s rest
-//   before that takes it back);
-// - 3.3.3: each window a Dock gesture brings forward is offered to the
-//   title-bar snap (`chainWindow`), Swish's chain.
-// Menu bar, pointer in the top band (3.3.3: the empty area only; menu titles
-// and status items keep their own clicks):
-// - swipe left / right: Spaces (unchanged, anywhere in the band); after tap
-//   and hold: the previous / next app;
-// - tap and hold, then lift (or scroll): the window switcher (3.3.3 option:
-//   scrolling holds the macOS ⌘-Tab app switcher instead);
+// - pinch out: activate it and send ⌘N; pinch in: ask it to quit. Pinch in
+//   twice: minimize all its windows; pinch out twice: unminimize them; a
+//   single pinch waits 0.35 s for the second, and any pinch runs when its
+//   fingers lift at the earliest (a third finger or a 2 s rest before that
+//   takes it back);
+// - each window a Dock gesture brings forward is offered to the title-bar snap
+//   (`chainWindow`).
+// Menu bar, pointer in the top band (the empty area only; menu titles and
+// status items keep their own clicks):
+// - swipe left / right: Spaces (anywhere in the band); after tap and hold: the
+//   previous / next app;
+// - tap and hold, then lift (or scroll): the window switcher (with the option
+//   on, scrolling holds the macOS ⌘-Tab app switcher instead);
 // - double tap: unsnap the windows the title-bar snap placed on this screen
 //   (⇧: every screen);
-// - 3.3.3 option: tap: scroll the front window to the top;
+// - option, tap: scroll the front window to the top;
 // - swipe down: minimize this screen's windows (twice or ⇧: every screen);
 // - swipe up: unminimize every window minimized there, AOM's newest first
 //   (twice or ⇧: every screen);
 // - ⌘ Command + swipe: move this screen's snapped windows to the display that
 //   way, keeping their cells.
-// Mission Control and App Exposé (3.3.3 option), pointer on a thumbnail:
+// Mission Control and App Exposé (option), pointer on a thumbnail:
 // pinch in: close that window (twice: quit its app); swipe down: minimize it.
 
 // MARK: - Recognition (pure, unit-tested)

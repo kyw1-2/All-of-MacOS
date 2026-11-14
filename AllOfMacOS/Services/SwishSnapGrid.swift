@@ -239,38 +239,31 @@ extension SwishSnap {
 
     // MARK: Chaining
 
-    /// Swish-style chaining on a grid: a swipe moves the window on from the
-    /// place it is in.
-    /// - Up (N337, the user's rule): a plain swipe up maximizes from every
-    ///   place, however long the swipe: a free or centred window, a half, a
-    ///   quarter (bottom-right ↑ is no longer top-right), a third, a sixth, a
-    ///   ninth, a row; a maximized window stays maximized. Almost maximize on:
-    ///   it almost-maximizes instead, and an almost-maximized window swiped
-    ///   up maximizes. Only an L-shaped or diagonal stroke reaches a top
-    ///   quarter; the upper sixths and the upper and middle ninths are no
-    ///   longer reached by a swipe at all (3.3.2–3.3.6: a third or a lower
-    ///   cell swiped up).
+    /// Chaining on a grid: a swipe moves the window on from the place it is in.
+    /// - Up: a plain swipe up maximizes from every place, however long the
+    ///   swipe: a free or centred window, a half, a quarter (bottom-right ↑ is
+    ///   no longer top-right), a third, a sixth, a ninth, a row; a maximized
+    ///   window stays maximized. With almost-maximize on it almost-maximizes
+    ///   instead, and an almost-maximized window swiped up maximizes. Only an
+    ///   L-shaped or diagonal stroke reaches a top quarter; the upper sixths
+    ///   and the upper and middle ninths are not reached by a swipe at all.
     /// - Free-floating or centred: sideways a half (a longer swipe a third
     ///   when the grid has thirds); down centres the window, and on a centred
-    ///   one puts it back, however long the swipe (N335).
+    ///   one puts it back, however long the swipe.
     /// - Maximized or almost-maximized: sideways a half, down puts the window back.
-    /// - No swipe ever takes the top or bottom half (N337, the user's rule;
-    ///   Swish's "Double-swipe vertically to snap to the top or bottom half"
-    ///   is left out on purpose). A swipe down that would have reached one
-    ///   (the top half moving down a row, a bottom quarter growing along the
-    ///   bottom edge, a bottom sixth spanning the bottom row) puts the window
-    ///   back instead, as a swipe down on any bottom-edge window does.
+    /// - No swipe ever takes the top or bottom half. A swipe down that would
+    ///   have reached one (the top half moving down a row, a bottom quarter
+    ///   growing along the bottom edge, a bottom sixth spanning the bottom row)
+    ///   puts the window back instead, as a swipe down on any bottom-edge
+    ///   window does.
     /// - A full-height column (a half, a third, two thirds) swiped down takes
-    ///   the bottom row of the grid (Swish: "Swipe horizontally and
-    ///   vertically to snap to a quarter. Both orders work."; "swipe
-    ///   vertically to access the upper and lower halves of those thirds"): a
-    ///   half becomes its bottom quarter; in 3 × 2 a third its lower sixth and
-    ///   two thirds the two sixths below; in 3 × 3 a third its bottom ninth
-    ///   and two thirds two-ninths.
-    /// - A column swiped sideways keeps 3.3.1's table: away from its edge it
-    ///   moves over (the other half, the next third; two thirds become the
-    ///   opposite half); toward its edge it steps half → third → two thirds →
-    ///   half with thirds on, and stays put in 2 × 2.
+    ///   the bottom row of the grid: a half becomes its bottom quarter; in
+    ///   3 × 2 a third its lower sixth and two thirds the two sixths below; in
+    ///   3 × 3 a third its bottom ninth and two thirds two-ninths.
+    /// - A column swiped sideways: away from its edge it moves over (the other
+    ///   half, the next third; two thirds become the opposite half); toward
+    ///   its edge it steps half → third → two thirds → half with thirds on, and
+    ///   stays put in 2 × 2.
     /// - A full-width row (the top or bottom half, a row of the 3 × 3 grid)
     ///   swiped sideways takes its left or right end (a quarter, or a ninth in
     ///   3 × 3); swiped down it moves a row, and from the bottom it puts the

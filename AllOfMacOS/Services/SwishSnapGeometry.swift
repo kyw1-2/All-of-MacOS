@@ -31,10 +31,7 @@ enum SwishSnap {
 
     /// The layout a swipe maps to. Tier 1 is a short swipe; tier 2 is a longer
     /// swipe in the same direction, so one gesture refines from half → third
-    /// (horizontal). Up is maximize and down the centre at any length (N334,
-    /// N335): a longer swipe up or down used to read as the top or bottom
-    /// half, which a quick or long swipe reached before the move it was meant
-    /// for. N337: no title-bar swipe reaches those halves any more.
+    /// (horizontal). Up is maximize and down the centre at any length.
     static func layout(for direction: Direction, tier: Int) -> CustomSnapZone.Layout {
         switch (direction, tier >= 2) {
         case (.left, false): return .leftHalf
@@ -463,27 +460,19 @@ enum SwishSnap {
         }
     }
 
-    /// Every title-bar swipe, after Swish 1.13:
-    /// - ⌘ (screen modifier), any direction: "move a window to the next
-    ///   screen in that direction".
-    /// - ⌥ (general modifier): sideways moves the window a Space ("use the
-    ///   general modifier to move a window between Mission Control spaces"),
-    ///   down closes it ("swipe down once while holding the general
-    ///   modifier"), and after tap-and-hold down quits the app. Up is a
-    ///   plain swipe up.
+    /// Every title-bar swipe:
+    /// - ⌘ (screen modifier), any direction: move the window to the next
+    ///   screen in that direction.
+    /// - ⌥ (general modifier): sideways moves the window a Space, down closes
+    ///   it, and after tap-and-hold down quits the app. Up is a plain swipe up.
     /// - Tap and hold first (`stroke.held`): up enters or leaves full screen,
-    ///   down minimizes ("in fullscreen mode, tap and hold before swiping
-    ///   down"), sideways moves a Space.
+    ///   down minimizes, sideways moves a Space.
     /// - Otherwise the cell chaining of `step(from:stroke:grid:almost:)`,
     ///   except that a swipe down on a free-floating or centred window
-    ///   minimizes it ("Swipe down once to minimize a window") while
-    ///   `downAction` is `.minimize`, at any length (N335).
-    /// - N337 (the user's rule over Swish's "Double-swipe vertically to snap
-    ///   to the top or bottom half of the screen"): no double swipe. A plain
-    ///   swipe up maximizes from every place, as the first motion of a touch,
-    ///   a later one, or a new touch right after another swipe; nothing here
-    ///   produces the top or bottom half (`step`). 3.3.4–3.3.6 took them with
-    ///   a second swipe up or down, in the same touch or within 0.5 s.
+    ///   minimizes it while `downAction` is `.minimize`, at any length.
+    /// - No double swipe: a plain swipe up maximizes from every place, as the
+    ///   first motion of a touch, a later one, or a new touch right after
+    ///   another swipe; nothing here produces the top or bottom half (`step`).
     /// A window in native full screen only answers to tap-and-hold and the
     /// modifiers. Nil: the stroke does nothing.
     static func move(from current: CustomSnapZone.Layout?, stroke: Stroke, modifiers: Modifiers,

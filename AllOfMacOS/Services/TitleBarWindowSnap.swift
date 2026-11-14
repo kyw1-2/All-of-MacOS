@@ -4,26 +4,15 @@ import AppKit
 // swipe with two fingers on the trackpad; a translucent preview shows where the
 // window will land, and lifting the fingers commits it (with a haptic tap).
 //
-// 3.2.0 recovered the interaction from Swish 1.13.3's strings and metadata
-// (REA/Ghidra on Oracle: `SnappingTabController`, `AccessibilityWindowController`,
-// the per-layout `GestureView`/`snappingView` overlays, a `gestureTimeout`
-// `gestureDispatchItem`, `NSHapticFeedbackManager`, the rounded-rect overlay
-// animated with `setFrame:display:animate:`).
-//
-// 3.3.0 applies the DeepSeek Harness Ghidra pass of the same build
-// (`/data/rea-targets-swish-20261027/report`, kept in `work/rea-swish/dsh-20261027`):
-// - The commit follows Swish's frame setter (`FUN_1000329c8`): AXEnhancedUserInterface
-//   is suspended, size → position → size is written and read back, and a window
-//   that keeps its own size is anchored to the snapped edge (`WindowManager.applySnap`).
+// What a swipe does:
+// - A swipe commits the frame setter's contract (suspend AXEnhancedUserInterface,
+//   write size → position → size and read it back); a window that keeps its own
+//   size is anchored to the snapped edge (`WindowManager.applySnap`).
 // - The preview settles on the frame the window really took before fading.
-// - Swish keeps each window's pre-snap frame (`ActionSnapUnsnap`, "Unsnap"): a swipe
-//   down on a window AOM snapped restores it.
+// - A swipe down on a window AOM snapped restores its pre-snap frame.
 // - "Swipe horizontally and vertically to snap to a quarter. Both orders work."
-// - Haptics on zone changes and commit, `activateAfterSnapping`, and the optional
-//   `snappingMoveCursor` warp (`CGWarpMouseCursorPosition`) back to the title bar.
-// - Readiness checks phrased the way Swish's settings explain them (Accessibility,
-//   haptic feedback, Mission Control shortcuts).
-// This is AOM's own implementation of that behaviour, not Swish code.
+// - Haptics on zone changes and commit, plus optional activate and
+//   keep-the-pointer settings.
 //
 // Stability first: the recognizer is pure and runs on the multitouch callback
 // thread doing only float maths; it never blocks the existing gesture pipeline,
