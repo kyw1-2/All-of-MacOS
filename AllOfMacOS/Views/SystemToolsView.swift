@@ -15,6 +15,7 @@ struct SystemToolsView: View {
     @ObservedObject private var homebrew = HomebrewModel.shared
     @ObservedObject private var vpn = VPNModel.shared
     @State private var query = ""
+    @State private var selectedGroup: SystemToolGroup?
     /// Read in actions, not observed: a page change never re-renders this view.
     @Environment(\.aomPageActivity) private var pageActivity
 
@@ -22,10 +23,11 @@ struct SystemToolsView: View {
     private static let toggleMinimumWidth: CGFloat = 188
     private static let emptyStateMinimumHeight: CGFloat = 240
 
-    private var showsStrip: Bool { query.isEmpty }
+    private var showsStrip: Bool { query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedGroup == nil }
 
     private var visibleGroups: [(group: SystemToolGroup, tools: [SystemToolInfo])] {
         SystemToolGroup.allCases.compactMap { group in
+            guard selectedGroup == nil || selectedGroup == group else { return nil }
             let tools = SystemToolCatalog.availableTools(in: group).filter { $0.matches(query) }
             return tools.isEmpty ? nil : (group, tools)
         }
@@ -34,7 +36,7 @@ struct SystemToolsView: View {
     /// The last result, or how to use the page before anything ran.
     private var subtitle: String {
         guard let result = model.lastResult else {
-            return "Right-click a tool to add it to Favorites"
+            return "Browse by category, search for a task, or star a tool for quick access."
         }
         let time = result.date.formatted(date: .omitted, time: .shortened)
         return "\(result.succeeded ? "✓" : "⚠︎") \(SystemToolCatalog.info(result.tool).title.replacingOccurrences(of: "…", with: "")): \(result.message) · \(time)"
@@ -44,6 +46,17 @@ struct SystemToolsView: View {
         AOMPage {
             AOMPageHeader("System Tools", subtitle: subtitle)
                 .help(model.lastResult?.message ?? "")
+            HStack {
+                Picker("Category", selection: $selectedGroup) {
+                    Text("All Categories").tag(SystemToolGroup?.none)
+                    ForEach(SystemToolGroup.allCases) { group in Text(group.name).tag(Optional(group)) }
+                }
+                .frame(maxWidth: AOMSize.moduleListIdeal)
+                Spacer()
+                if selectedGroup != nil || !query.isEmpty {
+                    Button("Reset Filters") { selectedGroup = nil; query = "" }
+                }
+            }
             if showsStrip {
                 VStack(alignment: .leading, spacing: AOMSpace.titleGap) {
                     AOMSectionTitle("This Mac")
@@ -56,9 +69,9 @@ struct SystemToolsView: View {
             }
             let shown = visibleGroups
             if shown.isEmpty {
-                AOMEmptyState("No Tools Match “\(query)”", systemImage: "magnifyingglass",
-                              message: "Try another word.") {
-                    Button("Clear Search") { query = "" }
+                AOMEmptyState(query.isEmpty ? "No available tools in this category" : "No Tools Match “\(query)”", systemImage: "magnifyingglass",
+                              message: "Choose another category or try a different search.") {
+                    Button("Show All Tools") { query = ""; selectedGroup = nil }
                 }
                 .frame(minHeight: Self.emptyStateMinimumHeight)
             } else {
@@ -73,7 +86,7 @@ struct SystemToolsView: View {
                 }
             }
             // Charging limit, fan presets and SMC sensors have no tile of their own.
-            if showsStrip { HardwareCareCard() }
+            if query.isEmpty && (selectedGroup == nil || selectedGroup == .power) { HardwareCareCard() }
         }
         .aomPage("System Tools")
         .aomPageToolbar {

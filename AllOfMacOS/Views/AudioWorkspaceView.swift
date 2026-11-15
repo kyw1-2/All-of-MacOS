@@ -25,12 +25,12 @@ struct AudioWorkspaceView: View {
             devicesCard
             // The microphone mute section sits under the input device it
             // mutes (drawn by its module).
+            applicationsCard
             MicMuteSection()
             // Output-wide effects follow the devices (and the output
             // equalizer inside them), before the per-app list.
             HeadphoneEQCard()
             AudioUnitEffectCard()
-            applicationsCard
         }
         .aomPage("Audio")
         .aomPageToolbar {
@@ -61,7 +61,6 @@ struct AudioWorkspaceView: View {
                       active: service.isSupported && service.soundEnabled) {
             if service.isSupported {
                 Toggle("App Audio", isOn: $service.soundEnabled)
-                    .labelsHidden()
                     .toggleStyle(.switch)
                     .help(service.soundEnabled ? "Turn off app audio processing" : "Turn on app audio processing")
                     .accessibilityLabel("App audio processing")

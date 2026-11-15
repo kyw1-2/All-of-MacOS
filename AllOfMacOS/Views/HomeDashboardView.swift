@@ -63,6 +63,9 @@ struct AOMHomeView: View {
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
     @State private var showsCustomize = false
+    @State private var directoryQuery = ""
+    @State private var focusDirectorySearch = false
+    @State private var showsOverview = false
     /// The Productivity modules' `attention` lines, polled with the rest of
     /// the status so a module's countdown never redraws the whole page.
     @State private var moduleAttention: [AOMModule: String] = [:]
@@ -96,17 +99,36 @@ struct AOMHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AOMSpace.sectionGap) {
                 // Status and anything that asks for you span the page.
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                        Text("Your Mac, within reach.").font(AOMFont.workspaceTitle)
+                        Text("Find a tool. Start a task. Make it yours.")
+                            .font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                    }
+                    Spacer()
+                    Picker("Workspace view", selection: $showsOverview) {
+                        Text("Explore").tag(false)
+                        Text("My Workspace").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: AOMSize.workspaceModeWidth)
+                }
                 hero(snapshot)
-                if snapshot.showsSetup {
+                if showsOverview && snapshot.showsSetup {
                     setupCard(snapshot)
                 }
-                if !snapshot.attention.isEmpty {
+                if showsOverview && !snapshot.attention.isEmpty {
                     needsAttention(snapshot.attention)
                 }
                 // Dashboard: what you operate on the left, what happened on
                 // the right rail (Xcode Organizer, Activity summary), so the
                 // whole state reads in one screen at the default window size.
-                if usesRail {
+                if !showsOverview {
+                    AOMFeatureDirectory(query: $directoryQuery, focusSearch: $focusDirectorySearch)
+                    if layout.shows(.quickActions) { quickActions }
+                    if snapshot.showsSetup { setupCard(snapshot) }
+                    if !snapshot.attention.isEmpty { needsAttention(snapshot.attention) }
+                    utilities
+                } else if usesRail {
                     HStack(alignment: .top, spacing: AOMSpace.sectionGap) {
                         VStack(alignment: .leading, spacing: AOMSpace.sectionGap) { mainColumn(snapshot) }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -132,7 +154,7 @@ struct AOMHomeView: View {
             .padding(.bottom, AOMSpace.x6)
             .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
         .background(AOMColor.pageBackground)
@@ -158,7 +180,7 @@ struct AOMHomeView: View {
         .onChange(of: layout.customizeRequested) { _, _ in openRequestedCustomize() }
         // ⌘N and ⌘F work from the Workspace too: they open the Automation page.
         .aomPageFocusedSceneValue(\.triggerEditorCommands, TriggerEditorCommandActions(
-            search: { appState.selectedMainTab = .gestures },
+            search: { showsOverview = false; focusDirectorySearch = true },
             newTrigger: newAutomation))
         .onReceive(stats.$totalFired.map { $0 > 0 }.removeDuplicates()) { hasFired = $0 }
         // Polls while Workspace is the selected page and on screen.

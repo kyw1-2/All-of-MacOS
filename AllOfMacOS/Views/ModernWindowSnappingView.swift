@@ -133,15 +133,15 @@ struct ModernWindowSnappingView: View {
                         }
                     } else {
                         dragSection
+                        gallerySection(compact: false)
+                        WindowPinningCard()
+                        zonesSection
                         titleBarSection
                         gesturesSection
                         SwishModifierRolesSection(snapOn: trackpadSnapOn)
                         gridSection
                         keyboardSection
                         dockSection
-                        gallerySection(compact: false)
-                        WindowPinningCard()
-                        zonesSection
                         advancedSection
                         readinessSection
                     }
@@ -152,7 +152,7 @@ struct ModernWindowSnappingView: View {
                 .frame(maxWidth: AOMSize.contentMaxWidth, alignment: .topLeading)
                 .frame(maxWidth: .infinity)
             }
-            .scrollIndicators(.never)
+            .scrollIndicators(.automatic)
             .defaultScrollAnchor(PreviewScrollAnchor.current)
             .aomScrollEdge()
         }

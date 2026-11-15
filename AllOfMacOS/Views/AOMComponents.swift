@@ -61,7 +61,7 @@ struct AOMPage<Content: View>: View {
         }
         // Created without scrollers, so AOMScrollChromePolicy has nothing
         // to change (its change re-laid out the whole page a second later).
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
         .defaultScrollAnchor(AOMPreviewHooks.scrollAnchor)
         .aomScrollEdge()
         .background(AOMColor.pageBackground)
@@ -97,11 +97,9 @@ struct AOMStatus: Equatable {
     }
 }
 
-/// The one header for every module page: a single 24 pt line on the canvas,
-/// not in a pane. The status sentence, its context after it on the same
-/// baseline, an optional status pill, then the trailing controls (master
-/// switch, actions) at small size. The context truncates before the sentence
-/// does. `help` becomes the title's tooltip.
+/// Shared module header: a distinct heading, wrapping context and status,
+/// with a visible control area. Long explanations remain readable at the
+/// minimum window width. `help` adds optional supplemental information.
 struct AOMPageHeader<Trailing: View>: View {
     let title: String
     var subtitle: String?
@@ -125,38 +123,23 @@ struct AOMPageHeader<Trailing: View>: View {
     }
 
     var body: some View {
-        // A status line, not a headline: the toolbar already names the page,
-        // so the sentence is Body semibold and its context follows on the
-        // same baseline in secondary Callout.
-        HStack(alignment: .center, spacing: AOMSpace.x3) {
-            HStack(alignment: .firstTextBaseline, spacing: AOMSpace.x2) {
-                Text(title)
-                    .font(AOMFont.heroSentence)
-                    .foregroundStyle(AOMColor.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .accessibilityAddTraits(.isHeader)
-                    .help(help ?? "")
-                    .layoutPriority(1)
+        HStack(alignment: .center, spacing: AOMSpace.x4) {
+            VStack(alignment: .leading, spacing: AOMSpace.x1) {
+                HStack(spacing: AOMSpace.x2) {
+                    Text(title).font(AOMFont.pageTitle).foregroundStyle(AOMColor.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader).help(help ?? "")
+                    if let status { AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol) }
+                }
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(AOMFont.callout)
-                        .foregroundStyle(AOMColor.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    Text(subtitle).font(AOMFont.callout).foregroundStyle(AOMColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if let status {
-                    AOMStatusPill(status.text, tone: status.tone, symbol: status.symbol)
-                }
-            }
-            .layoutPriority(1)
-            Spacer(minLength: AOMSpace.x3)
-            HStack(spacing: AOMSpace.x2) { trailing }
-                .controlSize(.small)
-                .fixedSize()
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: AOMSpace.x2) { trailing }.controlSize(.regular).fixedSize()
         }
-        .frame(minHeight: AOMSpace.x6)
-        .padding(.horizontal, AOMSpace.x0_5)
+        .frame(minHeight: AOMSize.rowDetail)
+        .padding(.horizontal, AOMSpace.rowInset)
         .foregroundStyle(active ? AOMColor.text : AOMColor.textSecondary)
         .accessibilityElement(children: .contain)
     }

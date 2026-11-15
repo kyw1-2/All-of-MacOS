@@ -48,48 +48,61 @@ struct SystemToolTile: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        Button(action: run) {
-            HStack(spacing: AOMSpace.x2) {
-                Image(systemName: info.symbol)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AOMColor.textSecondary)
-                    .frame(width: 22, height: 22)
-                    .accessibilityHidden(true)
-                Text(info.title)
-                    .font(AOMFont.body.weight(.medium))
-                    .foregroundStyle(AOMColor.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
-                Spacer(minLength: AOMSpace.x1)
-                if isRunning {
-                    ProgressView().controlSize(.small)
-                } else if let state {
-                    SystemToolValue(state: state)
-                }
-                if info.kind == .sheet {
-                    Image(systemName: "ellipsis")
-                        .font(AOMFont.caption)
-                        .foregroundStyle(AOMColor.textTertiary)
+        HStack(spacing: 0) {
+            Button(action: run) {
+                HStack(spacing: AOMSpace.x2) {
+                    Image(systemName: info.symbol)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(AOMColor.textSecondary)
+                        .frame(width: 22, height: 22)
                         .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: AOMSpace.x0_5) {
+                        Text(info.title)
+                            .font(AOMFont.body.weight(.medium))
+                            .foregroundStyle(AOMColor.text)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let state, !isRunning {
+                            Text(state.text).font(AOMFont.caption)
+                                .foregroundStyle(state.tone == .success ? AOMColor.successText : AOMColor.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    if isRunning { ProgressView().controlSize(.small) }
+                    if info.kind == .sheet {
+                        Image(systemName: "ellipsis")
+                            .font(AOMFont.caption)
+                            .foregroundStyle(AOMColor.textTertiary)
+                            .accessibilityHidden(true)
+                    }
                 }
+                .padding(.horizontal, AOMSpace.rowInset)
+                .padding(.vertical, AOMSpace.x1)
+                .frame(maxWidth: .infinity, minHeight: state == nil ? AOMSize.rowStandard : AOMSize.rowDetail, alignment: .leading)
             }
-            .padding(.horizontal, AOMSpace.rowInset)
-            .frame(maxWidth: .infinity, minHeight: AOMSize.rowStandard, alignment: .leading)
+            .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
+            .disabled(isRunning)
+            .help(info.help)
+            .contextMenu {
+                Button("Run") { run() }.disabled(isRunning)
+                Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: toggleFavorite)
+            }
+            .aomDropTarget(dropTargeted, radius: AOMRadius.well)
+            .modifier(SystemToolDropModifier(dropApp: dropApp, targeted: $dropTargeted))
+            .accessibilityLabel(info.title)
+            .accessibilityValue(isRunning ? "Running" : (state?.text ?? ""))
+            .accessibilityHint(info.help)
+            .accessibilityAction(named: isFavorite ? "Remove from Favorites" : "Add to Favorites", toggleFavorite)
+            Button(action: toggleFavorite) {
+                Image(systemName: isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(isFavorite ? AOMColor.accent : AOMColor.textSecondary)
+                    .frame(width: AOMSize.rowStandard, height: AOMSize.rowStandard)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+            .accessibilityLabel("\(isFavorite ? "Unfavorite" : "Favorite") \(info.title)")
         }
-        .buttonStyle(AOMRowButtonStyle(radius: AOMRadius.well))
-        .disabled(isRunning)
-        .help(info.help)
-        .contextMenu {
-            Button("Run") { run() }.disabled(isRunning)
-            Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: toggleFavorite)
-        }
-        .aomDropTarget(dropTargeted, radius: AOMRadius.well)
-        .modifier(SystemToolDropModifier(dropApp: dropApp, targeted: $dropTargeted))
-        .accessibilityLabel(info.title)
-        .accessibilityValue(isRunning ? "Running" : (state?.text ?? ""))
-        .accessibilityHint(info.help)
-        .accessibilityAction(named: isFavorite ? "Remove from Favorites" : "Add to Favorites", toggleFavorite)
     }
 }
 

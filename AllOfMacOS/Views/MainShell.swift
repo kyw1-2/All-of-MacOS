@@ -87,6 +87,9 @@ struct AOMMainShell<Content: View>: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AOMWorkspaceBackground())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                AOMRelatedTools(appState: appState)
+            }
             // The system toolbar title (design-3.3.6 b.11): standard size,
             // with the page's subtitle from `aomToolbarSubtitle`.
             .modifier(AOMShellTitle())
@@ -95,6 +98,18 @@ struct AOMMainShell<Content: View>: View {
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     AOMHistoryButtons(appState: appState)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingCommandPalette = true } label: {
+                        Label("Search Everything", systemImage: "magnifyingglass")
+                    }.help("Search all tools, settings and commands")
+                }
+                ToolbarItem(placement: .automatic) {
+                    Menu {
+                        Toggle("Diagnostics Console", isOn: $showLog)
+                        Toggle("Touch Visualizer", isOn: $showTouchVisualizer)
+                    } label: { Label("Inspect", systemImage: "sidebar.right") }
+                    .help("Diagnostics and touch visualizer")
                 }
             }
         }
@@ -174,40 +189,17 @@ struct AOMSidebar: View, Equatable {
                 set: { if let tab = $0, tab != appState.selectedMainTab { appState.selectedMainTab = tab } })
     }
 
-    /// Sections people folded (HIG Sidebars and Outline views: keep their
-    /// expansion choices).
-    @AppStorage("AOMSidebarCollapsed") private var collapsedSections = ""
     @ObservedObject private var layout = AOMWorkspaceLayout.shared
     @Environment(\.undoManager) private var undoManager
-
-    private func expanded(_ id: String) -> Binding<Bool> {
-        Binding(get: { !collapsedSections.split(separator: ",").contains(Substring(id)) },
-                set: { isExpanded in
-                    var set = Set(collapsedSections.split(separator: ",").map(String.init))
-                    if isExpanded { set.remove(id) } else { set.insert(id) }
-                    collapsedSections = set.sorted().joined(separator: ",")
-                })
-    }
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         List(selection: selection) {
             navigationItem(.home)
-            Section("Tools", isExpanded: expanded("tools")) {
-                navigationItem(.gestures)
-                navigationItem(.snapping)
-                navigationItem(.capture)
-                navigationItem(.clipboard)
-                navigationItem(.audio)
-                navigationItem(.tools)
-            }
-            Section("Productivity", isExpanded: expanded("productivity")) {
-                navigationItem(.folderRules)
-                navigationItem(.textActions)
-                navigationItem(.files)
-                navigationItem(.focus)
-            }
-            Section("Activity", isExpanded: expanded("activity")) {
-                navigationItem(.insights)
+            ForEach(AOMFeatureGroup.allCases) { group in
+                Section(group.rawValue) {
+                    ForEach(group.tabs) { tab in navigationItem(tab) }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -215,6 +207,18 @@ struct AOMSidebar: View, Equatable {
         // System Settings › Appearance (HIG Sidebars), so no override here.
         .safeAreaInset(edge: .top, spacing: 0) {
             AOMSidebarSearchButton(keys: paletteKeys, showingCommandPalette: $showingCommandPalette)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: AOMSpace.x2) {
+                Divider()
+                Button { openSettings() } label: {
+                    HStack {
+                        Label("Settings", systemImage: "gearshape")
+                        Spacer()
+                        Text("⌘,").foregroundStyle(AOMColor.textSecondary)
+                    }.padding(AOMSpace.x2).contentShape(Rectangle())
+                }.buttonStyle(AOMRowButtonStyle())
+            }.padding(.horizontal, AOMSpace.x3).padding(.bottom, AOMSpace.x2)
         }
         .accessibilityElement(children: .contain)
     }
@@ -288,6 +292,7 @@ struct AOMSidebar: View, Equatable {
         } icon: {
             // One icon column, so every title starts at the same x.
             Image(systemName: tab.sidebarSymbol)
+                .foregroundStyle(selected == tab ? Color.white : AOMColor.accent)
                 .frame(width: AOMIcon.row)
         }
         .tag(tab)
@@ -428,13 +433,13 @@ private struct AOMSidebarSearchButton: View {
                 HStack(spacing: AOMSpace.x1 + AOMSpace.x0_5) {
                     Image(systemName: "magnifyingglass")
                         .imageScale(.medium)
-                    Text("Search").font(AOMFont.callout)
+                    Text("Search Everything").font(AOMFont.callout)
                     Spacer(minLength: AOMSpace.x1)
                     AOMKeycap(text: keys)
                 }
                 .foregroundStyle(hovering ? AOMColor.text : AOMColor.textSecondary)
                 .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
-                .frame(height: AOMIcon.hitArea + AOMSpace.x0_5)
+                .frame(height: AOMSize.rowDetail)
                 .background(hovering ? AOMColor.surfaceHover : AOMColor.surface, in: Capsule())
                 .overlay {
                     Capsule().strokeBorder(contrast == .increased ? AOMColor.strongLine : AOMColor.hairline,
@@ -446,7 +451,7 @@ private struct AOMSidebarSearchButton: View {
             .onHover { hovering = $0 }
             .aomAnimation(.quick, value: hovering)
             .help("Search pages, settings and actions")
-            .accessibilityLabel("Search")
+            .accessibilityLabel("Search Everything")
         }
         .padding(.horizontal, AOMSpace.x2 + AOMSpace.x0_5)
         .padding(.top, AOMSpace.x2)

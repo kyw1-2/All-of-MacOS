@@ -79,7 +79,7 @@ struct CaptureStudioView: View {
             }
             // A bare strip: the toolbar's Capture menu lists the same tools,
             // so the strip needs no title of its own (VoiceOver keeps one).
-            AOMSection(padding: AOMSpace.x2) {
+            AOMSection("Capture tools", padding: AOMSpace.x3) {
                 VStack(spacing: AOMSpace.x2) {
                     captureLaunchpad
                     AOMDivider()
@@ -288,8 +288,8 @@ struct CaptureStudioView: View {
     }
 
     private var captureQuickUtilitiesBar: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: AOMSpace.x2) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: AOMSize.directoryTileMin), alignment: .leading)],
+                  alignment: .leading, spacing: AOMSpace.x2) {
                 Button {
                     AnnotationEditorController.shared.chooseImageOrProject()
                 } label: {
@@ -327,8 +327,6 @@ struct CaptureStudioView: View {
                 .padding(.horizontal, AOMSpace.x1)
                 .help("When enabled, Copy Text (OCR) appends to the clipboard instead of replacing it")
 
-                Spacer(minLength: AOMSpace.x2)
-
                 Button {
                     showingSettingsSheet = true
                 } label: {
@@ -337,11 +335,9 @@ struct CaptureStudioView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Format, save folder, recording FPS, audio & Quick Access options")
-            }
-            .padding(.horizontal, AOMSpace.x1)
-            .padding(.vertical, 2)
         }
-        .scrollIndicators(.hidden)
+        .padding(.horizontal, AOMSpace.x1)
+        .padding(.vertical, AOMSpace.x1)
     }
 
     /// What the gallery shows, with the thumbnail size at the trailing end of

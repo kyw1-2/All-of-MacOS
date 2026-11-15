@@ -240,8 +240,7 @@ final class AOMScrollChromePolicy {
             defer { applying = false }
             if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
             if !scroll.autohidesScrollers { scroll.autohidesScrollers = true }
-            if scroll.hasVerticalScroller { scroll.hasVerticalScroller = false }
-            if scroll.hasHorizontalScroller { scroll.hasHorizontalScroller = false }
+            // Respect each view’s indicator choice and the user’s scroll-bar preferences.
         }
     }
 }

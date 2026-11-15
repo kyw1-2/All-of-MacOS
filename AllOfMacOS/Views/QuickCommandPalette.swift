@@ -60,6 +60,7 @@ struct QuickCommandPalette: View {
         let primary: PaletteAction
         /// ⌘↩ runs the first; all of them are in the Actions panel (⌘K).
         private(set) var secondaries: [PaletteAction]
+        var keywords: String = ""
         var placement: Placement = .ranked
         /// Short trailing text: a folder, a time, a profile.
         var accessory: String?
@@ -137,6 +138,8 @@ struct QuickCommandPalette: View {
             if item.title.lowercased().hasPrefix(query.lowercased()) { return 0 }
             if item.title.localizedCaseInsensitiveContains(query) { return 1 }
             if item.subtitle.localizedCaseInsensitiveContains(query) { return 2 }
+            if !item.keywords.isEmpty,
+               SettingsSearch.matches(query: query, title: item.title, subtitle: item.subtitle, keywords: [item.keywords]) { return 2 }
             if item.section.rawValue.localizedCaseInsensitiveContains(query) { return 3 }
             if let score = PaletteFuzzy.score(query, item.title), score >= PaletteFuzzy.subsequenceFloor + 40 { return 4 }
             return nil
@@ -465,10 +468,24 @@ struct QuickCommandPalette: View {
 
     private func navigationItems() -> [PaletteItem] {
         var items = AOMMainTab.allCases.map { tab in
-            PaletteItem(id: "go.\(tab.rawValue)", title: tab.title, subtitle: "Show \(tab.title)",
-                        icon: tab.sidebarSymbol, section: .navigation,
-                        shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
-                        primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab })
+            var item = PaletteItem(id: "go.\(tab.rawValue)", title: tab.title, subtitle: tab.subtitle,
+                                  icon: tab.sidebarSymbol, section: .navigation,
+                                  shortcut: tab.shortcutKey.map { "⌘\($0.character)" },
+                                  primary: PaletteAction(title: "Open") { close(); appState.selectedMainTab = tab })
+            item.keywords = tab.discoveryKeywords
+            return item
+        }
+        items += SettingsCategory.allCases.map { category in
+            var item = PaletteItem(id: "settings.\(category.rawValue)", title: "\(category.title) Settings",
+                        subtitle: "Settings › \(category.title)", icon: category.symbol, section: .navigation,
+                        primary: PaletteAction(title: "Open Settings") {
+                            close(); openSettings()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                                NotificationCenter.default.post(name: .aomShowSettingsCategory, object: category.rawValue)
+                            }
+                        })
+            item.keywords = category.discoveryKeywords
+            return item
         }
         items.append(Self.homebrewItem {
             close()
