@@ -1,3 +1,27 @@
+## [4.0.0] - 2026-11-15
+
+### Changed
+- **Find every AOM tool from Workspace.** Explore displays 11 tool destinations as descriptive cards with task categories. The existing configurable dashboard remains in My Workspace, without hiding any tool from Explore.
+- **Task-led navigation and bilingual search.** Sidebar groups related tools and permanently exposes Settings; Cmd-F, Search Everything, the command palette, and Korean aliases find tools and settings such as window tiling, HomePod volume, clipboard history and remapping.
+- **Clearer tool controls.** Related-tool links bridge pages; System Tools adds categories and visible favorite stars; Capture utility options wrap instead of being lost offscreen; Window Tiling brings immediate layout actions forward, and Audio surfaces per-app volume and a named master switch.
+- **Consistent layouts.** Shared page headers, type scale, opaque cards, adaptive grids, contrast and dark-mode surfaces have been reviewed in 16 preview screenshots, including narrow windows and keyboard searches.
+- **Equalizer and app volume on the HomePod again, without crackle.** AOM no longer bridges HomePod audio across three clocks (tap → mix thread → separate AirPlay output). Each app routed to an AirPlay output now plays through one private device that holds its tap and the HomePod, with the HomePod as the only clock. The app's EQ, Magic Boost, volume, balance and Overdrive run there, followed by the −1 dBTP limiter. If the safety fuse had turned HomePod effects off, they come back on once; a choice you made yourself is kept. See docs/homepod-direct-path-20261115.md.
+- **A slimmer main window.** One content size (13 pt) with weight for hierarchy, page headers on one line, quieter section titles, groups without outlines, 30 pt rows, small controls inside rows, an 860 pt content column, and smaller badges, chips and buttons. See docs/design-4.0-slim.md.
+
+### Fixed
+- **Stalls in every window while App Audio was on.** Reading which apps play, their owners, devices and transports ran on the main thread on every audio notification and once a second. It now runs on a background queue; the main thread only applies the result.
+- **Page switches.** Pages you have visited stay alive instead of being rebuilt, and switching no longer re-evaluates the whole app. Later visits take about 200 ms instead of 310–400 ms in the in-app bench. Hidden pages stop their timers and polling. See docs/performance-main-window-20261115.md.
+
+### Known
+- On the HomePod path, output-wide Magic Boost, the leveler and a hosted Audio Unit master effect do not run, and each app has its own limiter. Settings › Audio still shows "Stable AirPlay dynamics", which has no effect on this path.
+- An app that starts playing is heard unprocessed for a moment until its session is up.
+- Specialized internal editors (e.g. automation actions, equalizer internals and annotation timeline) are unchanged; accessibility, hardware and every possible permission/preset combination need real-world QA.
+- The old HomePod bridge stays for comparison: `defaults write com.kyw.allofmacos AOMAudioAirPlayDirect -bool false`, then relaunch.
+
+### Validation
+- 148 tests passed (new: navigation and page activity, audio control snapshot, direct AirPlay path pieces, bilingual tool-discovery and settings search).
+- HomePod findings come from recordings made with muting taps (docs/homepod-direct-path-20261115.md). The shipped direct path was checked on the HomePod after installation as described in the release notes; listening by ear was not possible from the development session.
+
 ## [3.9.1] - 2026-11-14
 
 ### Changed
