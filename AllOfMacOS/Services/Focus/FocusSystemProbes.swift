@@ -161,30 +161,19 @@ enum FocusSystemProbes {
 
     /// Apps playing or recording audio, from Core Audio's process objects
     /// (`kAudioProcessPropertyIsRunningOutput` / `…IsRunningInput`) with the
-    /// audio mixer's owner resolution. Nil before macOS 14.2, where AOM
-    /// cannot tell, so callers must treat every app as possibly playing.
-    /// Main thread: the owner cache it shares with `AppAudioEngine` is
-    /// main-thread state.
+    /// audio mixer's owner resolution, as the audio engine last gathered them
+    /// off the main thread. Nil before macOS 14.2, or while no recent sweep
+    /// exists (the engine is then asked for one): callers must treat every
+    /// app as possibly playing.
     @MainActor
     static func audioActivity() -> FocusAudioActivity? {
-        guard #available(macOS 14.2, *) else { return nil }
-        var activity = FocusAudioActivity()
-        for (owner, objects) in AppAudioEngine.processObjectsByOwner() {
-            for object in objects {
-                if uint32(object, kAudioProcessPropertyIsRunningOutput) == 1 { activity.playing.insert(owner) }
-                if uint32(object, kAudioProcessPropertyIsRunningInput) == 1 { activity.recording.insert(owner) }
-            }
-        }
-        return activity
+        guard #available(macOS 14.2, *),
+              let owners = AppAudioEngine.shared.recentAudioOwners(maxAge: audioActivityMaxAge) else { return nil }
+        return FocusAudioActivity(playing: owners.playing, recording: owners.recording)
     }
 
-    private static func uint32(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {
-        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr ? value : nil
-    }
+    /// Older sweeps are not trusted for quitting an idle app.
+    static let audioActivityMaxAge: TimeInterval = 5
 }
 
 /// "412 MB", "1.2 GB" (memory, base 1024 like Activity Monitor); "0 MB" for nothing.

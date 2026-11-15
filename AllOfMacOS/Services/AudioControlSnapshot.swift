@@ -45,6 +45,8 @@ struct AudioControlSnapshot: Sendable {
     var objectsByOwner: [pid_t: [AudioObjectID]] = [:]
     /// Process objects whose `kAudioProcessPropertyIsRunningOutput` is 1.
     var runningOutput = Set<AudioObjectID>()
+    /// Process objects whose `kAudioProcessPropertyIsRunningInput` is 1.
+    var runningInput = Set<AudioObjectID>()
     var playingOwners = Set<pid_t>()
     var defaultOutputID: AudioDeviceID?
     var defaultOutputUID: String?
@@ -74,6 +76,11 @@ struct AudioControlSnapshot: Sendable {
     func device(uid: String) -> AudioOutputDevice? { devices.first { $0.uid == uid } }
 
     func softwareGain(uid: String) -> Float { softwareGains[uid] ?? 1 }
+
+    /// Owners with a process object that records (microphone or other input).
+    var recordingOwners: Set<pid_t> {
+        Set(objectsByOwner.compactMap { pid, objects in objects.contains(where: runningInput.contains) ? pid : nil })
+    }
 
     /// `AppAudioEngine.targetOutputUID(for:)` against this snapshot: a stored
     /// route while its device is connected, otherwise the default output.
@@ -105,9 +112,13 @@ struct AudioControlSnapshot: Sendable {
             let objects = AppAudioEngine.readProcessObjectList()
             snapshot.processObjects = objects
             snapshot.objectsByOwner = AppAudioEngine.processObjectsByOwner(objects: objects ?? [])
-            for object in snapshot.objectsByOwner.values.joined()
-            where AppAudioEngine.property(object, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1 {
-                snapshot.runningOutput.insert(object)
+            for object in snapshot.objectsByOwner.values.joined() {
+                if AppAudioEngine.property(object, selector: kAudioProcessPropertyIsRunningOutput, as: UInt32.self) == 1 {
+                    snapshot.runningOutput.insert(object)
+                }
+                if AppAudioEngine.property(object, selector: kAudioProcessPropertyIsRunningInput, as: UInt32.self) == 1 {
+                    snapshot.runningInput.insert(object)
+                }
             }
             let running = snapshot.runningOutput
             snapshot.playingOwners = AudioPlaybackActivity.playingOwners(snapshot.objectsByOwner) { running.contains($0) }

@@ -182,6 +182,16 @@ final class AppAudioEngine {
         var outputSampleRate: Double = 48000
         var sourceToken: SharedOutputRenderer.SourceToken?
         var transport: AppAudioTransport?
+        /// The output is an AirPlay receiver (either path).
+        var isAirPlay = false
+        /// One aggregate with the AirPlay device in it and one IOProc
+        /// (`AirPlayDirectStream`): no transport, no shared-renderer source.
+        var isDirect: Bool { stream != nil }
+        var stream: AirPlayDirectStream?
+        /// Direct path: when the app last played (idle detach).
+        var lastPlayingAt = ProcessInfo.processInfo.systemUptime
+        /// What status, the watchdog and diagnostics read, either kind.
+        var capture: AppAudioActivitySource? { stream ?? transport }
         /// 3.3.3 (A03): the transport's ring and counters in the event log.
         var eventSource: AudioEventLog.Source?
         let createdAt = ProcessInfo.processInfo.systemUptime
@@ -232,7 +242,7 @@ final class AppAudioEngine {
         UserDefaults.standard.set(enabled, forKey: "AOMAudioAirPlayProcessingEnabled")
         // Release the previously captured session before switching transport.
         // Native mode never retains any AirPlay muting tap or separate sender.
-        for session in Array(sessions.values) where session.sourceToken?.isAirPlay == true {
+        for session in Array(sessions.values) where session.isAirPlay {
             stop(pid: session.pid)
         }
         MainActor.assumeIsolated {
@@ -248,7 +258,10 @@ final class AppAudioEngine {
     /// repeatedly rebuild taps underneath a playing browser or toggle AppAudio
     /// itself. A user can explicitly re-enable the effects in Settings.
     func fallBackToNativeAirPlay(reason: String) {
-        guard Self.airPlayProcessingEnabled else { return }
+        // Driven by the bridge sender's overload episodes: a direct session
+        // has no sender, and its isolated IO gaps are only logged.
+        guard Self.airPlayProcessingEnabled,
+              sessions.values.contains(where: { $0.isAirPlay && !$0.isDirect }) else { return }
         setAirPlayProcessingEnabled(false)
         UserDefaults.standard.set(reason, forKey: Self.airPlaySafetyReasonKey)
         AudioEventLog.shared.record(.outputAutoRecovery, source: "system", detail: reason)
@@ -256,7 +269,7 @@ final class AppAudioEngine {
     }
 
     private(set) var airPlayBypassed = false
-    var airPlayProcessingActive: Bool { sessions.values.contains { $0.sourceToken?.isAirPlay == true } }
+    var airPlayProcessingActive: Bool { sessions.values.contains { $0.isAirPlay } }
     var airPlayPreparing: Bool { !pendingAirPlayPIDs.isEmpty }
     private var pendingAirPlayPIDs = Set<pid_t>()
     // A capture failure on a live remote sender must not retry merely because
@@ -307,6 +320,10 @@ final class AppAudioEngine {
 
     private init() {
         AppAudioPreferences.migrateToSoundSourceModel()
+        if AirPlayDirectMigration.run() {
+            AudioEventLog.shared.record(.effectChanged, source: "system",
+                detail: "HomePod effects re-enabled on the AirPlay direct path (the safety fuse had turned them off)")
+        }
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             sleepObservers.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -491,10 +508,14 @@ final class AppAudioEngine {
             if UserDefaults.standard.bool(forKey: "AOMAudioDiagnostics"), AudioDiagnostics.isWriteDue {
                 if AudioDiagnostics.isResetRequested { controlTimings.reset() }
                 let capture = Dictionary(uniqueKeysWithValues: sessions.values.compactMap { session -> (String, [String: Any])? in
+                    if let stream = session.stream {
+                        return (String(session.pid), AirPlayDirectStream.diagnostics(
+                            statistics: stream.statistics, bundleID: session.bundleID, tapRewrites: session.tapRewrites))
+                    }
                     guard let transport = session.transport else { return nil }
                     var stats = transport.statistics
                     stats["bundleID"] = session.bundleID
-                    stats["airPlay"] = session.sourceToken?.isAirPlay ?? false
+                    stats["airPlay"] = session.isAirPlay
                     stats["tapRewrites"] = session.tapRewrites
                     return (String(session.pid), stats)
                 })
@@ -536,7 +557,7 @@ final class AppAudioEngine {
         // Native AirPlay bypass must not disable unrelated local/HDMI
         // per-app routes. Their captures still use separate local outputs.
         if airPlayBypassed {
-            for session in Array(sessions.values) where session.sourceToken?.isAirPlay == true {
+            for session in Array(sessions.values) where session.isAirPlay {
                 stop(pid: session.pid)
             }
             MainActor.assumeIsolated {
@@ -551,8 +572,10 @@ final class AppAudioEngine {
         // empty session list is pure overhead.
         if apps.isEmpty && sessions.isEmpty { return }
         let devices = snapshot.devices
+        // The direct path has no shared AirPlay sender: none is kept for it.
+        let direct = AirPlayDirectStream.isEnabled()
         defer {
-            let requested = Self.airPlayProcessingEnabled
+            let requested = Self.airPlayProcessingEnabled && !direct
                 ? Set(apps.compactMap { snapshot.targetOutputUID(for: $0.bundleID) })
                 : Set<String>()
             MainActor.assumeIsolated { SharedOutputRenderer.shared.releaseUnusedAirPlayOutputs(keeping: requested) }
@@ -577,14 +600,16 @@ final class AppAudioEngine {
                 failAirPlay(session, message: message)
                 continue
             }
-            if let transport = session.transport {
+            if let capture = session.capture {
                 // A live sender alone does not prove the tap can capture this
                 // app (for example, offloaded playback). Restore direct audio
                 // if an actively playing producer has no capture callbacks.
+                // On the direct path that is a playing producer with no IO
+                // callbacks; there is no shared sender to restart.
                 let playing = session.processIDs.contains { snapshot.runningOutput.contains($0) }
-                let activity = transport.activity
-                if session.sourceToken?.isAirPlay == true {
-                    let counters = transport.eventCounters
+                let activity = capture.activity
+                if session.isAirPlay && !session.isDirect {
+                    let counters = capture.eventCounters
                     if session.cracklePolicy.observe(
                         underruns: counters["app.underruns"] ?? 0,
                         trims: counters["app.trims"] ?? 0,
@@ -599,7 +624,7 @@ final class AppAudioEngine {
                     let message = failure == .capture
                         ? "Audio capture stopped receiving app audio. Native playback restored; use Reconnect to retry."
                         : "Audio output stopped consuming app audio. Native playback restored; use Reconnect to retry."
-                    if session.sourceToken?.isAirPlay == true { failAirPlay(session, message: message, recover: failure == .output) }
+                    if session.isAirPlay && !session.isDirect { failAirPlay(session, message: message, recover: failure == .output) }
                     else { fail(session, message: message) }
                 }
             }
@@ -623,7 +648,32 @@ final class AppAudioEngine {
                 errors.removeValue(forKey: app.pid)
                 continue
             }
-            if Self.airPlayProcessingEnabled, let device = route, snapshot.isAirPlay(device),
+            // AirPlay direct: one aggregate and IOProc per app, held only
+            // while the app plays or is muted; a session whose kind or device
+            // no longer matches its destination is rebuilt in this pass.
+            let wantsDirect = direct && route.map { snapshot.isAirPlay($0) } == true
+            let muted = UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")
+            let appPlaying = snapshot.playingOwners.contains(app.pid)
+            if let session = sessions[app.pid], appPlaying { session.lastPlayingAt = snapshot.takenAt }
+            func directDecision() -> AirPlayDirectPolicy.Decision {
+                let session = sessions[app.pid]
+                let sameDevice = session.map { $0.outputUID == route?.uid && $0.stream?.deviceID == route?.id &&
+                    $0.stream?.needsRebuild == false } ?? false
+                return AirPlayDirectPolicy.decide(
+                    session: session.map { $0.isDirect ? .direct : .queued }, wantsDirect: wantsDirect,
+                    sameDevice: sameDevice, playing: appPlaying, muted: muted, hasProcessObjects: !ids.isEmpty,
+                    idleSeconds: session.map { snapshot.takenAt - $0.lastPlayingAt } ?? 0)
+            }
+            var decision = directDecision()
+            if decision == .recreate {
+                stop(pid: app.pid)
+                decision = directDecision()
+            }
+            if decision == .detach {
+                stop(pid: app.pid)
+                continue
+            }
+            if !wantsDirect, Self.airPlayProcessingEnabled, let device = route, snapshot.isAirPlay(device),
                sessions[app.pid] != nil || !ids.isEmpty {
                 let key = "\(device.uid)|\(app.bundleID)"
                 if let message = airPlayCaptureFailures[key] {
@@ -660,6 +710,9 @@ final class AppAudioEngine {
                 guard updateProcesses(session, ids: ids, runningOutput: snapshot.runningOutput) else {
                     continue
                 }
+                // A direct session renders on its device's clock: no output
+                // to move or restart, and an AirPlay device has no software gain.
+                if session.isDirect { continue }
                 // A tap created after this snapshot was gathered is read here
                 // once; the next gather covers it.
                 let format = snapshot.queriedTaps.contains(session.tapID)
@@ -714,10 +767,9 @@ final class AppAudioEngine {
             guard ProcessInfo.processInfo.systemUptime >= (retryAfter[app.pid] ?? 0) else { continue }
             // Master effects must not instantiate an aggregate for every
             // non-audio app. Process-list notifications attach new producers.
-            guard !ids.isEmpty else { continue }
+            guard !ids.isEmpty, decision == .attach else { continue }
             if attach(pid: app.pid, bundleID: app.bundleID, ids: ids, snapshot: snapshot,
-                      gain: Self.storedGain(bundleID: app.bundleID),
-                      muted: UserDefaults.standard.bool(forKey: "AOMAudioMute_\(app.bundleID)")) {
+                      gain: Self.storedGain(bundleID: app.bundleID), muted: muted, direct: wantsDirect) {
                 GestureLog.shared.logFromAnyThread("Audio session attached: pid \(app.pid) (\(app.bundleID))", level: .noMatch)
             }
         }
@@ -762,6 +814,20 @@ final class AppAudioEngine {
         }
     }
 
+    /// Playing and recording owners from the last sweep if it is at most
+    /// `maxAge` old; otherwise nil, and a background sweep is requested.
+    func recentAudioOwners(maxAge: TimeInterval) -> (playing: Set<pid_t>, recording: Set<pid_t>)? {
+        let snapshot = controlSnapshot
+        if snapshot.swept, ProcessInfo.processInfo.systemUptime - snapshot.takenAt <= maxAge {
+            return (snapshot.playingOwners, snapshot.recordingOwners)
+        }
+        if !systemSleeping {
+            pendingPlaybackRefresh = true
+            scheduleGather(announce: false)
+        }
+        return nil
+    }
+
     func level(pid: pid_t) -> Float { sessions[pid]?.box.takeUnretainedValue().peakLevel ?? 0 }
 
     /// The bundle identifier the engine knows for a PID, from its session or
@@ -783,7 +849,7 @@ final class AppAudioEngine {
             return "Reconnecting HomePod — native playback continues meanwhile"
         }
         if let error = errors[pid] { return error }
-        guard let session = sessions[pid], let transport = session.transport else {
+        guard let session = sessions[pid], let transport = session.capture else {
             if pid <= 0 { return "App closed — settings saved" }
             return needsProcessing(bundleID ?? "", in: controlSnapshot) ? "Waiting for app audio" : "Native playback — no effects applied"
         }
@@ -792,7 +858,7 @@ final class AppAudioEngine {
             return "Ready — waiting for app playback"
         }
         if !activity.rendering { return "Waiting for output device…" }
-        if session.sourceToken?.isAirPlay == true {
+        if session.isAirPlay {
             return session.muted ? "Muted · HomePod" : "Processing locally → HomePod / AirPlay"
         }
         return session.muted ? "Muted" : "Processing audio"
@@ -806,7 +872,9 @@ final class AppAudioEngine {
         let remoteRoute = Self.targetOutputUID(for: bundleID).flatMap { uid in
             AudioOutputService.devices().first(where: { $0.uid == uid })
         }.map { Self.outputTransport($0.id) == kAudioDeviceTransportTypeAirPlay } ?? false
-        if sessions[pid]?.sourceToken?.isAirPlay == true || remoteRoute,
+        // The direct path has no shared sender: Reconnect restarts only this app.
+        let direct = AirPlayDirectStream.isEnabled()
+        if !direct, sessions[pid]?.isAirPlay == true || remoteRoute,
            let uid = sessions[pid]?.outputUID ?? Self.targetOutputUID(for: bundleID) {
             retryAirPlay(uid: uid, requestedPID: pid)
             return
@@ -878,11 +946,13 @@ final class AppAudioEngine {
     }
 
     private func attach(pid: pid_t, bundleID: String, ids: [AudioObjectID], snapshot: AudioControlSnapshot,
-                        gain: Float, muted: Bool) -> Bool {
+                        gain: Float, muted: Bool, direct: Bool) -> Bool {
         guard isEnabled else { return false }
         errors.removeValue(forKey: pid)
-        guard let session = createSession(pid: pid, bundleID: bundleID, ids: ids, snapshot: snapshot,
-                                          gain: gain, muted: muted) else {
+        let created = direct
+            ? createDirectSession(pid: pid, bundleID: bundleID, ids: ids, snapshot: snapshot, gain: gain, muted: muted)
+            : createSession(pid: pid, bundleID: bundleID, ids: ids, snapshot: snapshot, gain: gain, muted: muted)
+        guard let session = created else {
             if errors[pid] == nil { errors[pid] = "Audio processing could not start. Check Screen & System Audio Recording permission." }
             // A permission/format/start failure must not repeatedly create and
             // destroy devices underneath a video player. Retry on explicit
@@ -892,7 +962,9 @@ final class AppAudioEngine {
             if Self.airPlayProcessingEnabled, let uid = snapshot.targetOutputUID(for: bundleID),
                let device = snapshot.device(uid: uid), snapshot.isAirPlay(device) {
                 let message = (errors[pid] ?? "AirPlay capture failed.") + " Native playback restored; use Reconnect to retry."
-                airPlayCaptureFailures["\(uid)|\(bundleID)"] = message
+                // The bridge keys failures to its shared sender; the direct
+                // path has none and relies on the retry suppression above.
+                if !direct { airPlayCaptureFailures["\(uid)|\(bundleID)"] = message }
                 errors[pid] = message
             }
             return false
@@ -936,8 +1008,8 @@ final class AppAudioEngine {
         for session in sessions.values {
             let mixer = session.box.takeUnretainedValue()
             mixer.setEffects(
-                app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: session.outputUID),
+                app: Self.appEQ(bundleID: session.bundleID, sampleRate: mixer.sampleRate),
+                master: Self.masterEQ(sampleRate: mixer.sampleRate, outputUID: session.outputUID),
                 appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
             mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: session.bundleID))
             mixer.overdrive = AppAudioPreferences.overdrive(bundleID: session.bundleID)
@@ -1455,6 +1527,7 @@ final class AppAudioEngine {
         session.outputUID = outUID
         session.sampleRate = sampleRate
         session.outputSampleRate = SharedOutputRenderer.sampleRate
+        session.isAirPlay = isAirPlay
         session.transport = transport
         session.sourceToken = source
         let eventName = "app:" + (bundleID.isEmpty ? "pid-\(pid)" : bundleID)
@@ -1465,6 +1538,110 @@ final class AppAudioEngine {
                                     detail: "pid \(pid), \(processObjIDs.count) process objects, to \(device.name)")
         return session
     }
+
+    /// AirPlay direct: the app's muted tap and the AirPlay device in one
+    /// private aggregate (the device is the clock; the tap is drift
+    /// compensated to it) and one IOProc running the app's chain at the
+    /// aggregate's rate. No buffer size is written: the AirPlay device keeps
+    /// its 128 frames whatever is asked.
+    private func createDirectSession(pid: pid_t, bundleID: String, ids: [AudioObjectID], snapshot: AudioControlSnapshot,
+                                     gain: Float, muted: Bool) -> Session? {
+        guard let uid = snapshot.targetOutputUID(for: bundleID),
+              let device = snapshot.device(uid: uid), snapshot.isAirPlay(device), !ids.isEmpty else { return nil }
+        let description = Self.captureDescription(processIDs: ids, bundleID: bundleID)
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        let tapStatus = AudioHardwareCreateProcessTap(description, &tapID)
+        guard tapStatus == noErr, tapID != kAudioObjectUnknown else {
+            errors[pid] = "Cannot capture this app’s audio (\(tapStatus)). Check Screen & System Audio Recording permission."
+            return nil
+        }
+        let aggregateDict: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "AOM App Audio \(pid)",
+            kAudioAggregateDeviceUIDKey: "com.kyw.allofmacos.tap.\(pid).\(UUID().uuidString)",
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceMainSubDeviceKey: device.uid,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: device.uid]],
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: description.uuid.uuidString,
+                                              kAudioSubTapDriftCompensationKey: true]]
+        ]
+        var aggregateID = AudioObjectID(kAudioObjectUnknown)
+        let aggregateStatus = AudioHardwareCreateAggregateDevice(aggregateDict as CFDictionary, &aggregateID)
+        guard aggregateStatus == noErr, aggregateID != kAudioObjectUnknown else {
+            errors[pid] = "Audio capture device could not be created (\(aggregateStatus))."
+            AudioHardwareDestroyProcessTap(tapID)
+            return nil
+        }
+        func discard() {
+            AudioHardwareDestroyAggregateDevice(aggregateID)
+            AudioHardwareDestroyProcessTap(tapID)
+        }
+        guard let format = Self.property(tapID, selector: kAudioTapPropertyFormat, as: AudioStreamBasicDescription.self),
+              Self.supports(format),
+              let rate = Self.property(aggregateID, selector: kAudioDevicePropertyNominalSampleRate, as: Float64.self),
+              rate.isFinite, rate > 0 else {
+            errors[pid] = "The app audio format or selected output is unavailable."
+            discard()
+            return nil
+        }
+        // The chain runs at the device's rate: EQ, Magic Boost and Overdrive
+        // are built for it (a rate change rebuilds the session).
+        let boost = UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(bundleID)")
+        let mixer = MixerBox(gain: gain, muted: muted, magicBoost: boost,
+                             eq: Self.appEQ(bundleID: bundleID, sampleRate: rate), sampleRate: rate)
+        mixer.setEffects(app: Self.appEQ(bundleID: bundleID, sampleRate: rate),
+                         master: Self.masterEQ(sampleRate: rate, outputUID: uid), appBoost: boost ? 1 : 0)
+        mixer.boostPreset = AudioBoostPreset.index(of: AudioBoostPreset.storedID(bundleID: bundleID))
+        mixer.overdrive = AppAudioPreferences.overdrive(bundleID: bundleID)
+        mixer.balance = AppAudioPreferences.balance(bundleID: bundleID)
+        mixer.deviceGain = snapshot.softwareGain(uid: uid)
+        let eventName = "app:" + (bundleID.isEmpty ? "pid-\(pid)" : bundleID)
+        let stream: AirPlayDirectStream
+        do {
+            stream = try AirPlayDirectStream(aggregateID: aggregateID, device: device, mixer: mixer, eventName: eventName,
+                                             onReconfigure: { [weak self] in DispatchQueue.main.async { self?.scheduleSync() } })
+        } catch AirPlayDirectStream.SetupError.start(let status) {
+            errors[pid] = "Audio capture could not start (\(status)). Check Screen & System Audio Recording permission."
+            discard()
+            return nil
+        } catch {
+            errors[pid] = "The app audio format or selected output is unavailable."
+            discard()
+            return nil
+        }
+        let startStatus = stream.start()
+        guard startStatus == noErr else {
+            errors[pid] = "Audio capture was refused (\(startStatus)). Check Screen & System Audio Recording permission."
+            Self.directTeardown.async {
+                stream.stop()
+                AudioHardwareDestroyAggregateDevice(aggregateID)
+                AudioHardwareDestroyProcessTap(tapID)
+            }
+            return nil
+        }
+        let box = Unmanaged.passRetained(mixer)
+        let session = Session(pid: pid, bundleID: bundleID, tapID: tapID, aggregateID: aggregateID,
+                              procID: nil, box: box, gain: gain, muted: muted)
+        session.processIDs = ids.sorted()
+        session.tapDescription = description
+        session.outputUID = uid
+        session.sampleRate = rate
+        session.outputSampleRate = rate
+        session.isAirPlay = true
+        session.stream = stream
+        session.eventSource = AudioEventLog.shared.register(name: eventName, rings: [stream.events]) { [weak stream] in
+            stream?.eventCounters ?? [:]
+        }
+        AudioEventLog.shared.record(.tapAttached, source: eventName, value: Int64(ids.count),
+                                    detail: "pid \(pid), \(ids.count) process objects, to \(device.name)")
+        AudioEventLog.shared.record(.outputStarted, source: eventName,
+                                    detail: "AirPlay direct, \(Int(rate.rounded())) Hz, \(stream.ioFrames)-frame IO")
+        return session
+    }
+
+    /// Direct sessions stop here, off main: a 5 ms fade-out (waited for up to
+    /// 30 ms), then IO, the IOProc, the aggregate and the tap, in that order.
+    private static let directTeardown = DispatchQueue(label: "com.kyw.allofmacos.audio.direct.teardown", qos: .userInitiated)
 
     private static func supports(_ format: AudioStreamBasicDescription) -> Bool {
         format.mFormatID == kAudioFormatLinearPCM &&
@@ -1538,6 +1715,7 @@ final class AppAudioEngine {
         }
         transport.setBufferedForAirPlay(source.isAirPlay)
         mixer.usesNetworkDynamics = source.isAirPlay
+        session.isAirPlay = source.isAirPlay
         if let events = session.eventSource {
             AudioEventLog.shared.record(.outputMoved, source: events.name,
                                         detail: "\(session.outputUID.isEmpty ? "none" : session.outputUID) → \(device.uid) (\(device.name))")
@@ -1547,8 +1725,8 @@ final class AppAudioEngine {
         // 3.3.3 (S04): the master EQ's device stage follows the output (a
         // headphone curve switches in or out; a 10 ms EQ crossfade inside
         // the hand-over's fades).
-        mixer.setEffects(app: Self.appEQ(bundleID: session.bundleID, sampleRate: SharedOutputRenderer.sampleRate),
-                         master: Self.masterEQ(sampleRate: SharedOutputRenderer.sampleRate, outputUID: device.uid),
+        mixer.setEffects(app: Self.appEQ(bundleID: session.bundleID, sampleRate: mixer.sampleRate),
+                         master: Self.masterEQ(sampleRate: mixer.sampleRate, outputUID: device.uid),
                          appBoost: UserDefaults.standard.bool(forKey: "AOMAudioMagicBoost_\(session.bundleID)") ? 1 : 0)
         return true
     }
@@ -1600,6 +1778,23 @@ final class AppAudioEngine {
     }
 
     static func destroy(_ session: Session) {
+        if let stream = session.stream {
+            session.stream = nil
+            if let events = session.eventSource {
+                AudioEventLog.shared.unregister(events)
+                session.eventSource = nil
+                AudioEventLog.shared.record(.tapDetached, source: events.name, detail: "pid \(session.pid)")
+            }
+            let box = session.box, aggregateID = session.aggregateID, tapID = session.tapID
+            directTeardown.async {
+                stream.stop()
+                AudioHardwareDestroyAggregateDevice(aggregateID)
+                AudioHardwareDestroyProcessTap(tapID)
+                // The IOProc that used the mixer is gone.
+                box.release()
+            }
+            return
+        }
         // Stop both callbacks before releasing the transport, mixer or tap.
         if let procID = session.procID {
             AudioDeviceStop(session.aggregateID, procID)
@@ -1716,7 +1911,10 @@ final class MixerBox {
     fileprivate var renderDeviceGain: Float = 1
     fileprivate var appEQ: AudioEQProcessor
     fileprivate var masterEQ: AudioEQProcessor
-    fileprivate let boostProcessor = AudioMagicBoost(sampleRate: SharedOutputRenderer.sampleRate)
+    /// The rate the chain runs at: the shared renderer's for queued
+    /// sessions, the aggregate's nominal rate on the AirPlay direct path.
+    let sampleRate: Double
+    fileprivate let boostProcessor: AudioMagicBoost
     /// 3.3.3 (S06): the app's Magic Boost preset (an index into
     /// `AudioBoostPreset.all`); the processor takes it up lock-free.
     var boostPreset: Int {
@@ -1727,7 +1925,7 @@ final class MixerBox {
     /// its limiter releases like the network bus; the release switches in
     /// place (3.3.2 review: a second, preallocated processor took over with a
     /// stale delay line, which could click when an overdriven app moved).
-    fileprivate let overdriveProcessor = AudioVolumeOverdrive(sampleRate: SharedOutputRenderer.sampleRate, chunk: MixerBox.chunk)
+    fileprivate let overdriveProcessor: AudioVolumeOverdrive
     private let networkDynamicsFlag = AudioAtomicCounter()
     /// Snapshot per callback (render thread only).
     fileprivate var renderNetworkDynamics = false
@@ -1784,7 +1982,12 @@ final class MixerBox {
         get { lock.lock(); defer { lock.unlock() }; return desiredOverdrive }
         set { lock.lock(); desiredOverdrive = AudioVolumeOverdrive.clamp(newValue); lock.unlock() }
     }
-    init(gain: Float, muted: Bool, magicBoost: Bool = false, eq: AudioEQ = AudioEQ()) {
+    init(gain: Float, muted: Bool, magicBoost: Bool = false, eq: AudioEQ = AudioEQ(),
+         sampleRate: Double = SharedOutputRenderer.sampleRate) {
+        let rate = sampleRate.isFinite && sampleRate > 0 ? sampleRate : SharedOutputRenderer.sampleRate
+        self.sampleRate = rate
+        boostProcessor = AudioMagicBoost(sampleRate: rate)
+        overdriveProcessor = AudioVolumeOverdrive(sampleRate: rate, chunk: MixerBox.chunk)
         desiredGain = Mixer.clamp(gain); renderGain = Mixer.clamp(gain)
         gainRamp = AudioGainRamp(muted ? 0 : Mixer.clamp(gain))
         desiredMuted = muted; renderMuted = muted
